@@ -58,6 +58,7 @@ async function loadSample(): Promise<LoadedFiles> {
 export function App() {
   const [files, setFiles] = useState<LoadedFiles | null>(null);
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
+  const [highlightAllNotes, setHighlightAllNotes] = useState(false);
   const [showOriginalNoteheadContours, setShowOriginalNoteheadContours] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -89,6 +90,7 @@ export function App() {
     try {
       setFiles(await loadSample());
       setSelectedGroupId(null);
+      setHighlightAllNotes(false);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Failed to load sample files.");
     }
@@ -122,6 +124,7 @@ export function App() {
         sidecarName: sidecar.name,
       });
       setSelectedGroupId(null);
+      setHighlightAllNotes(false);
       event.target.value = "";
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Failed to read selected files.");
@@ -130,6 +133,17 @@ export function App() {
 
   function handleGroupSelect(group: VisualGroup | null) {
     setSelectedGroupId(group?.visual_group_id ?? null);
+    setHighlightAllNotes(false);
+  }
+
+  function clearSelection() {
+    setSelectedGroupId(null);
+    setHighlightAllNotes(false);
+  }
+
+  function handleHighlightAllNotes() {
+    setSelectedGroupId(null);
+    setHighlightAllNotes(true);
   }
 
   const selectedNotes = selectedGroup
@@ -168,6 +182,7 @@ export function App() {
               imageUrl={files.imageUrl}
               sidecar={files.sidecar}
               selectedGroupId={selectedGroupId}
+              highlightAllNotes={highlightAllNotes}
               showOriginalNoteheadContours={showOriginalNoteheadContours}
               onSelectGroup={handleGroupSelect}
             />
@@ -182,6 +197,9 @@ export function App() {
                 Original notehead contours
               </label>
               <h2>Selection</h2>
+              <button type="button" onClick={handleHighlightAllNotes}>
+                Highlight all notes
+              </button>
               {selectedGroup ? (
                 <>
                   <dl>
@@ -192,7 +210,14 @@ export function App() {
                     <dt>Notes</dt>
                     <dd>{noteSummary(selectedNotes)}</dd>
                   </dl>
-                  <button type="button" onClick={() => setSelectedGroupId(null)}>
+                  <button type="button" onClick={clearSelection}>
+                    Clear
+                  </button>
+                </>
+              ) : highlightAllNotes ? (
+                <>
+                  <p>{files.sidecar.visual_groups.length.toLocaleString()} notes highlighted.</p>
+                  <button type="button" onClick={clearSelection}>
                     Clear
                   </button>
                 </>

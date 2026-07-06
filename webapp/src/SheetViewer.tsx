@@ -9,6 +9,7 @@ interface SheetViewerProps {
   imageUrl: string;
   sidecar: Sidecar;
   selectedGroupId: string | null;
+  highlightAllNotes: boolean;
   showOriginalNoteheadContours: boolean;
   onSelectGroup: (group: VisualGroup | null) => void;
 }
@@ -104,6 +105,7 @@ export function SheetViewer({
   imageUrl,
   sidecar,
   selectedGroupId,
+  highlightAllNotes,
   showOriginalNoteheadContours,
   onSelectGroup,
 }: SheetViewerProps) {
@@ -135,6 +137,10 @@ export function SheetViewer({
   );
 
   const selectedGroupIds = useMemo(() => {
+    if (highlightAllNotes) {
+      return new Set(visualGroups.map((group) => group.visual_group_id));
+    }
+
     if (!selectedGroup) {
       return new Set<string>();
     }
@@ -159,7 +165,7 @@ export function SheetViewer({
     }
 
     return ids;
-  }, [selectedGroup, visualGroups]);
+  }, [highlightAllNotes, selectedGroup, visualGroups]);
 
   function clientToImagePoint(clientX: number, clientY: number): VisualPoint {
     const rect = containerRef.current?.getBoundingClientRect();
@@ -363,7 +369,9 @@ export function SheetViewer({
             })}
           </svg>
         </div>
-        {selectedGroup ? (
+        {highlightAllNotes ? (
+          <div className="selection-chip">All notes</div>
+        ) : selectedGroup ? (
           <div className="selection-chip">
             {selectedGroup.visual_group_id}
             {selectedGroup.musicxml_ids.length > 0 ? ` / ${selectedGroup.musicxml_ids[0]}` : ""}
