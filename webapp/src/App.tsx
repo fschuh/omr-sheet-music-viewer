@@ -60,6 +60,7 @@ export function App() {
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const [highlightAllNotes, setHighlightAllNotes] = useState(false);
   const [showOriginalNoteheadContours, setShowOriginalNoteheadContours] = useState(false);
+  const [showRawStemContours, setShowRawStemContours] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const selectedGroup = useMemo(
@@ -184,6 +185,7 @@ export function App() {
               selectedGroupId={selectedGroupId}
               highlightAllNotes={highlightAllNotes}
               showOriginalNoteheadContours={showOriginalNoteheadContours}
+              showRawStemContours={showRawStemContours}
               onSelectGroup={handleGroupSelect}
             />
             <aside className="inspector">
@@ -195,6 +197,14 @@ export function App() {
                   onChange={(event) => setShowOriginalNoteheadContours(event.target.checked)}
                 />
                 Original notehead contours
+              </label>
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={showRawStemContours}
+                  onChange={(event) => setShowRawStemContours(event.target.checked)}
+                />
+                Raw stem contours
               </label>
               <h2>Selection</h2>
               <button type="button" onClick={handleHighlightAllNotes}>

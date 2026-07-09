@@ -28,13 +28,21 @@ export interface VisualGroup {
   bbox: VisualBBox | [];
   notehead_ellipses?: NoteheadEllipse[];
   notehead_contours: VisualPoint[][];
+  detected_stem_contours?: VisualPoint[][];
   stem_contours: VisualPoint[][];
   musicxml_ids: string[];
+}
+
+export interface RawStemContour {
+  debug_id: number;
+  contour: VisualPoint[];
+  bbox: VisualPoint[];
 }
 
 export interface Sidecar {
   version: number;
   source_image_size: [number, number];
+  raw_stem_contours?: RawStemContour[];
   notes: SidecarNote[];
   visual_groups: VisualGroup[];
   unmatched_musicxml_notes: string[];

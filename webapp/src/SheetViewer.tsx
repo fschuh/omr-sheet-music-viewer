@@ -11,6 +11,7 @@ interface SheetViewerProps {
   selectedGroupId: string | null;
   highlightAllNotes: boolean;
   showOriginalNoteheadContours: boolean;
+  showRawStemContours: boolean;
   onSelectGroup: (group: VisualGroup | null) => void;
 }
 
@@ -107,6 +108,7 @@ export function SheetViewer({
   selectedGroupId,
   highlightAllNotes,
   showOriginalNoteheadContours,
+  showRawStemContours,
   onSelectGroup,
 }: SheetViewerProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -340,6 +342,15 @@ export function SheetViewer({
             }
           />
           <svg className="overlay" viewBox={`0 0 ${width} ${height}`} aria-hidden="true">
+            {showRawStemContours
+              ? sidecar.raw_stem_contours?.map((stem, index) => (
+                  <polyline
+                    key={`raw-stem-${stem.debug_id}-${index}`}
+                    className="raw-stem-contour"
+                    points={pointsToSvg(stem.contour)}
+                  />
+                ))
+              : null}
             {visualGroups.map((group) => {
               const isSelected = selectedGroupIds.has(group.visual_group_id);
               return (
@@ -364,6 +375,15 @@ export function SheetViewer({
                   {group.stem_contours.map((contour, index) => (
                     <polygon key={`stem-${index}`} points={pointsToSvg(contour)} />
                   ))}
+                  {showRawStemContours
+                    ? group.detected_stem_contours?.map((contour, index) => (
+                        <polyline
+                          key={`detected-stem-${index}`}
+                          className="detected-stem-contour"
+                          points={pointsToSvg(contour)}
+                        />
+                      ))
+                    : null}
                 </g>
               );
             })}

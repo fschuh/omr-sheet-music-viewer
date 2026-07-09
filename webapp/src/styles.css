@@ -177,7 +177,8 @@ button:hover,
 }
 
 .visual-group polygon,
-.visual-group ellipse {
+.visual-group ellipse,
+.overlay polyline {
   fill: rgba(20, 93, 191, 0);
   stroke: transparent;
   stroke-width: 2;
@@ -188,6 +189,21 @@ button:hover,
   fill: #d9360b;
   stroke: #d9360b;
   stroke-width: 0;
+}
+
+.overlay .raw-stem-contour {
+  fill: none;
+  stroke: rgba(8, 130, 94, 0.78);
+  stroke-linejoin: round;
+  stroke-width: 2;
+}
+
+.visual-group.selected .detected-stem-contour {
+  fill: none;
+  stroke: #0b57d0;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 3;
 }
 
 .selection-chip {
