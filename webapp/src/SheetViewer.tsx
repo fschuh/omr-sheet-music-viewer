@@ -11,6 +11,7 @@ interface SheetViewerProps {
   selectedGroupId: string | null;
   highlightAllNotes: boolean;
   showOriginalNoteheadContours: boolean;
+  showDetectedNoteheadContours: boolean;
   showRawStemContours: boolean;
   onSelectGroup: (group: VisualGroup | null) => void;
 }
@@ -108,6 +109,7 @@ export function SheetViewer({
   selectedGroupId,
   highlightAllNotes,
   showOriginalNoteheadContours,
+  showDetectedNoteheadContours,
   showRawStemContours,
   onSelectGroup,
 }: SheetViewerProps) {
@@ -372,6 +374,15 @@ export function SheetViewer({
                     : group.notehead_contours.map((contour, index) => (
                         <polygon key={`notehead-${index}`} points={pointsToSvg(contour)} />
                       ))}
+                  {showDetectedNoteheadContours
+                    ? group.detected_notehead_contours?.map((contour, index) => (
+                        <polygon
+                          key={`detected-notehead-${index}`}
+                          className="detected-notehead-contour"
+                          points={pointsToSvg(contour)}
+                        />
+                      ))
+                    : null}
                   {group.stem_contours.map((contour, index) => (
                     <polygon key={`stem-${index}`} points={pointsToSvg(contour)} />
                   ))}

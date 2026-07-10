@@ -206,6 +206,14 @@ button:hover,
   stroke-width: 3;
 }
 
+.visual-group .detected-notehead-contour,
+.visual-group.selected .detected-notehead-contour {
+  fill: rgb(11 87 208 / 28%);
+  stroke: #0b57d0;
+  stroke-linejoin: round;
+  stroke-width: 1.5;
+}
+
 .selection-chip {
   background: rgba(255, 255, 255, 0.92);
   border: 1px solid #c9cdd3;

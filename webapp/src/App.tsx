@@ -60,6 +60,7 @@ export function App() {
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const [highlightAllNotes, setHighlightAllNotes] = useState(false);
   const [showOriginalNoteheadContours, setShowOriginalNoteheadContours] = useState(false);
+  const [showDetectedNoteheadContours, setShowDetectedNoteheadContours] = useState(false);
   const [showRawStemContours, setShowRawStemContours] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -185,6 +186,7 @@ export function App() {
               selectedGroupId={selectedGroupId}
               highlightAllNotes={highlightAllNotes}
               showOriginalNoteheadContours={showOriginalNoteheadContours}
+              showDetectedNoteheadContours={showDetectedNoteheadContours}
               showRawStemContours={showRawStemContours}
               onSelectGroup={handleGroupSelect}
             />
@@ -197,6 +199,14 @@ export function App() {
                   onChange={(event) => setShowOriginalNoteheadContours(event.target.checked)}
                 />
                 Original notehead contours
+              </label>
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={showDetectedNoteheadContours}
+                  onChange={(event) => setShowDetectedNoteheadContours(event.target.checked)}
+                />
+                Detected notehead contours
               </label>
               <label className="checkbox-row">
                 <input
