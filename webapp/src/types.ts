@@ -8,7 +8,7 @@ export interface NoteheadEllipse {
   angle: number;
 }
 
-export interface SidecarNote {
+export interface VisualSidecarNote {
   musicxml_id: string;
   part: number;
   measure: number;
@@ -39,11 +39,11 @@ export interface RawStemContour {
   bbox: VisualPoint[];
 }
 
-export interface Sidecar {
+export interface VisualSidecar {
   version: number;
   source_image_size: [number, number];
   raw_stem_contours?: RawStemContour[];
-  notes: SidecarNote[];
+  notes: VisualSidecarNote[];
   visual_groups: VisualGroup[];
   unmatched_musicxml_notes: string[];
   unmatched_visual_notes: string[];

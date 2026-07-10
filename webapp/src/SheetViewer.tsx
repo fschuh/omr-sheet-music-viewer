@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { Sidecar, ViewportTransform, VisualBBox, VisualGroup, VisualPoint } from "./types";
+import type { VisualSidecar, ViewportTransform, VisualBBox, VisualGroup, VisualPoint } from "./types";
 
 const MIN_SCALE = 0.2;
 const MAX_SCALE = 8;
@@ -7,7 +7,7 @@ const CLICK_MOVE_TOLERANCE = 6;
 
 interface SheetViewerProps {
   imageUrl: string;
-  sidecar: Sidecar;
+  visualSidecar: VisualSidecar;
   selectedGroupId: string | null;
   highlightAllNotes: boolean;
   showOriginalNoteheadContours: boolean;
@@ -104,7 +104,7 @@ function hasFittedNoteheads(group: VisualGroup): boolean {
 
 export function SheetViewer({
   imageUrl,
-  sidecar,
+  visualSidecar,
   selectedGroupId,
   highlightAllNotes,
   showOriginalNoteheadContours,
@@ -120,18 +120,18 @@ export function SheetViewer({
     transform: ViewportTransform;
   } | null>(null);
 
-  const [imageSize, setImageSize] = useState<[number, number]>(sidecar.source_image_size);
+  const [imageSize, setImageSize] = useState<[number, number]>(visualSidecar.source_image_size);
   const [transform, setTransform] = useState<ViewportTransform>({ scale: 1, x: 0, y: 0 });
 
-  const visualGroups = sidecar.visual_groups;
+  const visualGroups = visualSidecar.visual_groups;
 
   useEffect(() => {
-    setImageSize(sidecar.source_image_size);
+    setImageSize(visualSidecar.source_image_size);
     setTransform({ scale: 1, x: 0, y: 0 });
     activePointers.current.clear();
     dragStart.current = null;
     pinchStart.current = null;
-  }, [imageUrl, sidecar]);
+  }, [imageUrl, visualSidecar]);
 
   const selectedGroup = useMemo(
     () => visualGroups.find((group) => group.visual_group_id === selectedGroupId) ?? null,
@@ -336,14 +336,14 @@ export function SheetViewer({
             draggable={false}
             onLoad={(event) =>
               setImageSize([
-                event.currentTarget.naturalWidth || sidecar.source_image_size[0],
-                event.currentTarget.naturalHeight || sidecar.source_image_size[1],
+                event.currentTarget.naturalWidth || visualSidecar.source_image_size[0],
+                event.currentTarget.naturalHeight || visualSidecar.source_image_size[1],
               ])
             }
           />
           <svg className="overlay" viewBox={`0 0 ${width} ${height}`} aria-hidden="true">
             {showRawStemContours
-              ? sidecar.raw_stem_contours?.map((stem, index) => (
+              ? visualSidecar.raw_stem_contours?.map((stem, index) => (
                   <polyline
                     key={`raw-stem-${stem.debug_id}-${index}`}
                     className="raw-stem-contour"

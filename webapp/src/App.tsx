@@ -1,21 +1,21 @@
 import { useMemo, useState } from "react";
 import { SheetViewer } from "./SheetViewer";
-import type { Sidecar, SidecarNote, VisualGroup } from "./types";
+import type { VisualSidecar, VisualSidecarNote, VisualGroup } from "./types";
 
 const SAMPLE_IMAGE_URL = "/sample/mario castle.png";
 const SAMPLE_XML_URL = "/sample/mario castle.musicxml";
-const SAMPLE_SIDECAR_URL = "/sample/mario castle.homr.json";
+const SAMPLE_VISUAL_SIDECAR_URL = "/sample/mario castle.homr.visual.json";
 
 interface LoadedFiles {
   imageUrl: string;
   imageName: string;
   musicXml: string;
   musicXmlName: string;
-  sidecar: Sidecar;
-  sidecarName: string;
+  visualSidecar: VisualSidecar;
+  visualSidecarName: string;
 }
 
-function noteSummary(notes: SidecarNote[]): string {
+function noteSummary(notes: VisualSidecarNote[]): string {
   if (notes.length === 0) {
     return "No linked MusicXML notes";
   }
@@ -37,11 +37,11 @@ function readFileAsObjectUrl(file: File): string {
 }
 
 async function loadSample(): Promise<LoadedFiles> {
-  const [xmlResponse, sidecarResponse] = await Promise.all([
+  const [xmlResponse, visualSidecarResponse] = await Promise.all([
     fetch(SAMPLE_XML_URL),
-    fetch(SAMPLE_SIDECAR_URL),
+    fetch(SAMPLE_VISUAL_SIDECAR_URL),
   ]);
-  if (!xmlResponse.ok || !sidecarResponse.ok) {
+  if (!xmlResponse.ok || !visualSidecarResponse.ok) {
     throw new Error("Failed to load sample files from the Vite dev server.");
   }
 
@@ -50,8 +50,8 @@ async function loadSample(): Promise<LoadedFiles> {
     imageName: "mario castle.png",
     musicXml: await xmlResponse.text(),
     musicXmlName: "mario castle.musicxml",
-    sidecar: (await sidecarResponse.json()) as Sidecar,
-    sidecarName: "mario castle.homr.json",
+    visualSidecar: (await visualSidecarResponse.json()) as VisualSidecar,
+    visualSidecarName: "mario castle.homr.visual.json",
   };
 }
 
@@ -65,17 +65,17 @@ export function App() {
 
   const selectedGroup = useMemo(
     () =>
-      files?.sidecar.visual_groups.find((group) => group.visual_group_id === selectedGroupId) ??
+      files?.visualSidecar.visual_groups.find((group) => group.visual_group_id === selectedGroupId) ??
       null,
     [files, selectedGroupId],
   );
 
   const notesByVisualGroup = useMemo(() => {
-    const byGroup = new Map<string, SidecarNote[]>();
+    const byGroup = new Map<string, VisualSidecarNote[]>();
     if (!files) {
       return byGroup;
     }
-    for (const note of files.sidecar.notes) {
+    for (const note of files.visualSidecar.notes) {
       if (note.visual_group_id === null) {
         continue;
       }
@@ -101,28 +101,28 @@ export function App() {
     setError(null);
     const selectedFiles = Array.from(event.target.files ?? []);
     const image = selectedFiles.find((file) => file.type.startsWith("image/"));
-    const sidecar = selectedFiles.find((file) => file.name.endsWith(".homr.json"));
+    const visualSidecar = selectedFiles.find((file) => file.name.endsWith(".homr.visual.json"));
     const musicXml = selectedFiles.find(
       (file) => file.name.endsWith(".musicxml") || file.name.endsWith(".xml"),
     );
 
-    if (!image || !sidecar || !musicXml) {
-      setError("Select one image, one .musicxml file, and one .homr.json sidecar.");
+    if (!image || !visualSidecar || !musicXml) {
+      setError("Select one image, one .musicxml file, and one .homr.visual.json visual sidecar.");
       return;
     }
 
     try {
-      const [musicXmlText, sidecarText] = await Promise.all([
+      const [musicXmlText, visualSidecarText] = await Promise.all([
         readFileAsText(musicXml),
-        readFileAsText(sidecar),
+        readFileAsText(visualSidecar),
       ]);
       setFiles({
         imageUrl: readFileAsObjectUrl(image),
         imageName: image.name,
         musicXml: musicXmlText,
         musicXmlName: musicXml.name,
-        sidecar: JSON.parse(sidecarText) as Sidecar,
-        sidecarName: sidecar.name,
+        visualSidecar: JSON.parse(visualSidecarText) as VisualSidecar,
+        visualSidecarName: visualSidecar.name,
       });
       setSelectedGroupId(null);
       setHighlightAllNotes(false);
@@ -156,7 +156,7 @@ export function App() {
       <header className="topbar">
         <div>
           <h1>HOMR Viewer</h1>
-          <p>{files ? `${files.imageName} / ${files.musicXmlName} / ${files.sidecarName}` : ""}</p>
+          <p>{files ? `${files.imageName} / ${files.musicXmlName} / ${files.visualSidecarName}` : ""}</p>
         </div>
         <div className="actions">
           <button type="button" onClick={handleSampleLoad}>
@@ -181,7 +181,7 @@ export function App() {
           <>
             <SheetViewer
               imageUrl={files.imageUrl}
-              sidecar={files.sidecar}
+              visualSidecar={files.visualSidecar}
               selectedGroupId={selectedGroupId}
               highlightAllNotes={highlightAllNotes}
               showOriginalNoteheadContours={showOriginalNoteheadContours}
@@ -226,7 +226,7 @@ export function App() {
                 </>
               ) : highlightAllNotes ? (
                 <>
-                  <p>{files.sidecar.visual_groups.length.toLocaleString()} notes highlighted.</p>
+                  <p>{files.visualSidecar.visual_groups.length.toLocaleString()} notes highlighted.</p>
                   <button type="button" onClick={clearSelection}>
                     Clear
                   </button>
@@ -239,15 +239,15 @@ export function App() {
                 <dt>MusicXML size</dt>
                 <dd>{files.musicXml.length.toLocaleString()} chars</dd>
                 <dt>Visual groups</dt>
-                <dd>{files.sidecar.visual_groups.length.toLocaleString()}</dd>
+                <dd>{files.visualSidecar.visual_groups.length.toLocaleString()}</dd>
                 <dt>Linked notes</dt>
-                <dd>{files.sidecar.notes.length.toLocaleString()}</dd>
+                <dd>{files.visualSidecar.notes.length.toLocaleString()}</dd>
               </dl>
             </aside>
           </>
         ) : (
           <div className="empty-state">
-            <h2>Open a sheet music image, MusicXML file, and HOMR sidecar.</h2>
+            <h2>Open a sheet music image, MusicXML file, and HOMR visual sidecar.</h2>
             <p>Use the sample set or choose matching files from disk.</p>
           </div>
         )}
