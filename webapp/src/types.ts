@@ -29,6 +29,7 @@ export interface VisualGroup {
   notehead_ellipses?: NoteheadEllipse[];
   notehead_contours: VisualPoint[][];
   detected_notehead_contours?: VisualPoint[][];
+  refined_notehead_contours?: VisualPoint[][];
   detected_stem_contours?: VisualPoint[][];
   stem_contours: VisualPoint[][];
   musicxml_ids: string[];
