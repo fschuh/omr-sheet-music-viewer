@@ -27,13 +27,6 @@ function clampScale(scale: number): number {
   return Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale));
 }
 
-function getBBoxCenter(group: VisualGroup): VisualPoint {
-  if (group.bbox.length === 4) {
-    return [(group.bbox[0] + group.bbox[2]) / 2, (group.bbox[1] + group.bbox[3]) / 2];
-  }
-  return group.center;
-}
-
 function hasBBox(group: VisualGroup): group is VisualGroup & { bbox: VisualBBox } {
   return group.bbox.length === 4;
 }
@@ -59,33 +52,19 @@ function contourBBox(points: VisualPoint[]): [number, number, number, number] | 
   return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
 }
 
-function boxesOverlap(
-  a: [number, number, number, number],
-  b: [number, number, number, number],
-  padding = 3,
-): boolean {
-  return (
-    a[0] - padding <= b[2] &&
-    a[2] + padding >= b[0] &&
-    a[1] - padding <= b[3] &&
-    a[3] + padding >= b[1]
-  );
-}
-
-function groupStemBBoxes(group: VisualGroup): [number, number, number, number][] {
-  return group.stem_contours
-    .map((contour) => contourBBox(contour))
-    .filter((bbox): bbox is [number, number, number, number] => bbox !== null);
-}
-
-function groupBBoxesOverlapStem(
-  group: VisualGroup,
-  stemBBoxes: [number, number, number, number][],
-): boolean {
-  if (!hasBBox(group)) {
-    return false;
-  }
-  return stemBBoxes.some((stemBBox) => boxesOverlap(group.bbox, stemBBox));
+function pointInNotehead(point: VisualPoint, group: VisualGroup, padding = 3): boolean {
+  return group.notehead_contours.some((contour) => {
+    const bbox = contourBBox(contour);
+    if (bbox === null) {
+      return false;
+    }
+    return (
+      point[0] >= bbox[0] - padding &&
+      point[0] <= bbox[2] + padding &&
+      point[1] >= bbox[1] - padding &&
+      point[1] <= bbox[3] + padding
+    );
+  });
 }
 
 function pointerDistance(a: PointerState, b: PointerState): number {
@@ -151,26 +130,20 @@ export function SheetViewer({
       return new Set<string>();
     }
 
-    const selectedStemBBoxes = groupStemBBoxes(selectedGroup);
-    if (selectedStemBBoxes.length === 0) {
+    const selectedStemComponents = new Set(selectedGroup.stem_component_ids ?? []);
+    if (selectedStemComponents.size === 0) {
       return new Set([selectedGroup.visual_group_id]);
     }
 
-    const ids = new Set<string>([selectedGroup.visual_group_id]);
-    for (const group of visualGroups) {
-      if (group.visual_group_id === selectedGroup.visual_group_id) {
-        continue;
-      }
-
-      const hasSharedStem = groupStemBBoxes(group).some((candidateBBox) =>
-        selectedStemBBoxes.some((selectedBBox) => boxesOverlap(candidateBBox, selectedBBox)),
-      );
-      if (hasSharedStem || groupBBoxesOverlapStem(group, selectedStemBBoxes)) {
-        ids.add(group.visual_group_id);
-      }
-    }
-
-    return ids;
+    return new Set(
+      visualGroups
+        .filter((group) =>
+          (group.stem_component_ids ?? []).some((component) =>
+            selectedStemComponents.has(component),
+          ),
+        )
+        .map((group) => group.visual_group_id),
+    );
   }, [highlightAllNotes, selectedGroup, visualGroups]);
 
   function clientToImagePoint(clientX: number, clientY: number): VisualPoint {
@@ -203,12 +176,16 @@ export function SheetViewer({
   }
 
   function hitTest(point: VisualPoint): VisualGroup | null {
-    const candidates = visualGroups.filter((group) => pointInBBox(point, group));
+    const noteheadCandidates = visualGroups.filter((group) => pointInNotehead(point, group));
+    const candidates =
+      noteheadCandidates.length > 0
+        ? noteheadCandidates
+        : visualGroups.filter((group) => pointInBBox(point, group));
     if (candidates.length === 0) {
       return null;
     }
     return candidates.sort(
-      (a, b) => distanceToPoint(point, getBBoxCenter(a)) - distanceToPoint(point, getBBoxCenter(b)),
+      (a, b) => distanceToPoint(point, a.center) - distanceToPoint(point, b.center),
     )[0];
   }
 

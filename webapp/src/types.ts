@@ -32,6 +32,8 @@ export interface VisualGroup {
   refined_notehead_contours?: VisualPoint[][];
   detected_stem_contours?: VisualPoint[][];
   stem_contours: VisualPoint[][];
+  stem_component_ids?: string[];
+  is_hollow_notehead?: boolean;
   musicxml_ids: string[];
 }
 
