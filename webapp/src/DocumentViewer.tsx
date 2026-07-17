@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type {
   DocumentPage,
   ViewportTransform,
@@ -13,6 +13,7 @@ const MIN_SCALE = 0.08;
 const MAX_SCALE = 6;
 const CLICK_MOVE_TOLERANCE = 6;
 const PAGE_GAP = 28;
+const SHOW_REFRESH_DIAGNOSTIC = window.location.hostname === "localhost";
 
 interface DocumentViewerProps {
   documentKey: string;
@@ -35,6 +36,32 @@ interface PointerState {
 
 function clampScale(scale: number): number {
   return Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale));
+}
+
+function useDisplayRefreshRate(enabled: boolean): number | null {
+  const [refreshRate, setRefreshRate] = useState<number | null>(null);
+  useEffect(() => {
+    if (!enabled) return;
+    let frame = 0;
+    let previous: number | null = null;
+    const intervals: number[] = [];
+    function sample(timestamp: number) {
+      if (previous !== null) {
+        const interval = timestamp - previous;
+        if (interval > 4 && interval < 40) intervals.push(interval);
+      }
+      previous = timestamp;
+      if (intervals.length >= 90) {
+        intervals.sort((first, second) => first - second);
+        setRefreshRate(Math.round(1000 / intervals[Math.floor(intervals.length / 2)]));
+        intervals.length = 0;
+      }
+      frame = requestAnimationFrame(sample);
+    }
+    frame = requestAnimationFrame(sample);
+    return () => cancelAnimationFrame(frame);
+  }, [enabled]);
+  return refreshRate;
 }
 
 function hasBBox(group: VisualGroup): group is VisualGroup & { bbox: VisualBBox } {
@@ -134,7 +161,7 @@ interface PageOverlayProps {
   showRawStemContours: boolean;
 }
 
-function PageOverlay({
+const PageOverlay = memo(function PageOverlay({
   page,
   selected,
   highlightAll,
@@ -211,7 +238,7 @@ function PageOverlay({
       })}
     </svg>
   );
-}
+});
 
 export function DocumentViewer({
   documentKey,
@@ -235,8 +262,42 @@ export function DocumentViewer({
     transform: ViewportTransform;
   } | null>(null);
   const autoFitMarker = useRef<string | null>(null);
-  const [transform, setTransform] = useState<ViewportTransform>({ scale: 1, x: 24, y: 24 });
+  const initialTransform = useRef<ViewportTransform>({ scale: 1, x: 24, y: 24 });
+  const transformRef = useRef(initialTransform.current);
+  const pendingTransform = useRef<ViewportTransform | null>(null);
+  const transformFrame = useRef<number | null>(null);
+  const [transform, setTransform] = useState<ViewportTransform>(initialTransform.current);
   const [isPointerPanning, setIsPointerPanning] = useState(false);
+  const displayRefreshRate = useDisplayRefreshRate(SHOW_REFRESH_DIAGNOSTIC);
+
+  function commitTransform(next: ViewportTransform) {
+    if (transformFrame.current !== null) cancelAnimationFrame(transformFrame.current);
+    transformFrame.current = null;
+    pendingTransform.current = null;
+    transformRef.current = next;
+    setTransform(next);
+  }
+
+  function scheduleTransform(update: (current: ViewportTransform) => ViewportTransform) {
+    const current = pendingTransform.current ?? transformRef.current;
+    pendingTransform.current = update(current);
+    if (transformFrame.current !== null) return;
+    transformFrame.current = requestAnimationFrame(() => {
+      transformFrame.current = null;
+      const next = pendingTransform.current;
+      pendingTransform.current = null;
+      if (!next) return;
+      transformRef.current = next;
+      setTransform(next);
+    });
+  }
+
+  useEffect(
+    () => () => {
+      if (transformFrame.current !== null) cancelAnimationFrame(transformFrame.current);
+    },
+    [],
+  );
 
   const layout = useMemo(
     () => ({
@@ -251,7 +312,7 @@ export function DocumentViewer({
     const rect = stageRef.current?.getBoundingClientRect();
     if (!rect) return;
     const scale = clampScale((rect.width - 64) / layout.width);
-    setTransform({ scale, x: (rect.width - layout.width * scale) / 2, y: 32 });
+    commitTransform({ scale, x: (rect.width - layout.width * scale) / 2, y: 32 });
   }
 
   useEffect(() => {
@@ -260,7 +321,7 @@ export function DocumentViewer({
     pinchStart.current = null;
     autoFitMarker.current = null;
     setIsPointerPanning(false);
-    setTransform({ scale: 1, x: 24, y: 24 });
+    commitTransform(initialTransform.current);
   }, [documentKey]);
 
   useEffect(() => {
@@ -278,7 +339,7 @@ export function DocumentViewer({
       .slice(0, page.index)
       .reduce((total, candidate) => total + candidate.height + PAGE_GAP, 0);
     const scale = clampScale(Math.min((rect.width - 64) / page.width, (rect.height - 64) / page.height));
-    setTransform({
+    commitTransform({
       scale,
       x: (rect.width - layout.width * scale) / 2,
       y: (rect.height - page.height * scale) / 2 - pageTop * scale,
@@ -296,7 +357,7 @@ export function DocumentViewer({
         if (!rect) return;
         const cursorX = event.clientX - rect.left;
         const cursorY = event.clientY - rect.top;
-        setTransform((current) => {
+        scheduleTransform((current) => {
           // Precision touchpads report pinch as Ctrl + wheel. Their deltas are
           // much smaller than mouse-wheel deltas, hence the higher sensitivity.
           const scale = clampScale(current.scale * Math.exp(-event.deltaY * 0.01));
@@ -310,7 +371,7 @@ export function DocumentViewer({
         });
         return;
       }
-      setTransform((current) => ({
+      scheduleTransform((current) => ({
         ...current,
         x: current.x - event.deltaX,
         y: current.y - event.deltaY,
@@ -356,11 +417,11 @@ export function DocumentViewer({
       if (Math.hypot(event.clientX - start.x, event.clientY - start.y) > CLICK_MOVE_TOLERANCE) {
         setIsPointerPanning(true);
       }
-      setTransform({
+      scheduleTransform(() => ({
         scale: start.transform.scale,
         x: start.transform.x + event.clientX - start.x,
         y: start.transform.y + event.clientY - start.y,
-      });
+      }));
     } else if (pointers.length === 2 && pinchStart.current && pinchStart.current.distance > 0) {
       const start = pinchStart.current;
       const rect = stageRef.current?.getBoundingClientRect();
@@ -371,11 +432,11 @@ export function DocumentViewer({
       );
       const documentX = (start.midpoint[0] - rect.left - start.transform.x) / start.transform.scale;
       const documentY = (start.midpoint[1] - rect.top - start.transform.y) / start.transform.scale;
-      setTransform({
+      scheduleTransform(() => ({
         scale,
         x: nextMidpoint[0] - rect.left - documentX * scale,
         y: nextMidpoint[1] - rect.top - documentY * scale,
-      });
+      }));
     }
   }
 
@@ -419,17 +480,26 @@ export function DocumentViewer({
       <div className="viewer-toolbar">
         <button type="button" onClick={fitWidth}>Fit width</button>
         <button type="button" onClick={fitPage}>Fit page</button>
-        <button type="button" onClick={() => setTransform({ scale: 1, x: 24, y: 24 })}>Reset</button>
+        <button type="button" onClick={() => commitTransform(initialTransform.current)}>Reset</button>
         <button
           type="button"
           aria-label="Zoom out"
-          onClick={() => setTransform((current) => ({ ...current, scale: clampScale(current.scale / 1.2) }))}
+          onClick={() => {
+            const current = transformRef.current;
+            commitTransform({ ...current, scale: clampScale(current.scale / 1.2) });
+          }}
         >−</button>
         <span>{Math.round(transform.scale * 100)}%</span>
+        {SHOW_REFRESH_DIAGNOSTIC && displayRefreshRate ? (
+          <span title="Measured requestAnimationFrame cadence">~{displayRefreshRate} Hz</span>
+        ) : null}
         <button
           type="button"
           aria-label="Zoom in"
-          onClick={() => setTransform((current) => ({ ...current, scale: clampScale(current.scale * 1.2) }))}
+          onClick={() => {
+            const current = transformRef.current;
+            commitTransform({ ...current, scale: clampScale(current.scale * 1.2) });
+          }}
         >+</button>
       </div>
       <div
@@ -445,7 +515,7 @@ export function DocumentViewer({
           style={{
             width: layout.width,
             height: layout.height,
-            transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})`,
+            transform: `translate3d(${transform.x}px, ${transform.y}px, 0) scale(${transform.scale})`,
           }}
         >
           {pages.map((page) => (

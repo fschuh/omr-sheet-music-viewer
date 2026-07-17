@@ -250,11 +250,13 @@ button:disabled {
 .viewer-stage.is-pointer-panning { cursor: grabbing; }
 
 .document-content {
+  backface-visibility: hidden;
   left: 0;
   position: absolute;
   top: 0;
   transform-origin: 0 0;
   user-select: none;
+  will-change: transform;
 }
 
 .document-page {
