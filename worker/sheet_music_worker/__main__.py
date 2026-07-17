@@ -6,14 +6,15 @@ import threading
 import traceback
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 
 from sheet_music_worker import PROTOCOL_VERSION, WORKER_VERSION
 from sheet_music_worker.processor import PdfProcessor
 
 
 class WorkerServer:
-    def __init__(self) -> None:
+    def __init__(self, protocol_output: TextIO) -> None:
+        self._protocol_output = protocol_output
         self._write_lock = threading.Lock()
         self._state_lock = threading.Lock()
         self._active_job_id: str | None = None
@@ -24,8 +25,8 @@ class WorkerServer:
 
     def emit(self, event: dict[str, Any]) -> None:
         with self._write_lock:
-            sys.stdout.write(json.dumps(event, separators=(",", ":")) + "\n")
-            sys.stdout.flush()
+            self._protocol_output.write(json.dumps(event, separators=(",", ":")) + "\n")
+            self._protocol_output.flush()
 
     def serve(self) -> None:
         # ONNX Runtime and HOMR load native libraries. Initialize them on the
@@ -122,8 +123,15 @@ class WorkerServer:
                 self._active_job_id = None
 
 
+def _reserve_protocol_output() -> TextIO:
+    """Keep stdout protocol-only and route dependency prints to worker logs."""
+    protocol_output = sys.stdout
+    sys.stdout = sys.stderr
+    return protocol_output
+
+
 def main() -> None:
-    WorkerServer().serve()
+    WorkerServer(_reserve_protocol_output()).serve()
 
 
 if __name__ == "__main__":
