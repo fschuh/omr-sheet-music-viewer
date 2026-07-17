@@ -96,6 +96,7 @@ export interface LoadedDocument {
   name: string;
   pageCount: number;
   cacheStatus: "miss" | "partial" | "complete";
+  cachePath?: string;
   status: JobStatus;
   pages: DocumentPage[];
 }

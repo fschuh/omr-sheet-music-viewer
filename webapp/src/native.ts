@@ -15,6 +15,7 @@ export type WorkerEvent =
       documentName: string;
       pageCount: number;
       cacheStatus: "miss" | "partial" | "complete";
+      cachePath: string;
     }
   | { type: "page_started"; jobId: string; pageIndex: number }
   | {
@@ -68,6 +69,10 @@ export async function retryPage(jobId: string, pageIndex: number): Promise<void>
 
 export async function getWorkerLogPath(): Promise<string> {
   return invoke<string>("get_worker_log_path");
+}
+
+export async function openCacheDirectory(path: string): Promise<void> {
+  return invoke("open_cache_directory", { path });
 }
 
 export async function loadPageArtifacts(artifacts: PageArtifacts): Promise<PageArtifactData> {

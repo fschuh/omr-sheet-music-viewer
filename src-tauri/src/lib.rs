@@ -367,6 +367,40 @@ fn get_worker_log_path(app: AppHandle) -> Result<String, String> {
     Ok(worker_log_path(&app)?.to_string_lossy().into_owned())
 }
 
+#[tauri::command]
+fn open_cache_directory(app: AppHandle, path: String) -> Result<(), String> {
+    let directory = checked_cache_path(&app, &path)?;
+    if !directory.is_dir() {
+        return Err("The PDF cache directory does not exist".into());
+    }
+
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        let mut command = Command::new("explorer.exe");
+        command.arg(PathBuf::from(path));
+        command
+    };
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        let mut command = Command::new("open");
+        command.arg(directory);
+        command
+    };
+    #[cfg(target_os = "linux")]
+    let mut command = {
+        let mut command = Command::new("xdg-open");
+        command.arg(directory);
+        command
+    };
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    return Err("Opening cache directories is not supported on this platform".into());
+
+    command
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("Could not open the PDF cache directory: {error}"))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -382,7 +416,8 @@ pub fn run() {
             cancel_job,
             retry_page,
             load_page_artifacts,
-            get_worker_log_path
+            get_worker_log_path,
+            open_cache_directory
         ])
         .run(tauri::generate_context!())
         .expect("error while running the HOMR sheet-music viewer");

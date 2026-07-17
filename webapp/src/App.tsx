@@ -6,6 +6,7 @@ import {
   getWorkerLogPath,
   loadPageArtifacts,
   nativeViewerAvailable,
+  openCacheDirectory,
   openPdf,
   pageImageUrl,
   retryPage,
@@ -138,6 +139,7 @@ export function App() {
               ...current,
               name: event.documentName,
               cacheStatus: event.cacheStatus,
+              cachePath: event.cachePath,
               status: "processing",
             };
           }
@@ -148,6 +150,7 @@ export function App() {
             name: event.documentName,
             pageCount: event.pageCount,
             cacheStatus: event.cacheStatus,
+            cachePath: event.cachePath,
             status: "processing",
             pages: pendingPages(event.pageCount),
           };
@@ -333,6 +336,15 @@ export function App() {
     }
   }
 
+  async function handleOpenCacheDirectory() {
+    if (!document?.cachePath) return;
+    try {
+      await openCacheDirectory(document.cachePath);
+    } catch (openError) {
+      setError(openError instanceof Error ? openError.message : String(openError));
+    }
+  }
+
   async function handleRetryPage(pageIndex: number) {
     if (!document) return;
     setError(null);
@@ -385,6 +397,16 @@ export function App() {
           >
             Worker logs{workerLogs.length ? ` (${workerLogs.length})` : ""}
           </button>
+          {document ? (
+            <button
+              type="button"
+              title={document.cachePath ?? "The cache folder is available after the PDF is opened"}
+              disabled={!document.cachePath}
+              onClick={handleOpenCacheDirectory}
+            >
+              Open cache folder
+            </button>
+          ) : null}
           {busy ? <button type="button" onClick={handleCancel}>Cancel</button> : null}
           <button type="button" className="primary-button" onClick={handleOpenPdf} disabled={!nativeAvailable || busy}>
             Open PDF

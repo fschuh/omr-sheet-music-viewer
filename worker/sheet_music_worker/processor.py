@@ -123,6 +123,7 @@ class PdfProcessor:
                     "documentName": pdf_path.name,
                     "pageCount": page_count,
                     "cacheStatus": cache_status,
+                    "cachePath": str(cache_directory),
                 }
             )
 
