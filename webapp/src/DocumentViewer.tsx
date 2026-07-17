@@ -283,20 +283,41 @@ export function DocumentViewer({
     });
   }
 
-  function zoomAt(clientX: number, clientY: number, requestedScale: number) {
-    const rect = stageRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    const scale = clampScale(requestedScale);
-    const cursorX = clientX - rect.left;
-    const cursorY = clientY - rect.top;
-    const documentX = (cursorX - transform.x) / transform.scale;
-    const documentY = (cursorY - transform.y) / transform.scale;
-    setTransform({
-      scale,
-      x: cursorX - documentX * scale,
-      y: cursorY - documentY * scale,
-    });
-  }
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return;
+
+    function handleWheel(event: WheelEvent) {
+      event.preventDefault();
+      if (event.ctrlKey) {
+        const rect = stage?.getBoundingClientRect();
+        if (!rect) return;
+        const cursorX = event.clientX - rect.left;
+        const cursorY = event.clientY - rect.top;
+        setTransform((current) => {
+          // Precision touchpads report pinch as Ctrl + wheel. Their deltas are
+          // much smaller than mouse-wheel deltas, hence the higher sensitivity.
+          const scale = clampScale(current.scale * Math.exp(-event.deltaY * 0.01));
+          const documentX = (cursorX - current.x) / current.scale;
+          const documentY = (cursorY - current.y) / current.scale;
+          return {
+            scale,
+            x: cursorX - documentX * scale,
+            y: cursorY - documentY * scale,
+          };
+        });
+        return;
+      }
+      setTransform((current) => ({
+        ...current,
+        x: current.x - event.deltaX,
+        y: current.y - event.deltaY,
+      }));
+    }
+
+    stage.addEventListener("wheel", handleWheel, { passive: false });
+    return () => stage.removeEventListener("wheel", handleWheel);
+  }, []);
 
   function updatePointer(event: React.PointerEvent<HTMLDivElement>) {
     activePointers.current.set(event.pointerId, {
@@ -411,10 +432,6 @@ export function DocumentViewer({
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerUp}
-        onWheel={(event) => {
-          event.preventDefault();
-          zoomAt(event.clientX, event.clientY, transform.scale * Math.exp(-event.deltaY * 0.001));
-        }}
       >
         <div
           className="document-content"
