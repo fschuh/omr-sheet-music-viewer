@@ -1,0 +1,11 @@
+{
+  "name": "homr-sheet-music-viewer",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "tauri": "node webapp/node_modules/@tauri-apps/cli/tauri.js",
+    "tauri:dev": "node webapp/node_modules/@tauri-apps/cli/tauri.js dev",
+    "tauri:build": "node webapp/node_modules/@tauri-apps/cli/tauri.js build",
+    "web:build": "cd webapp && npm run build"
+  }
+}

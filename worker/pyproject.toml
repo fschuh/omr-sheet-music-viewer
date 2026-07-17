@@ -1,0 +1,20 @@
+[project]
+name = "sheet-music-worker"
+version = "0.1.0"
+description = "Local PDF rasterization and HOMR orchestration for the sheet-music viewer"
+requires-python = ">=3.11,<3.16"
+dependencies = [
+  "homr",
+  "pypdfium2>=5,<6",
+]
+
+[project.scripts]
+sheet-music-worker = "sheet_music_worker.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+

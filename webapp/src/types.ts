@@ -58,3 +58,44 @@ export interface ViewportTransform {
   x: number;
   y: number;
 }
+
+export interface VisualGroupRef {
+  pageIndex: number;
+  visualGroupId: string;
+}
+
+export interface PageArtifacts {
+  imagePath: string;
+  musicXmlPath: string;
+  visualSidecarPath: string;
+  width: number;
+  height: number;
+  musicXmlBytes: number;
+  visualSidecarBytes: number;
+}
+
+export type DocumentPageStatus = "pending" | "processing" | "loading" | "complete" | "failed";
+
+export interface DocumentPage {
+  index: number;
+  status: DocumentPageStatus;
+  width: number;
+  height: number;
+  imageUrl?: string;
+  musicXml?: string;
+  visualSidecar?: VisualSidecar;
+  artifacts?: PageArtifacts;
+  cached?: boolean;
+  error?: string;
+}
+
+export type JobStatus = "opening" | "processing" | "complete" | "partial" | "cancelled" | "failed";
+
+export interface LoadedDocument {
+  jobId: string;
+  name: string;
+  pageCount: number;
+  cacheStatus: "miss" | "partial" | "complete";
+  status: JobStatus;
+  pages: DocumentPage[];
+}

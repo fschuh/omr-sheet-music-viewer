@@ -3,6 +3,7 @@
 
 __pycache__/
 .venv/
+.uv-cache/
 *_cache/
 .idea/
 *.log
@@ -16,6 +17,8 @@ _build/
 /webapp/dist
 /webapp/node_modules
 /webapp/*.tsbuildinfo
+/src-tauri/target
+/src-tauri/gen
 
 # Datasets
 /datasets/*

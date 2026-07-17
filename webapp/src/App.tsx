@@ -1,277 +1,528 @@
-import { useMemo, useState } from "react";
-import { SheetViewer } from "./SheetViewer";
-import type { VisualSidecar, VisualSidecarNote, VisualGroup } from "./types";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { DocumentViewer } from "./DocumentViewer";
+import {
+  cancelJob,
+  choosePdf,
+  getWorkerLogPath,
+  loadPageArtifacts,
+  nativeViewerAvailable,
+  openPdf,
+  pageImageUrl,
+  retryPage,
+  subscribeToWorkerEvents,
+  type WorkerEvent,
+} from "./native";
+import type {
+  DocumentPage,
+  LoadedDocument,
+  VisualGroupRef,
+  VisualSidecarNote,
+} from "./types";
 
-const SAMPLE_IMAGE_URL = "/sample/mario castle.png";
-const SAMPLE_XML_URL = "/sample/mario castle.musicxml";
-const SAMPLE_VISUAL_SIDECAR_URL = "/sample/mario castle.homr.visual.json";
+interface WorkerLogEntry {
+  id: number;
+  time: string;
+  line: string;
+}
 
-interface LoadedFiles {
-  imageUrl: string;
-  imageName: string;
-  musicXml: string;
-  musicXmlName: string;
-  visualSidecar: VisualSidecar;
-  visualSidecarName: string;
+const MAX_VISIBLE_WORKER_LOGS = 500;
+
+function pendingPages(pageCount: number): DocumentPage[] {
+  return Array.from({ length: pageCount }, (_, index) => ({
+    index,
+    status: "pending",
+    width: 850,
+    height: 1100,
+  }));
 }
 
 function noteSummary(notes: VisualSidecarNote[]): string {
-  if (notes.length === 0) {
-    return "No linked MusicXML notes";
-  }
-
+  if (notes.length === 0) return "No linked MusicXML notes";
   return notes
-    .map((note) => {
-      const pitch = note.pitch ?? "rest";
-      return `${pitch}, ${note.duration}, measure ${note.measure}`;
-    })
+    .map((note) => `${note.pitch ?? "rest"}, ${note.duration}, measure ${note.measure}`)
     .join(" / ");
 }
 
-function readFileAsText(file: File): Promise<string> {
-  return file.text();
+function fileName(path: string): string {
+  return path.split(/[\\/]/).pop() || path;
 }
 
-function readFileAsObjectUrl(file: File): string {
-  return URL.createObjectURL(file);
-}
-
-async function loadSample(): Promise<LoadedFiles> {
-  const [xmlResponse, visualSidecarResponse] = await Promise.all([
-    fetch(SAMPLE_XML_URL),
-    fetch(SAMPLE_VISUAL_SIDECAR_URL),
-  ]);
-  if (!xmlResponse.ok || !visualSidecarResponse.ok) {
-    throw new Error("Failed to load sample files from the Vite dev server.");
-  }
-
+function replacePage(
+  document: LoadedDocument,
+  pageIndex: number,
+  update: (page: DocumentPage) => DocumentPage,
+): LoadedDocument {
   return {
-    imageUrl: SAMPLE_IMAGE_URL,
-    imageName: "mario castle.png",
-    musicXml: await xmlResponse.text(),
-    musicXmlName: "mario castle.musicxml",
-    visualSidecar: (await visualSidecarResponse.json()) as VisualSidecar,
-    visualSidecarName: "mario castle.homr.visual.json",
+    ...document,
+    pages: document.pages.map((page) => (page.index === pageIndex ? update(page) : page)),
   };
 }
 
+function statusLabel(document: LoadedDocument): string {
+  if (document.status === "opening") return "Opening PDF…";
+  if (document.status === "processing") {
+    return document.cacheStatus === "complete" ? "Loading cached recognition…" : "Recognizing score…";
+  }
+  if (document.status === "partial") return "Finished with page errors";
+  if (document.status === "cancelled") return "Cancelled — completed pages were cached";
+  if (document.status === "failed") return "Document processing failed";
+  return document.cacheStatus === "complete" ? "Loaded from cache" : "Recognition complete";
+}
+
 export function App() {
-  const [files, setFiles] = useState<LoadedFiles | null>(null);
-  const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
+  const nativeAvailable = nativeViewerAvailable();
+  const activeJobId = useRef<string | null>(null);
+  const nextWorkerLogId = useRef(1);
+  const workerLogOutput = useRef<HTMLDivElement | null>(null);
+  const [document, setDocument] = useState<LoadedDocument | null>(null);
+  const [selectedGroup, setSelectedGroup] = useState<VisualGroupRef | null>(null);
   const [highlightAllNotes, setHighlightAllNotes] = useState(false);
   const [showOriginalNoteheadContours, setShowOriginalNoteheadContours] = useState(false);
   const [showDetectedNoteheadContours, setShowDetectedNoteheadContours] = useState(false);
   const [showRefinedNoteheadContours, setShowRefinedNoteheadContours] = useState(false);
   const [showRawStemContours, setShowRawStemContours] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const selectedGroup = useMemo(
-    () =>
-      files?.visualSidecar.visual_groups.find((group) => group.visual_group_id === selectedGroupId) ??
-      null,
-    [files, selectedGroupId],
+  const [workerInfo, setWorkerInfo] = useState<string | null>(null);
+  const [workerLogs, setWorkerLogs] = useState<WorkerLogEntry[]>([]);
+  const [workerLogPath, setWorkerLogPath] = useState<string | null>(null);
+  const [showWorkerLogs, setShowWorkerLogs] = useState(false);
+  const [error, setError] = useState<string | null>(
+    nativeAvailable ? null : "PDF processing is available in the Tauri desktop app. Run npm run tauri dev.",
   );
 
-  const notesByVisualGroup = useMemo(() => {
-    const byGroup = new Map<string, VisualSidecarNote[]>();
-    if (!files) {
-      return byGroup;
-    }
-    for (const note of files.visualSidecar.notes) {
-      if (note.visual_group_id === null) {
-        continue;
+  useEffect(() => {
+    if (!nativeAvailable) return;
+    let disposed = false;
+    let unsubscribe: (() => void) | undefined;
+
+    function handleWorkerEvent(event: WorkerEvent) {
+      if (event.type === "worker_log") {
+        const entry = {
+          id: nextWorkerLogId.current++,
+          time: new Date().toLocaleTimeString(),
+          line: event.line.replace(/\u001b\[[0-9;]*m/g, ""),
+        };
+        setWorkerLogs((current) => [
+          ...current.slice(-(MAX_VISIBLE_WORKER_LOGS - 1)),
+          entry,
+        ]);
+        return;
       }
-      const notes = byGroup.get(note.visual_group_id) ?? [];
-      notes.push(note);
-      byGroup.set(note.visual_group_id, notes);
+      if (event.type === "hello") {
+        setWorkerInfo(`HOMR ${event.homrVersion} · worker ${event.workerVersion}`);
+        return;
+      }
+      if (event.type === "protocol_error" || event.type === "worker_stopped") {
+        setError(event.message);
+        setShowWorkerLogs(true);
+        setDocument((current) =>
+          current && (current.status === "opening" || current.status === "processing")
+            ? {
+                ...current,
+                status: "failed",
+                pages: current.pages.map((page) =>
+                  page.status === "complete"
+                    ? page
+                    : { ...page, status: "failed", error: event.message },
+                ),
+              }
+            : current,
+        );
+        return;
+      }
+      if (event.type === "job_started") {
+        activeJobId.current = event.jobId;
+        setError(null);
+        setDocument((current) => {
+          if (current?.jobId === event.jobId && current.pages.length === event.pageCount) {
+            return {
+              ...current,
+              name: event.documentName,
+              cacheStatus: event.cacheStatus,
+              status: "processing",
+            };
+          }
+          setSelectedGroup(null);
+          setHighlightAllNotes(false);
+          return {
+            jobId: event.jobId,
+            name: event.documentName,
+            pageCount: event.pageCount,
+            cacheStatus: event.cacheStatus,
+            status: "processing",
+            pages: pendingPages(event.pageCount),
+          };
+        });
+        return;
+      }
+      if (!("jobId" in event) || event.jobId !== activeJobId.current) return;
+
+      if (event.type === "page_started") {
+        setDocument((current) =>
+          current && current.jobId === event.jobId
+            ? replacePage(current, event.pageIndex, (page) => ({
+                ...page,
+                status: "processing",
+                error: undefined,
+              }))
+            : current,
+        );
+        return;
+      }
+      if (event.type === "page_completed") {
+        setDocument((current) =>
+          current && current.jobId === event.jobId
+            ? replacePage(current, event.pageIndex, (page) => ({
+                ...page,
+                status: "loading",
+                width: event.artifacts.width,
+                height: event.artifacts.height,
+                artifacts: event.artifacts,
+                cached: event.cached,
+              }))
+            : current,
+        );
+        void loadPageArtifacts(event.artifacts)
+          .then((loaded) => {
+            if (disposed || activeJobId.current !== event.jobId) return;
+            setDocument((current) =>
+              current && current.jobId === event.jobId
+                ? replacePage(current, event.pageIndex, (page) => ({
+                    ...page,
+                    status: "complete",
+                    imageUrl: pageImageUrl(event.artifacts.imagePath),
+                    musicXml: loaded.musicXml,
+                    visualSidecar: loaded.visualSidecar,
+                  }))
+                : current,
+            );
+          })
+          .catch((loadError: unknown) => {
+            if (disposed) return;
+            const message = loadError instanceof Error ? loadError.message : String(loadError);
+            setDocument((current) =>
+              current && current.jobId === event.jobId
+                ? replacePage(current, event.pageIndex, (page) => ({
+                    ...page,
+                    status: "failed",
+                    error: `Could not load recognized artifacts: ${message}`,
+                  }))
+                : current,
+            );
+          });
+        return;
+      }
+      if (event.type === "page_failed") {
+        setDocument((current) =>
+          current && current.jobId === event.jobId
+            ? replacePage(current, event.pageIndex, (page) => ({
+                ...page,
+                status: "failed",
+                error: event.error.message,
+              }))
+            : current,
+        );
+        return;
+      }
+      if (event.type === "job_completed") {
+        setDocument((current) =>
+          current?.jobId === event.jobId ? { ...current, status: event.status } : current,
+        );
+        return;
+      }
+      if (event.type === "job_failed") {
+        setError(event.error.message);
+        setDocument((current) =>
+          current?.jobId === event.jobId ? { ...current, status: "failed" } : current,
+        );
+      }
     }
-    return byGroup;
-  }, [files]);
 
-  async function handleSampleLoad() {
-    setError(null);
-    try {
-      setFiles(await loadSample());
-      setSelectedGroupId(null);
-      setHighlightAllNotes(false);
-    } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Failed to load sample files.");
+    void subscribeToWorkerEvents(handleWorkerEvent).then((unlisten) => {
+      if (disposed) unlisten();
+      else unsubscribe = unlisten;
+    });
+    return () => {
+      disposed = true;
+      unsubscribe?.();
+    };
+  }, [nativeAvailable]);
+
+  useEffect(() => {
+    if (!nativeAvailable) return;
+    void getWorkerLogPath()
+      .then(setWorkerLogPath)
+      .catch(() => setWorkerLogPath(null));
+  }, [nativeAvailable]);
+
+  useEffect(() => {
+    if (showWorkerLogs && workerLogOutput.current) {
+      workerLogOutput.current.scrollTop = workerLogOutput.current.scrollHeight;
     }
-  }
+  }, [showWorkerLogs, workerLogs]);
 
-  async function handleFileSelection(event: React.ChangeEvent<HTMLInputElement>) {
-    setError(null);
-    const selectedFiles = Array.from(event.target.files ?? []);
-    const image = selectedFiles.find((file) => file.type.startsWith("image/"));
-    const visualSidecar = selectedFiles.find((file) => file.name.endsWith(".homr.visual.json"));
-    const musicXml = selectedFiles.find(
-      (file) => file.name.endsWith(".musicxml") || file.name.endsWith(".xml"),
-    );
-
-    if (!image || !visualSidecar || !musicXml) {
-      setError("Select one image, one .musicxml file, and one .homr.visual.json visual sidecar.");
-      return;
-    }
-
-    try {
-      const [musicXmlText, visualSidecarText] = await Promise.all([
-        readFileAsText(musicXml),
-        readFileAsText(visualSidecar),
-      ]);
-      setFiles({
-        imageUrl: readFileAsObjectUrl(image),
-        imageName: image.name,
-        musicXml: musicXmlText,
-        musicXmlName: musicXml.name,
-        visualSidecar: JSON.parse(visualSidecarText) as VisualSidecar,
-        visualSidecarName: visualSidecar.name,
-      });
-      setSelectedGroupId(null);
-      setHighlightAllNotes(false);
-      event.target.value = "";
-    } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Failed to read selected files.");
-    }
-  }
-
-  function handleGroupSelect(group: VisualGroup | null) {
-    setSelectedGroupId(group?.visual_group_id ?? null);
-    setHighlightAllNotes(false);
-  }
-
-  function clearSelection() {
-    setSelectedGroupId(null);
-    setHighlightAllNotes(false);
-  }
-
-  function handleHighlightAllNotes() {
-    setSelectedGroupId(null);
-    setHighlightAllNotes(true);
-  }
-
-  const selectedNotes = selectedGroup
-    ? notesByVisualGroup.get(selectedGroup.visual_group_id) ?? []
+  const selectedPage = selectedGroup
+    ? document?.pages.find((page) => page.index === selectedGroup.pageIndex)
+    : undefined;
+  const selectedVisualGroup = selectedGroup
+    ? selectedPage?.visualSidecar?.visual_groups.find(
+        (group) => group.visual_group_id === selectedGroup.visualGroupId,
+      )
+    : undefined;
+  const selectedNotes = selectedVisualGroup
+    ? selectedPage?.visualSidecar?.notes.filter(
+        (note) => note.visual_group_id === selectedVisualGroup.visual_group_id,
+      ) ?? []
     : [];
+
+  const totals = useMemo(() => {
+    const completedPages = document?.pages.filter((page) => page.status === "complete").length ?? 0;
+    const failedPages = document?.pages.filter((page) => page.status === "failed").length ?? 0;
+    const visualGroups =
+      document?.pages.reduce(
+        (total, page) => total + (page.visualSidecar?.visual_groups.length ?? 0),
+        0,
+      ) ?? 0;
+    const linkedNotes =
+      document?.pages.reduce((total, page) => total + (page.visualSidecar?.notes.length ?? 0), 0) ?? 0;
+    const unmatchedMusicXml =
+      document?.pages.reduce(
+        (total, page) => total + (page.visualSidecar?.unmatched_musicxml_notes.length ?? 0),
+        0,
+      ) ?? 0;
+    const unmatchedVisual =
+      document?.pages.reduce(
+        (total, page) => total + (page.visualSidecar?.unmatched_visual_notes.length ?? 0),
+        0,
+      ) ?? 0;
+    return { completedPages, failedPages, visualGroups, linkedNotes, unmatchedMusicXml, unmatchedVisual };
+  }, [document]);
+
+  async function handleOpenPdf() {
+    if (!nativeAvailable) return;
+    setError(null);
+    try {
+      const path = await choosePdf();
+      if (!path) return;
+      setSelectedGroup(null);
+      setHighlightAllNotes(false);
+      const jobId = await openPdf(path);
+      activeJobId.current = jobId;
+      setDocument((current) =>
+        current?.jobId === jobId
+          ? current
+          : {
+              jobId,
+              name: fileName(path),
+              pageCount: 0,
+              cacheStatus: "miss",
+              status: "opening",
+              pages: [],
+            },
+      );
+    } catch (openError) {
+      setError(openError instanceof Error ? openError.message : String(openError));
+    }
+  }
+
+  async function handleCancel() {
+    if (!document) return;
+    try {
+      await cancelJob(document.jobId);
+    } catch (cancelError) {
+      setError(cancelError instanceof Error ? cancelError.message : String(cancelError));
+    }
+  }
+
+  async function handleRetryPage(pageIndex: number) {
+    if (!document) return;
+    setError(null);
+    setDocument((current) =>
+      current
+        ? replacePage({ ...current, status: "processing" }, pageIndex, (page) => ({
+            ...page,
+            status: "processing",
+            error: undefined,
+          }))
+        : current,
+    );
+    try {
+      await retryPage(document.jobId, pageIndex);
+    } catch (retryError) {
+      setError(retryError instanceof Error ? retryError.message : String(retryError));
+    }
+  }
+
+  const busy = document?.status === "opening" || document?.status === "processing";
+  const latestWorkerLog = workerLogs.at(-1)?.line;
+  const progress = document?.pageCount
+    ? ((totals.completedPages + totals.failedPages) / document.pageCount) * 100
+    : 0;
 
   return (
     <main className="app-shell">
       <header className="topbar">
-        <div>
-          <h1>HOMR Viewer</h1>
-          <p>{files ? `${files.imageName} / ${files.musicXmlName} / ${files.visualSidecarName}` : ""}</p>
+        <div className="document-heading">
+          <h1>HOMR Sheet Music Viewer</h1>
+          <p>{document ? document.name : workerInfo ?? "Open a PDF score to begin"}</p>
         </div>
+        {document ? (
+          <div className="job-summary" aria-live="polite">
+            <span>{statusLabel(document)}</span>
+            {document.pageCount > 0 ? (
+              <span>{totals.completedPages + totals.failedPages} / {document.pageCount} pages</span>
+            ) : null}
+            {busy && latestWorkerLog ? (
+              <span className="worker-stage" title={latestWorkerLog}>{latestWorkerLog}</span>
+            ) : null}
+          </div>
+        ) : null}
         <div className="actions">
-          <button type="button" onClick={handleSampleLoad}>
-            Load sample
+          <button
+            type="button"
+            className={showWorkerLogs ? "log-button active" : "log-button"}
+            title={latestWorkerLog ?? "Show Python worker logs"}
+            onClick={() => setShowWorkerLogs((current) => !current)}
+          >
+            Worker logs{workerLogs.length ? ` (${workerLogs.length})` : ""}
           </button>
-          <label className="file-picker">
-            Open files
-            <input
-              type="file"
-              accept="image/*,.musicxml,.xml,.json"
-              multiple
-              onChange={handleFileSelection}
-            />
-          </label>
+          {busy ? <button type="button" onClick={handleCancel}>Cancel</button> : null}
+          <button type="button" className="primary-button" onClick={handleOpenPdf} disabled={!nativeAvailable || busy}>
+            Open PDF
+          </button>
         </div>
       </header>
 
+      {busy && document?.pageCount ? (
+        <div className="progress-track" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}>
+          <span style={{ width: `${progress}%` }} />
+        </div>
+      ) : null}
       {error ? <div className="error">{error}</div> : null}
 
       <section className="workspace">
-        {files ? (
+        {document && document.pages.length > 0 ? (
           <>
-            <SheetViewer
-              imageUrl={files.imageUrl}
-              visualSidecar={files.visualSidecar}
-              selectedGroupId={selectedGroupId}
+            <DocumentViewer
+              documentKey={document.jobId}
+              pages={document.pages}
+              selectedGroup={selectedGroup}
               highlightAllNotes={highlightAllNotes}
               showOriginalNoteheadContours={showOriginalNoteheadContours}
               showDetectedNoteheadContours={showDetectedNoteheadContours}
               showRefinedNoteheadContours={showRefinedNoteheadContours}
               showRawStemContours={showRawStemContours}
-              onSelectGroup={handleGroupSelect}
+              onSelectGroup={(group) => {
+                setSelectedGroup(group);
+                setHighlightAllNotes(false);
+              }}
+              onRetryPage={handleRetryPage}
             />
             <aside className="inspector">
-              <h2>Display</h2>
+              <h2>Highlighting</h2>
+              <button
+                type="button"
+                disabled={totals.visualGroups === 0}
+                onClick={() => {
+                  setSelectedGroup(null);
+                  setHighlightAllNotes(true);
+                }}
+              >Highlight all notes</button>
+              <h2>Debug overlays</h2>
               <label className="checkbox-row">
-                <input
-                  type="checkbox"
-                  checked={showOriginalNoteheadContours}
-                  onChange={(event) => setShowOriginalNoteheadContours(event.target.checked)}
-                />
+                <input type="checkbox" checked={showOriginalNoteheadContours} onChange={(event) => setShowOriginalNoteheadContours(event.target.checked)} />
                 Original notehead contours
               </label>
               <label className="checkbox-row">
-                <input
-                  type="checkbox"
-                  checked={showDetectedNoteheadContours}
-                  onChange={(event) => setShowDetectedNoteheadContours(event.target.checked)}
-                />
+                <input type="checkbox" checked={showDetectedNoteheadContours} onChange={(event) => setShowDetectedNoteheadContours(event.target.checked)} />
                 Detected notehead contours
               </label>
               <label className="checkbox-row">
-                <input
-                  type="checkbox"
-                  checked={showRefinedNoteheadContours}
-                  onChange={(event) => setShowRefinedNoteheadContours(event.target.checked)}
-                />
+                <input type="checkbox" checked={showRefinedNoteheadContours} onChange={(event) => setShowRefinedNoteheadContours(event.target.checked)} />
                 Refined notehead contours
               </label>
               <label className="checkbox-row">
-                <input
-                  type="checkbox"
-                  checked={showRawStemContours}
-                  onChange={(event) => setShowRawStemContours(event.target.checked)}
-                />
+                <input type="checkbox" checked={showRawStemContours} onChange={(event) => setShowRawStemContours(event.target.checked)} />
                 Raw stem contours
               </label>
               <h2>Selection</h2>
-              <button type="button" onClick={handleHighlightAllNotes}>
-                Highlight all notes
-              </button>
-              {selectedGroup ? (
+              {selectedVisualGroup && selectedGroup ? (
                 <>
                   <dl>
-                    <dt>Visual group</dt>
-                    <dd>{selectedGroup.visual_group_id}</dd>
-                    <dt>MusicXML IDs</dt>
-                    <dd>{selectedGroup.musicxml_ids.join(", ") || "None"}</dd>
-                    <dt>Notes</dt>
-                    <dd>{noteSummary(selectedNotes)}</dd>
+                    <dt>Page</dt><dd>{selectedGroup.pageIndex + 1}</dd>
+                    <dt>Visual group</dt><dd>{selectedVisualGroup.visual_group_id}</dd>
+                    <dt>MusicXML IDs</dt><dd>{selectedVisualGroup.musicxml_ids.join(", ") || "None"}</dd>
+                    <dt>Notes</dt><dd>{noteSummary(selectedNotes)}</dd>
+                    <dt>Staff position</dt><dd>{selectedVisualGroup.staff_position}</dd>
+                    <dt>Confidence</dt><dd>{selectedNotes.length ? Math.max(...selectedNotes.map((note) => note.match_confidence)).toFixed(3) : "—"}</dd>
                   </dl>
-                  <button type="button" onClick={clearSelection}>
-                    Clear
-                  </button>
+                  <button type="button" onClick={() => setSelectedGroup(null)}>Clear</button>
                 </>
               ) : highlightAllNotes ? (
                 <>
-                  <p>{files.visualSidecar.visual_groups.length.toLocaleString()} notes highlighted.</p>
-                  <button type="button" onClick={clearSelection}>
-                    Clear
-                  </button>
+                  <p>{totals.visualGroups.toLocaleString()} visual groups highlighted.</p>
+                  <button type="button" onClick={() => setHighlightAllNotes(false)}>Clear</button>
                 </>
               ) : (
-                <p>Click a note or chord in the score.</p>
+                <p>Click a notehead to inspect its recognized note or chord.</p>
               )}
-              <h2>Loaded Data</h2>
+              <h2>Document data</h2>
               <dl>
-                <dt>MusicXML size</dt>
-                <dd>{files.musicXml.length.toLocaleString()} chars</dd>
-                <dt>Visual groups</dt>
-                <dd>{files.visualSidecar.visual_groups.length.toLocaleString()}</dd>
-                <dt>Linked notes</dt>
-                <dd>{files.visualSidecar.notes.length.toLocaleString()}</dd>
+                <dt>Pages ready</dt><dd>{totals.completedPages} / {document.pageCount}</dd>
+                <dt>Failed pages</dt><dd>{totals.failedPages}</dd>
+                <dt>Visual groups</dt><dd>{totals.visualGroups.toLocaleString()}</dd>
+                <dt>Linked notes</dt><dd>{totals.linkedNotes.toLocaleString()}</dd>
+                <dt>Unmatched XML</dt><dd>{totals.unmatchedMusicXml.toLocaleString()}</dd>
+                <dt>Unmatched visual</dt><dd>{totals.unmatchedVisual.toLocaleString()}</dd>
               </dl>
+              {workerInfo ? <p className="worker-info">{workerInfo}</p> : null}
             </aside>
           </>
         ) : (
           <div className="empty-state">
-            <h2>Open a sheet music image, MusicXML file, and HOMR visual sidecar.</h2>
-            <p>Use the sample set or choose matching files from disk.</p>
+            {document?.status === "opening" ? (
+              <>
+                <span className="spinner large" />
+                <h2>Opening {document.name}</h2>
+                <p>Fingerprinting the PDF and checking its recognition cache.</p>
+              </>
+            ) : (
+              <>
+                <div className="empty-score-icon" aria-hidden="true">♪</div>
+                <h2>Open a PDF score</h2>
+                <p>Pages are recognized locally with HOMR and become interactive as soon as they are ready.</p>
+                <button type="button" className="primary-button" onClick={handleOpenPdf} disabled={!nativeAvailable}>Choose PDF</button>
+              </>
+            )}
           </div>
         )}
       </section>
+      {showWorkerLogs ? (
+        <section className="worker-console" aria-label="Python worker logs">
+          <header>
+            <div>
+              <strong>Python worker logs</strong>
+              <span>Live HOMR diagnostics from stderr</span>
+            </div>
+            <div className="worker-console-actions">
+              <button type="button" onClick={() => setWorkerLogs([])}>Clear view</button>
+              <button type="button" onClick={() => setShowWorkerLogs(false)}>Close</button>
+            </div>
+          </header>
+          <div ref={workerLogOutput} className="worker-log-output" role="log" aria-live="polite">
+            {workerLogs.length ? (
+              workerLogs.map((entry) => (
+                <div key={entry.id} className="worker-log-line">
+                  <time>{entry.time}</time>
+                  <span>{entry.line}</span>
+                </div>
+              ))
+            ) : (
+              <div className="worker-log-empty">The worker has not written any logs yet.</div>
+            )}
+          </div>
+          {workerLogPath ? <footer title={workerLogPath}>Saved to {workerLogPath}</footer> : null}
+        </section>
+      ) : null}
     </main>
   );
 }
