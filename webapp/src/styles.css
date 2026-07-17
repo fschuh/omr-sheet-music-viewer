@@ -239,7 +239,7 @@ button:disabled {
   background-color: #6e6b67;
   background-image: radial-gradient(rgb(255 255 255 / 8%) 0.7px, transparent 0.7px);
   background-size: 5px 5px;
-  cursor: grab;
+  cursor: default;
   flex: 1;
   min-height: 0;
   overflow: hidden;
@@ -247,7 +247,7 @@ button:disabled {
   touch-action: none;
 }
 
-.viewer-stage:active { cursor: grabbing; }
+.viewer-stage.is-pointer-panning { cursor: grabbing; }
 
 .document-content {
   left: 0;

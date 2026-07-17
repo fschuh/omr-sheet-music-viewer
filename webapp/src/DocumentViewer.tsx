@@ -236,6 +236,7 @@ export function DocumentViewer({
   } | null>(null);
   const autoFitMarker = useRef<string | null>(null);
   const [transform, setTransform] = useState<ViewportTransform>({ scale: 1, x: 24, y: 24 });
+  const [isPointerPanning, setIsPointerPanning] = useState(false);
 
   const layout = useMemo(
     () => ({
@@ -258,6 +259,7 @@ export function DocumentViewer({
     dragStart.current = null;
     pinchStart.current = null;
     autoFitMarker.current = null;
+    setIsPointerPanning(false);
     setTransform({ scale: 1, x: 24, y: 24 });
   }, [documentKey]);
 
@@ -329,6 +331,7 @@ export function DocumentViewer({
 
   function handlePointerDown(event: React.PointerEvent<HTMLDivElement>) {
     event.currentTarget.setPointerCapture(event.pointerId);
+    setIsPointerPanning(false);
     updatePointer(event);
     const pointers = Array.from(activePointers.current.values());
     if (pointers.length === 1) {
@@ -350,6 +353,9 @@ export function DocumentViewer({
     const pointers = Array.from(activePointers.current.values());
     if (pointers.length === 1 && dragStart.current) {
       const start = dragStart.current;
+      if (Math.hypot(event.clientX - start.x, event.clientY - start.y) > CLICK_MOVE_TOLERANCE) {
+        setIsPointerPanning(true);
+      }
       setTransform({
         scale: start.transform.scale,
         x: start.transform.x + event.clientX - start.x,
@@ -396,6 +402,7 @@ export function DocumentViewer({
 
   function handlePointerUp(event: React.PointerEvent<HTMLDivElement>) {
     const start = dragStart.current;
+    setIsPointerPanning(false);
     activePointers.current.delete(event.pointerId);
     if (start && activePointers.current.size === 0) {
       const moved = Math.hypot(event.clientX - start.x, event.clientY - start.y);
@@ -427,7 +434,7 @@ export function DocumentViewer({
       </div>
       <div
         ref={stageRef}
-        className="viewer-stage"
+        className={`viewer-stage${isPointerPanning ? " is-pointer-panning" : ""}`}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
