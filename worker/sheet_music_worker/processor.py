@@ -19,7 +19,7 @@ from sheet_music_worker.logging import worker_log
 
 RASTER_DPI = 300
 MANIFEST_SCHEMA_VERSION = 1
-VISUAL_SIDECAR_CACHE_REVISION = 4
+VISUAL_SIDECAR_CACHE_REVISION = 5
 
 EventEmitter = Callable[[dict[str, Any]], None]
 
