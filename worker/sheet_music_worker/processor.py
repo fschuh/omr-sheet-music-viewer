@@ -19,7 +19,7 @@ from sheet_music_worker.logging import worker_log
 
 RASTER_DPI = 300
 MANIFEST_SCHEMA_VERSION = 1
-VISUAL_SIDECAR_VERSION = 3
+VISUAL_SIDECAR_CACHE_REVISION = 3
 
 EventEmitter = Callable[[dict[str, Any]], None]
 
@@ -225,7 +225,7 @@ class PdfProcessor:
             "pdfSha256": identity.pdf_sha256,
             "pdfByteLength": identity.byte_length,
             "homrVersion": identity.homr_version,
-            "visualSidecarVersion": VISUAL_SIDECAR_VERSION,
+            "visualSidecarCacheRevision": VISUAL_SIDECAR_CACHE_REVISION,
             "rasterizer": {
                 "name": "pypdfium2",
                 "version": identity.rasterizer_version,

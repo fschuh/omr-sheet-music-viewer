@@ -5,7 +5,7 @@ from pathlib import Path
 from PIL import Image
 
 from sheet_music_worker.processor import (
-    VISUAL_SIDECAR_VERSION,
+    VISUAL_SIDECAR_CACHE_REVISION,
     PdfProcessor,
     sha256_file,
     validate_artifacts,
@@ -101,7 +101,7 @@ def test_pdf_processing_rasterizes_then_reuses_cache(tmp_path: Path) -> None:
     assert all(event["cached"] is True for event in completed)
 
 
-def test_pdf_processing_invalidates_an_older_sidecar_generation(tmp_path: Path) -> None:
+def test_pdf_processing_invalidates_an_older_sidecar_cache_revision(tmp_path: Path) -> None:
     pdf_path = tmp_path / "score.pdf"
     Image.new("RGB", (120, 80), "white").save(pdf_path, "PDF", resolution=300)
     engine = FakeHomrEngine()
@@ -117,7 +117,7 @@ def test_pdf_processing_invalidates_an_older_sidecar_generation(tmp_path: Path) 
 
     manifest_path = cache_root / "pdf-cache" / sha256_file(pdf_path) / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    manifest["visualSidecarVersion"] = VISUAL_SIDECAR_VERSION - 1
+    manifest["visualSidecarCacheRevision"] = VISUAL_SIDECAR_CACHE_REVISION - 1
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
     refreshed_events: list[dict[str, object]] = []

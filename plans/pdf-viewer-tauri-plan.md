@@ -256,7 +256,7 @@ Manifest content:
   "homrVersion": "...",
   "homrCommit": "...",
   "modelVersions": {},
-  "visualSidecarVersion": 1,
+  "visualSidecarCacheRevision": 1,
   "rasterizer": {
     "name": "pypdfium2",
     "version": "...",
