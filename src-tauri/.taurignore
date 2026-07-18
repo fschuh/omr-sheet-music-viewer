@@ -1,0 +1,3 @@
+# Completely disabled Tauri's file watcher because when Codex reads its files it triggers a rebuild/relaunch in Windows.
+# Requires manually triggering builds by closing the app and running 'cargo build'
+/*
