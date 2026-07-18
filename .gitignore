@@ -16,6 +16,7 @@ _build/
 /dist
 /webapp/dist
 /webapp/node_modules
+/webapp/.test-dist
 /webapp/*.tsbuildinfo
 /src-tauri/target
 /src-tauri/gen

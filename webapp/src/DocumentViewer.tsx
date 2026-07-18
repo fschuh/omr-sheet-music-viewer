@@ -1,4 +1,5 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { layoutNoteLabels } from "./noteLabels";
 import type {
   DocumentPage,
   ViewportTransform,
@@ -170,9 +171,28 @@ const PageOverlay = memo(function PageOverlay({
   showRefinedNoteheadContours,
   showRawStemContours,
 }: PageOverlayProps) {
+  const selectedIds = useMemo(
+    () =>
+      page.visualSidecar
+        ? selectedGroupIds(page.visualSidecar, selected, page.index, highlightAll)
+        : new Set<string>(),
+    [highlightAll, page.index, page.visualSidecar, selected],
+  );
+  const noteLabels = useMemo(
+    () =>
+      page.visualSidecar
+        ? layoutNoteLabels(
+            page.visualSidecar,
+            selectedIds,
+            page.width,
+            page.height,
+            page.musicXml,
+          )
+        : [],
+    [page.height, page.musicXml, page.visualSidecar, page.width, selectedIds],
+  );
   if (!page.visualSidecar) return null;
   const sidecar = page.visualSidecar;
-  const selectedIds = selectedGroupIds(sidecar, selected, page.index, highlightAll);
   return (
     <svg className="overlay" viewBox={`0 0 ${page.width} ${page.height}`} aria-hidden="true">
       {showRawStemContours
@@ -236,6 +256,46 @@ const PageOverlay = memo(function PageOverlay({
           </g>
         );
       })}
+      <g className="note-label-connectors">
+        {noteLabels.map((label) => (
+          <line
+            key={`connector-${label.key}`}
+            x1={label.anchor[0]}
+            y1={label.anchor[1]}
+            x2={label.connector[0]}
+            y2={label.connector[1]}
+          />
+        ))}
+      </g>
+      <g className="note-labels">
+        {noteLabels.map((label) => (
+          <g
+            key={label.key}
+            className="note-label"
+            data-musicxml-id={label.musicXmlId}
+            data-visual-group-id={label.visualGroupId}
+            data-label-x={label.x}
+            data-label-y={label.y}
+            data-label-width={label.width}
+            data-label-height={label.height}
+          >
+            <rect
+              x={label.x}
+              y={label.y}
+              width={label.width}
+              height={label.height}
+              rx={label.fontSize * 0.16}
+            />
+            <text
+              x={label.x + label.width / 2}
+              y={label.y + label.height / 2}
+              fontSize={label.fontSize}
+            >
+              {label.text}
+            </text>
+          </g>
+        ))}
+      </g>
     </svg>
   );
 });
