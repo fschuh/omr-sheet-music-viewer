@@ -1,6 +1,7 @@
 import type {
   VisualBBox,
   VisualGroup,
+  VisualGroupRef,
   VisualPoint,
   VisualSidecar,
   VisualSidecarNote,
@@ -34,6 +35,69 @@ export interface NoteLabelLayout extends Bounds {
   fontSize: number;
   anchor: VisualPoint;
   connector: VisualPoint;
+}
+
+export function selectedGroupIds(
+  sidecar: VisualSidecar,
+  selected: VisualGroupRef | null,
+  pageIndex: number,
+  highlightAll: boolean,
+): Set<string> {
+  if (highlightAll) return new Set(sidecar.visual_groups.map((group) => group.visual_group_id));
+  if (!selected || selected.pageIndex !== pageIndex) return new Set();
+  const group = sidecar.visual_groups.find(
+    (candidate) => candidate.visual_group_id === selected.visualGroupId,
+  );
+  if (!group) return new Set();
+
+  const result = new Set([group.visual_group_id]);
+  const stemComponents = new Set(group.stem_component_ids ?? []);
+  for (const candidate of sidecar.visual_groups) {
+    if (
+      candidate.staff_index !== group.staff_index ||
+      candidate.stave_index !== group.stave_index
+    ) {
+      continue;
+    }
+    if (
+      (candidate.stem_component_ids ?? []).some((component) => stemComponents.has(component))
+    ) {
+      result.add(candidate.visual_group_id);
+    }
+    if (visuallyAlignedNoteheads(group, candidate)) {
+      result.add(candidate.visual_group_id);
+    }
+  }
+  return result;
+}
+
+function visuallyAlignedNoteheads(first: VisualGroup, second: VisualGroup): boolean {
+  if (
+    first.visual_group_id === second.visual_group_id ||
+    first.staff_index !== second.staff_index ||
+    first.stave_index !== second.stave_index
+  ) {
+    return false;
+  }
+
+  const firstNoteheads = first.notehead_ellipses ?? [];
+  const secondNoteheads = second.notehead_ellipses ?? [];
+  if (firstNoteheads.length === 0 || secondNoteheads.length === 0) return false;
+
+  return firstNoteheads.some((firstNotehead) =>
+    secondNoteheads.some((secondNotehead) => {
+      const horizontalTolerance = clamp(
+        Math.min(firstNotehead.rx, secondNotehead.rx) * 0.35,
+        2,
+        6,
+      );
+      const verticalSeparation = Math.abs(firstNotehead.center[1] - secondNotehead.center[1]);
+      return (
+        Math.abs(firstNotehead.center[0] - secondNotehead.center[0]) <= horizontalTolerance &&
+        verticalSeparation > Math.min(firstNotehead.ry, secondNotehead.ry) * 0.5
+      );
+    }),
+  );
 }
 
 function clamp(value: number, minimum: number, maximum: number): number {

@@ -1,18 +1,31 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { formatPitchName, layoutNoteLabels, noteLabelsOverlap } from "./noteLabels";
+import {
+  formatPitchName,
+  layoutNoteLabels,
+  noteLabelsOverlap,
+  selectedGroupIds,
+} from "./noteLabels";
 import type { VisualGroup, VisualSidecar } from "./types";
 
-function group(index: number, x: number, y: number): VisualGroup {
+function group(
+  index: number,
+  x: number,
+  y: number,
+  stemComponentIds: string[] = [],
+  staveIndex = 0,
+): VisualGroup {
   return {
     visual_group_id: `group-${index}`,
     staff_index: 0,
+    stave_index: staveIndex,
     staff_position: index,
     center: [x, y],
     bbox: [x - 10, y - 8, x + 10, y + 8],
     notehead_ellipses: [{ center: [x, y], rx: 10, ry: 8, angle: 0 }],
     notehead_contours: [],
     stem_contours: [],
+    stem_component_ids: stemComponentIds,
     musicxml_ids: [`note-${index}`],
   };
 }
@@ -76,4 +89,69 @@ test("keeps every label disjoint in a 486-note highlight-all stress case", () =>
       );
     }
   }
+});
+
+test("selects vertically aligned chord members when stem detection is missing", () => {
+  const groups = [group(0, 500, 480), group(1, 500, 520)];
+  const data = sidecar(groups, ["G5", "B4"]);
+
+  assert.deepEqual(
+    selectedGroupIds(
+      data,
+      { pageIndex: 0, visualGroupId: groups[1].visual_group_id },
+      0,
+      false,
+    ),
+    new Set(groups.map((value) => value.visual_group_id)),
+  );
+});
+
+test("does not select horizontally adjacent chord columns", () => {
+  const groups = [
+    group(0, 500, 480),
+    group(1, 500, 520),
+    group(2, 535, 480),
+    group(3, 535, 520),
+  ];
+  const data = sidecar(groups, ["G5", "B4", "G5", "B4"]);
+
+  assert.deepEqual(
+    selectedGroupIds(
+      data,
+      { pageIndex: 0, visualGroupId: groups[0].visual_group_id },
+      0,
+      false,
+    ),
+    new Set([groups[0].visual_group_id, groups[1].visual_group_id]),
+  );
+});
+
+test("does not select an aligned note on another stave in the same system", () => {
+  const groups = [group(0, 500, 480), group(1, 500, 720, [], 1)];
+  const data = sidecar(groups, ["G5", "G2"]);
+
+  assert.deepEqual(
+    selectedGroupIds(
+      data,
+      { pageIndex: 0, visualGroupId: groups[0].visual_group_id },
+      0,
+      false,
+    ),
+    new Set([groups[0].visual_group_id]),
+  );
+});
+
+test("keeps shared-stem chord members selected when noteheads are offset", () => {
+  const groups = [group(0, 500, 480, ["stem-1"]), group(1, 512, 500, ["stem-1"])];
+  const data = sidecar(groups, ["F5", "E5"]);
+
+  assert.deepEqual(
+    selectedGroupIds(
+      data,
+      { pageIndex: 0, visualGroupId: groups[0].visual_group_id },
+      0,
+      false,
+    ),
+    new Set(groups.map((value) => value.visual_group_id)),
+  );
 });

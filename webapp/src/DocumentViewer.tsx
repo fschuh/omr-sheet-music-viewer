@@ -1,5 +1,5 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
-import { layoutNoteLabels } from "./noteLabels";
+import { layoutNoteLabels, selectedGroupIds } from "./noteLabels";
 import type {
   DocumentPage,
   ViewportTransform,
@@ -127,29 +127,6 @@ function midpoint(first: PointerState, second: PointerState): VisualPoint {
 
 function pointsToSvg(points: VisualPoint[]): string {
   return points.map(([x, y]) => `${x},${y}`).join(" ");
-}
-
-function selectedGroupIds(
-  sidecar: VisualSidecar,
-  selected: VisualGroupRef | null,
-  pageIndex: number,
-  highlightAll: boolean,
-): Set<string> {
-  if (highlightAll) return new Set(sidecar.visual_groups.map((group) => group.visual_group_id));
-  if (!selected || selected.pageIndex !== pageIndex) return new Set();
-  const group = sidecar.visual_groups.find(
-    (candidate) => candidate.visual_group_id === selected.visualGroupId,
-  );
-  if (!group) return new Set();
-  const stemComponents = new Set(group.stem_component_ids ?? []);
-  if (stemComponents.size === 0) return new Set([group.visual_group_id]);
-  return new Set(
-    sidecar.visual_groups
-      .filter((candidate) =>
-        (candidate.stem_component_ids ?? []).some((component) => stemComponents.has(component)),
-      )
-      .map((candidate) => candidate.visual_group_id),
-  );
 }
 
 interface PageOverlayProps {

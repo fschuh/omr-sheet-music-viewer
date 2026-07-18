@@ -23,6 +23,7 @@ export interface VisualSidecarNote {
 export interface VisualGroup {
   visual_group_id: string;
   staff_index: number;
+  stave_index: number;
   staff_position: number;
   center: VisualPoint;
   bbox: VisualBBox | [];
