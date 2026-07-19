@@ -16,6 +16,12 @@ Playback commands can be triggered from the viewer toolbar, customizable
 keyboard shortcuts, or optional MIDI messages. Open **Settings** to reassign a
 shortcut: select a keyboard cell and press a key combination, or select a MIDI
 cell and send the desired message. Press `Esc` to cancel either capture.
+Recognized notes and chords play with polyphonic piano audio while note sounds
+are enabled. Use the speaker button or the default `M` shortcut to mute or
+unmute them. The bundled medium-dynamics samples come from AKAI's public-domain
+[Splendid Grand Piano](https://github.com/sfzinstruments/SplendidGrandPiano)
+library; provenance is recorded beside the assets in
+`webapp/public/audio/piano/SOURCE.md`.
 
 On Windows, the app listens to every standard MIDI input exposed by the system.
 BLE MIDI hardware therefore needs a bridge that exposes it as a Windows MIDI

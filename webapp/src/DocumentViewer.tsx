@@ -29,6 +29,7 @@ interface DocumentViewerProps {
   showRefinedNoteheadContours: boolean;
   showRawStemContours: boolean;
   playbackActive: boolean;
+  playbackNoteSoundsEnabled: boolean;
   playbackAvailable: boolean;
   playbackMoment: PlaybackMoment | null;
   onPlaybackCommand: (command: PlaybackCommand) => void;
@@ -324,6 +325,7 @@ export function DocumentViewer({
   showRefinedNoteheadContours,
   showRawStemContours,
   playbackActive,
+  playbackNoteSoundsEnabled,
   playbackAvailable,
   playbackMoment,
   onPlaybackCommand,
@@ -641,6 +643,15 @@ export function DocumentViewer({
             disabled={!playbackAvailable && !playbackActive}
             onClick={() => onPlaybackCommand("togglePlayback")}
           >{playbackActive ? "■" : "▶"}</button>
+          <button
+            type="button"
+            className={`sound-toggle${playbackNoteSoundsEnabled ? " active" : ""}`}
+            aria-label={playbackNoteSoundsEnabled ? "Mute note sounds" : "Play note sounds"}
+            aria-pressed={playbackNoteSoundsEnabled}
+            title={playbackNoteSoundsEnabled ? "Mute note sounds (M)" : "Play note sounds (M)"}
+            disabled={!playbackActive}
+            onClick={() => onPlaybackCommand("toggleNoteSounds")}
+          >{playbackNoteSoundsEnabled ? "🔊" : "🔇"}</button>
           <button
             type="button"
             aria-label="Backward one page"

@@ -9,6 +9,7 @@ import {
   runPlaybackCommand as applyPlaybackCommand,
   type PlaybackCommand,
 } from "./playback";
+import { pianoSampler } from "./piano";
 import {
   cancelJob,
   choosePdf,
@@ -113,6 +114,10 @@ function isEditableKeyboardTarget(target: EventTarget | null): boolean {
   );
 }
 
+function isPlaybackToggleCommand(command: PlaybackCommand): boolean {
+  return command === "togglePlayback" || command === "toggleNoteSounds";
+}
+
 export function App() {
   const nativeAvailable = nativeViewerAvailable();
   const activeJobId = useRef<string | null>(null);
@@ -145,6 +150,7 @@ export function App() {
   const [workerLogs, setWorkerLogs] = useState<WorkerLogEntry[]>([]);
   const [workerLogPath, setWorkerLogPath] = useState<string | null>(null);
   const [showWorkerLogs, setShowWorkerLogs] = useState(false);
+  const [playbackAudioError, setPlaybackAudioError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(
     nativeAvailable ? null : "PDF processing is available in the Tauri desktop app. Run npm run tauri dev.",
   );
@@ -153,12 +159,30 @@ export function App() {
     [document?.pages],
   );
   const [playbackState, setPlaybackState] = useState(initialPlaybackState);
+  const playbackStateRef = useRef(playbackState);
+  playbackStateRef.current = playbackState;
   const playbackActiveRef = useRef(playbackState.active);
   playbackActiveRef.current = playbackState.active;
   const playbackMoment = currentPlaybackMoment(playbackTimeline, playbackState);
   const handlePlaybackCommand = useCallback(
     (command: PlaybackCommand) => {
-      setPlaybackState((current) => applyPlaybackCommand(playbackTimeline, current, command));
+      const next = applyPlaybackCommand(playbackTimeline, playbackStateRef.current, command);
+      playbackStateRef.current = next;
+      setPlaybackState(next);
+      if (!next.active || !next.noteSoundsEnabled) {
+        pianoSampler.stop();
+        setPlaybackAudioError(null);
+        return;
+      }
+      const moment = currentPlaybackMoment(playbackTimeline, next);
+      if (moment) {
+        void pianoSampler.play(moment.pitches)
+          .then(() => setPlaybackAudioError(null))
+          .catch((audioError: unknown) => {
+            const message = audioError instanceof Error ? audioError.message : String(audioError);
+            setPlaybackAudioError(`Piano audio could not start: ${message}`);
+          });
+      }
     },
     [playbackTimeline],
   );
@@ -258,8 +282,13 @@ export function App() {
   }, [nativeAvailable]);
 
   useEffect(() => {
+    playbackStateRef.current = initialPlaybackState;
     setPlaybackState(initialPlaybackState);
+    setPlaybackAudioError(null);
+    pianoSampler.stop();
   }, [document?.jobId]);
+
+  useEffect(() => () => pianoSampler.stop(), []);
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -267,7 +296,7 @@ export function App() {
       if (isEditableKeyboardTarget(event.target)) return;
       const command = commandForKeyboardEvent(shortcuts, event);
       if (!command || (command !== "togglePlayback" && !playbackState.active)) return;
-      if (command === "togglePlayback" && event.repeat) return;
+      if (isPlaybackToggleCommand(command) && event.repeat) return;
       event.preventDefault();
       handlePlaybackCommand(command);
     }
@@ -318,7 +347,7 @@ export function App() {
       if (!command || (command !== "togglePlayback" && !playbackActiveRef.current)) return;
       stopMidiRepeat();
       handlePlaybackCommandRef.current(command);
-      if (command !== "togglePlayback") startMidiRepeat(command, received);
+      if (!isPlaybackToggleCommand(command)) startMidiRepeat(command, received);
     }).then((unlisten) => {
       if (disposed) unlisten();
       else unsubscribe = unlisten;
@@ -395,6 +424,8 @@ export function App() {
           }
           setSelectedGroup(null);
           setHighlightAllNotes(false);
+          playbackStateRef.current = initialPlaybackState;
+          pianoSampler.stop();
           setPlaybackState(initialPlaybackState);
           return {
             jobId: event.jobId,
@@ -565,6 +596,8 @@ export function App() {
       if (!path) return;
       setSelectedGroup(null);
       setHighlightAllNotes(false);
+      playbackStateRef.current = initialPlaybackState;
+      pianoSampler.stop();
       setPlaybackState(initialPlaybackState);
       const jobId = await openPdf(path);
       activeJobId.current = jobId;
@@ -736,6 +769,7 @@ export function App() {
         </div>
       ) : null}
       {error ? <div className="error">{error}</div> : null}
+      {playbackAudioError ? <div className="error" role="alert">{playbackAudioError}</div> : null}
 
       <section className="workspace">
         {document && document.pages.length > 0 ? (
@@ -750,6 +784,7 @@ export function App() {
               showRefinedNoteheadContours={showRefinedNoteheadContours}
               showRawStemContours={showRawStemContours}
               playbackActive={playbackState.active}
+              playbackNoteSoundsEnabled={playbackState.noteSoundsEnabled}
               playbackAvailable={playbackTimeline.length > 0}
               playbackMoment={playbackMoment}
               onPlaybackCommand={handlePlaybackCommand}

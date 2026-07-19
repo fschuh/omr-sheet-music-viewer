@@ -3,12 +3,13 @@ import test from "node:test";
 import {
   buildPlaybackTimeline,
   initialPlaybackState,
+  playbackPitchForNote,
   playbackGroupIdsForPage,
   runPlaybackCommand,
   type PlaybackCommand,
   type PlaybackState,
 } from "./playback";
-import type { DocumentPage, VisualGroup, VisualSidecar } from "./types";
+import type { DocumentPage, VisualGroup, VisualSidecar, VisualSidecarNote } from "./types";
 
 function group(id: string, staffIndex: number, staveIndex: number, x: number, y: number): VisualGroup {
   return {
@@ -60,6 +61,22 @@ function run(
   return runPlaybackCommand(timeline, state, command);
 }
 
+test("prefers the resolved MusicXML accidental over a natural-only sidecar pitch", () => {
+  const note: VisualSidecarNote = {
+    musicxml_id: "note-flat",
+    part: 1,
+    measure: 1,
+    staff: 1,
+    voice: 1,
+    pitch: "A3",
+    duration: "note_4",
+    match_confidence: 1,
+    visual_group_id: "flat",
+  };
+
+  assert.equal(playbackPitchForNote(note, new Map([["note-flat", "A♭3"]])), "A♭3");
+});
+
 test("groups a chord and aligned notes in different clefs into one playhead moment", () => {
   const upper = group("upper", 0, 0, 200, 250);
   const chord = group("chord", 0, 0, 212, 270);
@@ -70,6 +87,7 @@ test("groups a chord and aligned notes in different clefs into one playhead mome
 
   assert.equal(timeline.length, 1);
   assert.deepEqual(timeline[0].visualGroupIds, ["chord", "lower", "upper"]);
+  assert.deepEqual(timeline[0].pitches, ["C4"]);
 });
 
 test("keeps vertically aligned notes on different systems as separate moments", () => {
@@ -133,6 +151,18 @@ test("navigation is inactive outside playback mode and toggle exits cleanly", ()
   assert.equal(run(timeline, initialPlaybackState, "forwardNote"), initialPlaybackState);
   const active = run(timeline, initialPlaybackState, "togglePlayback");
   assert.deepEqual(run(timeline, active, "togglePlayback"), initialPlaybackState);
+});
+
+test("note sounds toggle only in playback mode and survive leaving playback", () => {
+  const timeline = buildPlaybackTimeline([page(0, [group("a", 0, 0, 100, 200)], [1])]);
+  assert.equal(run(timeline, initialPlaybackState, "toggleNoteSounds"), initialPlaybackState);
+  const active = run(timeline, initialPlaybackState, "togglePlayback");
+  const muted = run(timeline, active, "toggleNoteSounds");
+  assert.equal(muted.noteSoundsEnabled, false);
+  const inactive = run(timeline, muted, "togglePlayback");
+  assert.equal(inactive.active, false);
+  assert.equal(inactive.noteSoundsEnabled, false);
+  assert.equal(run(timeline, inactive, "togglePlayback").noteSoundsEnabled, false);
 });
 
 test("reuses the empty page selection so memoized overlays stay memoized", () => {

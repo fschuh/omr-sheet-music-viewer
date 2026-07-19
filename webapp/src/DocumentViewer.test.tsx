@@ -53,6 +53,7 @@ const moment: PlaybackMoment = {
   measure: 1,
   barKey: "page-0-measure-1",
   visualGroupIds: groups.map((value) => value.visual_group_id),
+  pitches: ["C4", "E3"],
   center: [301, 435],
 };
 
@@ -68,6 +69,7 @@ function render(playbackActive: boolean): string {
       showRefinedNoteheadContours={false}
       showRawStemContours={false}
       playbackActive={playbackActive}
+      playbackNoteSoundsEnabled
       playbackAvailable
       playbackMoment={playbackActive ? moment : null}
       onPlaybackCommand={() => undefined}
@@ -80,7 +82,8 @@ function render(playbackActive: boolean): string {
 test("renders compact playback controls disabled outside playback mode", () => {
   const markup = render(false);
   assert.match(markup, /aria-label="Play"/);
-  assert.equal(markup.match(/disabled=""/g)?.length, 6);
+  assert.match(markup, /aria-label="Mute note sounds"/);
+  assert.equal(markup.match(/disabled=""/g)?.length, 7);
   assert.doesNotMatch(markup, /data-playback-selected="true"/);
 });
 

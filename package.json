@@ -7,5 +7,8 @@
     "tauri:dev": "node webapp/node_modules/@tauri-apps/cli/tauri.js dev",
     "tauri:build": "node webapp/node_modules/@tauri-apps/cli/tauri.js build",
     "web:build": "cd webapp && npm run build"
+  },
+  "dependencies": {
+    "@audio-samples/piano-velocity8": "^1.0.5"
   }
 }

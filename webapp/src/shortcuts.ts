@@ -29,6 +29,7 @@ export const playbackCommandDetails: ReadonlyArray<{
   description: string;
 }> = [
   { command: "togglePlayback", label: "Start or exit playback", description: "Enter or leave note-by-note playback mode." },
+  { command: "toggleNoteSounds", label: "Play or mute notes", description: "Toggle piano sound for the current note or chord." },
   { command: "forwardNote", label: "Next note", description: "Move to the next note or chord." },
   { command: "backwardNote", label: "Previous note", description: "Move to the previous note or chord." },
   { command: "forwardBar", label: "Next bar", description: "Move to the first note of the next bar." },
@@ -44,6 +45,7 @@ function keyboard(code: string): KeyboardShortcut {
 export function defaultPlaybackShortcuts(): PlaybackShortcuts {
   return {
     togglePlayback: { keyboard: keyboard("Space"), midi: null },
+    toggleNoteSounds: { keyboard: keyboard("KeyM"), midi: null },
     forwardNote: { keyboard: keyboard("ArrowRight"), midi: null },
     backwardNote: { keyboard: keyboard("ArrowLeft"), midi: null },
     forwardBar: { keyboard: keyboard("Period"), midi: null },

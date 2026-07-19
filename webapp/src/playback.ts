@@ -1,7 +1,9 @@
 import type { DocumentPage, VisualGroup, VisualSidecarNote } from "./types";
+import { musicXmlPitchNames } from "./noteLabels";
 
 export const playbackCommandNames = [
   "togglePlayback",
+  "toggleNoteSounds",
   "forwardNote",
   "backwardNote",
   "forwardBar",
@@ -19,6 +21,7 @@ export interface PlaybackMoment {
   measure: number | null;
   barKey: string;
   visualGroupIds: string[];
+  pitches: string[];
   center: [number, number];
 }
 
@@ -34,11 +37,13 @@ export function playbackGroupIdsForPage(
 export interface PlaybackState {
   active: boolean;
   currentMomentId: string | null;
+  noteSoundsEnabled: boolean;
 }
 
 export const initialPlaybackState: PlaybackState = {
   active: false,
   currentMomentId: null,
+  noteSoundsEnabled: true,
 };
 
 interface TimelineGroup {
@@ -46,6 +51,7 @@ interface TimelineGroup {
   x: number;
   width: number;
   measures: Set<number>;
+  notes: VisualSidecarNote[];
 }
 
 interface MomentCluster {
@@ -54,10 +60,20 @@ interface MomentCluster {
   measure: number | null;
 }
 
-function notesByVisualGroup(notes: VisualSidecarNote[]): Map<string, VisualSidecarNote[]> {
+export function playbackPitchForNote(
+  note: VisualSidecarNote,
+  pitchNames: ReadonlyMap<string, string>,
+): string | null {
+  return pitchNames.get(note.musicxml_id) ?? note.pitch;
+}
+
+function notesByVisualGroup(
+  notes: VisualSidecarNote[],
+  pitchNames: ReadonlyMap<string, string>,
+): Map<string, VisualSidecarNote[]> {
   const result = new Map<string, VisualSidecarNote[]>();
   for (const note of notes) {
-    if (!note.visual_group_id || note.pitch === null) continue;
+    if (!note.visual_group_id || playbackPitchForNote(note, pitchNames) === null) continue;
     const linked = result.get(note.visual_group_id) ?? [];
     linked.push(note);
     result.set(note.visual_group_id, linked);
@@ -121,15 +137,21 @@ function belongsToCluster(entry: TimelineGroup, cluster: MomentCluster): boolean
   return Math.abs(entry.x - cluster.x) <= tolerance;
 }
 
-function clustersForStaff(groups: VisualGroup[], notes: VisualSidecarNote[]): MomentCluster[] {
-  const linkedNotes = notesByVisualGroup(notes);
+function clustersForStaff(
+  groups: VisualGroup[],
+  notes: VisualSidecarNote[],
+  pitchNames: ReadonlyMap<string, string>,
+): MomentCluster[] {
+  const linkedNotes = notesByVisualGroup(notes, pitchNames);
   const entries = groups
     .map((group): TimelineGroup => {
       const geometry = horizontalGeometry(group);
+      const notes = linkedNotes.get(group.visual_group_id) ?? [];
       return {
         group,
         ...geometry,
-        measures: new Set((linkedNotes.get(group.visual_group_id) ?? []).map((note) => note.measure)),
+        measures: new Set(notes.map((note) => note.measure)),
+        notes,
       };
     })
     .sort((first, second) => first.x - second.x || first.group.center[1] - second.group.center[1]);
@@ -152,16 +174,25 @@ export function buildPlaybackTimeline(pages: DocumentPage[]): PlaybackMoment[] {
   for (const page of [...pages].sort((first, second) => first.index - second.index)) {
     const sidecar = page.visualSidecar;
     if (!sidecar) continue;
+    const pitchNames = musicXmlPitchNames(page.musicXml);
     const staffIndexes = Array.from(
       new Set(sidecar.visual_groups.map((group) => group.staff_index)),
     ).sort((first, second) => first - second);
     for (const staffIndex of staffIndexes) {
       const staffGroups = sidecar.visual_groups.filter((group) => group.staff_index === staffIndex);
-      const clusters = clustersForStaff(staffGroups, sidecar.notes);
+      const clusters = clustersForStaff(staffGroups, sidecar.notes, pitchNames);
       clusters.forEach((cluster, clusterIndex) => {
         const visualGroupIds = cluster.groups
           .map((entry) => entry.group.visual_group_id)
           .sort((first, second) => first.localeCompare(second));
+        const pitches = Array.from(new Set(
+          cluster.groups.flatMap((entry) =>
+            entry.notes.flatMap((note) => {
+              const pitch = playbackPitchForNote(note, pitchNames);
+              return pitch === null ? [] : [pitch];
+            }),
+          ),
+        ));
         const centerY =
           cluster.groups.reduce((total, entry) => total + entry.group.center[1], 0) /
           cluster.groups.length;
@@ -173,6 +204,7 @@ export function buildPlaybackTimeline(pages: DocumentPage[]): PlaybackMoment[] {
           measure: cluster.measure,
           barKey: cluster.measure === null ? unknownBarKey : `page-${page.index}-measure-${cluster.measure}`,
           visualGroupIds,
+          pitches,
           center: [cluster.x, centerY],
         });
       });
@@ -207,7 +239,7 @@ function firstMomentOfPreviousBar(timeline: PlaybackMoment[], index: number): nu
 function commandDestination(
   timeline: PlaybackMoment[],
   index: number,
-  command: Exclude<PlaybackCommand, "togglePlayback">,
+  command: Exclude<PlaybackCommand, "togglePlayback" | "toggleNoteSounds">,
 ): number {
   if (command === "forwardNote") return Math.min(timeline.length - 1, index + 1);
   if (command === "backwardNote") return Math.max(0, index - 1);
@@ -246,12 +278,15 @@ export function runPlaybackCommand(
   command: PlaybackCommand,
 ): PlaybackState {
   if (command === "togglePlayback") {
-    if (state.active) return initialPlaybackState;
+    if (state.active) return { ...state, active: false, currentMomentId: null };
     return timeline.length === 0
-      ? initialPlaybackState
-      : { active: true, currentMomentId: timeline[0].id };
+      ? { ...state, active: false, currentMomentId: null }
+      : { ...state, active: true, currentMomentId: timeline[0].id };
+  }
+  if (command === "toggleNoteSounds") {
+    return state.active ? { ...state, noteSoundsEnabled: !state.noteSoundsEnabled } : state;
   }
   if (!state.active || timeline.length === 0) return state;
   const destination = commandDestination(timeline, currentIndex(timeline, state), command);
-  return { active: true, currentMomentId: timeline[destination].id };
+  return { ...state, active: true, currentMomentId: timeline[destination].id };
 }

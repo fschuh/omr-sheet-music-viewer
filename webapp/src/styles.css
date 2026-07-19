@@ -275,6 +275,20 @@ button:disabled {
   color: #fff;
 }
 
+.viewer-toolbar .playback-controls .sound-toggle {
+  filter: grayscale(1);
+  font-size: 0.82rem;
+  margin-right: 2px;
+  opacity: 0.68;
+}
+
+.viewer-toolbar .playback-controls .sound-toggle.active {
+  background: #e1eee9;
+  border-color: #7aada3;
+  filter: none;
+  opacity: 1;
+}
+
 .viewer-stage {
   background-color: #6e6b67;
   background-image: radial-gradient(rgb(255 255 255 / 8%) 0.7px, transparent 0.7px);
