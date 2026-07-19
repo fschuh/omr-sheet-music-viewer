@@ -24,6 +24,8 @@ page can rescan inputs after a bridge or device is connected.
 Holding an assigned MIDI Note or nonzero Control Change repeats navigation until
 the corresponding Note Off or zero-value Control Change arrives. Playback-mode
 toggle messages and message types without a release signal remain one-shot.
+On Windows, the repeat delay and rate follow the system keyboard settings; other
+platforms use a 400 ms delay and 75 ms interval.
 
 ## Development
 

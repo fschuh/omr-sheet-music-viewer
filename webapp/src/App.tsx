@@ -12,6 +12,7 @@ import {
 import {
   cancelJob,
   choosePdf,
+  getKeyboardRepeatTiming,
   getWorkerLogPath,
   loadPageArtifacts,
   nativeViewerAvailable,
@@ -129,6 +130,10 @@ export function App() {
   const [midiCaptureCommand, setMidiCaptureCommand] = useState<PlaybackCommand | null>(null);
   const midiCaptureCommandRef = useRef<PlaybackCommand | null>(null);
   const activeMidiRepeatRef = useRef<ActiveMidiRepeat | null>(null);
+  const midiRepeatTimingRef = useRef({
+    delayMs: MIDI_REPEAT_DELAY_MS,
+    intervalMs: MIDI_REPEAT_INTERVAL_MS,
+  });
   const [document, setDocument] = useState<LoadedDocument | null>(null);
   const [selectedGroup, setSelectedGroup] = useState<VisualGroupRef | null>(null);
   const [highlightAllNotes, setHighlightAllNotes] = useState(false);
@@ -177,6 +182,7 @@ export function App() {
       delayId: null,
       intervalId: null,
     };
+    const repeatTiming = midiRepeatTimingRef.current;
     const repeatCommand = () => {
       if (
         activeMidiRepeatRef.current !== activeRepeat ||
@@ -193,8 +199,8 @@ export function App() {
       activeRepeat.delayId = null;
       repeatCommand();
       if (activeMidiRepeatRef.current !== activeRepeat) return;
-      activeRepeat.intervalId = window.setInterval(repeatCommand, MIDI_REPEAT_INTERVAL_MS);
-    }, MIDI_REPEAT_DELAY_MS);
+      activeRepeat.intervalId = window.setInterval(repeatCommand, repeatTiming.intervalMs);
+    }, repeatTiming.delayMs);
   }, [stopMidiRepeat]);
 
   const handleRefreshMidiInputs = useCallback(() => {
@@ -228,6 +234,28 @@ export function App() {
   useEffect(() => {
     savePlaybackShortcuts(shortcuts);
   }, [shortcuts]);
+
+  useEffect(() => {
+    if (!nativeAvailable) return;
+    let disposed = false;
+    void getKeyboardRepeatTiming()
+      .then((timing) => {
+        if (
+          disposed ||
+          !Number.isFinite(timing.delayMs) ||
+          !Number.isFinite(timing.intervalMs) ||
+          timing.delayMs < 0 ||
+          timing.intervalMs <= 0
+        ) return;
+        midiRepeatTimingRef.current = timing;
+      })
+      .catch(() => {
+        // Keep the hardcoded cross-platform defaults if native timing is unavailable.
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [nativeAvailable]);
 
   useEffect(() => {
     setPlaybackState(initialPlaybackState);

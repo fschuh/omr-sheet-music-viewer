@@ -54,6 +54,11 @@ export interface MidiMessageEvent {
   bytes: number[];
 }
 
+export interface KeyboardRepeatTiming {
+  delayMs: number;
+  intervalMs: number;
+}
+
 export function nativeViewerAvailable(): boolean {
   return isTauri();
 }
@@ -80,6 +85,10 @@ export async function getWorkerLogPath(): Promise<string> {
 
 export async function refreshMidiInputs(): Promise<string[]> {
   return invoke<string[]>("refresh_midi_inputs");
+}
+
+export async function getKeyboardRepeatTiming(): Promise<KeyboardRepeatTiming> {
+  return invoke<KeyboardRepeatTiming>("get_keyboard_repeat_timing");
 }
 
 export async function openCacheDirectory(path: string): Promise<void> {

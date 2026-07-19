@@ -9,8 +9,75 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use tauri::{AppHandle, Emitter, Manager, State};
 use uuid::Uuid;
+#[cfg(target_os = "windows")]
+use windows::Win32::UI::WindowsAndMessaging::{
+    SystemParametersInfoW, SPI_GETKEYBOARDDELAY, SPI_GETKEYBOARDSPEED,
+    SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
+};
 
 const PROTOCOL_VERSION: u8 = 1;
+const DEFAULT_KEYBOARD_REPEAT_DELAY_MS: u32 = 400;
+const DEFAULT_KEYBOARD_REPEAT_INTERVAL_MS: u32 = 75;
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct KeyboardRepeatTiming {
+    delay_ms: u32,
+    interval_ms: u32,
+}
+
+impl Default for KeyboardRepeatTiming {
+    fn default() -> Self {
+        Self {
+            delay_ms: DEFAULT_KEYBOARD_REPEAT_DELAY_MS,
+            interval_ms: DEFAULT_KEYBOARD_REPEAT_INTERVAL_MS,
+        }
+    }
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn repeat_timing_from_windows_settings(
+    delay_setting: u32,
+    speed_setting: u32,
+) -> KeyboardRepeatTiming {
+    let delay_ms = (delay_setting.min(3) + 1) * 250;
+    let repeats_per_second = 2.5 + (speed_setting.min(31) as f64 / 31.0) * 27.5;
+    let interval_ms = (1000.0 / repeats_per_second).round() as u32;
+    KeyboardRepeatTiming {
+        delay_ms,
+        interval_ms,
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn keyboard_repeat_timing() -> KeyboardRepeatTiming {
+    let mut delay_setting = 0u32;
+    let mut speed_setting = 0u32;
+    let query_result = unsafe {
+        SystemParametersInfoW(
+            SPI_GETKEYBOARDDELAY,
+            0,
+            Some((&raw mut delay_setting).cast()),
+            SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+        )
+        .and_then(|_| {
+            SystemParametersInfoW(
+                SPI_GETKEYBOARDSPEED,
+                0,
+                Some((&raw mut speed_setting).cast()),
+                SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+            )
+        })
+    };
+    query_result
+        .map(|_| repeat_timing_from_windows_settings(delay_setting, speed_setting))
+        .unwrap_or_default()
+}
+
+#[cfg(not(target_os = "windows"))]
+fn keyboard_repeat_timing() -> KeyboardRepeatTiming {
+    KeyboardRepeatTiming::default()
+}
 
 #[derive(Default)]
 struct MidiInputManager {
@@ -468,6 +535,11 @@ fn refresh_midi_inputs(
     midi_inputs.refresh(&app)
 }
 
+#[tauri::command]
+fn get_keyboard_repeat_timing() -> KeyboardRepeatTiming {
+    keyboard_repeat_timing()
+}
+
 fn open_with_system(path: &Path) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     let mut command = {
@@ -544,6 +616,7 @@ pub fn run() {
             load_page_artifacts,
             get_worker_log_path,
             refresh_midi_inputs,
+            get_keyboard_repeat_timing,
             open_music_xml,
             open_cache_directory
         ])
@@ -555,7 +628,10 @@ pub fn run() {
 mod tests {
     use std::path::Path;
 
-    use super::{has_music_xml_extension, is_channel_voice_message, strip_ansi_codes};
+    use super::{
+        has_music_xml_extension, is_channel_voice_message, repeat_timing_from_windows_settings,
+        strip_ansi_codes, KeyboardRepeatTiming,
+    };
 
     #[test]
     fn worker_logs_strip_terminal_colors() {
@@ -582,5 +658,27 @@ mod tests {
         assert!(!is_channel_voice_message(&[0xf8]));
         assert!(!is_channel_voice_message(&[0xfe]));
         assert!(!is_channel_voice_message(&[]));
+    }
+
+    #[test]
+    fn windows_keyboard_settings_convert_to_repeat_timings() {
+        assert_eq!(
+            repeat_timing_from_windows_settings(0, 0),
+            KeyboardRepeatTiming {
+                delay_ms: 250,
+                interval_ms: 400,
+            }
+        );
+        assert_eq!(
+            repeat_timing_from_windows_settings(3, 31),
+            KeyboardRepeatTiming {
+                delay_ms: 1000,
+                interval_ms: 33,
+            }
+        );
+        assert_eq!(
+            repeat_timing_from_windows_settings(99, 99),
+            repeat_timing_from_windows_settings(3, 31),
+        );
     }
 }
