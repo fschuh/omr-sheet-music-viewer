@@ -2,7 +2,10 @@
 
 This first desktop iteration opens a PDF, rasterizes it page by page, runs the
 local HOMR checkout, caches the generated PNG/MusicXML/visual-sidecar artifacts,
-and overlays recognized note geometry for selection and highlighting.
+merges successfully recognized pages into a document-level MusicXML file, and
+overlays recognized note geometry for selection and highlighting. The merged
+file is stored at the PDF cache root using the PDF filename with a `.musicxml`
+extension.
 
 Playback and inking are intentionally not part of this iteration.
 

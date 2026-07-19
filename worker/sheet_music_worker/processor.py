@@ -16,6 +16,7 @@ import pypdfium2 as pdfium
 from sheet_music_worker import WORKER_VERSION
 from sheet_music_worker.homr_engine import HomrEngine
 from sheet_music_worker.logging import worker_log
+from sheet_music_worker.musicxml_merge import merge_musicxml_pages
 
 RASTER_DPI = 300
 MANIFEST_SCHEMA_VERSION = 1
@@ -114,6 +115,13 @@ class PdfProcessor:
                 for page in manifest["pages"]
                 if page.get("status") == "complete" and validate_artifacts(page, cache_directory)
             )
+            document_music_xml_path = (
+                cache_directory / pdf_path.with_suffix(".musicxml").name
+            )
+            if reusable != page_count or force_page_index is not None:
+                document_music_xml_path.unlink(missing_ok=True)
+                if manifest.pop("documentMusicXml", None) is not None:
+                    atomic_write_json(manifest_path, manifest)
             cache_status = "complete" if reusable == page_count else "partial" if reusable else "miss"
             worker_log(f"Cache status: {cache_status} ({reusable}/{page_count} page(s) reusable)")
             self._emit(
@@ -201,19 +209,41 @@ class PdfProcessor:
                         }
                     )
 
+            document_music_xml: Path | None = None
+            all_pages_complete = all(
+                page.get("status") == "complete" and validate_artifacts(page, cache_directory)
+                for page in manifest["pages"]
+            )
+            if all_pages_complete:
+                page_music_xml = [
+                    cache_directory / page["musicXml"] for page in manifest["pages"]
+                ]
+                document_music_xml = document_music_xml_path
+                worker_log(
+                    f"Post-processing {len(page_music_xml)} page(s) into "
+                    f"{document_music_xml.name}"
+                )
+                merge_musicxml_pages(page_music_xml, document_music_xml)
+                manifest["documentMusicXml"] = self._relative(
+                    cache_directory, document_music_xml
+                )
+                atomic_write_json(manifest_path, manifest)
+                worker_log(f"Merged MusicXML is ready at {document_music_xml}")
+
             status = "complete" if failed == 0 else "partial"
             worker_log(
                 f"Job finished with status {status}: {completed} completed, {failed} failed"
             )
-            self._emit(
-                {
-                    "type": "job_completed",
-                    "jobId": job_id,
-                    "status": status,
-                    "completedPages": completed,
-                    "failedPages": failed,
-                }
-            )
+            event = {
+                "type": "job_completed",
+                "jobId": job_id,
+                "status": status,
+                "completedPages": completed,
+                "failedPages": failed,
+            }
+            if document_music_xml is not None:
+                event["documentMusicXmlPath"] = str(document_music_xml.resolve())
+            self._emit(event)
         finally:
             document.close()
 
