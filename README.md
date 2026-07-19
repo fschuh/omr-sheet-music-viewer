@@ -7,6 +7,10 @@ overlays recognized note geometry for selection and highlighting. The merged
 file is stored at the PDF cache root using the PDF filename with a `.musicxml`
 extension.
 
+After the merged file is ready, **Open MusicXML** delegates it to the operating
+system. The configured default application opens it, or the system can prompt
+for an application when no association exists.
+
 Playback and inking are intentionally not part of this iteration.
 
 ## Development

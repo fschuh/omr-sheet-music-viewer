@@ -37,6 +37,7 @@ export type WorkerEvent =
       status: "complete" | "partial" | "cancelled";
       completedPages?: number;
       failedPages?: number;
+      documentMusicXmlPath?: string;
     }
   | { type: "job_failed"; jobId: string; error: { message: string } }
   | { type: "worker_log"; line: string }
@@ -73,6 +74,10 @@ export async function getWorkerLogPath(): Promise<string> {
 
 export async function openCacheDirectory(path: string): Promise<void> {
   return invoke("open_cache_directory", { path });
+}
+
+export async function openMusicXml(path: string): Promise<void> {
+  return invoke("open_music_xml", { path });
 }
 
 export async function loadPageArtifacts(artifacts: PageArtifacts): Promise<PageArtifactData> {

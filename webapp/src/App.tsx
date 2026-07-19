@@ -7,6 +7,7 @@ import {
   loadPageArtifacts,
   nativeViewerAvailable,
   openCacheDirectory,
+  openMusicXml,
   openPdf,
   pageImageUrl,
   retryPage,
@@ -140,6 +141,7 @@ export function App() {
               name: event.documentName,
               cacheStatus: event.cacheStatus,
               cachePath: event.cachePath,
+              documentMusicXmlPath: undefined,
               status: "processing",
             };
           }
@@ -228,7 +230,13 @@ export function App() {
       }
       if (event.type === "job_completed") {
         setDocument((current) =>
-          current?.jobId === event.jobId ? { ...current, status: event.status } : current,
+          current?.jobId === event.jobId
+            ? {
+                ...current,
+                status: event.status,
+                documentMusicXmlPath: event.documentMusicXmlPath,
+              }
+            : current,
         );
         return;
       }
@@ -345,16 +353,30 @@ export function App() {
     }
   }
 
+  async function handleOpenMusicXml() {
+    if (!document?.documentMusicXmlPath) return;
+    setError(null);
+    try {
+      await openMusicXml(document.documentMusicXmlPath);
+    } catch (openError) {
+      setError(openError instanceof Error ? openError.message : String(openError));
+    }
+  }
+
   async function handleRetryPage(pageIndex: number) {
     if (!document) return;
     setError(null);
     setDocument((current) =>
       current
-        ? replacePage({ ...current, status: "processing" }, pageIndex, (page) => ({
-            ...page,
-            status: "processing",
-            error: undefined,
-          }))
+        ? replacePage(
+            { ...current, status: "processing", documentMusicXmlPath: undefined },
+            pageIndex,
+            (page) => ({
+              ...page,
+              status: "processing",
+              error: undefined,
+            }),
+          )
         : current,
     );
     try {
@@ -397,6 +419,20 @@ export function App() {
           >
             Worker logs{workerLogs.length ? ` (${workerLogs.length})` : ""}
           </button>
+          {document ? (
+            <button
+              type="button"
+              title={
+                document.documentMusicXmlPath
+                  ? `Open ${fileName(document.documentMusicXmlPath)} with the system default application`
+                  : "MusicXML is available after every page is recognized"
+              }
+              disabled={!document.documentMusicXmlPath}
+              onClick={handleOpenMusicXml}
+            >
+              Open MusicXML
+            </button>
+          ) : null}
           {document ? (
             <button
               type="button"

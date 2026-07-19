@@ -98,6 +98,7 @@ export interface LoadedDocument {
   pageCount: number;
   cacheStatus: "miss" | "partial" | "complete";
   cachePath?: string;
+  documentMusicXmlPath?: string;
   status: JobStatus;
   pages: DocumentPage[];
 }

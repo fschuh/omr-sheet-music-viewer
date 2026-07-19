@@ -367,38 +367,56 @@ fn get_worker_log_path(app: AppHandle) -> Result<String, String> {
     Ok(worker_log_path(&app)?.to_string_lossy().into_owned())
 }
 
+fn open_with_system(path: &Path) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        let mut command = Command::new("explorer.exe");
+        command.arg(path);
+        command
+    };
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        let mut command = Command::new("open");
+        command.arg(path);
+        command
+    };
+    #[cfg(target_os = "linux")]
+    let mut command = {
+        let mut command = Command::new("xdg-open");
+        command.arg(path);
+        command
+    };
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    return Err("Opening files is not supported on this platform".into());
+
+    command
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("Could not open {}: {error}", path.display()))
+}
+
+fn has_music_xml_extension(path: &Path) -> bool {
+    path.extension()
+        .and_then(|value| value.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("musicxml"))
+}
+
+#[tauri::command]
+fn open_music_xml(app: AppHandle, path: String) -> Result<(), String> {
+    let music_xml = checked_cache_path(&app, &path)?;
+    if !music_xml.is_file() || !has_music_xml_extension(&music_xml) {
+        return Err("The merged MusicXML file does not exist".into());
+    }
+    open_with_system(&music_xml)
+}
+
 #[tauri::command]
 fn open_cache_directory(app: AppHandle, path: String) -> Result<(), String> {
     let directory = checked_cache_path(&app, &path)?;
     if !directory.is_dir() {
         return Err("The PDF cache directory does not exist".into());
     }
-
-    #[cfg(target_os = "windows")]
-    let mut command = {
-        let mut command = Command::new("explorer.exe");
-        command.arg(PathBuf::from(path));
-        command
-    };
-    #[cfg(target_os = "macos")]
-    let mut command = {
-        let mut command = Command::new("open");
-        command.arg(directory);
-        command
-    };
-    #[cfg(target_os = "linux")]
-    let mut command = {
-        let mut command = Command::new("xdg-open");
-        command.arg(directory);
-        command
-    };
-    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-    return Err("Opening cache directories is not supported on this platform".into());
-
-    command
-        .spawn()
-        .map(|_| ())
-        .map_err(|error| format!("Could not open the PDF cache directory: {error}"))
+    open_with_system(&directory)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -417,6 +435,7 @@ pub fn run() {
             retry_page,
             load_page_artifacts,
             get_worker_log_path,
+            open_music_xml,
             open_cache_directory
         ])
         .run(tauri::generate_context!())
@@ -425,7 +444,9 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::strip_ansi_codes;
+    use std::path::Path;
+
+    use super::{has_music_xml_extension, strip_ansi_codes};
 
     #[test]
     fn worker_logs_strip_terminal_colors() {
@@ -433,5 +454,13 @@ mod tests {
             strip_ansi_codes("\u{1b}[32m[INFO]\u{1b}[0m ready"),
             "[INFO] ready"
         );
+    }
+
+    #[test]
+    fn system_open_only_accepts_musicxml_extensions() {
+        assert!(has_music_xml_extension(Path::new("score.musicxml")));
+        assert!(has_music_xml_extension(Path::new("score.MUSICXML")));
+        assert!(!has_music_xml_extension(Path::new("score.xml")));
+        assert!(!has_music_xml_extension(Path::new("score.musicxml.exe")));
     }
 }
