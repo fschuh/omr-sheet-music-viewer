@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DocumentViewer } from "./DocumentViewer";
+import { SettingsPage } from "./SettingsPage";
 import {
   buildPlaybackTimeline,
   currentPlaybackMoment,
   initialPlaybackState,
+  playbackCommandNames,
   runPlaybackCommand as applyPlaybackCommand,
   type PlaybackCommand,
 } from "./playback";
@@ -17,10 +19,21 @@ import {
   openMusicXml,
   openPdf,
   pageImageUrl,
+  refreshMidiInputs,
   retryPage,
+  subscribeToMidiMessages,
   subscribeToWorkerEvents,
   type WorkerEvent,
 } from "./native";
+import {
+  commandForKeyboardEvent,
+  commandForMidiShortcut,
+  loadPlaybackShortcuts,
+  midiShortcutFromBytes,
+  midiShortcutsEqual,
+  savePlaybackShortcuts,
+  type PlaybackShortcuts,
+} from "./shortcuts";
 import type {
   DocumentPage,
   LoadedDocument,
@@ -78,17 +91,6 @@ function statusLabel(document: LoadedDocument): string {
   return document.cacheStatus === "complete" ? "Loaded from cache" : "Recognition complete";
 }
 
-function playbackCommandForKey(event: KeyboardEvent): PlaybackCommand | null {
-  if (event.code === "Space") return "togglePlayback";
-  if (event.key === "ArrowRight") return "forwardNote";
-  if (event.key === "ArrowLeft") return "backwardNote";
-  if (event.key === "ArrowDown") return "forwardPage";
-  if (event.key === "ArrowUp") return "backwardPage";
-  if (event.code === "Period") return "forwardBar";
-  if (event.code === "Comma") return "backwardBar";
-  return null;
-}
-
 function isEditableKeyboardTarget(target: EventTarget | null): boolean {
   return (
     target instanceof HTMLInputElement ||
@@ -103,6 +105,17 @@ export function App() {
   const activeJobId = useRef<string | null>(null);
   const nextWorkerLogId = useRef(1);
   const workerLogOutput = useRef<HTMLDivElement | null>(null);
+  const [activePage, setActivePage] = useState<"viewer" | "settings">("viewer");
+  const activePageRef = useRef(activePage);
+  activePageRef.current = activePage;
+  const [shortcuts, setShortcuts] = useState<PlaybackShortcuts>(loadPlaybackShortcuts);
+  const shortcutsRef = useRef(shortcuts);
+  shortcutsRef.current = shortcuts;
+  const [midiPorts, setMidiPorts] = useState<string[]>([]);
+  const [midiError, setMidiError] = useState<string | null>(null);
+  const [midiRefreshing, setMidiRefreshing] = useState(false);
+  const [midiCaptureCommand, setMidiCaptureCommand] = useState<PlaybackCommand | null>(null);
+  const midiCaptureCommandRef = useRef<PlaybackCommand | null>(null);
   const [document, setDocument] = useState<LoadedDocument | null>(null);
   const [selectedGroup, setSelectedGroup] = useState<VisualGroupRef | null>(null);
   const [highlightAllNotes, setHighlightAllNotes] = useState(false);
@@ -122,6 +135,8 @@ export function App() {
     [document?.pages],
   );
   const [playbackState, setPlaybackState] = useState(initialPlaybackState);
+  const playbackActiveRef = useRef(playbackState.active);
+  playbackActiveRef.current = playbackState.active;
   const playbackMoment = currentPlaybackMoment(playbackTimeline, playbackState);
   const handlePlaybackCommand = useCallback(
     (command: PlaybackCommand) => {
@@ -129,6 +144,39 @@ export function App() {
     },
     [playbackTimeline],
   );
+  const handlePlaybackCommandRef = useRef(handlePlaybackCommand);
+  handlePlaybackCommandRef.current = handlePlaybackCommand;
+
+  const handleRefreshMidiInputs = useCallback(() => {
+    if (!nativeAvailable) return;
+    setMidiRefreshing(true);
+    setMidiError(null);
+    void refreshMidiInputs()
+      .then((ports) => {
+        setMidiPorts(ports);
+        setMidiError(null);
+      })
+      .catch((refreshError: unknown) => {
+        setMidiPorts([]);
+        setMidiError(refreshError instanceof Error ? refreshError.message : String(refreshError));
+      })
+      .finally(() => setMidiRefreshing(false));
+  }, [nativeAvailable]);
+
+  const cancelMidiCapture = useCallback(() => {
+    midiCaptureCommandRef.current = null;
+    setMidiCaptureCommand(null);
+  }, []);
+
+  const beginMidiCapture = useCallback((command: PlaybackCommand) => {
+    midiCaptureCommandRef.current = command;
+    setMidiCaptureCommand(command);
+    handleRefreshMidiInputs();
+  }, [handleRefreshMidiInputs]);
+
+  useEffect(() => {
+    savePlaybackShortcuts(shortcuts);
+  }, [shortcuts]);
 
   useEffect(() => {
     setPlaybackState(initialPlaybackState);
@@ -136,8 +184,9 @@ export function App() {
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
+      if (activePage !== "viewer") return;
       if (isEditableKeyboardTarget(event.target)) return;
-      const command = playbackCommandForKey(event);
+      const command = commandForKeyboardEvent(shortcuts, event);
       if (!command || (command !== "togglePlayback" && !playbackState.active)) return;
       if (command === "togglePlayback" && event.repeat) return;
       event.preventDefault();
@@ -145,7 +194,54 @@ export function App() {
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [handlePlaybackCommand, playbackState.active]);
+  }, [activePage, handlePlaybackCommand, playbackState.active, shortcuts]);
+
+  useEffect(() => {
+    if (!nativeAvailable) return;
+    let disposed = false;
+    let unsubscribe: (() => void) | undefined;
+
+    void subscribeToMidiMessages((event) => {
+      const received = midiShortcutFromBytes(event.bytes);
+      if (!received) return;
+
+      const captureCommand = midiCaptureCommandRef.current;
+      if (captureCommand) {
+        midiCaptureCommandRef.current = null;
+        setMidiCaptureCommand(null);
+        setShortcuts((current) => {
+          const next = { ...current } as PlaybackShortcuts;
+          for (const command of playbackCommandNames) {
+            const assigned = current[command].midi;
+            if (assigned && midiShortcutsEqual(assigned, received)) {
+              next[command] = { ...current[command], midi: null };
+            }
+          }
+          next[captureCommand] = { ...next[captureCommand], midi: received };
+          return next;
+        });
+        return;
+      }
+
+      if (activePageRef.current !== "viewer") return;
+      const command = commandForMidiShortcut(shortcutsRef.current, received);
+      if (!command || (command !== "togglePlayback" && !playbackActiveRef.current)) return;
+      handlePlaybackCommandRef.current(command);
+    }).then((unlisten) => {
+      if (disposed) unlisten();
+      else unsubscribe = unlisten;
+    });
+
+    return () => {
+      disposed = true;
+      unsubscribe?.();
+    };
+  }, [nativeAvailable]);
+
+  useEffect(() => {
+    if (activePage === "settings") handleRefreshMidiInputs();
+    else cancelMidiCapture();
+  }, [activePage, cancelMidiCapture, handleRefreshMidiInputs]);
 
   useEffect(() => {
     if (!nativeAvailable) return;
@@ -455,9 +551,9 @@ export function App() {
       <header className="topbar">
         <div className="document-heading">
           <h1>HOMR Sheet Music Viewer</h1>
-          <p>{document ? document.name : workerInfo ?? "Open a PDF score to begin"}</p>
+          <p>{activePage === "settings" ? "Playback preferences" : document ? document.name : workerInfo ?? "Open a PDF score to begin"}</p>
         </div>
-        {document ? (
+        {activePage === "viewer" && document ? (
           <div className="job-summary" aria-live="polite">
             <span>{statusLabel(document)}</span>
             {document.pageCount > 0 ? (
@@ -469,6 +565,8 @@ export function App() {
           </div>
         ) : null}
         <div className="actions">
+          {activePage === "viewer" ? (
+            <>
           <button
             type="button"
             className={showWorkerLogs ? "log-button active" : "log-button"}
@@ -505,9 +603,37 @@ export function App() {
           <button type="button" className="primary-button" onClick={handleOpenPdf} disabled={!nativeAvailable || busy}>
             Open PDF
           </button>
+            </>
+          ) : null}
+          <button
+            type="button"
+            className={activePage === "settings" ? "settings-button active" : "settings-button"}
+            onClick={() => {
+              setShowWorkerLogs(false);
+              cancelMidiCapture();
+              setActivePage((current) => current === "viewer" ? "settings" : "viewer");
+            }}
+          >
+            {activePage === "settings" ? "Back to score" : "Settings"}
+          </button>
         </div>
       </header>
 
+      {activePage === "settings" ? (
+        <SettingsPage
+          shortcuts={shortcuts}
+          nativeAvailable={nativeAvailable}
+          midiPorts={midiPorts}
+          midiError={midiError}
+          midiRefreshing={midiRefreshing}
+          midiCaptureCommand={midiCaptureCommand}
+          onChangeShortcuts={setShortcuts}
+          onBeginMidiCapture={beginMidiCapture}
+          onCancelMidiCapture={cancelMidiCapture}
+          onRefreshMidiInputs={handleRefreshMidiInputs}
+        />
+      ) : (
+        <>
       {busy && document?.pageCount ? (
         <div className="progress-track" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}>
           <span style={{ width: `${progress}%` }} />
@@ -643,6 +769,8 @@ export function App() {
           {workerLogPath ? <footer title={workerLogPath}>Saved to {workerLogPath}</footer> : null}
         </section>
       ) : null}
+        </>
+      )}
     </main>
   );
 }

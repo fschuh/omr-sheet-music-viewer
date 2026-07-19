@@ -3,7 +3,8 @@
 This first desktop iteration opens a PDF, rasterizes it page by page, runs the
 local HOMR checkout, caches the generated PNG/MusicXML/visual-sidecar artifacts,
 merges successfully recognized pages into a document-level MusicXML file, and
-overlays recognized note geometry for selection and highlighting. The merged
+overlays recognized note geometry for selection, highlighting, and note-by-note
+playback navigation. The merged
 file is stored at the PDF cache root using the PDF filename with a `.musicxml`
 extension.
 
@@ -11,7 +12,15 @@ After the merged file is ready, **Open MusicXML** delegates it to the operating
 system. The configured default application opens it, or the system can prompt
 for an application when no association exists.
 
-Playback and inking are intentionally not part of this iteration.
+Playback commands can be triggered from the viewer toolbar, customizable
+keyboard shortcuts, or optional MIDI messages. Open **Settings** to reassign a
+shortcut: select a keyboard cell and press a key combination, or select a MIDI
+cell and send the desired message. Press `Esc` to cancel either capture.
+
+On Windows, the app listens to every standard MIDI input exposed by the system.
+BLE MIDI hardware therefore needs a bridge that exposes it as a Windows MIDI
+port. MIDI assignments are device- and channel-independent, and the Settings
+page can rescan inputs after a bridge or device is connected.
 
 ## Development
 

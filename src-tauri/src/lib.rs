@@ -1,3 +1,4 @@
+use midir::{Ignore, MidiInput, MidiInputConnection};
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::fs::{self, OpenOptions};
@@ -10,6 +11,98 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use uuid::Uuid;
 
 const PROTOCOL_VERSION: u8 = 1;
+
+#[derive(Default)]
+struct MidiInputManager {
+    connections: Mutex<Vec<MidiInputConnection<()>>>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MidiMessageEvent {
+    port: String,
+    timestamp: u64,
+    bytes: Vec<u8>,
+}
+
+fn is_channel_voice_message(message: &[u8]) -> bool {
+    message
+        .first()
+        .is_some_and(|status| (0x80..=0xef).contains(status))
+}
+
+impl MidiInputManager {
+    fn refresh(&self, app: &AppHandle) -> Result<Vec<String>, String> {
+        let mut connections = self
+            .connections
+            .lock()
+            .map_err(|_| "MIDI input lock was poisoned")?;
+        // WinMM devices are commonly exclusive, so release old handles before reconnecting.
+        connections.clear();
+
+        let probe =
+            MidiInput::new("Sheet Music Viewer MIDI input").map_err(|error| error.to_string())?;
+        let port_count = probe.port_count();
+        drop(probe);
+
+        let mut connected_names = Vec::new();
+        let mut connection_errors = Vec::new();
+        for port_index in 0..port_count {
+            let mut midi_input = match MidiInput::new("Sheet Music Viewer MIDI input") {
+                Ok(input) => input,
+                Err(error) => {
+                    connection_errors.push(error.to_string());
+                    continue;
+                }
+            };
+            // System-exclusive, timing, and active-sensing events are not useful page-turn controls.
+            midi_input.ignore(Ignore::All);
+            let ports = midi_input.ports();
+            let Some(port) = ports.get(port_index).cloned() else {
+                continue;
+            };
+            let port_name = midi_input
+                .port_name(&port)
+                .unwrap_or_else(|_| format!("MIDI input {}", port_index + 1));
+            let event_port = port_name.clone();
+            let event_app = app.clone();
+            let connection_name =
+                format!("Sheet Music Viewer page turner input {}", port_index + 1);
+            match midi_input.connect(
+                &port,
+                &connection_name,
+                move |timestamp, message, _| {
+                    if !is_channel_voice_message(message) {
+                        return;
+                    }
+                    let _ = event_app.emit(
+                        "midi-message",
+                        MidiMessageEvent {
+                            port: event_port.clone(),
+                            timestamp,
+                            bytes: message.to_vec(),
+                        },
+                    );
+                },
+                (),
+            ) {
+                Ok(connection) => {
+                    connected_names.push(port_name);
+                    connections.push(connection);
+                }
+                Err(error) => connection_errors.push(format!("{port_name}: {error}")),
+            }
+        }
+
+        if connections.is_empty() && !connection_errors.is_empty() {
+            return Err(format!(
+                "Could not connect to a MIDI input: {}",
+                connection_errors.join("; ")
+            ));
+        }
+        Ok(connected_names)
+    }
+}
 
 fn worker_log_path(app: &AppHandle) -> Result<PathBuf, String> {
     let log_directory = app
@@ -367,6 +460,14 @@ fn get_worker_log_path(app: AppHandle) -> Result<String, String> {
     Ok(worker_log_path(&app)?.to_string_lossy().into_owned())
 }
 
+#[tauri::command]
+fn refresh_midi_inputs(
+    app: AppHandle,
+    midi_inputs: State<'_, MidiInputManager>,
+) -> Result<Vec<String>, String> {
+    midi_inputs.refresh(&app)
+}
+
 fn open_with_system(path: &Path) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     let mut command = {
@@ -423,9 +524,16 @@ fn open_cache_directory(app: AppHandle, path: String) -> Result<(), String> {
 pub fn run() {
     tauri::Builder::default()
         .manage(WorkerSupervisor::default())
+        .manage(MidiInputManager::default())
         .setup(|app| {
             let cache_root = app.path().app_cache_dir()?;
             fs::create_dir_all(cache_root)?;
+            if let Err(error) = app
+                .state::<MidiInputManager>()
+                .refresh(&app.handle().clone())
+            {
+                eprintln!("[midi] {error}");
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -435,6 +543,7 @@ pub fn run() {
             retry_page,
             load_page_artifacts,
             get_worker_log_path,
+            refresh_midi_inputs,
             open_music_xml,
             open_cache_directory
         ])
@@ -446,7 +555,7 @@ pub fn run() {
 mod tests {
     use std::path::Path;
 
-    use super::{has_music_xml_extension, strip_ansi_codes};
+    use super::{has_music_xml_extension, is_channel_voice_message, strip_ansi_codes};
 
     #[test]
     fn worker_logs_strip_terminal_colors() {
@@ -462,5 +571,16 @@ mod tests {
         assert!(has_music_xml_extension(Path::new("score.MUSICXML")));
         assert!(!has_music_xml_extension(Path::new("score.xml")));
         assert!(!has_music_xml_extension(Path::new("score.musicxml.exe")));
+    }
+
+    #[test]
+    fn midi_input_accepts_all_channel_voice_statuses_only() {
+        assert!(is_channel_voice_message(&[0x80, 60, 0]));
+        assert!(is_channel_voice_message(&[0x9f, 60, 127]));
+        assert!(is_channel_voice_message(&[0xbe, 64, 127]));
+        assert!(is_channel_voice_message(&[0xef, 0, 64]));
+        assert!(!is_channel_voice_message(&[0xf8]));
+        assert!(!is_channel_voice_message(&[0xfe]));
+        assert!(!is_channel_voice_message(&[]));
     }
 }

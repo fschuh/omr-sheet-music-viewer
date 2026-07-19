@@ -48,6 +48,12 @@ interface PageArtifactData {
   visualSidecar: VisualSidecar;
 }
 
+export interface MidiMessageEvent {
+  port: string;
+  timestamp: number;
+  bytes: number[];
+}
+
 export function nativeViewerAvailable(): boolean {
   return isTauri();
 }
@@ -70,6 +76,10 @@ export async function retryPage(jobId: string, pageIndex: number): Promise<void>
 
 export async function getWorkerLogPath(): Promise<string> {
   return invoke<string>("get_worker_log_path");
+}
+
+export async function refreshMidiInputs(): Promise<string[]> {
+  return invoke<string[]>("refresh_midi_inputs");
 }
 
 export async function openCacheDirectory(path: string): Promise<void> {
@@ -95,4 +105,10 @@ export async function subscribeToWorkerEvents(
   callback: (event: WorkerEvent) => void,
 ): Promise<UnlistenFn> {
   return listen<WorkerEvent>("worker-event", ({ payload }) => callback(payload));
+}
+
+export async function subscribeToMidiMessages(
+  callback: (event: MidiMessageEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<MidiMessageEvent>("midi-message", ({ payload }) => callback(payload));
 }
