@@ -1,5 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { layoutNoteLabels, selectedGroupIds } from "./noteLabels";
+import type { PlaybackCommand, PlaybackMoment } from "./playback";
 import type {
   DocumentPage,
   ViewportTransform,
@@ -14,7 +15,8 @@ const MIN_SCALE = 0.08;
 const MAX_SCALE = 6;
 const CLICK_MOVE_TOLERANCE = 6;
 const PAGE_GAP = 28;
-const SHOW_REFRESH_DIAGNOSTIC = window.location.hostname === "localhost";
+const SHOW_REFRESH_DIAGNOSTIC =
+  typeof window !== "undefined" && window.location.hostname === "localhost";
 
 interface DocumentViewerProps {
   documentKey: string;
@@ -25,6 +27,10 @@ interface DocumentViewerProps {
   showDetectedNoteheadContours: boolean;
   showRefinedNoteheadContours: boolean;
   showRawStemContours: boolean;
+  playbackActive: boolean;
+  playbackAvailable: boolean;
+  playbackMoment: PlaybackMoment | null;
+  onPlaybackCommand: (command: PlaybackCommand) => void;
   onSelectGroup: (group: VisualGroupRef | null) => void;
   onRetryPage: (pageIndex: number) => void;
 }
@@ -129,6 +135,20 @@ function pointsToSvg(points: VisualPoint[]): string {
   return points.map(([x, y]) => `${x},${y}`).join(" ");
 }
 
+function visualGroupBBox(group: VisualGroup): VisualBBox {
+  if (hasBBox(group)) return group.bbox;
+  const ellipses = group.notehead_ellipses ?? [];
+  if (ellipses.length > 0) {
+    return [
+      Math.min(...ellipses.map((ellipse) => ellipse.center[0] - ellipse.rx)),
+      Math.min(...ellipses.map((ellipse) => ellipse.center[1] - ellipse.ry)),
+      Math.max(...ellipses.map((ellipse) => ellipse.center[0] + ellipse.rx)),
+      Math.max(...ellipses.map((ellipse) => ellipse.center[1] + ellipse.ry)),
+    ];
+  }
+  return [group.center[0] - 6, group.center[1] - 6, group.center[0] + 6, group.center[1] + 6];
+}
+
 interface PageOverlayProps {
   page: DocumentPage;
   selected: VisualGroupRef | null;
@@ -137,6 +157,8 @@ interface PageOverlayProps {
   showDetectedNoteheadContours: boolean;
   showRefinedNoteheadContours: boolean;
   showRawStemContours: boolean;
+  playbackActive: boolean;
+  playbackGroupIds: string[];
 }
 
 const PageOverlay = memo(function PageOverlay({
@@ -147,13 +169,17 @@ const PageOverlay = memo(function PageOverlay({
   showDetectedNoteheadContours,
   showRefinedNoteheadContours,
   showRawStemContours,
+  playbackActive,
+  playbackGroupIds,
 }: PageOverlayProps) {
   const selectedIds = useMemo(
-    () =>
-      page.visualSidecar
+    () => {
+      if (playbackActive) return new Set(playbackGroupIds);
+      return page.visualSidecar
         ? selectedGroupIds(page.visualSidecar, selected, page.index, highlightAll)
-        : new Set<string>(),
-    [highlightAll, page.index, page.visualSidecar, selected],
+        : new Set<string>();
+    },
+    [highlightAll, page.index, page.visualSidecar, playbackActive, playbackGroupIds, selected],
   );
   const noteLabels = useMemo(
     () =>
@@ -171,7 +197,11 @@ const PageOverlay = memo(function PageOverlay({
   if (!page.visualSidecar) return null;
   const sidecar = page.visualSidecar;
   return (
-    <svg className="overlay" viewBox={`0 0 ${page.width} ${page.height}`} aria-hidden="true">
+    <svg
+      className={`overlay${playbackActive ? " playback-overlay" : ""}`}
+      viewBox={`0 0 ${page.width} ${page.height}`}
+      aria-hidden="true"
+    >
       {showRawStemContours
         ? sidecar.raw_stem_contours?.map((stem, index) => (
             <polyline
@@ -183,9 +213,15 @@ const PageOverlay = memo(function PageOverlay({
         : null}
       {sidecar.visual_groups.map((group) => {
         const selectedClass = selectedIds.has(group.visual_group_id) ? " selected" : "";
+        const playbackClass = playbackActive && selectedClass ? " playback-selected" : "";
         const fittedNoteheads = (group.notehead_ellipses?.length ?? 0) > 0;
         return (
-          <g key={group.visual_group_id} className={`visual-group${selectedClass}`}>
+          <g
+            key={group.visual_group_id}
+            className={`visual-group${selectedClass}${playbackClass}`}
+            data-visual-group-id={group.visual_group_id}
+            data-playback-selected={playbackClass ? "true" : undefined}
+          >
             {fittedNoteheads && !showOriginalNoteheadContours
               ? group.notehead_ellipses?.map((ellipse, index) => (
                   <ellipse
@@ -286,6 +322,10 @@ export function DocumentViewer({
   showDetectedNoteheadContours,
   showRefinedNoteheadContours,
   showRawStemContours,
+  playbackActive,
+  playbackAvailable,
+  playbackMoment,
+  onPlaybackCommand,
   onSelectGroup,
   onRetryPage,
 }: DocumentViewerProps) {
@@ -512,6 +552,57 @@ export function DocumentViewer({
     }
   }
 
+  useEffect(() => {
+    if (!playbackActive || !playbackMoment) return;
+    const stage = stageRef.current;
+    const page = pages.find((candidate) => candidate.index === playbackMoment.pageIndex);
+    const sidecar = page?.visualSidecar;
+    const rect = stage?.getBoundingClientRect();
+    if (!stage || !page || !sidecar || !rect) return;
+
+    const staffGroups = sidecar.visual_groups.filter(
+      (group) => group.staff_index === playbackMoment.staffIndex,
+    );
+    const momentIds = new Set(playbackMoment.visualGroupIds);
+    const momentGroups = staffGroups.filter((group) => momentIds.has(group.visual_group_id));
+    if (staffGroups.length === 0 || momentGroups.length === 0) return;
+
+    const pageTop = pages
+      .filter((candidate) => candidate.index < page.index)
+      .reduce((total, candidate) => total + candidate.height + PAGE_GAP, 0);
+    const pageLeft = (layout.width - page.width) / 2;
+    const staffBoxes = staffGroups.map(visualGroupBBox);
+    const momentBoxes = momentGroups.map(visualGroupBBox);
+    const verticalPadding = Math.max(18, page.height * 0.018);
+    const staffTop = pageTop + Math.min(...staffBoxes.map((box) => box[1])) - verticalPadding;
+    const staffBottom = pageTop + Math.max(...staffBoxes.map((box) => box[3])) + verticalPadding;
+    const momentLeft = pageLeft + Math.min(...momentBoxes.map((box) => box[0]));
+    const momentRight = pageLeft + Math.max(...momentBoxes.map((box) => box[2]));
+    const current = transformRef.current;
+    const safeTop = rect.height * 0.12;
+    const safeBottom = rect.height * 0.88;
+    const safeLeft = rect.width * 0.12;
+    const safeRight = rect.width * 0.88;
+    const screenStaffTop = current.y + staffTop * current.scale;
+    const screenStaffBottom = current.y + staffBottom * current.scale;
+    const screenMomentLeft = current.x + momentLeft * current.scale;
+    const screenMomentRight = current.x + momentRight * current.scale;
+    let x = current.x;
+    let y = current.y;
+
+    if (screenStaffTop < safeTop || screenStaffBottom > safeBottom) {
+      const documentCenter = (staffTop + staffBottom) / 2;
+      y = rect.height / 2 - documentCenter * current.scale;
+    }
+    if (screenMomentLeft < safeLeft || screenMomentRight > safeRight) {
+      const documentCenter = (momentLeft + momentRight) / 2;
+      x = rect.width / 2 - documentCenter * current.scale;
+    }
+    if (Math.abs(x - current.x) > 0.5 || Math.abs(y - current.y) > 0.5) {
+      commitTransform({ ...current, x, y });
+    }
+  }, [layout.width, pages, playbackActive, playbackMoment]);
+
   return (
     <div className="viewer">
       <div className="viewer-toolbar">
@@ -538,6 +629,60 @@ export function DocumentViewer({
             commitTransform({ ...current, scale: clampScale(current.scale * 1.2) });
           }}
         >+</button>
+        <div className="toolbar-separator" aria-hidden="true" />
+        <div className="playback-controls" role="group" aria-label="Playback controls">
+          <button
+            type="button"
+            className={`playback-toggle${playbackActive ? " active" : ""}`}
+            aria-label="Play"
+            aria-pressed={playbackActive}
+            title={playbackActive ? "Exit playback mode (Space)" : "Enter playback mode (Space)"}
+            disabled={!playbackAvailable && !playbackActive}
+            onClick={() => onPlaybackCommand("togglePlayback")}
+          >{playbackActive ? "■" : "▶"}</button>
+          <button
+            type="button"
+            aria-label="Backward one page"
+            title="Backward one page (Up arrow)"
+            disabled={!playbackActive}
+            onClick={() => onPlaybackCommand("backwardPage")}
+          >⇤</button>
+          <button
+            type="button"
+            aria-label="Backward one bar"
+            title="Backward one bar (Comma)"
+            disabled={!playbackActive}
+            onClick={() => onPlaybackCommand("backwardBar")}
+          >←│</button>
+          <button
+            type="button"
+            aria-label="Backward one note"
+            title="Backward one note (Left arrow)"
+            disabled={!playbackActive}
+            onClick={() => onPlaybackCommand("backwardNote")}
+          >←</button>
+          <button
+            type="button"
+            aria-label="Forward one note"
+            title="Forward one note (Right arrow)"
+            disabled={!playbackActive}
+            onClick={() => onPlaybackCommand("forwardNote")}
+          >→</button>
+          <button
+            type="button"
+            aria-label="Forward one bar"
+            title="Forward one bar (Period)"
+            disabled={!playbackActive}
+            onClick={() => onPlaybackCommand("forwardBar")}
+          >│→</button>
+          <button
+            type="button"
+            aria-label="Forward one page"
+            title="Forward one page (Down arrow)"
+            disabled={!playbackActive}
+            onClick={() => onPlaybackCommand("forwardPage")}
+          >⇥</button>
+        </div>
       </div>
       <div
         ref={stageRef}
@@ -571,6 +716,10 @@ export function DocumentViewer({
                 page={page}
                 selected={selectedGroup}
                 highlightAll={highlightAllNotes}
+                playbackActive={playbackActive}
+                playbackGroupIds={
+                  playbackMoment?.pageIndex === page.index ? playbackMoment.visualGroupIds : []
+                }
                 showOriginalNoteheadContours={showOriginalNoteheadContours}
                 showDetectedNoteheadContours={showDetectedNoteheadContours}
                 showRefinedNoteheadContours={showRefinedNoteheadContours}

@@ -1,5 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DocumentViewer } from "./DocumentViewer";
+import {
+  buildPlaybackTimeline,
+  currentPlaybackMoment,
+  initialPlaybackState,
+  runPlaybackCommand as applyPlaybackCommand,
+  type PlaybackCommand,
+} from "./playback";
 import {
   cancelJob,
   choosePdf,
@@ -71,6 +78,26 @@ function statusLabel(document: LoadedDocument): string {
   return document.cacheStatus === "complete" ? "Loaded from cache" : "Recognition complete";
 }
 
+function playbackCommandForKey(event: KeyboardEvent): PlaybackCommand | null {
+  if (event.code === "Space") return "togglePlayback";
+  if (event.key === "ArrowRight") return "forwardNote";
+  if (event.key === "ArrowLeft") return "backwardNote";
+  if (event.key === "ArrowDown") return "forwardPage";
+  if (event.key === "ArrowUp") return "backwardPage";
+  if (event.code === "Period") return "forwardBar";
+  if (event.code === "Comma") return "backwardBar";
+  return null;
+}
+
+function isEditableKeyboardTarget(target: EventTarget | null): boolean {
+  return (
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement ||
+    target instanceof HTMLSelectElement ||
+    (target instanceof HTMLElement && target.isContentEditable)
+  );
+}
+
 export function App() {
   const nativeAvailable = nativeViewerAvailable();
   const activeJobId = useRef<string | null>(null);
@@ -90,6 +117,35 @@ export function App() {
   const [error, setError] = useState<string | null>(
     nativeAvailable ? null : "PDF processing is available in the Tauri desktop app. Run npm run tauri dev.",
   );
+  const playbackTimeline = useMemo(
+    () => buildPlaybackTimeline(document?.pages ?? []),
+    [document?.pages],
+  );
+  const [playbackState, setPlaybackState] = useState(initialPlaybackState);
+  const playbackMoment = currentPlaybackMoment(playbackTimeline, playbackState);
+  const handlePlaybackCommand = useCallback(
+    (command: PlaybackCommand) => {
+      setPlaybackState((current) => applyPlaybackCommand(playbackTimeline, current, command));
+    },
+    [playbackTimeline],
+  );
+
+  useEffect(() => {
+    setPlaybackState(initialPlaybackState);
+  }, [document?.jobId]);
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (isEditableKeyboardTarget(event.target)) return;
+      const command = playbackCommandForKey(event);
+      if (!command || (command !== "togglePlayback" && !playbackState.active)) return;
+      if (command === "togglePlayback" && event.repeat) return;
+      event.preventDefault();
+      handlePlaybackCommand(command);
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [handlePlaybackCommand, playbackState.active]);
 
   useEffect(() => {
     if (!nativeAvailable) return;
@@ -147,6 +203,7 @@ export function App() {
           }
           setSelectedGroup(null);
           setHighlightAllNotes(false);
+          setPlaybackState(initialPlaybackState);
           return {
             jobId: event.jobId,
             name: event.documentName,
@@ -316,6 +373,7 @@ export function App() {
       if (!path) return;
       setSelectedGroup(null);
       setHighlightAllNotes(false);
+      setPlaybackState(initialPlaybackState);
       const jobId = await openPdf(path);
       activeJobId.current = jobId;
       setDocument((current) =>
@@ -469,6 +527,10 @@ export function App() {
               showDetectedNoteheadContours={showDetectedNoteheadContours}
               showRefinedNoteheadContours={showRefinedNoteheadContours}
               showRawStemContours={showRawStemContours}
+              playbackActive={playbackState.active}
+              playbackAvailable={playbackTimeline.length > 0}
+              playbackMoment={playbackMoment}
+              onPlaybackCommand={handlePlaybackCommand}
               onSelectGroup={(group) => {
                 setSelectedGroup(group);
                 setHighlightAllNotes(false);

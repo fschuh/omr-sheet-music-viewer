@@ -235,6 +235,39 @@ button:disabled {
   text-align: center;
 }
 
+.toolbar-separator {
+  align-self: stretch;
+  background: #d2cdc5;
+  margin: 2px 2px;
+  width: 1px;
+}
+
+.playback-controls {
+  align-items: center;
+  display: flex;
+  gap: 3px;
+}
+
+.viewer-toolbar .playback-controls button {
+  border-radius: 6px;
+  font-size: 0.86rem;
+  height: 30px;
+  line-height: 1;
+  padding: 0;
+  width: 30px;
+}
+
+.viewer-toolbar .playback-controls .playback-toggle {
+  color: #116657;
+  margin-right: 2px;
+}
+
+.viewer-toolbar .playback-controls .playback-toggle.active {
+  background: #116657;
+  border-color: #116657;
+  color: #fff;
+}
+
 .viewer-stage {
   background-color: #6e6b67;
   background-image: radial-gradient(rgb(255 255 255 / 8%) 0.7px, transparent 0.7px);
@@ -299,6 +332,13 @@ button:disabled {
   stroke-width: 0.4;
 }
 
+.visual-group.playback-selected polygon,
+.visual-group.playback-selected ellipse {
+  fill: rgb(19 169 141 / 90%);
+  stroke: #0a6f5e;
+  stroke-width: 0.7;
+}
+
 .overlay .raw-stem-contour {
   fill: none;
   stroke: rgb(8 130 94 / 78%);
@@ -350,6 +390,19 @@ button:disabled {
   font-weight: 800;
   letter-spacing: -0.02em;
   text-anchor: middle;
+}
+
+.overlay.playback-overlay .note-label-connectors line {
+  stroke: #087361;
+}
+
+.overlay.playback-overlay .note-label rect {
+  fill: rgb(239 255 250 / 97%);
+  stroke: #087361;
+}
+
+.overlay.playback-overlay .note-label text {
+  fill: #075647;
 }
 
 .page-placeholder {
