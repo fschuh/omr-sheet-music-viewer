@@ -206,6 +206,27 @@ export function midiShortcutsEqual(left: MidiShortcut, right: MidiShortcut): boo
     left.data.every((byte, index) => byte === right.data[index]);
 }
 
+export function midiShortcutSupportsHold(shortcut: MidiShortcut): boolean {
+  const value = shortcut.data[1] ?? 0;
+  return [0x90, 0xa0, 0xb0].includes(shortcut.status) && value > 0;
+}
+
+export function midiShortcutIsRelease(
+  pressed: MidiShortcut,
+  received: MidiShortcut,
+): boolean {
+  const sameControl = pressed.data[0] === received.data[0];
+  if (!sameControl) return false;
+  if (pressed.status === 0x90 && pressed.data[1] > 0) {
+    return received.status === 0x80 ||
+      (received.status === 0x90 && received.data[1] === 0);
+  }
+  if ([0xa0, 0xb0].includes(pressed.status) && pressed.data[1] > 0) {
+    return received.status === pressed.status && received.data[1] === 0;
+  }
+  return false;
+}
+
 export function commandForMidiShortcut(
   shortcuts: PlaybackShortcuts,
   received: MidiShortcut,

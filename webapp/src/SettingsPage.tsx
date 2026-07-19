@@ -108,7 +108,7 @@ export function SettingsPage({
         <header className="settings-card-header">
           <div>
             <h3 id="shortcuts-title">Shortcuts</h3>
-            <p>Select a shortcut to replace it. MIDI assignments accept channel voice messages from any connected input and any channel.</p>
+            <p>Select a shortcut to replace it. MIDI assignments accept channel voice messages from any connected input and any channel. Hold Note or Control Change inputs to repeat navigation commands.</p>
           </div>
           <button
             type="button"

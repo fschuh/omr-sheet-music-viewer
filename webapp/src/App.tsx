@@ -30,8 +30,11 @@ import {
   commandForMidiShortcut,
   loadPlaybackShortcuts,
   midiShortcutFromBytes,
+  midiShortcutIsRelease,
+  midiShortcutSupportsHold,
   midiShortcutsEqual,
   savePlaybackShortcuts,
+  type MidiShortcut,
   type PlaybackShortcuts,
 } from "./shortcuts";
 import type {
@@ -48,6 +51,15 @@ interface WorkerLogEntry {
 }
 
 const MAX_VISIBLE_WORKER_LOGS = 500;
+const MIDI_REPEAT_DELAY_MS = 400;
+const MIDI_REPEAT_INTERVAL_MS = 75;
+
+interface ActiveMidiRepeat {
+  command: PlaybackCommand;
+  shortcut: MidiShortcut;
+  delayId: number | null;
+  intervalId: number | null;
+}
 
 function pendingPages(pageCount: number): DocumentPage[] {
   return Array.from({ length: pageCount }, (_, index) => ({
@@ -116,6 +128,7 @@ export function App() {
   const [midiRefreshing, setMidiRefreshing] = useState(false);
   const [midiCaptureCommand, setMidiCaptureCommand] = useState<PlaybackCommand | null>(null);
   const midiCaptureCommandRef = useRef<PlaybackCommand | null>(null);
+  const activeMidiRepeatRef = useRef<ActiveMidiRepeat | null>(null);
   const [document, setDocument] = useState<LoadedDocument | null>(null);
   const [selectedGroup, setSelectedGroup] = useState<VisualGroupRef | null>(null);
   const [highlightAllNotes, setHighlightAllNotes] = useState(false);
@@ -147,6 +160,43 @@ export function App() {
   const handlePlaybackCommandRef = useRef(handlePlaybackCommand);
   handlePlaybackCommandRef.current = handlePlaybackCommand;
 
+  const stopMidiRepeat = useCallback(() => {
+    const activeRepeat = activeMidiRepeatRef.current;
+    if (!activeRepeat) return;
+    if (activeRepeat.delayId !== null) window.clearTimeout(activeRepeat.delayId);
+    if (activeRepeat.intervalId !== null) window.clearInterval(activeRepeat.intervalId);
+    activeMidiRepeatRef.current = null;
+  }, []);
+
+  const startMidiRepeat = useCallback((command: PlaybackCommand, shortcut: MidiShortcut) => {
+    if (!midiShortcutSupportsHold(shortcut)) return;
+    stopMidiRepeat();
+    const activeRepeat: ActiveMidiRepeat = {
+      command,
+      shortcut,
+      delayId: null,
+      intervalId: null,
+    };
+    const repeatCommand = () => {
+      if (
+        activeMidiRepeatRef.current !== activeRepeat ||
+        activePageRef.current !== "viewer" ||
+        !playbackActiveRef.current
+      ) {
+        if (activeMidiRepeatRef.current === activeRepeat) stopMidiRepeat();
+        return;
+      }
+      handlePlaybackCommandRef.current(command);
+    };
+    activeMidiRepeatRef.current = activeRepeat;
+    activeRepeat.delayId = window.setTimeout(() => {
+      activeRepeat.delayId = null;
+      repeatCommand();
+      if (activeMidiRepeatRef.current !== activeRepeat) return;
+      activeRepeat.intervalId = window.setInterval(repeatCommand, MIDI_REPEAT_INTERVAL_MS);
+    }, MIDI_REPEAT_DELAY_MS);
+  }, [stopMidiRepeat]);
+
   const handleRefreshMidiInputs = useCallback(() => {
     if (!nativeAvailable) return;
     setMidiRefreshing(true);
@@ -169,10 +219,11 @@ export function App() {
   }, []);
 
   const beginMidiCapture = useCallback((command: PlaybackCommand) => {
+    stopMidiRepeat();
     midiCaptureCommandRef.current = command;
     setMidiCaptureCommand(command);
     handleRefreshMidiInputs();
-  }, [handleRefreshMidiInputs]);
+  }, [handleRefreshMidiInputs, stopMidiRepeat]);
 
   useEffect(() => {
     savePlaybackShortcuts(shortcuts);
@@ -197,6 +248,10 @@ export function App() {
   }, [activePage, handlePlaybackCommand, playbackState.active, shortcuts]);
 
   useEffect(() => {
+    if (!playbackState.active || activePage !== "viewer") stopMidiRepeat();
+  }, [activePage, playbackState.active, stopMidiRepeat]);
+
+  useEffect(() => {
     if (!nativeAvailable) return;
     let disposed = false;
     let unsubscribe: (() => void) | undefined;
@@ -204,6 +259,13 @@ export function App() {
     void subscribeToMidiMessages((event) => {
       const received = midiShortcutFromBytes(event.bytes);
       if (!received) return;
+
+      const activeRepeat = activeMidiRepeatRef.current;
+      if (activeRepeat && midiShortcutIsRelease(activeRepeat.shortcut, received)) {
+        stopMidiRepeat();
+        return;
+      }
+      if (activeRepeat && midiShortcutsEqual(activeRepeat.shortcut, received)) return;
 
       const captureCommand = midiCaptureCommandRef.current;
       if (captureCommand) {
@@ -226,7 +288,9 @@ export function App() {
       if (activePageRef.current !== "viewer") return;
       const command = commandForMidiShortcut(shortcutsRef.current, received);
       if (!command || (command !== "togglePlayback" && !playbackActiveRef.current)) return;
+      stopMidiRepeat();
       handlePlaybackCommandRef.current(command);
+      if (command !== "togglePlayback") startMidiRepeat(command, received);
     }).then((unlisten) => {
       if (disposed) unlisten();
       else unsubscribe = unlisten;
@@ -235,13 +299,17 @@ export function App() {
     return () => {
       disposed = true;
       unsubscribe?.();
+      stopMidiRepeat();
     };
-  }, [nativeAvailable]);
+  }, [nativeAvailable, startMidiRepeat, stopMidiRepeat]);
 
   useEffect(() => {
-    if (activePage === "settings") handleRefreshMidiInputs();
+    if (activePage === "settings") {
+      stopMidiRepeat();
+      handleRefreshMidiInputs();
+    }
     else cancelMidiCapture();
-  }, [activePage, cancelMidiCapture, handleRefreshMidiInputs]);
+  }, [activePage, cancelMidiCapture, handleRefreshMidiInputs, stopMidiRepeat]);
 
   useEffect(() => {
     if (!nativeAvailable) return;

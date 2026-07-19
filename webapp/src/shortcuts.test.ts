@@ -5,7 +5,9 @@ import {
   commandForMidiShortcut,
   defaultPlaybackShortcuts,
   formatKeyboardShortcut,
+  midiShortcutIsRelease,
   midiShortcutFromBytes,
+  midiShortcutSupportsHold,
   parsePlaybackShortcuts,
 } from "./shortcuts";
 
@@ -41,6 +43,22 @@ test("MIDI bindings match the same message on every channel", () => {
   shortcuts.forwardNote.midi = learned;
   assert.equal(commandForMidiShortcut(shortcuts, anotherChannel!), "forwardNote");
   assert.equal(commandForMidiShortcut(shortcuts, midiShortcutFromBytes([0x9e, 60, 0])!), null);
+});
+
+test("MIDI note and control presses recognize their release on every channel", () => {
+  const notePress = midiShortcutFromBytes([0x91, 60, 100])!;
+  assert.equal(midiShortcutSupportsHold(notePress), true);
+  assert.equal(midiShortcutIsRelease(notePress, midiShortcutFromBytes([0x8f, 60, 64])!), true);
+  assert.equal(midiShortcutIsRelease(notePress, midiShortcutFromBytes([0x9a, 60, 0])!), true);
+  assert.equal(midiShortcutIsRelease(notePress, midiShortcutFromBytes([0x8f, 61, 64])!), false);
+
+  const controlPress = midiShortcutFromBytes([0xb2, 64, 127])!;
+  assert.equal(midiShortcutSupportsHold(controlPress), true);
+  assert.equal(midiShortcutIsRelease(controlPress, midiShortcutFromBytes([0xbd, 64, 0])!), true);
+  assert.equal(midiShortcutIsRelease(controlPress, midiShortcutFromBytes([0xbd, 65, 0])!), false);
+
+  assert.equal(midiShortcutSupportsHold(midiShortcutFromBytes([0xc0, 4])!), false);
+  assert.equal(midiShortcutSupportsHold(midiShortcutFromBytes([0xb0, 64, 0])!), false);
 });
 
 test("invalid saved values fall back safely without dropping valid bindings", () => {
