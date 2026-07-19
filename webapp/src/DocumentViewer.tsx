@@ -1,5 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { layoutNoteLabels, selectedGroupIds } from "./noteLabels";
+import { playbackGroupIdsForPage } from "./playback";
 import type { PlaybackCommand, PlaybackMoment } from "./playback";
 import type {
   DocumentPage,
@@ -158,7 +159,7 @@ interface PageOverlayProps {
   showRefinedNoteheadContours: boolean;
   showRawStemContours: boolean;
   playbackActive: boolean;
-  playbackGroupIds: string[];
+  playbackGroupIds: readonly string[];
 }
 
 const PageOverlay = memo(function PageOverlay({
@@ -717,9 +718,7 @@ export function DocumentViewer({
                 selected={selectedGroup}
                 highlightAll={highlightAllNotes}
                 playbackActive={playbackActive}
-                playbackGroupIds={
-                  playbackMoment?.pageIndex === page.index ? playbackMoment.visualGroupIds : []
-                }
+                playbackGroupIds={playbackGroupIdsForPage(playbackMoment, page.index)}
                 showOriginalNoteheadContours={showOriginalNoteheadContours}
                 showDetectedNoteheadContours={showDetectedNoteheadContours}
                 showRefinedNoteheadContours={showRefinedNoteheadContours}

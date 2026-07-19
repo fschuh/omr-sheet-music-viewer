@@ -22,6 +22,15 @@ export interface PlaybackMoment {
   center: [number, number];
 }
 
+const NO_PLAYBACK_GROUPS: readonly string[] = [];
+
+export function playbackGroupIdsForPage(
+  moment: PlaybackMoment | null,
+  pageIndex: number,
+): readonly string[] {
+  return moment?.pageIndex === pageIndex ? moment.visualGroupIds : NO_PLAYBACK_GROUPS;
+}
+
 export interface PlaybackState {
   active: boolean;
   currentMomentId: string | null;

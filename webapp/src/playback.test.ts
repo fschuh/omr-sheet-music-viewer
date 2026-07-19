@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   buildPlaybackTimeline,
   initialPlaybackState,
+  playbackGroupIdsForPage,
   runPlaybackCommand,
   type PlaybackCommand,
   type PlaybackState,
@@ -132,4 +133,15 @@ test("navigation is inactive outside playback mode and toggle exits cleanly", ()
   assert.equal(run(timeline, initialPlaybackState, "forwardNote"), initialPlaybackState);
   const active = run(timeline, initialPlaybackState, "togglePlayback");
   assert.deepEqual(run(timeline, active, "togglePlayback"), initialPlaybackState);
+});
+
+test("reuses the empty page selection so memoized overlays stay memoized", () => {
+  const { timeline } = activeAtFirst([page(0, [group("a", 0, 0, 100, 200)], [1])]);
+  const firstEmptySelection = playbackGroupIdsForPage(timeline[0], 1);
+  const secondEmptySelection = playbackGroupIdsForPage(timeline[0], 2);
+  const inactiveSelection = playbackGroupIdsForPage(null, 0);
+
+  assert.equal(firstEmptySelection, secondEmptySelection);
+  assert.equal(secondEmptySelection, inactiveSelection);
+  assert.equal(playbackGroupIdsForPage(timeline[0], 0), timeline[0].visualGroupIds);
 });
