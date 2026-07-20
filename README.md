@@ -24,12 +24,14 @@ and peak limiting. The bundled medium-dynamics samples come from AKAI's public-d
 library; provenance is recorded beside the assets in
 `webapp/public/audio/piano/SOURCE.md`.
 
-On Windows, the app listens to every standard MIDI input exposed by the system.
-BLE MIDI hardware therefore needs a bridge that exposes it as a Windows MIDI
-port. MIDI assignments are device- and channel-independent, and the Settings
-page can rescan inputs after a bridge or device is connected. MIDI discovery
-runs after the viewer opens; if the system MIDI service does not respond, the
-viewer remains usable and reports that MIDI controls are disabled for the session.
+The app listens to every standard MIDI input exposed by the operating system.
+MIDI assignments are device- and channel-independent, and
+the Settings page can rescan inputs after a bridge or device is connected. 
+On Windows, BLE MIDI hardware requires a bridge that exposes it as a
+standard MIDI port. 
+MIDI discovery runs after the viewer opens; if the system MIDI service does not
+respond, the viewer remains usable and reports that MIDI controls are disabled
+for the session.
 Holding an assigned MIDI Note or nonzero Control Change repeats navigation until
 the corresponding Note Off or zero-value Control Change arrives. Playback-mode
 toggle messages and message types without a release signal remain one-shot.
