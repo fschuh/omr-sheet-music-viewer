@@ -291,12 +291,14 @@ export function runPlaybackCommand(
   timeline: PlaybackMoment[],
   state: PlaybackState,
   command: PlaybackCommand,
+  selectedGroup: VisualGroupRef | null = null,
 ): PlaybackState {
   if (command === "togglePlayback") {
     if (state.active) return { ...state, active: false, currentMomentId: null };
-    return timeline.length === 0
+    const next = timeline.length === 0
       ? { ...state, active: false, currentMomentId: null }
       : { ...state, active: true, currentMomentId: timeline[0].id };
+    return seekPlaybackToGroup(timeline, next, selectedGroup);
   }
   if (command === "toggleNoteSounds") {
     return state.active ? { ...state, noteSoundsEnabled: !state.noteSoundsEnabled } : state;

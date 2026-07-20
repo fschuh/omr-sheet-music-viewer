@@ -192,10 +192,10 @@ export function App() {
   const handlePlaybackCommand = useCallback(
     (command: PlaybackCommand) => {
       commitPlaybackState(
-        applyPlaybackCommand(playbackTimeline, playbackStateRef.current, command),
+        applyPlaybackCommand(playbackTimeline, playbackStateRef.current, command, selectedGroup),
       );
     },
-    [commitPlaybackState, playbackTimeline],
+    [commitPlaybackState, playbackTimeline, selectedGroup],
   );
   const handleSelectGroup = useCallback(
     (group: VisualGroupRef | null) => {

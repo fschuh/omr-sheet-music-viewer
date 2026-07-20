@@ -134,6 +134,24 @@ test("seeks playback to a mouse-selected group and continues navigation there", 
   assert.equal(previous.currentMomentId, timeline[0].id);
 });
 
+test("starts playback at a group selected before entering playback mode", () => {
+  const timeline = buildPlaybackTimeline([
+    page(
+      0,
+      [group("first", 0, 0, 100, 200), group("selected", 0, 0, 200, 200)],
+      [1, 1],
+    ),
+  ]);
+
+  const active = runPlaybackCommand(timeline, initialPlaybackState, "togglePlayback", {
+    pageIndex: 0,
+    visualGroupId: "selected",
+  });
+
+  assert.equal(active.active, true);
+  assert.equal(active.currentMomentId, timeline[1].id);
+});
+
 test("ignores mouse selection outside playback or when the group has no timeline moment", () => {
   const timeline = buildPlaybackTimeline([page(0, [group("a", 0, 0, 100, 200)], [1])]);
   const active = run(timeline, initialPlaybackState, "togglePlayback");
