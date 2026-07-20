@@ -6,6 +6,7 @@ import {
   playbackPitchForNote,
   playbackGroupIdsForPage,
   runPlaybackCommand,
+  seekPlaybackToGroup,
   type PlaybackCommand,
   type PlaybackState,
 } from "./playback";
@@ -111,6 +112,41 @@ test("moves by notes and clamps at the first and last moments", () => {
   assert.equal(beforeFirst.currentMomentId, timeline[0].id);
   assert.equal(second.currentMomentId, timeline[1].id);
   assert.equal(afterLast.currentMomentId, timeline[1].id);
+});
+
+test("seeks playback to a mouse-selected group and continues navigation there", () => {
+  const upperFirst = group("upper-first", 0, 0, 100, 200);
+  const lowerFirst = group("lower-first", 0, 1, 102, 400);
+  const upperSecond = group("upper-second", 0, 0, 200, 200);
+  const lowerSecond = group("lower-second", 0, 1, 202, 400);
+  const { timeline, state: first } = activeAtFirst([
+    page(0, [upperFirst, lowerFirst, upperSecond, lowerSecond], [1, 1, 1, 1]),
+  ]);
+
+  const selected = seekPlaybackToGroup(timeline, first, {
+    pageIndex: 0,
+    visualGroupId: "lower-second",
+  });
+  const previous = run(timeline, selected, "backwardNote");
+
+  assert.equal(selected.currentMomentId, timeline[1].id);
+  assert.deepEqual(timeline[1].visualGroupIds, ["lower-second", "upper-second"]);
+  assert.equal(previous.currentMomentId, timeline[0].id);
+});
+
+test("ignores mouse selection outside playback or when the group has no timeline moment", () => {
+  const timeline = buildPlaybackTimeline([page(0, [group("a", 0, 0, 100, 200)], [1])]);
+  const active = run(timeline, initialPlaybackState, "togglePlayback");
+
+  assert.equal(
+    seekPlaybackToGroup(timeline, initialPlaybackState, { pageIndex: 0, visualGroupId: "a" }),
+    initialPlaybackState,
+  );
+  assert.equal(
+    seekPlaybackToGroup(timeline, active, { pageIndex: 0, visualGroupId: "missing" }),
+    active,
+  );
+  assert.equal(seekPlaybackToGroup(timeline, active, null), active);
 });
 
 test("moves to the first moment of the next and previous bars", () => {

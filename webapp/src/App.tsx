@@ -8,7 +8,9 @@ import {
   initialPlaybackState,
   playbackCommandNames,
   runPlaybackCommand as applyPlaybackCommand,
+  seekPlaybackToGroup,
   type PlaybackCommand,
+  type PlaybackState,
 } from "./playback";
 import { pianoSampler } from "./piano";
 import {
@@ -166,9 +168,8 @@ export function App() {
   const playbackActiveRef = useRef(playbackState.active);
   playbackActiveRef.current = playbackState.active;
   const playbackMoment = currentPlaybackMoment(playbackTimeline, playbackState);
-  const handlePlaybackCommand = useCallback(
-    (command: PlaybackCommand) => {
-      const next = applyPlaybackCommand(playbackTimeline, playbackStateRef.current, command);
+  const commitPlaybackState = useCallback(
+    (next: PlaybackState) => {
       playbackStateRef.current = next;
       setPlaybackState(next);
       if (!next.active || !next.noteSoundsEnabled) {
@@ -187,6 +188,23 @@ export function App() {
       }
     },
     [playbackTimeline],
+  );
+  const handlePlaybackCommand = useCallback(
+    (command: PlaybackCommand) => {
+      commitPlaybackState(
+        applyPlaybackCommand(playbackTimeline, playbackStateRef.current, command),
+      );
+    },
+    [commitPlaybackState, playbackTimeline],
+  );
+  const handleSelectGroup = useCallback(
+    (group: VisualGroupRef | null) => {
+      setSelectedGroup(group);
+      setHighlightAllNotes(false);
+      const next = seekPlaybackToGroup(playbackTimeline, playbackStateRef.current, group);
+      if (next !== playbackStateRef.current) commitPlaybackState(next);
+    },
+    [commitPlaybackState, playbackTimeline],
   );
   const handlePlaybackCommandRef = useRef(handlePlaybackCommand);
   handlePlaybackCommandRef.current = handlePlaybackCommand;
@@ -805,10 +823,7 @@ export function App() {
               playbackAvailable={playbackTimeline.length > 0}
               playbackMoment={playbackMoment}
               onPlaybackCommand={handlePlaybackCommand}
-              onSelectGroup={(group) => {
-                setSelectedGroup(group);
-                setHighlightAllNotes(false);
-              }}
+              onSelectGroup={handleSelectGroup}
               onRetryPage={handleRetryPage}
             />
             <aside className="inspector">

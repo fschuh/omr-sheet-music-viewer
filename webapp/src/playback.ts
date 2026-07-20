@@ -1,4 +1,4 @@
-import type { DocumentPage, VisualGroup, VisualSidecarNote } from "./types";
+import type { DocumentPage, VisualGroup, VisualGroupRef, VisualSidecarNote } from "./types";
 import { musicXmlPitchNames } from "./noteLabels";
 
 export const playbackCommandNames = [
@@ -219,6 +219,21 @@ export function currentPlaybackMoment(
 ): PlaybackMoment | null {
   if (!state.active) return null;
   return timeline.find((moment) => moment.id === state.currentMomentId) ?? timeline[0] ?? null;
+}
+
+export function seekPlaybackToGroup(
+  timeline: PlaybackMoment[],
+  state: PlaybackState,
+  selectedGroup: VisualGroupRef | null,
+): PlaybackState {
+  if (!state.active || !selectedGroup) return state;
+  const moment = timeline.find(
+    (candidate) =>
+      candidate.pageIndex === selectedGroup.pageIndex &&
+      candidate.visualGroupIds.includes(selectedGroup.visualGroupId),
+  );
+  if (!moment || moment.id === state.currentMomentId) return state;
+  return { ...state, currentMomentId: moment.id };
 }
 
 function currentIndex(timeline: PlaybackMoment[], state: PlaybackState): number {
