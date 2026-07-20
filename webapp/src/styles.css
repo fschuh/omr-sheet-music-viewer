@@ -173,6 +173,158 @@ button:disabled {
   flex: 1;
   grid-template-columns: minmax(0, 1fr) 330px;
   min-height: 0;
+  overflow: hidden;
+  position: relative;
+}
+
+.piano-keyboard-overlay {
+  animation: piano-keyboard-enter 180ms ease-out;
+  background: linear-gradient(180deg, #2d2a27 0%, #171614 100%);
+  border-top: 1px solid rgb(255 255 255 / 18%);
+  bottom: 0;
+  box-shadow: 0 -10px 30px rgb(20 17 14 / 38%);
+  color: #f7f3ec;
+  height: clamp(150px, 24vh, 210px);
+  left: 0;
+  padding: 8px 14px 12px;
+  position: absolute;
+  right: 0;
+  user-select: none;
+  z-index: 5;
+}
+
+@keyframes piano-keyboard-enter {
+  from { opacity: 0; transform: translateY(22px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.piano-keyboard-heading {
+  align-items: center;
+  display: grid;
+  gap: 16px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  height: 30px;
+  padding: 0 2px 7px;
+}
+
+.piano-keyboard-title {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.piano-keyboard-current {
+  align-items: center;
+  display: flex;
+  gap: 5px;
+  justify-content: center;
+  min-width: 0;
+}
+
+.piano-keyboard-current > span {
+  color: #aaa39a;
+  font-size: 0.66rem;
+  margin-right: 3px;
+  text-transform: uppercase;
+}
+
+.piano-keyboard-current strong {
+  background: #167966;
+  border: 1px solid #51b7a5;
+  border-radius: 999px;
+  color: #fff;
+  font-size: 0.68rem;
+  line-height: 1;
+  padding: 3px 7px;
+}
+
+.piano-keyboard-range {
+  color: #aaa39a;
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+}
+
+.piano-keys {
+  height: calc(100% - 30px);
+  position: relative;
+}
+
+.piano-white-keys,
+.piano-black-keys {
+  height: 100%;
+  left: 0;
+  position: absolute;
+  top: 0;
+  width: 100%;
+}
+
+.piano-white-keys { display: flex; }
+.piano-black-keys { pointer-events: none; }
+
+.piano-key {
+  position: relative;
+  transition: background 100ms ease, box-shadow 100ms ease, border-color 100ms ease;
+}
+
+.piano-key-white {
+  background: linear-gradient(90deg, #d9d6d0 0%, #fff 14%, #f8f6f1 82%, #cbc7bf 100%);
+  border: 1px solid #393633;
+  border-radius: 0 0 4px 4px;
+  flex: 1 1 0;
+  height: 100%;
+  min-width: 0;
+}
+
+.piano-key-white.active {
+  background: linear-gradient(180deg, #b9eee4 0%, #42baa4 63%, #16806c 100%);
+  border-color: #075d50;
+  box-shadow: inset 0 0 0 2px rgb(255 255 255 / 35%), 0 0 12px rgb(55 215 186 / 58%);
+  z-index: 1;
+}
+
+.piano-key-black {
+  background: linear-gradient(90deg, #090909 0%, #393735 45%, #080808 100%);
+  border: 1px solid #050505;
+  border-radius: 0 0 4px 4px;
+  box-shadow: 0 4px 5px rgb(0 0 0 / 58%);
+  height: 62%;
+  position: absolute;
+  top: 0;
+  z-index: 2;
+}
+
+.piano-key-black.active {
+  background: linear-gradient(180deg, #44cbb3 0%, #0f8b76 72%, #075b4e 100%);
+  border-color: #75ddca;
+  box-shadow: 0 0 13px rgb(63 229 199 / 78%), inset 0 0 0 1px rgb(255 255 255 / 32%);
+  z-index: 3;
+}
+
+.piano-key-label {
+  background: #075f51;
+  border: 1px solid rgb(255 255 255 / 72%);
+  border-radius: 999px;
+  bottom: 13%;
+  color: #fff;
+  font-size: clamp(0.48rem, 0.72vw, 0.7rem);
+  font-weight: 800;
+  left: 50%;
+  line-height: 1;
+  padding: 3px 4px;
+  position: absolute;
+  text-shadow: 0 1px 1px rgb(0 0 0 / 34%);
+  transform: translateX(-50%);
+  white-space: nowrap;
+  z-index: 4;
+}
+
+.piano-key-black .piano-key-label {
+  background: #f7fffc;
+  border-color: #075f51;
+  bottom: 8px;
+  color: #075f51;
+  text-shadow: none;
 }
 
 .empty-state {
@@ -961,6 +1113,13 @@ button:disabled {
   }
 
   .worker-console { flex-basis: 220px; }
+
+  .piano-keyboard-overlay { padding-left: 6px; padding-right: 6px; }
+  .piano-keyboard-heading { gap: 8px; }
+  .piano-keyboard-current > span,
+  .piano-keyboard-range { display: none; }
+  .piano-keyboard-current { justify-content: flex-end; }
+  .piano-keyboard-current strong { font-size: 0.61rem; padding: 3px 5px; }
 
   .settings-card-header { align-items: stretch; flex-direction: column; }
   .settings-card-header .secondary-button { align-self: flex-start; }

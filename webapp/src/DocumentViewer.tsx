@@ -583,7 +583,8 @@ export function DocumentViewer({
     const momentRight = pageLeft + Math.max(...momentBoxes.map((box) => box[2]));
     const current = transformRef.current;
     const safeTop = rect.height * 0.12;
-    const safeBottom = rect.height * 0.88;
+    const keyboardHeight = Math.min(210, Math.max(150, window.innerHeight * 0.24));
+    const safeBottom = Math.max(safeTop + 80, rect.height - keyboardHeight - 20);
     const safeLeft = rect.width * 0.12;
     const safeRight = rect.width * 0.88;
     const screenStaffTop = current.y + staffTop * current.scale;
@@ -595,7 +596,7 @@ export function DocumentViewer({
 
     if (screenStaffTop < safeTop || screenStaffBottom > safeBottom) {
       const documentCenter = (staffTop + staffBottom) / 2;
-      y = rect.height / 2 - documentCenter * current.scale;
+      y = (safeTop + safeBottom) / 2 - documentCenter * current.scale;
     }
     if (screenMomentLeft < safeLeft || screenMomentRight > safeRight) {
       const documentCenter = (momentLeft + momentRight) / 2;

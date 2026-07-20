@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DocumentViewer } from "./DocumentViewer";
+import { PianoKeyboard } from "./PianoKeyboard";
 import { SettingsPage } from "./SettingsPage";
 import {
   buildPlaybackTimeline,
@@ -853,6 +854,9 @@ export function App() {
               </dl>
               {workerInfo ? <p className="worker-info">{workerInfo}</p> : null}
             </aside>
+            {playbackState.active ? (
+              <PianoKeyboard pitches={playbackMoment?.pitches ?? []} />
+            ) : null}
           </>
         ) : (
           <div className="empty-state">
