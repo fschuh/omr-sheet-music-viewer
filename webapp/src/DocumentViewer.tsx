@@ -471,6 +471,7 @@ export function DocumentViewer({
   }
 
   function handlePointerDown(event: React.PointerEvent<HTMLDivElement>) {
+    event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
     setIsPointerPanning(false);
     updatePointer(event);
