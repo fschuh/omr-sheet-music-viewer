@@ -20,7 +20,7 @@ from sheet_music_worker.musicxml_merge import merge_musicxml_pages
 
 RASTER_DPI = 300
 MANIFEST_SCHEMA_VERSION = 1
-VISUAL_SIDECAR_CACHE_REVISION = 8
+VISUAL_SIDECAR_CACHE_REVISION = 11
 
 EventEmitter = Callable[[dict[str, Any]], None]
 

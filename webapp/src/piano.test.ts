@@ -24,7 +24,9 @@ test("chooses nearby roots for repitched notes", () => {
 
 test("starts every distinct chord pitch together on independent voices", async () => {
   const starts: number[] = [];
+  const stops: number[] = [];
   const rates: number[] = [];
+  const releaseEnds: number[] = [];
   const context = {
     state: "running",
     currentTime: 4,
@@ -36,14 +38,16 @@ test("starts every distinct chord pitch together on independent voices", async (
       playbackRate: { setValueAtTime: (value: number) => rates.push(value) },
       connect() { return this; },
       start: (when: number) => starts.push(when),
-      stop: () => undefined,
+      stop: (when: number) => stops.push(when),
       onended: null,
     }),
     createGain: () => ({
       gain: {
         value: 1,
         setValueAtTime: () => undefined,
-        linearRampToValueAtTime: () => undefined,
+        linearRampToValueAtTime: (value: number, when: number) => {
+          if (value === 0) releaseEnds.push(when);
+        },
         cancelScheduledValues: () => undefined,
       },
       connect() { return this; },
@@ -73,4 +77,10 @@ test("starts every distinct chord pitch together on independent voices", async (
   assert.equal(starts.length, 3);
   assert.deepEqual(starts, [4.008, 4.008, 4.008]);
   assert.equal(rates.length, 3);
+
+  sampler.stop();
+  assert.equal(releaseEnds.length, 3);
+  assert.ok(releaseEnds.every((when) => Math.abs(when - 4.35) < 1e-9));
+  assert.equal(stops.length, 3);
+  assert.ok(stops.every((when) => Math.abs(when - 4.37) < 1e-9));
 });

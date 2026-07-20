@@ -19,6 +19,9 @@ interface ActiveVoice {
   gain: GainNode;
 }
 
+const NOTE_RELEASE_SECONDS = 0.35;
+const NOTE_RELEASE_STOP_PADDING_SECONDS = 0.02;
+
 const NATURAL_SEMITONES: Readonly<Record<string, number>> = {
   C: 0,
   D: 2,
@@ -103,8 +106,8 @@ export class PianoSampler {
     for (const voice of this.voices) {
       voice.gain.gain.cancelScheduledValues(now);
       voice.gain.gain.setValueAtTime(voice.gain.gain.value, now);
-      voice.gain.gain.linearRampToValueAtTime(0, now + 0.06);
-      voice.source.stop(now + 0.07);
+      voice.gain.gain.linearRampToValueAtTime(0, now + NOTE_RELEASE_SECONDS);
+      voice.source.stop(now + NOTE_RELEASE_SECONDS + NOTE_RELEASE_STOP_PADDING_SECONDS);
     }
     this.voices.clear();
   }
