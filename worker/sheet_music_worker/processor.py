@@ -14,7 +14,7 @@ from typing import Any, Callable
 import pypdfium2 as pdfium
 
 from sheet_music_worker import WORKER_VERSION
-from sheet_music_worker.homr_engine import HomrEngine
+from sheet_music_worker.homr_engine import HomrEngine, NoMusicDetectedError
 from sheet_music_worker.logging import worker_log
 from sheet_music_worker.musicxml_merge import merge_musicxml_pages
 
@@ -46,6 +46,17 @@ def atomic_write_json(path: Path, value: dict[str, Any]) -> None:
     os.replace(temporary, path)
 
 
+def read_visual_sidecar(path: Path) -> dict[str, Any]:
+    sidecar = json.loads(path.read_text(encoding="utf-8"))
+    if (
+        not isinstance(sidecar, dict)
+        or not isinstance(sidecar.get("visual_groups"), list)
+        or not isinstance(sidecar.get("notes"), list)
+    ):
+        raise ValueError("HOMR visual sidecar has an invalid structure")
+    return sidecar
+
+
 def validate_artifacts(page: dict[str, Any], cache_directory: Path) -> bool:
     try:
         image = cache_directory / page["image"]
@@ -54,14 +65,30 @@ def validate_artifacts(page: dict[str, Any], cache_directory: Path) -> bool:
         if not all(path.is_file() and path.stat().st_size > 0 for path in (image, music_xml, visual_sidecar)):
             return False
         ElementTree.parse(music_xml)
-        sidecar = json.loads(visual_sidecar.read_text(encoding="utf-8"))
-        return (
-            isinstance(sidecar, dict)
-            and isinstance(sidecar.get("visual_groups"), list)
-            and isinstance(sidecar.get("notes"), list)
-        )
+        sidecar = read_visual_sidecar(visual_sidecar)
+        return len(sidecar["notes"]) > 0
     except (KeyError, OSError, ValueError, ElementTree.ParseError):
         return False
+
+
+def validate_skipped_page(page: dict[str, Any], cache_directory: Path) -> bool:
+    try:
+        image = cache_directory / page["image"]
+        return (
+            page.get("status") == "skipped"
+            and image.is_file()
+            and image.stat().st_size > 0
+            and isinstance(page.get("reason"), str)
+            and bool(page["reason"])
+        )
+    except (KeyError, OSError):
+        return False
+
+
+def page_is_reusable(page: dict[str, Any], cache_directory: Path) -> bool:
+    if page.get("status") == "complete":
+        return validate_artifacts(page, cache_directory)
+    return validate_skipped_page(page, cache_directory)
 
 
 @dataclass(frozen=True)
@@ -111,9 +138,7 @@ class PdfProcessor:
             worker_log(f"Opened {pdf_path.name}: {page_count} page(s), rendering at {RASTER_DPI} DPI")
             manifest = self._load_manifest(manifest_path, identity, page_count)
             reusable = sum(
-                1
-                for page in manifest["pages"]
-                if page.get("status") == "complete" and validate_artifacts(page, cache_directory)
+                1 for page in manifest["pages"] if page_is_reusable(page, cache_directory)
             )
             document_music_xml_path = (
                 cache_directory / pdf_path.with_suffix(".musicxml").name
@@ -140,6 +165,7 @@ class PdfProcessor:
                 raise ValueError("Page index is outside this PDF")
 
             completed = 0
+            skipped = 0
             failed = 0
             for page_index in indices:
                 if cancel.is_set():
@@ -150,12 +176,22 @@ class PdfProcessor:
                 page_manifest = manifest["pages"][page_index]
                 if (
                     force_page_index is None
-                    and page_manifest.get("status") == "complete"
-                    and validate_artifacts(page_manifest, cache_directory)
+                    and page_is_reusable(page_manifest, cache_directory)
                 ):
-                    completed += 1
-                    worker_log(f"Page {page_index + 1}/{page_count}: using cached recognition")
-                    self._emit_page_completed(job_id, page_index, page_manifest, cache_directory, True)
+                    if page_manifest.get("status") == "skipped":
+                        skipped += 1
+                        worker_log(
+                            f"Page {page_index + 1}/{page_count}: using cached no-music result"
+                        )
+                        self._emit_page_skipped(job_id, page_index, page_manifest, True)
+                    else:
+                        completed += 1
+                        worker_log(
+                            f"Page {page_index + 1}/{page_count}: using cached recognition"
+                        )
+                        self._emit_page_completed(
+                            job_id, page_index, page_manifest, cache_directory, True
+                        )
                     continue
 
                 self._emit({"type": "page_started", "jobId": job_id, "pageIndex": page_index})
@@ -168,6 +204,8 @@ class PdfProcessor:
                         f"{rendered['width']}x{rendered['height']}; starting HOMR"
                     )
                     music_xml, visual_sidecar = self._homr.process_image(rendered["path"])
+                    if len(read_visual_sidecar(visual_sidecar)["notes"]) == 0:
+                        raise NoMusicDetectedError("No notes detected")
                     page_manifest.clear()
                     page_manifest.update(
                         {
@@ -189,6 +227,26 @@ class PdfProcessor:
                     self._emit_page_completed(
                         job_id, page_index, page_manifest, cache_directory, False
                     )
+                except NoMusicDetectedError as error:
+                    skipped += 1
+                    elapsed = time.perf_counter() - page_started_at
+                    worker_log(
+                        f"Page {page_index + 1}/{page_count}: no music detected after "
+                        f"{elapsed:.1f}s; skipping page ({error})"
+                    )
+                    page_manifest.clear()
+                    page_manifest.update(
+                        {
+                            "index": page_index,
+                            "status": "skipped",
+                            "reason": str(error),
+                            "width": rendered["width"],
+                            "height": rendered["height"],
+                            "image": self._relative(cache_directory, rendered["path"]),
+                        }
+                    )
+                    atomic_write_json(manifest_path, manifest)
+                    self._emit_page_skipped(job_id, page_index, page_manifest, False)
                 except Exception as error:  # A failed page must not prevent later pages.
                     failed += 1
                     elapsed = time.perf_counter() - page_started_at
@@ -210,14 +268,16 @@ class PdfProcessor:
                     )
 
             document_music_xml: Path | None = None
-            all_pages_complete = all(
-                page.get("status") == "complete" and validate_artifacts(page, cache_directory)
-                for page in manifest["pages"]
+            all_pages_resolved = all(
+                page_is_reusable(page, cache_directory) for page in manifest["pages"]
             )
-            if all_pages_complete:
-                page_music_xml = [
-                    cache_directory / page["musicXml"] for page in manifest["pages"]
-                ]
+            page_music_xml = [
+                cache_directory / page["musicXml"]
+                for page in manifest["pages"]
+                if page.get("status") == "complete"
+                and validate_artifacts(page, cache_directory)
+            ]
+            if all_pages_resolved and page_music_xml:
                 document_music_xml = document_music_xml_path
                 worker_log(
                     f"Post-processing {len(page_music_xml)} page(s) into "
@@ -232,13 +292,15 @@ class PdfProcessor:
 
             status = "complete" if failed == 0 else "partial"
             worker_log(
-                f"Job finished with status {status}: {completed} completed, {failed} failed"
+                f"Job finished with status {status}: {completed} completed, "
+                f"{skipped} skipped, {failed} failed"
             )
             event = {
                 "type": "job_completed",
                 "jobId": job_id,
                 "status": status,
                 "completedPages": completed,
+                "skippedPages": skipped,
                 "failedPages": failed,
             }
             if document_music_xml is not None:
@@ -329,6 +391,23 @@ class PdfProcessor:
                     "musicXmlBytes": music_xml.stat().st_size,
                     "visualSidecarBytes": visual_sidecar.stat().st_size,
                 },
+            }
+        )
+
+    def _emit_page_skipped(
+        self,
+        job_id: str,
+        page_index: int,
+        page: dict[str, Any],
+        cached: bool,
+    ) -> None:
+        self._emit(
+            {
+                "type": "page_skipped",
+                "jobId": job_id,
+                "pageIndex": page_index,
+                "cached": cached,
+                "reason": page["reason"],
             }
         )
 

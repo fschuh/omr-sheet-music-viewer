@@ -26,6 +26,13 @@ export type WorkerEvent =
       artifacts: PageArtifacts;
     }
   | {
+      type: "page_skipped";
+      jobId: string;
+      pageIndex: number;
+      cached: boolean;
+      reason: string;
+    }
+  | {
       type: "page_failed";
       jobId: string;
       pageIndex: number;
@@ -36,6 +43,7 @@ export type WorkerEvent =
       jobId: string;
       status: "complete" | "partial" | "cancelled";
       completedPages?: number;
+      skippedPages?: number;
       failedPages?: number;
       documentMusicXmlPath?: string;
     }

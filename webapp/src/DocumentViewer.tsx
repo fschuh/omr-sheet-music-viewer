@@ -317,7 +317,7 @@ const PageOverlay = memo(function PageOverlay({
 
 export function DocumentViewer({
   documentKey,
-  pages,
+  pages: documentPages,
   selectedGroup,
   highlightAllNotes,
   showOriginalNoteheadContours,
@@ -349,6 +349,10 @@ export function DocumentViewer({
   const [transform, setTransform] = useState<ViewportTransform>(initialTransform.current);
   const [isPointerPanning, setIsPointerPanning] = useState(false);
   const displayRefreshRate = useDisplayRefreshRate(SHOW_REFRESH_DIAGNOSTIC);
+  const pages = useMemo(
+    () => documentPages.filter((page) => page.status !== "skipped"),
+    [documentPages],
+  );
 
   function commitTransform(next: ViewportTransform) {
     if (transformFrame.current !== null) cancelAnimationFrame(transformFrame.current);
@@ -415,8 +419,9 @@ export function DocumentViewer({
     if (!rect || pages.length === 0) return;
     const page =
       pages.find((candidate) => candidate.index === selectedGroup?.pageIndex) ?? firstRealPage ?? pages[0];
+    const pagePosition = pages.indexOf(page);
     const pageTop = pages
-      .slice(0, page.index)
+      .slice(0, pagePosition)
       .reduce((total, candidate) => total + candidate.height + PAGE_GAP, 0);
     const scale = clampScale(Math.min((rect.width - 64) / page.width, (rect.height - 64) / page.height));
     commitTransform({
@@ -714,7 +719,7 @@ export function DocumentViewer({
             transform: `translate3d(${transform.x}px, ${transform.y}px, 0) scale(${transform.scale})`,
           }}
         >
-          {pages.map((page) => (
+          {pages.map((page, pagePosition) => (
             <div
               key={page.index}
               ref={(element) => {
@@ -722,7 +727,7 @@ export function DocumentViewer({
                 else pageRefs.current.delete(page.index);
               }}
               className={`document-page page-${page.status}`}
-              style={{ width: page.width, height: page.height, marginBottom: page.index === pages.length - 1 ? 0 : PAGE_GAP }}
+              style={{ width: page.width, height: page.height, marginBottom: pagePosition === pages.length - 1 ? 0 : PAGE_GAP }}
             >
               <span className="page-number">{page.index + 1}</span>
               {page.imageUrl ? <img src={page.imageUrl} alt={`Sheet music page ${page.index + 1}`} draggable={false} /> : null}

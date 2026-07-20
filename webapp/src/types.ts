@@ -75,7 +75,7 @@ export interface PageArtifacts {
   visualSidecarBytes: number;
 }
 
-export type DocumentPageStatus = "pending" | "processing" | "loading" | "complete" | "failed";
+export type DocumentPageStatus = "pending" | "processing" | "loading" | "complete" | "skipped" | "failed";
 
 export interface DocumentPage {
   index: number;

@@ -429,7 +429,7 @@ export function App() {
                 ...current,
                 status: "failed",
                 pages: current.pages.map((page) =>
-                  page.status === "complete"
+                  page.status === "complete" || page.status === "skipped"
                     ? page
                     : { ...page, status: "failed", error: event.message },
                 ),
@@ -526,6 +526,19 @@ export function App() {
           });
         return;
       }
+      if (event.type === "page_skipped") {
+        setDocument((current) =>
+          current && current.jobId === event.jobId
+            ? replacePage(current, event.pageIndex, (page) => ({
+                ...page,
+                status: "skipped",
+                cached: event.cached,
+                error: undefined,
+              }))
+            : current,
+        );
+        return;
+      }
       if (event.type === "page_failed") {
         setDocument((current) =>
           current && current.jobId === event.jobId
@@ -597,6 +610,7 @@ export function App() {
 
   const totals = useMemo(() => {
     const completedPages = document?.pages.filter((page) => page.status === "complete").length ?? 0;
+    const skippedPages = document?.pages.filter((page) => page.status === "skipped").length ?? 0;
     const failedPages = document?.pages.filter((page) => page.status === "failed").length ?? 0;
     const visualGroups =
       document?.pages.reduce(
@@ -615,7 +629,15 @@ export function App() {
         (total, page) => total + (page.visualSidecar?.unmatched_visual_notes.length ?? 0),
         0,
       ) ?? 0;
-    return { completedPages, failedPages, visualGroups, linkedNotes, unmatchedMusicXml, unmatchedVisual };
+    return {
+      completedPages,
+      skippedPages,
+      failedPages,
+      visualGroups,
+      linkedNotes,
+      unmatchedMusicXml,
+      unmatchedVisual,
+    };
   }, [document]);
 
   async function handleOpenPdf() {
@@ -702,7 +724,7 @@ export function App() {
   const busy = document?.status === "opening" || document?.status === "processing";
   const latestWorkerLog = workerLogs.at(-1)?.line;
   const progress = document?.pageCount
-    ? ((totals.completedPages + totals.failedPages) / document.pageCount) * 100
+    ? ((totals.completedPages + totals.skippedPages + totals.failedPages) / document.pageCount) * 100
     : 0;
 
   return (
@@ -716,7 +738,7 @@ export function App() {
           <div className="job-summary" aria-live="polite">
             <span>{statusLabel(document)}</span>
             {document.pageCount > 0 ? (
-              <span>{totals.completedPages + totals.failedPages} / {document.pageCount} pages</span>
+              <span>{totals.completedPages + totals.skippedPages + totals.failedPages} / {document.pageCount} pages</span>
             ) : null}
             {busy && latestWorkerLog ? (
               <span className="worker-stage" title={latestWorkerLog}>{latestWorkerLog}</span>
@@ -877,6 +899,7 @@ export function App() {
               <h2>Document data</h2>
               <dl>
                 <dt>Pages ready</dt><dd>{totals.completedPages} / {document.pageCount}</dd>
+                <dt>Pages without music</dt><dd>{totals.skippedPages}</dd>
                 <dt>Failed pages</dt><dd>{totals.failedPages}</dd>
                 <dt>Visual groups</dt><dd>{totals.visualGroups.toLocaleString()}</dd>
                 <dt>Linked notes</dt><dd>{totals.linkedNotes.toLocaleString()}</dd>

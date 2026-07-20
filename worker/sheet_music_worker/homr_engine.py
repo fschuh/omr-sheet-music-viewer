@@ -5,6 +5,13 @@ from pathlib import Path
 from sheet_music_worker.logging import worker_log
 
 
+class NoMusicDetectedError(RuntimeError):
+    """HOMR could not find enough musical content to recognize a page."""
+
+
+NO_MUSIC_ERROR_MESSAGES = frozenset({"No noteheads found", "No staffs found"})
+
+
 class HomrEngine:
     """Small adapter around HOMR's current programmatic entry points.
 
@@ -65,7 +72,12 @@ class HomrEngine:
         if self._config is None or self._xml_arguments is None:
             raise RuntimeError("HOMR failed to initialize")
 
-        process_image(str(image_path), self._config, self._xml_arguments)
+        try:
+            process_image(str(image_path), self._config, self._xml_arguments)
+        except Exception as error:
+            if str(error) in NO_MUSIC_ERROR_MESSAGES:
+                raise NoMusicDetectedError(str(error)) from error
+            raise
         music_xml = image_path.with_suffix(".musicxml")
         visual_sidecar = image_path.with_suffix(".homr.visual.json")
         if not music_xml.is_file() or not visual_sidecar.is_file():

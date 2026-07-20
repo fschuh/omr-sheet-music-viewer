@@ -95,3 +95,36 @@ test("renders all groups and note names in the active cross-clef moment", () => 
   assert.match(markup, />E3<\/text>/);
   assert.match(markup, /aria-pressed="true"/);
 });
+
+test("omits pages that were skipped because they contain no music", () => {
+  const skippedPage: DocumentPage = {
+    index: 0,
+    status: "skipped",
+    width: 1000,
+    height: 1400,
+  };
+  const musicPage: DocumentPage = { ...page, index: 1 };
+  const markup = renderToStaticMarkup(
+    <DocumentViewer
+      documentKey="fixture"
+      pages={[skippedPage, musicPage]}
+      selectedGroup={null}
+      highlightAllNotes={false}
+      showOriginalNoteheadContours={false}
+      showDetectedNoteheadContours={false}
+      showRefinedNoteheadContours={false}
+      showRawStemContours={false}
+      playbackActive={false}
+      playbackNoteSoundsEnabled
+      playbackAvailable
+      playbackMoment={null}
+      onPlaybackCommand={() => undefined}
+      onSelectGroup={() => undefined}
+      onRetryPage={() => undefined}
+    />,
+  );
+
+  assert.equal(markup.match(/class="document-page /g)?.length, 1);
+  assert.match(markup, /class="page-number">2<\/span>/);
+  assert.doesNotMatch(markup, /class="page-number">1<\/span>/);
+});

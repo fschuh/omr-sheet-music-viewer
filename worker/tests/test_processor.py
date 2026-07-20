@@ -5,6 +5,7 @@ from pathlib import Path
 
 from PIL import Image
 
+from sheet_music_worker.homr_engine import NoMusicDetectedError
 from sheet_music_worker.processor import (
     VISUAL_SIDECAR_CACHE_REVISION,
     PdfProcessor,
@@ -38,7 +39,13 @@ class FakeHomrEngine:
             encoding="utf-8",
         )
         visual_sidecar.write_text(
-            json.dumps({"visual_groups": [], "notes": []}), encoding="utf-8"
+            json.dumps(
+                {
+                    "visual_groups": [],
+                    "notes": [{"musicxml_id": "homr-note-1", "pitch": None}],
+                }
+            ),
+            encoding="utf-8",
         )
         return music_xml, visual_sidecar
 
@@ -48,6 +55,23 @@ class SecondPageFailureEngine(FakeHomrEngine):
         if image_path.stem == "0002":
             raise RuntimeError("deliberate page failure")
         return super().process_image(image_path)
+
+
+class FirstPageNoMusicEngine(FakeHomrEngine):
+    def process_image(self, image_path: Path) -> tuple[Path, Path]:
+        if image_path.stem == "0001":
+            self.calls.append(image_path)
+            raise NoMusicDetectedError("No staffs found")
+        return super().process_image(image_path)
+
+
+class EmptySidecarEngine(FakeHomrEngine):
+    def process_image(self, image_path: Path) -> tuple[Path, Path]:
+        music_xml, visual_sidecar = super().process_image(image_path)
+        visual_sidecar.write_text(
+            json.dumps({"visual_groups": [], "notes": []}), encoding="utf-8"
+        )
+        return music_xml, visual_sidecar
 
 
 def test_sha256_file_is_content_based(tmp_path: Path) -> None:
@@ -64,7 +88,10 @@ def test_validate_artifacts_accepts_readable_outputs(tmp_path: Path) -> None:
     (pages / "0001.png").write_bytes(b"png")
     (pages / "0001.musicxml").write_text("<score-partwise />", encoding="utf-8")
     (pages / "0001.homr.visual.json").write_text(
-        json.dumps({"visual_groups": [], "notes": []}), encoding="utf-8"
+        json.dumps(
+            {"visual_groups": [], "notes": [{"musicxml_id": "homr-note-1"}]}
+        ),
+        encoding="utf-8",
     )
     page = {
         "image": "pages/0001.png",
@@ -72,6 +99,22 @@ def test_validate_artifacts_accepts_readable_outputs(tmp_path: Path) -> None:
         "visualSidecar": "pages/0001.homr.visual.json",
     }
     assert validate_artifacts(page, tmp_path)
+
+
+def test_validate_artifacts_rejects_a_page_without_notes(tmp_path: Path) -> None:
+    pages = tmp_path / "pages"
+    pages.mkdir()
+    (pages / "0001.png").write_bytes(b"png")
+    (pages / "0001.musicxml").write_text("<score-partwise />", encoding="utf-8")
+    (pages / "0001.homr.visual.json").write_text(
+        json.dumps({"visual_groups": [], "notes": []}), encoding="utf-8"
+    )
+    page = {
+        "image": "pages/0001.png",
+        "musicXml": "pages/0001.musicxml",
+        "visualSidecar": "pages/0001.homr.visual.json",
+    }
+    assert not validate_artifacts(page, tmp_path)
 
 
 def test_validate_artifacts_rejects_bad_sidecar(tmp_path: Path) -> None:
@@ -170,6 +213,90 @@ def test_pdf_processing_invalidates_an_older_sidecar_cache_revision(tmp_path: Pa
     completed = [event for event in refreshed_events if event.get("type") == "page_completed"]
     assert len(completed) == 1
     assert completed[0]["cached"] is False
+
+
+def test_no_music_page_is_skipped_and_remaining_pages_are_merged(tmp_path: Path) -> None:
+    pdf_path = tmp_path / "Score With Introduction.pdf"
+    first_page = Image.new("RGB", (120, 80), "white")
+    second_page = Image.new("RGB", (100, 120), "white")
+    first_page.save(
+        pdf_path,
+        "PDF",
+        resolution=300,
+        save_all=True,
+        append_images=[second_page],
+    )
+    cache_root = tmp_path / "cache"
+    engine = FirstPageNoMusicEngine()
+    events: list[dict[str, object]] = []
+
+    PdfProcessor(events.append, engine).process_pdf(  # type: ignore[arg-type]
+        job_id="first",
+        pdf_path=pdf_path,
+        cache_root=cache_root,
+        cancel=threading.Event(),
+    )
+
+    cache_directory = cache_root / "pdf-cache" / sha256_file(pdf_path)
+    merged_music_xml = cache_directory / "Score With Introduction.musicxml"
+    assert merged_music_xml.is_file()
+    assert len(ElementTree.parse(merged_music_xml).getroot().findall("./part/measure")) == 1
+    manifest = json.loads((cache_directory / "manifest.json").read_text(encoding="utf-8"))
+    assert [page["status"] for page in manifest["pages"]] == ["skipped", "complete"]
+    assert manifest["documentMusicXml"] == "Score With Introduction.musicxml"
+    skipped = [event for event in events if event.get("type") == "page_skipped"]
+    assert skipped == [
+        {
+            "type": "page_skipped",
+            "jobId": "first",
+            "pageIndex": 0,
+            "cached": False,
+            "reason": "No staffs found",
+        }
+    ]
+    job_completed = [event for event in events if event.get("type") == "job_completed"]
+    assert job_completed[0]["status"] == "complete"
+    assert job_completed[0]["completedPages"] == 1
+    assert job_completed[0]["skippedPages"] == 1
+    assert job_completed[0]["failedPages"] == 0
+
+    cached_events: list[dict[str, object]] = []
+    PdfProcessor(cached_events.append, engine).process_pdf(  # type: ignore[arg-type]
+        job_id="cached",
+        pdf_path=pdf_path,
+        cache_root=cache_root,
+        cancel=threading.Event(),
+    )
+
+    assert len(engine.calls) == 2
+    cached_skipped = [
+        event for event in cached_events if event.get("type") == "page_skipped"
+    ]
+    assert len(cached_skipped) == 1
+    assert cached_skipped[0]["cached"] is True
+    assert merged_music_xml.is_file()
+
+
+def test_page_with_empty_note_sidecar_is_skipped(tmp_path: Path) -> None:
+    pdf_path = tmp_path / "No Music.pdf"
+    Image.new("RGB", (120, 80), "white").save(
+        pdf_path, "PDF", resolution=300
+    )
+    events: list[dict[str, object]] = []
+
+    PdfProcessor(events.append, EmptySidecarEngine()).process_pdf(  # type: ignore[arg-type]
+        job_id="empty",
+        pdf_path=pdf_path,
+        cache_root=tmp_path / "cache",
+        cancel=threading.Event(),
+    )
+
+    cache_directory = tmp_path / "cache" / "pdf-cache" / sha256_file(pdf_path)
+    manifest = json.loads((cache_directory / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["pages"][0]["status"] == "skipped"
+    assert not (cache_directory / "No Music.musicxml").exists()
+    skipped = [event for event in events if event.get("type") == "page_skipped"]
+    assert skipped[0]["reason"] == "No notes detected"
 
 
 def test_pdf_processing_does_not_merge_until_every_page_is_complete(tmp_path: Path) -> None:
