@@ -133,6 +133,7 @@ export function App() {
   const [midiPorts, setMidiPorts] = useState<string[]>([]);
   const [midiError, setMidiError] = useState<string | null>(null);
   const [midiRefreshing, setMidiRefreshing] = useState(false);
+  const midiRefreshInProgressRef = useRef(false);
   const [midiCaptureCommand, setMidiCaptureCommand] = useState<PlaybackCommand | null>(null);
   const midiCaptureCommandRef = useRef<PlaybackCommand | null>(null);
   const activeMidiRepeatRef = useRef<ActiveMidiRepeat | null>(null);
@@ -229,7 +230,8 @@ export function App() {
   }, [stopMidiRepeat]);
 
   const handleRefreshMidiInputs = useCallback(() => {
-    if (!nativeAvailable) return;
+    if (!nativeAvailable || midiRefreshInProgressRef.current) return;
+    midiRefreshInProgressRef.current = true;
     setMidiRefreshing(true);
     setMidiError(null);
     void refreshMidiInputs()
@@ -239,9 +241,14 @@ export function App() {
       })
       .catch((refreshError: unknown) => {
         setMidiPorts([]);
+        midiCaptureCommandRef.current = null;
+        setMidiCaptureCommand(null);
         setMidiError(refreshError instanceof Error ? refreshError.message : String(refreshError));
       })
-      .finally(() => setMidiRefreshing(false));
+      .finally(() => {
+        midiRefreshInProgressRef.current = false;
+        setMidiRefreshing(false);
+      });
   }, [nativeAvailable]);
 
   const cancelMidiCapture = useCallback(() => {
@@ -259,6 +266,10 @@ export function App() {
   useEffect(() => {
     savePlaybackShortcuts(shortcuts);
   }, [shortcuts]);
+
+  useEffect(() => {
+    handleRefreshMidiInputs();
+  }, [handleRefreshMidiInputs]);
 
   useEffect(() => {
     if (!nativeAvailable) return;
@@ -771,6 +782,11 @@ export function App() {
       ) : null}
       {error ? <div className="error">{error}</div> : null}
       {playbackAudioError ? <div className="error" role="alert">{playbackAudioError}</div> : null}
+      {midiError ? (
+        <div className="warning" role="alert">
+          <strong>MIDI controls unavailable.</strong> {midiError}
+        </div>
+      ) : null}
 
       <section className="workspace">
         {document && document.pages.length > 0 ? (

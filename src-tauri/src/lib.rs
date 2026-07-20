@@ -5,8 +5,10 @@ use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
+use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, State};
 use uuid::Uuid;
 #[cfg(target_os = "windows")]
@@ -18,6 +20,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 const PROTOCOL_VERSION: u8 = 1;
 const DEFAULT_KEYBOARD_REPEAT_DELAY_MS: u32 = 400;
 const DEFAULT_KEYBOARD_REPEAT_INTERVAL_MS: u32 = 75;
+const MIDI_INITIALIZATION_TIMEOUT: Duration = Duration::from_secs(4);
+const MIDI_UNAVAILABLE_ERROR: &str = "MIDI initialization timed out because the system MIDI service did not respond. MIDI controls are disabled for this session; keyboard controls and the rest of the app remain available. Restart the MIDI service or your computer, then reopen the app to try again.";
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -79,9 +83,14 @@ fn keyboard_repeat_timing() -> KeyboardRepeatTiming {
     KeyboardRepeatTiming::default()
 }
 
-#[derive(Default)]
+type MidiConnections = Vec<MidiInputConnection<()>>;
+type MidiScanResult = Result<(Vec<String>, MidiConnections), String>;
+
+#[derive(Clone, Default)]
 struct MidiInputManager {
-    connections: Mutex<Vec<MidiInputConnection<()>>>,
+    connections: Arc<Mutex<MidiConnections>>,
+    refresh_in_progress: Arc<AtomicBool>,
+    unavailable: Arc<AtomicBool>,
 }
 
 #[derive(Clone, Serialize)]
@@ -98,76 +107,128 @@ fn is_channel_voice_message(message: &[u8]) -> bool {
         .is_some_and(|status| (0x80..=0xef).contains(status))
 }
 
-impl MidiInputManager {
-    fn refresh(&self, app: &AppHandle) -> Result<Vec<String>, String> {
-        let mut connections = self
-            .connections
-            .lock()
-            .map_err(|_| "MIDI input lock was poisoned")?;
-        // WinMM devices are commonly exclusive, so release old handles before reconnecting.
-        connections.clear();
+fn discover_midi_inputs(app: &AppHandle) -> MidiScanResult {
+    let probe =
+        MidiInput::new("Sheet Music Viewer MIDI input").map_err(|error| error.to_string())?;
+    let port_count = probe.port_count();
+    drop(probe);
 
-        let probe =
-            MidiInput::new("Sheet Music Viewer MIDI input").map_err(|error| error.to_string())?;
-        let port_count = probe.port_count();
-        drop(probe);
-
-        let mut connected_names = Vec::new();
-        let mut connection_errors = Vec::new();
-        for port_index in 0..port_count {
-            let mut midi_input = match MidiInput::new("Sheet Music Viewer MIDI input") {
-                Ok(input) => input,
-                Err(error) => {
-                    connection_errors.push(error.to_string());
-                    continue;
-                }
-            };
-            // System-exclusive, timing, and active-sensing events are not useful page-turn controls.
-            midi_input.ignore(Ignore::All);
-            let ports = midi_input.ports();
-            let Some(port) = ports.get(port_index).cloned() else {
+    let mut connected_names = Vec::new();
+    let mut connections = Vec::new();
+    let mut connection_errors = Vec::new();
+    for port_index in 0..port_count {
+        let mut midi_input = match MidiInput::new("Sheet Music Viewer MIDI input") {
+            Ok(input) => input,
+            Err(error) => {
+                connection_errors.push(error.to_string());
                 continue;
-            };
-            let port_name = midi_input
-                .port_name(&port)
-                .unwrap_or_else(|_| format!("MIDI input {}", port_index + 1));
-            let event_port = port_name.clone();
-            let event_app = app.clone();
-            let connection_name =
-                format!("Sheet Music Viewer page turner input {}", port_index + 1);
-            match midi_input.connect(
-                &port,
-                &connection_name,
-                move |timestamp, message, _| {
-                    if !is_channel_voice_message(message) {
-                        return;
-                    }
-                    let _ = event_app.emit(
-                        "midi-message",
-                        MidiMessageEvent {
-                            port: event_port.clone(),
-                            timestamp,
-                            bytes: message.to_vec(),
-                        },
-                    );
-                },
-                (),
-            ) {
-                Ok(connection) => {
-                    connected_names.push(port_name);
-                    connections.push(connection);
+            }
+        };
+        // System-exclusive, timing, and active-sensing events are not useful page-turn controls.
+        midi_input.ignore(Ignore::All);
+        let ports = midi_input.ports();
+        let Some(port) = ports.get(port_index).cloned() else {
+            continue;
+        };
+        let port_name = midi_input
+            .port_name(&port)
+            .unwrap_or_else(|_| format!("MIDI input {}", port_index + 1));
+        let event_port = port_name.clone();
+        let event_app = app.clone();
+        let connection_name = format!("Sheet Music Viewer page turner input {}", port_index + 1);
+        match midi_input.connect(
+            &port,
+            &connection_name,
+            move |timestamp, message, _| {
+                if !is_channel_voice_message(message) {
+                    return;
                 }
-                Err(error) => connection_errors.push(format!("{port_name}: {error}")),
+                let _ = event_app.emit(
+                    "midi-message",
+                    MidiMessageEvent {
+                        port: event_port.clone(),
+                        timestamp,
+                        bytes: message.to_vec(),
+                    },
+                );
+            },
+            (),
+        ) {
+            Ok(connection) => {
+                connected_names.push(port_name);
+                connections.push(connection);
+            }
+            Err(error) => connection_errors.push(format!("{port_name}: {error}")),
+        }
+    }
+
+    if connections.is_empty() && !connection_errors.is_empty() {
+        return Err(format!(
+            "Could not connect to a MIDI input: {}",
+            connection_errors.join("; ")
+        ));
+    }
+    Ok((connected_names, connections))
+}
+
+fn run_with_timeout<T, F>(timeout: Duration, operation: F) -> Result<T, mpsc::RecvTimeoutError>
+where
+    T: Send + 'static,
+    F: FnOnce() -> T + Send + 'static,
+{
+    let (sender, receiver) = mpsc::sync_channel(1);
+    thread::spawn(move || {
+        let _ = sender.send(operation());
+    });
+    receiver.recv_timeout(timeout)
+}
+
+impl MidiInputManager {
+    fn refresh(&self, app: AppHandle) -> Result<Vec<String>, String> {
+        if self.unavailable.load(Ordering::Acquire) {
+            return Err(MIDI_UNAVAILABLE_ERROR.into());
+        }
+        if self
+            .refresh_in_progress
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return Err("A MIDI input scan is already in progress.".into());
+        }
+
+        let previous_connections = match self.connections.lock() {
+            Ok(mut connections) => std::mem::take(&mut *connections),
+            Err(_) => {
+                self.refresh_in_progress.store(false, Ordering::Release);
+                return Err("MIDI input lock was poisoned".into());
+            }
+        };
+        let scan = run_with_timeout(MIDI_INITIALIZATION_TIMEOUT, move || {
+            // WinMM devices are commonly exclusive, so release old handles before reconnecting.
+            // This also keeps a stalled driver call away from the UI thread and manager lock.
+            drop(previous_connections);
+            discover_midi_inputs(&app)
+        });
+        self.refresh_in_progress.store(false, Ordering::Release);
+
+        match scan {
+            Ok(Ok((connected_names, connections))) => {
+                *self
+                    .connections
+                    .lock()
+                    .map_err(|_| "MIDI input lock was poisoned")? = connections;
+                Ok(connected_names)
+            }
+            Ok(Err(error)) => Err(error),
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                self.unavailable.store(true, Ordering::Release);
+                Err(MIDI_UNAVAILABLE_ERROR.into())
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                self.unavailable.store(true, Ordering::Release);
+                Err("MIDI initialization stopped unexpectedly. MIDI controls are disabled for this session; keyboard controls and the rest of the app remain available. Reopen the app to try again.".into())
             }
         }
-
-        if connections.is_empty() && !connection_errors.is_empty() {
-            return Err(format!(
-                "Could not connect to a MIDI input: {}",
-                connection_errors.join("; ")
-            ));
-        }
-        Ok(connected_names)
     }
 }
 
@@ -528,11 +589,14 @@ fn get_worker_log_path(app: AppHandle) -> Result<String, String> {
 }
 
 #[tauri::command]
-fn refresh_midi_inputs(
+async fn refresh_midi_inputs(
     app: AppHandle,
     midi_inputs: State<'_, MidiInputManager>,
 ) -> Result<Vec<String>, String> {
-    midi_inputs.refresh(&app)
+    let midi_inputs = midi_inputs.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || midi_inputs.refresh(app))
+        .await
+        .map_err(|error| format!("MIDI initialization task failed: {error}"))?
 }
 
 #[tauri::command]
@@ -600,12 +664,6 @@ pub fn run() {
         .setup(|app| {
             let cache_root = app.path().app_cache_dir()?;
             fs::create_dir_all(cache_root)?;
-            if let Err(error) = app
-                .state::<MidiInputManager>()
-                .refresh(&app.handle().clone())
-            {
-                eprintln!("[midi] {error}");
-            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -627,10 +685,12 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use std::path::Path;
+    use std::thread;
+    use std::time::Duration;
 
     use super::{
         has_music_xml_extension, is_channel_voice_message, repeat_timing_from_windows_settings,
-        strip_ansi_codes, KeyboardRepeatTiming,
+        run_with_timeout, strip_ansi_codes, KeyboardRepeatTiming,
     };
 
     #[test]
@@ -658,6 +718,20 @@ mod tests {
         assert!(!is_channel_voice_message(&[0xf8]));
         assert!(!is_channel_voice_message(&[0xfe]));
         assert!(!is_channel_voice_message(&[]));
+    }
+
+    #[test]
+    fn background_operations_return_before_the_timeout() {
+        assert_eq!(run_with_timeout(Duration::from_millis(100), || 42), Ok(42));
+    }
+
+    #[test]
+    fn stalled_background_operations_time_out() {
+        let result = run_with_timeout(Duration::from_millis(1), || {
+            thread::sleep(Duration::from_millis(25));
+            42
+        });
+        assert_eq!(result, Err(std::sync::mpsc::RecvTimeoutError::Timeout));
     }
 
     #[test]

@@ -168,6 +168,14 @@ button:disabled {
   padding: 9px 18px;
 }
 
+.warning {
+  background: #fff8e5;
+  border-bottom: 1px solid #e8d49e;
+  color: #6f5211;
+  font-size: 0.86rem;
+  padding: 9px 18px;
+}
+
 .workspace {
   display: grid;
   flex: 1;
@@ -917,6 +925,11 @@ button:disabled {
 .midi-status-dot.connected {
   background: #16806e;
   border-color: #cbe4df;
+}
+
+.midi-status-dot.unavailable {
+  background: #b65f31;
+  border-color: #f0d5c6;
 }
 
 .midi-status div {

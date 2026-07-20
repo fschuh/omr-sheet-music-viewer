@@ -125,16 +125,18 @@ export function SettingsPage({
         </header>
 
         <div className="midi-status" aria-live="polite">
-          <span className={`midi-status-dot${midiPorts.length ? " connected" : ""}`} />
+          <span className={`midi-status-dot${midiError ? " unavailable" : midiPorts.length ? " connected" : ""}`} />
           <div>
             <strong>
               {!nativeAvailable
                 ? "MIDI is available in the desktop app"
                 : midiRefreshing
                   ? "Looking for MIDI inputs…"
-                  : midiPorts.length
-                    ? `${midiPorts.length} MIDI input${midiPorts.length === 1 ? "" : "s"} connected`
-                    : "No MIDI inputs found"}
+                  : midiError
+                    ? "MIDI unavailable"
+                    : midiPorts.length
+                      ? `${midiPorts.length} MIDI input${midiPorts.length === 1 ? "" : "s"} connected`
+                      : "No MIDI inputs found"}
             </strong>
             <span>{midiError ?? (midiPorts.length ? midiPorts.join(" · ") : "Connect or start your Windows MIDI bridge, then scan again.")}</span>
           </div>
@@ -185,7 +187,7 @@ export function SettingsPage({
                     className={`shortcut-binding midi-binding${learningMidi ? " listening" : ""}${midi ? " assigned" : ""}`}
                     aria-label={`MIDI shortcut for ${label}`}
                     aria-pressed={learningMidi}
-                    disabled={!nativeAvailable}
+                    disabled={!nativeAvailable || midiRefreshing || Boolean(midiError)}
                     onClick={() => beginMidiCapture(command)}
                   >
                     {learningMidi ? "Waiting for MIDI…" : midi ? formatMidiShortcut(midi) : "Not assigned"}

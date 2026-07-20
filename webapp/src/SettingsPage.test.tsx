@@ -29,3 +29,24 @@ test("renders every playback command with its default keyboard key and empty MID
   assert.match(markup, />1 MIDI input connected</);
   assert.match(markup, /Bluetooth MIDI bridge/);
 });
+
+test("disables MIDI assignment when initialization fails", () => {
+  const markup = renderToStaticMarkup(
+    <SettingsPage
+      shortcuts={defaultPlaybackShortcuts()}
+      nativeAvailable
+      midiPorts={[]}
+      midiError="MIDI initialization timed out."
+      midiRefreshing={false}
+      midiCaptureCommand={null}
+      onChangeShortcuts={() => undefined}
+      onBeginMidiCapture={() => undefined}
+      onCancelMidiCapture={() => undefined}
+      onRefreshMidiInputs={() => undefined}
+    />,
+  );
+
+  assert.match(markup, />MIDI unavailable</);
+  assert.match(markup, /MIDI initialization timed out\./);
+  assert.equal(markup.match(/aria-label="MIDI shortcut for[^>]+disabled/g)?.length, 8);
+});

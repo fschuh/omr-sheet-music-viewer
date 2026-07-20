@@ -27,7 +27,9 @@ library; provenance is recorded beside the assets in
 On Windows, the app listens to every standard MIDI input exposed by the system.
 BLE MIDI hardware therefore needs a bridge that exposes it as a Windows MIDI
 port. MIDI assignments are device- and channel-independent, and the Settings
-page can rescan inputs after a bridge or device is connected.
+page can rescan inputs after a bridge or device is connected. MIDI discovery
+runs after the viewer opens; if the system MIDI service does not respond, the
+viewer remains usable and reports that MIDI controls are disabled for the session.
 Holding an assigned MIDI Note or nonzero Control Change repeats navigation until
 the corresponding Note Off or zero-value Control Change arrives. Playback-mode
 toggle messages and message types without a release signal remain one-shot.
