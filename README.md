@@ -18,7 +18,8 @@ shortcut: select a keyboard cell and press a key combination, or select a MIDI
 cell and send the desired message. Press `Esc` to cancel either capture.
 Recognized notes and chords play with polyphonic piano audio while note sounds
 are enabled. Use the speaker button or the default `M` shortcut to mute or
-unmute them. The bundled medium-dynamics samples come from AKAI's public-domain
+unmute them. Tone.js provides sample scheduling, release envelopes, compression,
+and peak limiting. The bundled medium-dynamics samples come from AKAI's public-domain
 [Splendid Grand Piano](https://github.com/sfzinstruments/SplendidGrandPiano)
 library; provenance is recorded beside the assets in
 `webapp/public/audio/piano/SOURCE.md`.

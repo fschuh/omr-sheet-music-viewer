@@ -1,3 +1,5 @@
+import * as Tone from "tone";
+
 const SAMPLE_FILES = [
   "Mp-B-1", "Mp-Ds0", "Mp-F0", "Mp-G0", "Mp-A0", "Mp-B0", "Mp-Cs1", "Mp-D1",
   "Mp-E1", "Mp-F1", "Mp-G1", "Mp-A1", "Mp-B1", "Mp-C2", "Mp-D2", "Mp-E2",
@@ -9,18 +11,9 @@ const SAMPLE_FILES = [
   "Mp-Gs6", "Mp-A6", "Mp-As6",
 ] as const;
 
-interface PianoSample {
-  file: string;
-  midi: number;
-}
-
-interface ActiveVoice {
-  source: AudioBufferSourceNode;
-  gain: GainNode;
-}
-
 const NOTE_RELEASE_SECONDS = 0.35;
-const NOTE_RELEASE_STOP_PADDING_SECONDS = 0.02;
+const SAMPLER_VOLUME_DB = -4;
+const LIMITER_THRESHOLD_DB = -1;
 
 const NATURAL_SEMITONES: Readonly<Record<string, number>> = {
   C: 0,
@@ -48,73 +41,95 @@ export function pitchToMidi(pitch: string): number | null {
   return Number.isInteger(midi) && midi >= 0 && midi <= 127 ? midi : null;
 }
 
-const PIANO_SAMPLES: PianoSample[] = SAMPLE_FILES
-  .map((file): PianoSample => {
+const PIANO_SAMPLE_URLS: Readonly<Record<number, string>> = Object.fromEntries(
+  SAMPLE_FILES.map((file): [number, string] => {
     const labelledMidi = pitchToMidi(file.slice(3).replace("s", "#"));
     if (labelledMidi === null) throw new Error(`Invalid bundled piano sample name: ${file}`);
     // This sample set labels each recording one octave below its concert pitch.
-    return { file, midi: labelledMidi + 12 };
-  })
-  .sort((first, second) => first.midi - second.midi);
+    return [labelledMidi + 12, `/audio/piano/${encodeURIComponent(file)}.ogg`];
+  }),
+);
 
-export function nearestPianoSample(midi: number): PianoSample {
-  return PIANO_SAMPLES.reduce((nearest, candidate) =>
-    Math.abs(candidate.midi - midi) < Math.abs(nearest.midi - midi) ? candidate : nearest,
-  );
+export function pianoSampleUrls(): Record<number, string> {
+  return { ...PIANO_SAMPLE_URLS };
+}
+
+const PITCH_CLASSES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"] as const;
+
+function tonePitchForMidi(midi: number): string {
+  return `${PITCH_CLASSES[midi % 12]}${Math.floor(midi / 12) - 1}`;
+}
+
+export interface PianoPlaybackEngine {
+  ready(): Promise<void>;
+  attack(notes: readonly string[], velocity: number): void;
+  release(notes: readonly string[]): void;
+}
+
+class TonePianoPlaybackEngine implements PianoPlaybackEngine {
+  private readonly sampler: Tone.Sampler;
+  private readonly compressor: Tone.Compressor;
+  private readonly limiter: Tone.Limiter;
+  private readonly loaded: Promise<void>;
+
+  constructor() {
+    let resolveLoaded!: () => void;
+    let rejectLoaded!: (error: unknown) => void;
+    this.loaded = new Promise<void>((resolve, reject) => {
+      resolveLoaded = resolve;
+      rejectLoaded = reject;
+    });
+    this.limiter = new Tone.Limiter(LIMITER_THRESHOLD_DB).toDestination();
+    this.compressor = new Tone.Compressor({
+      threshold: -18,
+      ratio: 3,
+      attack: 0.003,
+      release: 0.2,
+      knee: 12,
+    }).connect(this.limiter);
+    this.sampler = new Tone.Sampler({
+      urls: pianoSampleUrls(),
+      attack: 0.008,
+      release: NOTE_RELEASE_SECONDS,
+      curve: "exponential",
+      volume: SAMPLER_VOLUME_DB,
+      onload: resolveLoaded,
+      onerror: rejectLoaded,
+    }).connect(this.compressor);
+  }
+
+  async ready(): Promise<void> {
+    await Tone.start();
+    await this.loaded;
+  }
+
+  attack(notes: readonly string[], velocity: number): void {
+    this.sampler.triggerAttack([...notes], Tone.immediate() + 0.008, velocity);
+  }
+
+  release(notes: readonly string[]): void {
+    if (notes.length > 0) this.sampler.triggerRelease([...notes], Tone.immediate());
+  }
 }
 
 export class PianoSampler {
-  private context: AudioContext | null = null;
-  private buffers = new Map<string, Promise<AudioBuffer>>();
-  private voices = new Set<ActiveVoice>();
+  private engine: PianoPlaybackEngine | null = null;
+  private activeNotes: string[] = [];
   private playGeneration = 0;
 
   constructor(
-    private readonly createContext: () => AudioContext = () => new AudioContext(),
-    private readonly fetchAsset: typeof fetch = (...arguments_) => fetch(...arguments_),
+    private readonly createEngine: () => PianoPlaybackEngine = () => new TonePianoPlaybackEngine(),
   ) {}
 
-  private audioContext(): AudioContext {
-    if (!this.context) this.context = this.createContext();
-    return this.context;
-  }
-
-  private sampleUrl(file: string): string {
-    return `/audio/piano/${encodeURIComponent(file)}.ogg`;
-  }
-
-  private loadSample(context: AudioContext, sample: PianoSample): Promise<AudioBuffer> {
-    const cached = this.buffers.get(sample.file);
-    if (cached) return cached;
-    const loading = this.fetchAsset(this.sampleUrl(sample.file))
-      .then((response) => {
-        if (!response.ok) throw new Error(`Could not load piano sample ${sample.file}: ${response.status}`);
-        return response.arrayBuffer();
-      })
-      .then((bytes) => context.decodeAudioData(bytes))
-      .catch((error) => {
-        this.buffers.delete(sample.file);
-        throw error;
-      });
-    this.buffers.set(sample.file, loading);
-    return loading;
-  }
-
-  private releaseVoices(): void {
-    if (!this.context) return;
-    const now = this.context.currentTime;
-    for (const voice of this.voices) {
-      voice.gain.gain.cancelScheduledValues(now);
-      voice.gain.gain.setValueAtTime(voice.gain.gain.value, now);
-      voice.gain.gain.linearRampToValueAtTime(0, now + NOTE_RELEASE_SECONDS);
-      voice.source.stop(now + NOTE_RELEASE_SECONDS + NOTE_RELEASE_STOP_PADDING_SECONDS);
-    }
-    this.voices.clear();
+  private audioEngine(): PianoPlaybackEngine {
+    if (!this.engine) this.engine = this.createEngine();
+    return this.engine;
   }
 
   stop(): void {
     this.playGeneration += 1;
-    this.releaseVoices();
+    if (this.engine) this.engine.release(this.activeNotes);
+    this.activeNotes = [];
   }
 
   async play(pitches: readonly string[]): Promise<void> {
@@ -125,42 +140,18 @@ export class PianoSampler {
       }),
     ));
     const generation = ++this.playGeneration;
-    this.releaseVoices();
+    if (this.engine) this.engine.release(this.activeNotes);
+    this.activeNotes = [];
     if (midiNotes.length === 0) return;
 
-    const context = this.audioContext();
-    if (context.state === "suspended") await context.resume();
-    const selected = midiNotes.map((midi) => ({ midi, sample: nearestPianoSample(midi) }));
-    const loadedBuffers = await Promise.allSettled(
-      selected.map(({ sample }) => this.loadSample(context, sample)),
-    );
+    const engine = this.audioEngine();
+    await engine.ready();
     if (generation !== this.playGeneration) return;
 
-    const playable = selected.flatMap((selection, index) => {
-      const loaded = loadedBuffers[index];
-      return loaded.status === "fulfilled"
-        ? [{ ...selection, buffer: loaded.value }]
-        : [];
-    });
-    const firstFailure = loadedBuffers.find((loaded) => loaded.status === "rejected");
-    if (playable.length === 0 && firstFailure?.status === "rejected") throw firstFailure.reason;
-
-    const when = context.currentTime + 0.008;
-    const voiceGain = Math.min(0.78, 0.9 / Math.sqrt(playable.length));
-    playable.forEach(({ midi, sample, buffer }) => {
-      const source = context.createBufferSource();
-      const gain = context.createGain();
-      const voice = { source, gain };
-      source.buffer = buffer;
-      source.playbackRate.setValueAtTime(2 ** ((midi - sample.midi) / 12), when);
-      gain.gain.setValueAtTime(0, when);
-      gain.gain.linearRampToValueAtTime(voiceGain, when + 0.008);
-      source.connect(gain).connect(context.destination);
-      source.onended = () => this.voices.delete(voice);
-      this.voices.add(voice);
-      source.start(when);
-    });
-    if (firstFailure?.status === "rejected") throw firstFailure.reason;
+    const notes = midiNotes.map(tonePitchForMidi);
+    const velocity = Math.min(0.78, 0.9 / Math.sqrt(notes.length));
+    engine.attack(notes, velocity);
+    this.activeNotes = notes;
   }
 }
 

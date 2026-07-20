@@ -13,7 +13,8 @@
     "@audio-samples/piano-velocity8": "^1.0.5",
     "@tauri-apps/api": "^2.11.1",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "tone": "^15.1.22"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.11.4",

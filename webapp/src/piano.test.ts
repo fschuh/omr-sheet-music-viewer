@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { nearestPianoSample, PianoSampler, pitchToMidi } from "./piano";
+import {
+  pianoSampleUrls,
+  PianoSampler,
+  pitchToMidi,
+  type PianoPlaybackEngine,
+} from "./piano";
 
 test("parses natural, sharp, flat, and double-accidental pitches", () => {
   assert.equal(pitchToMidi("C4"), 60);
@@ -14,73 +19,34 @@ test("parses natural, sharp, flat, and double-accidental pitches", () => {
   assert.equal(pitchToMidi("rest"), null);
 });
 
-test("chooses nearby roots for repitched notes", () => {
-  assert.deepEqual(nearestPianoSample(55), { file: "Mp-G2", midi: 55 });
-  assert.deepEqual(nearestPianoSample(56), { file: "Mp-Gs2", midi: 56 });
-  assert.deepEqual(nearestPianoSample(60), { file: "Mp-C3", midi: 60 });
-  assert.deepEqual(nearestPianoSample(61), { file: "Mp-C3", midi: 60 });
-  assert.deepEqual(nearestPianoSample(108), { file: "Mp-As6", midi: 106 });
+test("maps bundled sample roots to their concert pitches", () => {
+  const urls = pianoSampleUrls();
+  assert.equal(urls[55], "/audio/piano/Mp-G2.ogg");
+  assert.equal(urls[56], "/audio/piano/Mp-Gs2.ogg");
+  assert.equal(urls[60], "/audio/piano/Mp-C3.ogg");
+  assert.equal(urls[106], "/audio/piano/Mp-As6.ogg");
 });
 
-test("starts every distinct chord pitch together on independent voices", async () => {
-  const starts: number[] = [];
-  const stops: number[] = [];
-  const rates: number[] = [];
-  const releaseEnds: number[] = [];
-  const context = {
-    state: "running",
-    currentTime: 4,
-    destination: {},
-    resume: async () => undefined,
-    decodeAudioData: async () => ({}),
-    createBufferSource: () => ({
-      buffer: null,
-      playbackRate: { setValueAtTime: (value: number) => rates.push(value) },
-      connect() { return this; },
-      start: (when: number) => starts.push(when),
-      stop: (when: number) => stops.push(when),
-      onended: null,
-    }),
-    createGain: () => ({
-      gain: {
-        value: 1,
-        setValueAtTime: () => undefined,
-        linearRampToValueAtTime: (value: number, when: number) => {
-          if (value === 0) releaseEnds.push(when);
-        },
-        cancelScheduledValues: () => undefined,
-      },
-      connect() { return this; },
-    }),
-  } as unknown as AudioContext;
-  const originalFetch = globalThis.fetch;
-  const fetchedUrls: string[] = [];
-  let fetchReceiver: unknown = "not called";
-  globalThis.fetch = (async function (this: unknown, input: string | URL | Request) {
-    fetchReceiver = this;
-    fetchedUrls.push(String(input));
-    return {
-      ok: true,
-      arrayBuffer: async () => new ArrayBuffer(0),
-    };
-  }) as unknown as typeof fetch;
-  const sampler = new PianoSampler(() => context);
+test("attacks distinct Tone.js pitches and releases them on navigation", async () => {
+  const attacks: Array<{ notes: readonly string[]; velocity: number }> = [];
+  const releases: Array<readonly string[]> = [];
+  const engine: PianoPlaybackEngine = {
+    ready: async () => undefined,
+    attack: (notes, velocity) => attacks.push({ notes, velocity }),
+    release: (notes) => releases.push(notes),
+  };
+  const sampler = new PianoSampler(() => engine);
 
-  try {
-    await sampler.play(["C4", "E4", "A♭3", "C4"]);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
+  await sampler.play(["C4", "E4", "A♭3", "C4"]);
 
-  assert.equal(fetchReceiver, undefined);
-  assert.ok(fetchedUrls.includes("/audio/piano/Mp-Gs2.ogg"));
-  assert.equal(starts.length, 3);
-  assert.deepEqual(starts, [4.008, 4.008, 4.008]);
-  assert.equal(rates.length, 3);
+  assert.deepEqual(attacks[0].notes, ["C4", "E4", "G#3"]);
+  assert.ok(Math.abs(attacks[0].velocity - 0.9 / Math.sqrt(3)) < 1e-9);
+  assert.deepEqual(releases, []);
+
+  await sampler.play(["D4"]);
+  assert.deepEqual(releases, [["C4", "E4", "G#3"]]);
+  assert.deepEqual(attacks[1].notes, ["D4"]);
 
   sampler.stop();
-  assert.equal(releaseEnds.length, 3);
-  assert.ok(releaseEnds.every((when) => Math.abs(when - 4.35) < 1e-9));
-  assert.equal(stops.length, 3);
-  assert.ok(stops.every((when) => Math.abs(when - 4.37) < 1e-9));
+  assert.deepEqual(releases, [["C4", "E4", "G#3"], ["D4"]]);
 });
