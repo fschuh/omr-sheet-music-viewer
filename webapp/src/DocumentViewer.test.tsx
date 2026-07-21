@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { DocumentViewer, shouldScrollPlaybackHorizontally } from "./DocumentViewer";
+import {
+  centeredPlaybackX,
+  DocumentViewer,
+  shouldScrollPlaybackHorizontally,
+} from "./DocumentViewer";
 import type { PlaybackMoment } from "./playback";
 import type { DocumentPage, VisualGroup, VisualSidecar } from "./types";
 
@@ -139,6 +143,28 @@ test("does not scroll horizontally when the approached staff edge is already vis
     shouldScrollPlaybackHorizontally(80, 150, 20, 960, 120, 880, 1000),
     false,
   );
+});
+
+test("scrolls before the playhead label reaches a visible staff edge", () => {
+  assert.equal(
+    shouldScrollPlaybackHorizontally(12, 82, 40, 960, 120, 880, 1000),
+    true,
+  );
+  assert.equal(
+    shouldScrollPlaybackHorizontally(918, 988, 40, 960, 120, 880, 1000),
+    true,
+  );
+});
+
+test("recenters the notes independently of asymmetric label placement", () => {
+  const noteLeft = 100;
+  const noteRight = 140;
+  const scale = 2;
+  const viewportWidth = 1000;
+
+  const x = centeredPlaybackX(noteLeft, noteRight, scale, viewportWidth);
+
+  assert.equal(x + ((noteLeft + noteRight) / 2) * scale, viewportWidth / 2);
 });
 
 test("scrolls horizontally when the playhead approaches music clipped on that side", () => {

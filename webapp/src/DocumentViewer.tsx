@@ -16,6 +16,7 @@ const MIN_SCALE = 0.08;
 const MAX_SCALE = 6;
 const CLICK_MOVE_TOLERANCE = 6;
 const PAGE_GAP = 28;
+const PLAYBACK_EDGE_CLEARANCE = 16;
 const SHOW_REFRESH_DIAGNOSTIC =
   typeof window !== "undefined" && window.location.hostname === "localhost";
 
@@ -159,10 +160,23 @@ export function shouldScrollPlaybackHorizontally(
   safeLeft: number,
   safeRight: number,
   viewportWidth: number,
+  edgeClearance = PLAYBACK_EDGE_CLEARANCE,
 ): boolean {
-  const needsLeftwardReveal = momentLeft < safeLeft && staffLeft < 0;
-  const needsRightwardReveal = momentRight > safeRight && staffRight > viewportWidth;
+  const needsLeftwardReveal =
+    momentLeft < safeLeft && Math.min(momentLeft, staffLeft) < edgeClearance;
+  const needsRightwardReveal =
+    momentRight > safeRight &&
+    Math.max(momentRight, staffRight) > viewportWidth - edgeClearance;
   return needsLeftwardReveal || needsRightwardReveal;
+}
+
+export function centeredPlaybackX(
+  momentLeft: number,
+  momentRight: number,
+  scale: number,
+  viewportWidth: number,
+): number {
+  return viewportWidth / 2 - ((momentLeft + momentRight) / 2) * scale;
 }
 
 interface PageOverlayProps {
@@ -596,6 +610,13 @@ export function DocumentViewer({
     const pageLeft = (layout.width - page.width) / 2;
     const staffBoxes = staffGroups.map(visualGroupBBox);
     const momentBoxes = momentGroups.map(visualGroupBBox);
+    const momentLabels = layoutNoteLabels(
+      sidecar,
+      momentIds,
+      page.width,
+      page.height,
+      page.musicXml,
+    );
     const verticalPadding = Math.max(18, page.height * 0.018);
     const horizontalPadding = Math.max(18, page.width * 0.02);
     const staffTop = pageTop + Math.min(...staffBoxes.map((box) => box[1])) - verticalPadding;
@@ -604,6 +625,14 @@ export function DocumentViewer({
     const staffRight = pageLeft + Math.max(...staffBoxes.map((box) => box[2])) + horizontalPadding;
     const momentLeft = pageLeft + Math.min(...momentBoxes.map((box) => box[0]));
     const momentRight = pageLeft + Math.max(...momentBoxes.map((box) => box[2]));
+    const momentContentLeft = pageLeft + Math.min(
+      ...momentBoxes.map((box) => box[0]),
+      ...momentLabels.map((label) => label.x),
+    );
+    const momentContentRight = pageLeft + Math.max(
+      ...momentBoxes.map((box) => box[2]),
+      ...momentLabels.map((label) => label.x + label.width),
+    );
     const current = transformRef.current;
     const safeTop = rect.height * 0.12;
     const keyboardHeight = Math.min(210, Math.max(150, window.innerHeight * 0.24));
@@ -614,8 +643,8 @@ export function DocumentViewer({
     const screenStaffBottom = current.y + staffBottom * current.scale;
     const screenStaffLeft = current.x + staffLeft * current.scale;
     const screenStaffRight = current.x + staffRight * current.scale;
-    const screenMomentLeft = current.x + momentLeft * current.scale;
-    const screenMomentRight = current.x + momentRight * current.scale;
+    const screenMomentLeft = current.x + momentContentLeft * current.scale;
+    const screenMomentRight = current.x + momentContentRight * current.scale;
     let x = current.x;
     let y = current.y;
 
@@ -632,8 +661,7 @@ export function DocumentViewer({
       safeRight,
       rect.width,
     )) {
-      const documentCenter = (momentLeft + momentRight) / 2;
-      x = rect.width / 2 - documentCenter * current.scale;
+      x = centeredPlaybackX(momentLeft, momentRight, current.scale, rect.width);
     }
     if (Math.abs(x - current.x) > 0.5 || Math.abs(y - current.y) > 0.5) {
       commitTransform({ ...current, x, y });
