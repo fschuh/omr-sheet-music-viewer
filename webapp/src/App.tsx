@@ -938,6 +938,17 @@ export function App() {
           <strong>MIDI controls unavailable.</strong> {midiError}
         </div>
       ) : null}
+      {playbackState.active && document && (
+        document.status === "processing" ||
+        document.fingeringStatus === "pending" ||
+        document.fingeringStatus === "predicting"
+      ) ? (
+        <div className="warning" role="status">
+          <strong>Fingerings are not available yet.</strong>{" "}
+          Playback can continue while recognition runs; fingering labels will appear after the
+          entire score is processed and fingering prediction finishes.
+        </div>
+      ) : null}
 
       <section className="workspace">
         {document && document.pages.length > 0 ? (
