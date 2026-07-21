@@ -31,7 +31,9 @@ test("attacks distinct Tone.js pitches and releases them on navigation", async (
   const attacks: Array<{ notes: readonly string[]; velocity: number }> = [];
   const releases: Array<readonly string[]> = [];
   const engine: PianoPlaybackEngine = {
-    ready: async () => undefined,
+    load: async () => undefined,
+    activate: async () => undefined,
+    prepare: async () => undefined,
     attack: (notes, velocity) => attacks.push({ notes, velocity }),
     release: (notes) => releases.push(notes),
   };
@@ -49,4 +51,32 @@ test("attacks distinct Tone.js pitches and releases them on navigation", async (
 
   sampler.stop();
   assert.deepEqual(releases, [["C4", "E4", "G#3"], ["D4"]]);
+});
+
+test("preloads, activates, and reuses the playback engine before the first note", async () => {
+  let enginesCreated = 0;
+  let loads = 0;
+  let activations = 0;
+  let preparations = 0;
+  const engine: PianoPlaybackEngine = {
+    load: async () => { loads += 1; },
+    activate: async () => { activations += 1; },
+    prepare: async () => { preparations += 1; },
+    attack: () => undefined,
+    release: () => undefined,
+  };
+  const sampler = new PianoSampler(() => {
+    enginesCreated += 1;
+    return engine;
+  });
+
+  await sampler.preload();
+  await sampler.activate();
+  await sampler.prepare();
+  await sampler.play(["C4"]);
+
+  assert.equal(enginesCreated, 1);
+  assert.equal(loads, 1);
+  assert.equal(activations, 1);
+  assert.equal(preparations, 1);
 });

@@ -14,6 +14,10 @@ const SAMPLE_FILES = [
 const NOTE_RELEASE_SECONDS = 0.35;
 const SAMPLER_VOLUME_DB = -4;
 const LIMITER_THRESHOLD_DB = -1;
+const WARMUP_NOTE = "C4";
+const WARMUP_VELOCITY = 0.0001;
+const WARMUP_DURATION_SECONDS = 0.02;
+const WARMUP_SETTLE_MS = 100;
 
 const NATURAL_SEMITONES: Readonly<Record<string, number>> = {
   C: 0,
@@ -61,7 +65,9 @@ function tonePitchForMidi(midi: number): string {
 }
 
 export interface PianoPlaybackEngine {
-  ready(): Promise<void>;
+  load(): Promise<void>;
+  activate(): Promise<void>;
+  prepare(): Promise<void>;
   attack(notes: readonly string[], velocity: number): void;
   release(notes: readonly string[]): void;
 }
@@ -71,6 +77,8 @@ class TonePianoPlaybackEngine implements PianoPlaybackEngine {
   private readonly compressor: Tone.Compressor;
   private readonly limiter: Tone.Limiter;
   private readonly loaded: Promise<void>;
+  private activation: Promise<void> | null = null;
+  private preparation: Promise<void> | null = null;
 
   constructor() {
     let resolveLoaded!: () => void;
@@ -89,7 +97,7 @@ class TonePianoPlaybackEngine implements PianoPlaybackEngine {
     }).connect(this.limiter);
     this.sampler = new Tone.Sampler({
       urls: pianoSampleUrls(),
-      attack: 0.008,
+      attack: 0.002,
       release: NOTE_RELEASE_SECONDS,
       curve: "exponential",
       volume: SAMPLER_VOLUME_DB,
@@ -98,9 +106,39 @@ class TonePianoPlaybackEngine implements PianoPlaybackEngine {
     }).connect(this.compressor);
   }
 
-  async ready(): Promise<void> {
-    await Tone.start();
+  async load(): Promise<void> {
     await this.loaded;
+  }
+
+  activate(): Promise<void> {
+    if (!this.activation) {
+      this.activation = Tone.start().catch((error: unknown) => {
+        this.activation = null;
+        throw error;
+      });
+    }
+    return this.activation;
+  }
+
+  private async ready(): Promise<void> {
+    await Promise.all([this.activate(), this.load()]);
+  }
+
+  prepare(): Promise<void> {
+    if (!this.preparation) {
+      this.preparation = this.ready()
+        .then(async () => {
+          const startTime = Tone.immediate() + 0.008;
+          this.sampler.triggerAttack(WARMUP_NOTE, startTime, WARMUP_VELOCITY);
+          this.sampler.triggerRelease(WARMUP_NOTE, startTime + WARMUP_DURATION_SECONDS);
+          await new Promise<void>((resolve) => globalThis.setTimeout(resolve, WARMUP_SETTLE_MS));
+        })
+        .catch((error: unknown) => {
+          this.preparation = null;
+          throw error;
+        });
+    }
+    return this.preparation;
   }
 
   attack(notes: readonly string[], velocity: number): void {
@@ -114,6 +152,7 @@ class TonePianoPlaybackEngine implements PianoPlaybackEngine {
 
 export class PianoSampler {
   private engine: PianoPlaybackEngine | null = null;
+  private preparation: Promise<void> | null = null;
   private activeNotes: string[] = [];
   private playGeneration = 0;
 
@@ -124,6 +163,24 @@ export class PianoSampler {
   private audioEngine(): PianoPlaybackEngine {
     if (!this.engine) this.engine = this.createEngine();
     return this.engine;
+  }
+
+  preload(): Promise<void> {
+    return this.audioEngine().load();
+  }
+
+  activate(): Promise<void> {
+    return this.audioEngine().activate();
+  }
+
+  prepare(): Promise<void> {
+    if (!this.preparation) {
+      this.preparation = this.audioEngine().prepare().catch((error: unknown) => {
+        this.preparation = null;
+        throw error;
+      });
+    }
+    return this.preparation;
   }
 
   stop(): void {
@@ -144,13 +201,12 @@ export class PianoSampler {
     this.activeNotes = [];
     if (midiNotes.length === 0) return;
 
-    const engine = this.audioEngine();
-    await engine.ready();
+    await this.prepare();
     if (generation !== this.playGeneration) return;
 
     const notes = midiNotes.map(tonePitchForMidi);
     const velocity = Math.min(0.78, 0.9 / Math.sqrt(notes.length));
-    engine.attack(notes, velocity);
+    this.audioEngine().attack(notes, velocity);
     this.activeNotes = notes;
   }
 }

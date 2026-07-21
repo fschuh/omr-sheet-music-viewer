@@ -322,13 +322,24 @@ export function App() {
   }, [nativeAvailable]);
 
   useEffect(() => {
+    let disposed = false;
+    void pianoSampler.prepare().catch((audioError: unknown) => {
+      if (disposed) return;
+      const message = audioError instanceof Error ? audioError.message : String(audioError);
+      setPlaybackAudioError(`Piano audio could not start: ${message}`);
+    });
+    return () => {
+      disposed = true;
+      pianoSampler.stop();
+    };
+  }, []);
+
+  useEffect(() => {
     playbackStateRef.current = initialPlaybackState;
     setPlaybackState(initialPlaybackState);
     setPlaybackAudioError(null);
     pianoSampler.stop();
   }, [document?.jobId]);
-
-  useEffect(() => () => pianoSampler.stop(), []);
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
