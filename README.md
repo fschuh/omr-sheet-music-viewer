@@ -1,4 +1,4 @@
-# HOMR Sheet Music Viewer
+# OMR Sheet Music Viewer
 
 This first desktop iteration opens a PDF, rasterizes it page by page, runs the
 local HOMR checkout, caches the generated PNG/MusicXML/visual-sidecar artifacts,

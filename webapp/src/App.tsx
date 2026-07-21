@@ -1276,7 +1276,7 @@ export function App() {
     <main className="app-shell">
       <header className="topbar">
         <div className="document-heading">
-          <h1>HOMR Sheet Music Viewer</h1>
+          <h1>OMR Sheet Music Viewer</h1>
           <p>{activePage === "settings" ? "Playback preferences" : document ? document.name : workerInfo ?? "Open a PDF score to begin"}</p>
         </div>
         {activePage === "viewer" && document ? (

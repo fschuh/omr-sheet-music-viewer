@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "HOMR Sheet Music Viewer",
+  "productName": "OMR Sheet Music Viewer",
   "version": "0.1.0",
   "identifier": "com.homr.sheetmusicviewer",
   "build": {
@@ -19,7 +19,7 @@
   "app": {
     "windows": [
       {
-        "title": "HOMR Sheet Music Viewer",
+        "title": "OMR Sheet Music Viewer",
         "width": 1400,
         "height": 900,
         "minWidth": 900,
