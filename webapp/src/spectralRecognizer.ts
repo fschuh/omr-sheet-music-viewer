@@ -29,10 +29,16 @@ interface AnalyserLike extends AudioNodeLike {
   getFloatFrequencyData(target: Float32Array<ArrayBuffer>): void;
 }
 
+interface GainLike extends AudioNodeLike {
+  gain: { value: number };
+}
+
 interface AudioContextLike {
   sampleRate: number;
+  destination: unknown;
   createMediaStreamSource(stream: MediaStreamLike): AudioNodeLike;
   createAnalyser(): AnalyserLike;
+  createGain(): GainLike;
   resume(): Promise<void>;
   close(): Promise<void>;
 }
@@ -98,6 +104,7 @@ export class BrowserSpectralRecognizer implements NoteRecognizer {
   private audioContext: AudioContextLike | null = null;
   private source: AudioNodeLike | null = null;
   private analyser: AnalyserLike | null = null;
+  private silentGain: GainLike | null = null;
   private detector: DetectorLike | null = null;
   private spectrum: Float32Array<ArrayBuffer> | null = null;
   private animationFrame: number | null = null;
@@ -143,14 +150,19 @@ export class BrowserSpectralRecognizer implements NoteRecognizer {
       const audioContext = this.environment.createAudioContext();
       const source = audioContext.createMediaStreamSource(stream);
       const analyser = audioContext.createAnalyser();
+      const silentGain = audioContext.createGain();
       analyser.fftSize = FFT_SIZE;
       analyser.smoothingTimeConstant = 0;
       analyser.minDecibels = -100;
       analyser.maxDecibels = -15;
-      source.connect(analyser);
+      silentGain.gain.value = 0;
       this.audioContext = audioContext;
       this.source = source;
       this.analyser = analyser;
+      this.silentGain = silentGain;
+      source.connect(analyser);
+      analyser.connect(silentGain);
+      silentGain.connect(audioContext.destination);
       this.detector = this.environment.createDetector(audioContext.sampleRate, analyser.fftSize);
       this.spectrum = new Float32Array(analyser.frequencyBinCount);
       this.updateLifecycle({ analysis: "ready" });
@@ -254,11 +266,13 @@ export class BrowserSpectralRecognizer implements NoteRecognizer {
     this.animationFrame = null;
     this.source?.disconnect();
     this.analyser?.disconnect();
+    this.silentGain?.disconnect();
     for (const track of this.stream?.getTracks() ?? []) track.stop();
     void this.audioContext?.close().catch(() => undefined);
     this.detector?.reset();
     this.source = null;
     this.analyser = null;
+    this.silentGain = null;
     this.stream = null;
     this.audioContext = null;
     this.detector = null;
