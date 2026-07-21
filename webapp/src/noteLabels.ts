@@ -52,6 +52,7 @@ export function selectedGroupIds(
 
   const result = new Set([group.visual_group_id]);
   const stemComponents = new Set(group.stem_component_ids ?? []);
+  const notesByGroup = linkedNotes(sidecar);
   for (const candidate of sidecar.visual_groups) {
     if (
       candidate.staff_index !== group.staff_index ||
@@ -60,26 +61,48 @@ export function selectedGroupIds(
       continue;
     }
     if (
-      (candidate.stem_component_ids ?? []).some((component) => stemComponents.has(component))
+      (candidate.stem_component_ids ?? []).some((component) => stemComponents.has(component)) ||
+      stemlessWholeNotesFormChord(group, candidate, notesByGroup)
     ) {
-      result.add(candidate.visual_group_id);
-    }
-    if (visuallyAlignedNoteheads(group, candidate)) {
       result.add(candidate.visual_group_id);
     }
   }
   return result;
 }
 
-function visuallyAlignedNoteheads(first: VisualGroup, second: VisualGroup): boolean {
+function stemlessWholeNotesFormChord(
+  first: VisualGroup,
+  second: VisualGroup,
+  notesByGroup: ReadonlyMap<string, VisualSidecarNote[]>,
+): boolean {
   if (
     first.visual_group_id === second.visual_group_id ||
-    first.staff_index !== second.staff_index ||
-    first.stave_index !== second.stave_index
+    !first.is_hollow_notehead ||
+    !second.is_hollow_notehead ||
+    (first.stem_component_ids?.length ?? 0) > 0 ||
+    (second.stem_component_ids?.length ?? 0) > 0 ||
+    !visuallyAlignedNoteheads(first, second)
   ) {
     return false;
   }
 
+  const firstNotes = notesByGroup.get(first.visual_group_id) ?? [];
+  const secondNotes = notesByGroup.get(second.visual_group_id) ?? [];
+  return firstNotes.some((firstNote) =>
+    secondNotes.some(
+      (secondNote) =>
+        firstNote.pitch !== null &&
+        secondNote.pitch !== null &&
+        firstNote.duration === "note_1" &&
+        secondNote.duration === "note_1" &&
+        firstNote.measure === secondNote.measure &&
+        firstNote.staff === secondNote.staff &&
+        firstNote.voice === secondNote.voice,
+    ),
+  );
+}
+
+function visuallyAlignedNoteheads(first: VisualGroup, second: VisualGroup): boolean {
   const firstNoteheads = first.notehead_ellipses ?? [];
   const secondNoteheads = second.notehead_ellipses ?? [];
   if (firstNoteheads.length === 0 || secondNoteheads.length === 0) return false;
@@ -91,10 +114,10 @@ function visuallyAlignedNoteheads(first: VisualGroup, second: VisualGroup): bool
         2,
         6,
       );
-      const verticalSeparation = Math.abs(firstNotehead.center[1] - secondNotehead.center[1]);
       return (
         Math.abs(firstNotehead.center[0] - secondNotehead.center[0]) <= horizontalTolerance &&
-        verticalSeparation > Math.min(firstNotehead.ry, secondNotehead.ry) * 0.5
+        Math.abs(firstNotehead.center[1] - secondNotehead.center[1]) >
+          Math.min(firstNotehead.ry, secondNotehead.ry) * 0.5
       );
     }),
   );

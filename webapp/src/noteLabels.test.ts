@@ -14,6 +14,7 @@ function group(
   y: number,
   stemComponentIds: string[] = [],
   staveIndex = 0,
+  isHollowNotehead = false,
 ): VisualGroup {
   return {
     visual_group_id: `group-${index}`,
@@ -26,6 +27,7 @@ function group(
     notehead_contours: [],
     stem_contours: [],
     stem_component_ids: stemComponentIds,
+    is_hollow_notehead: isHollowNotehead,
     musicxml_ids: [`note-${index}`],
   };
 }
@@ -91,14 +93,43 @@ test("keeps every label disjoint in a 486-note highlight-all stress case", () =>
   }
 });
 
-test("selects vertically aligned chord members when stem detection is missing", () => {
-  const groups = [group(0, 500, 480), group(1, 500, 520)];
-  const data = sidecar(groups, ["G5", "B4"]);
+test("does not infer a chord from vertically aligned noteheads without a shared stem", () => {
+  // Page 2, local measure 16 (document measure 34): these noteheads are
+  // vertically aligned, but belong to independent voices and durations.
+  const groups = [group(0, 1892.965, 2184.157), group(1, 1892.87, 2213.511)];
+  const data = sidecar(groups, ["C5", "G4"]);
+  data.notes[0].voice = 2;
+  data.notes[1].duration = "note_8";
 
   assert.deepEqual(
     selectedGroupIds(
       data,
-      { pageIndex: 0, visualGroupId: groups[1].visual_group_id },
+      { pageIndex: 0, visualGroupId: groups[0].visual_group_id },
+      0,
+      false,
+    ),
+    new Set([groups[0].visual_group_id]),
+  );
+});
+
+test("selects an aligned chord of stemless whole notes", () => {
+  // Page 1, measure 9 bass clef: F3 and A3 form a whole-note chord.
+  const groups = [
+    group(0, 970.697, 2034.109, [], 1, true),
+    group(1, 970.697, 2013.445, [], 1, true),
+  ];
+  const data = sidecar(groups, ["F3", "A3"]);
+  for (const note of data.notes) {
+    note.measure = 9;
+    note.staff = 2;
+    note.voice = 5;
+    note.duration = "note_1";
+  }
+
+  assert.deepEqual(
+    selectedGroupIds(
+      data,
+      { pageIndex: 0, visualGroupId: groups[0].visual_group_id },
       0,
       false,
     ),
@@ -106,7 +137,28 @@ test("selects vertically aligned chord members when stem detection is missing", 
   );
 });
 
-test("does not select horizontally adjacent chord columns", () => {
+test("does not group aligned whole notes from different voices", () => {
+  const groups = [
+    group(0, 500, 480, [], 0, true),
+    group(1, 500, 520, [], 0, true),
+  ];
+  const data = sidecar(groups, ["C5", "G4"]);
+  data.notes[0].duration = "note_1";
+  data.notes[1].duration = "note_1";
+  data.notes[1].voice = 2;
+
+  assert.deepEqual(
+    selectedGroupIds(
+      data,
+      { pageIndex: 0, visualGroupId: groups[0].visual_group_id },
+      0,
+      false,
+    ),
+    new Set([groups[0].visual_group_id]),
+  );
+});
+
+test("does not select other aligned note columns without shared stems", () => {
   const groups = [
     group(0, 500, 480),
     group(1, 500, 520),
@@ -122,7 +174,7 @@ test("does not select horizontally adjacent chord columns", () => {
       0,
       false,
     ),
-    new Set([groups[0].visual_group_id, groups[1].visual_group_id]),
+    new Set([groups[0].visual_group_id]),
   );
 });
 
