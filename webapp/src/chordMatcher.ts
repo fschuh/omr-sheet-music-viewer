@@ -14,7 +14,7 @@ export interface ChordMatcherOptions {
 export const defaultChordMatcherOptions: ChordMatcherOptions = {
   onsetThreshold: 0.5,
   targetNoteThreshold: 0.3,
-  noteThreshold: 0.35,
+  noteThreshold: 0.5,
   collectionWindowMs: 400,
   settleMs: 80,
   duplicateOnsetMs: 120,
@@ -36,7 +36,7 @@ function sorted(values: Iterable<number>): number[] {
 
 /**
  * Collects fresh, confident onsets into an exact score chord. It intentionally
- * knows nothing about Basic Pitch, microphone capture, or playback navigation.
+ * knows nothing about spectrum analysis, microphone capture, or playback navigation.
  */
 export class ExactChordMatcher {
   private readonly options: ChordMatcherOptions;

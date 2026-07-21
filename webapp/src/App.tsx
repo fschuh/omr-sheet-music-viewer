@@ -18,7 +18,7 @@ import {
   type PlaybackState,
 } from "./playback";
 import { pianoSampler, pitchToMidi } from "./piano";
-import { BrowserBasicPitchRecognizer } from "./basicPitchRecognizer";
+import { BrowserSpectralRecognizer } from "./spectralRecognizer";
 import { ExactChordMatcher } from "./chordMatcher";
 import {
   stoppedRecognizerLifecycle,
@@ -300,13 +300,13 @@ export function App() {
     );
     chordMatcherRef.current.setTarget(target, generation, performance.now());
     setListenFeedback({
-      lifecycle: { state: "initializing", microphone: "loading", model: "loading" },
+      lifecycle: { state: "initializing", microphone: "loading", analysis: "loading" },
       targetPitches: target,
       detectedTargetPitches: [],
       extraPitches: [],
       processingTimeMs: null,
     });
-    const recognizer = new BrowserBasicPitchRecognizer();
+    const recognizer = new BrowserSpectralRecognizer();
     recognizerRef.current = recognizer;
     try {
       await recognizer.start(generation, {
@@ -340,7 +340,7 @@ export function App() {
       );
     } catch {
       if (recognizerRef.current === recognizer) recognizerRef.current = null;
-      // The lifecycle callback already exposes the specific model/device error.
+      // The lifecycle callback already exposes the specific analyzer/device error.
     }
   }, [commitPlaybackState, handleRecognizerResult, playbackTimeline]);
 

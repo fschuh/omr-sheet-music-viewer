@@ -103,7 +103,7 @@ test("requires fresh onsets for repeated identical target chords", () => {
   assert.equal(matcher.consume(result(2, 1_681, [], [60, 64])).matched, true);
 });
 
-test("ignores stale inference after manual navigation and mode generations", () => {
+test("ignores stale analysis after manual navigation and mode generations", () => {
   const matcher = new ExactChordMatcher();
   matcher.setTarget([60], 10, 0);
   matcher.setTarget([62], 11, 1_000);

@@ -373,8 +373,8 @@ export function DocumentViewer({
     if (lifecycle.state === "error") return `Listen error: ${lifecycle.error ?? "Unknown error"}`;
     if (lifecycle.state === "initializing") {
       const microphone = lifecycle.microphone === "ready" ? "Microphone ready" : "Requesting microphone";
-      const model = lifecycle.model === "ready" ? "Basic Pitch ready" : "Loading Basic Pitch";
-      return `${microphone} · ${model}`;
+      const analysis = lifecycle.analysis === "ready" ? "Analyzer ready" : "Starting analyzer";
+      return `${microphone} · ${analysis}`;
     }
     if (lifecycle.state === "paused") return "Listening paused while the target chord plays";
     if (lifecycle.state !== "listening") return null;
@@ -383,9 +383,9 @@ export function DocumentViewer({
     const extras = listenFeedback.extraPitches.map(midiToPitchName).join(" ");
     const processing = listenFeedback.processingTimeMs === null
       ? ""
-      : ` · ${Math.round(listenFeedback.processingTimeMs)} ms inference`;
+      : ` · ${Math.round(listenFeedback.processingTimeMs)} ms analysis`;
     return [
-      `Microphone ready · Basic Pitch ready · Target ${target}`,
+      `Microphone ready · Analyzer ready · Target ${target}`,
       heard ? `Heard ${heard}` : "Waiting for a fresh onset",
       extras ? `Extra ${extras}` : "",
     ].filter(Boolean).join(" · ") + processing;

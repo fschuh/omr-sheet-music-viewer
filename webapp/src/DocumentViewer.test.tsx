@@ -107,16 +107,16 @@ test("renders all groups and note names in the active cross-clef moment", () => 
   assert.match(markup, /aria-pressed="true"/);
 });
 
-test("shows listen lifecycle, target detections, extras, and inference time", () => {
+test("shows listen lifecycle, target detections, extras, and analysis time", () => {
   const markup = render(true, {
-    lifecycle: { state: "listening", microphone: "ready", model: "ready" },
+    lifecycle: { state: "listening", microphone: "ready", analysis: "ready" },
     targetPitches: [60, 64],
     detectedTargetPitches: [60],
     extraPitches: [67],
     processingTimeMs: 123.4,
   });
-  assert.match(markup, /Microphone ready · Basic Pitch ready · Target C4 E4/);
-  assert.match(markup, /Heard C4 · Extra G4 · 123 ms inference/);
+  assert.match(markup, /Microphone ready · Analyzer ready · Target C4 E4/);
+  assert.match(markup, /Heard C4 · Extra G4 · 123 ms analysis/);
   assert.match(markup, /aria-label="Disable listen mode"/);
 });
 
