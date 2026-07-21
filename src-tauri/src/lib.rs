@@ -1,3 +1,5 @@
+#[cfg(target_os = "linux")]
+use gtk::prelude::{DialogExtManual, GtkWindowExt, WidgetExt};
 use midir::{Ignore, MidiInput, MidiInputConnection};
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -11,6 +13,11 @@ use std::thread;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, State};
 use uuid::Uuid;
+#[cfg(target_os = "linux")]
+use webkit2gtk::{
+    glib::object::Cast, PermissionRequestExt, UserMediaPermissionRequest,
+    UserMediaPermissionRequestExt, WebViewExt,
+};
 #[cfg(target_os = "windows")]
 use windows::Win32::UI::WindowsAndMessaging::{
     SystemParametersInfoW, SPI_GETKEYBOARDDELAY, SPI_GETKEYBOARDSPEED,
@@ -22,6 +29,54 @@ const DEFAULT_KEYBOARD_REPEAT_DELAY_MS: u32 = 400;
 const DEFAULT_KEYBOARD_REPEAT_INTERVAL_MS: u32 = 75;
 const MIDI_INITIALIZATION_TIMEOUT: Duration = Duration::from_secs(4);
 const MIDI_UNAVAILABLE_ERROR: &str = "MIDI initialization timed out because the system MIDI service did not respond. MIDI controls are disabled for this session; keyboard controls and the rest of the app remain available. Restart the MIDI service or your computer, then reopen the app to try again.";
+
+#[cfg(target_os = "linux")]
+fn install_linux_microphone_permission_handler<R: tauri::Runtime>(
+    webview: &tauri::WebviewWindow<R>,
+) -> tauri::Result<()> {
+    webview.with_webview(|platform_webview| {
+        platform_webview
+            .inner()
+            .connect_permission_request(|webview, request| {
+                let Some(media_request) = request.downcast_ref::<UserMediaPermissionRequest>() else {
+                    request.deny();
+                    return true;
+                };
+                if !media_request.is_for_audio_device() || media_request.is_for_video_device() {
+                    request.deny();
+                    return true;
+                }
+
+                let parent = webview
+                    .toplevel()
+                    .and_then(|widget| widget.downcast::<gtk::Window>().ok());
+                let mut builder = gtk::MessageDialog::builder()
+                    .title("Microphone access")
+                    .modal(true)
+                    .message_type(gtk::MessageType::Question)
+                    .buttons(gtk::ButtonsType::YesNo)
+                    .text("Allow HOMR Sheet Music Viewer to use the microphone?")
+                    .secondary_text(
+                        "Listen mode analyzes microphone audio locally. Audio is not stored or transmitted.",
+                    );
+                if let Some(parent) = parent.as_ref() {
+                    builder = builder.transient_for(parent);
+                }
+                let dialog = builder.build();
+                let request = request.clone();
+                gtk::glib::MainContext::default().spawn_local(async move {
+                    let response = dialog.run_future().await;
+                    dialog.close();
+                    if response == gtk::ResponseType::Yes {
+                        request.allow();
+                    } else {
+                        request.deny();
+                    }
+                });
+                true
+            });
+    })
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -682,6 +737,10 @@ pub fn run() {
         .setup(|app| {
             let cache_root = app.path().app_cache_dir()?;
             fs::create_dir_all(cache_root)?;
+            #[cfg(target_os = "linux")]
+            if let Some(main_webview) = app.get_webview_window("main") {
+                install_linux_microphone_permission_handler(&main_webview)?;
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
