@@ -18,6 +18,7 @@ function keyEvent(code: string, modifiers: Partial<KeyboardEvent> = {}): Keyboar
 test("default shortcuts reproduce the existing playback keys", () => {
   const shortcuts = defaultPlaybackShortcuts();
   assert.equal(commandForKeyboardEvent(shortcuts, keyEvent("Space")), "togglePlayback");
+  assert.equal(commandForKeyboardEvent(shortcuts, keyEvent("Escape")), "stopPlayback");
   assert.equal(commandForKeyboardEvent(shortcuts, keyEvent("KeyM")), "toggleNoteSounds");
   assert.equal(commandForKeyboardEvent(shortcuts, keyEvent("ArrowRight")), "forwardNote");
   assert.equal(commandForKeyboardEvent(shortcuts, keyEvent("ArrowLeft")), "backwardNote");

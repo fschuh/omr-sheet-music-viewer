@@ -221,9 +221,13 @@ function formatStoredPitch(pitch: string): string {
   return `${match[1].toUpperCase()}${accidental}${match[3]}`;
 }
 
+const musicXmlPitchCache = new Map<string, Map<string, string>>();
+
 export function musicXmlPitchNames(musicXml?: string): Map<string, string> {
   const result = new Map<string, string>();
   if (!musicXml || typeof DOMParser === "undefined") return result;
+  const cached = musicXmlPitchCache.get(musicXml);
+  if (cached) return cached;
   const document = new DOMParser().parseFromString(musicXml, "application/xml");
   if (document.querySelector("parsererror")) return result;
   for (const element of Array.from(document.getElementsByTagName("*"))) {
@@ -237,6 +241,11 @@ export function musicXmlPitchNames(musicXml?: string): Map<string, string> {
     if (!step || octave === null || !Number.isFinite(parsedAlter)) continue;
     result.set(id, formatPitchName(step, octave, parsedAlter));
   }
+  if (musicXmlPitchCache.size >= 64) {
+    const oldest = musicXmlPitchCache.keys().next().value;
+    if (oldest !== undefined) musicXmlPitchCache.delete(oldest);
+  }
+  musicXmlPitchCache.set(musicXml, result);
   return result;
 }
 
@@ -430,15 +439,43 @@ function gridLayout(
   return labels;
 }
 
-function linkedNotes(sidecar: VisualSidecar): Map<string, VisualSidecarNote[]> {
-  const result = new Map<string, VisualSidecarNote[]>();
+interface SidecarLayoutData {
+  groups: Map<string, VisualGroup>;
+  notes: Map<string, VisualSidecarNote[]>;
+  bounds: Map<string, Bounds>;
+  noteheadHeights: number[];
+  obstacles: Bounds[];
+}
+
+const sidecarLayoutCache = new WeakMap<VisualSidecar, SidecarLayoutData>();
+
+function sidecarLayoutData(sidecar: VisualSidecar): SidecarLayoutData {
+  const cached = sidecarLayoutCache.get(sidecar);
+  if (cached) return cached;
+  const groups = new Map(sidecar.visual_groups.map((group) => [group.visual_group_id, group]));
+  const notes = new Map<string, VisualSidecarNote[]>();
   for (const note of sidecar.notes) {
     if (!note.visual_group_id) continue;
-    const notes = result.get(note.visual_group_id) ?? [];
-    notes.push(note);
-    result.set(note.visual_group_id, notes);
+    const linked = notes.get(note.visual_group_id) ?? [];
+    linked.push(note);
+    notes.set(note.visual_group_id, linked);
   }
+  const bounds = new Map<string, Bounds>();
+  const noteheadHeights: number[] = [];
+  const obstacles: Bounds[] = [];
+  for (const group of sidecar.visual_groups) {
+    const groupBounds = noteheadBounds(group);
+    bounds.set(group.visual_group_id, groupBounds);
+    noteheadHeights.push(groupBounds.height);
+    obstacles.push(groupBounds);
+  }
+  const result = { groups, notes, bounds, noteheadHeights, obstacles };
+  sidecarLayoutCache.set(sidecar, result);
   return result;
+}
+
+function linkedNotes(sidecar: VisualSidecar): Map<string, VisualSidecarNote[]> {
+  return sidecarLayoutData(sidecar).notes;
 }
 
 function labelRequests(
@@ -447,13 +484,15 @@ function labelRequests(
   musicXml?: string,
 ): NoteLabelRequest[] {
   const pitchNames = musicXmlPitchNames(musicXml);
+  const layoutData = sidecarLayoutData(sidecar);
   const notesByGroup = linkedNotes(sidecar);
   const requests: NoteLabelRequest[] = [];
   const seenMusicXmlIds = new Set<string>();
 
-  for (const group of sidecar.visual_groups) {
-    if (!selectedIds.has(group.visual_group_id)) continue;
-    const bounds = noteheadBounds(group);
+  for (const visualGroupId of selectedIds) {
+    const group = layoutData.groups.get(visualGroupId);
+    if (!group) continue;
+    const bounds = layoutData.bounds.get(visualGroupId) ?? noteheadBounds(group);
     const anchor: VisualPoint = [bounds.x + bounds.width / 2, bounds.y + bounds.height / 2];
     const notes = notesByGroup.get(group.visual_group_id) ?? [];
     for (const note of notes) {
@@ -498,14 +537,13 @@ export function layoutNoteLabels(
 ): NoteLabelLayout[] {
   const requests = labelRequests(sidecar, selectedIds, musicXml);
   if (requests.length === 0) return [];
-  const noteheadHeights = sidecar.visual_groups.map((group) => noteheadBounds(group).height);
+  const layoutData = sidecarLayoutData(sidecar);
   const fontSize = clamp(
-    Math.max(pageWidth * 0.0185, median(noteheadHeights) * 2.1),
+    Math.max(pageWidth * 0.0185, median(layoutData.noteheadHeights) * 2.1),
     MIN_FONT_SIZE,
     MAX_FONT_SIZE,
   );
-  const obstacles = sidecar.visual_groups.map(noteheadBounds);
-  const nearby = greedyLayout(requests, obstacles, fontSize, pageWidth, pageHeight);
+  const nearby = greedyLayout(requests, layoutData.obstacles, fontSize, pageWidth, pageHeight);
   if (nearby) return nearby;
 
   // Extremely dense scores fall back to page-wide fixed cells. Each cell is

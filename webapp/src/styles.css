@@ -443,6 +443,71 @@ button:disabled {
   align-items: center;
   display: flex;
   gap: 3px;
+  min-width: 0;
+}
+
+.playback-mode-selector {
+  background: #e7e3dc;
+  border: 1px solid #c8c1b7;
+  border-radius: 7px;
+  display: flex;
+  margin-right: 4px;
+  padding: 2px;
+}
+
+.viewer-toolbar .playback-controls .playback-mode-selector button {
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  color: #635c53;
+  font-size: 0.72rem;
+  padding: 0 8px;
+  width: auto;
+}
+
+.viewer-toolbar .playback-controls .playback-mode-selector button.selected {
+  background: #fff;
+  box-shadow: 0 1px 3px rgb(31 27 23 / 18%);
+  color: #0a6656;
+}
+
+.realtime-mode-control {
+  display: flex;
+  position: relative;
+}
+
+.realtime-mode-control.unavailable {
+  cursor: not-allowed;
+}
+
+.realtime-mode-control button:disabled {
+  pointer-events: none;
+}
+
+.realtime-unavailable-tooltip {
+  background: #292621;
+  border-radius: 6px;
+  box-shadow: 0 3px 10px rgb(31 27 23 / 28%);
+  color: #fff;
+  font-size: 0.75rem;
+  left: 50%;
+  line-height: 1.35;
+  opacity: 0;
+  padding: 7px 9px;
+  pointer-events: none;
+  position: absolute;
+  text-align: left;
+  top: calc(100% + 8px);
+  transform: translateX(-50%);
+  transition: opacity 100ms ease, visibility 100ms ease;
+  visibility: hidden;
+  white-space: nowrap;
+  z-index: 30;
+}
+
+.realtime-mode-control:hover .realtime-unavailable-tooltip {
+  opacity: 1;
+  visibility: visible;
 }
 
 .viewer-toolbar .playback-controls button {
@@ -477,6 +542,57 @@ button:disabled {
   border-color: #7aada3;
   filter: none;
   opacity: 1;
+}
+
+.viewer-toolbar .playback-controls .realtime-stop {
+  color: #8e2f26;
+}
+
+.tempo-control { position: relative; }
+
+.viewer-toolbar .playback-controls .tempo-button {
+  color: #365f57;
+  font-size: 0.7rem;
+  margin-left: 3px;
+  padding: 0 7px;
+  width: auto;
+}
+
+.tempo-popover {
+  background: #fff;
+  border: 1px solid #c8c1b7;
+  border-radius: 9px;
+  box-shadow: 0 8px 28px rgb(31 27 23 / 24%);
+  color: #39342e;
+  padding: 12px;
+  position: absolute;
+  right: 0;
+  top: 36px;
+  width: 230px;
+  z-index: 20;
+}
+
+.tempo-popover label {
+  align-items: center;
+  display: flex;
+  font-size: 0.78rem;
+  font-weight: 700;
+  justify-content: space-between;
+}
+
+.viewer-toolbar .tempo-popover span { min-width: 0; }
+
+.viewer-toolbar .tempo-popover input[type="number"] {
+  height: 28px;
+  margin-right: 3px;
+  padding: 3px 5px;
+  width: 65px;
+}
+
+.viewer-toolbar .tempo-popover input[type="range"] {
+  accent-color: #087361;
+  margin-top: 12px;
+  width: 100%;
 }
 
 .viewer-stage {
@@ -527,6 +643,15 @@ button:disabled {
 }
 
 .overlay { pointer-events: none; }
+
+.overlay .realtime-playhead {
+  filter: drop-shadow(0 0 2px rgb(255 255 255 / 95%));
+  stroke: #e3261c;
+  stroke-linecap: round;
+  stroke-width: 4;
+  vector-effect: non-scaling-stroke;
+  will-change: transform;
+}
 
 .visual-group polygon,
 .visual-group ellipse,

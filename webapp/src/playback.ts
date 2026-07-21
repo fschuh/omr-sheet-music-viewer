@@ -4,6 +4,7 @@ import { musicXmlPitchNames } from "./noteLabels";
 
 export const playbackCommandNames = [
   "togglePlayback",
+  "stopPlayback",
   "toggleNoteSounds",
   "forwardNote",
   "backwardNote",
@@ -286,7 +287,7 @@ function firstMomentOfPreviousBar(timeline: PlaybackMoment[], index: number): nu
 function commandDestination(
   timeline: PlaybackMoment[],
   index: number,
-  command: Exclude<PlaybackCommand, "togglePlayback" | "toggleNoteSounds">,
+  command: Exclude<PlaybackCommand, "togglePlayback" | "stopPlayback" | "toggleNoteSounds">,
 ): number {
   if (command === "forwardNote") return Math.min(timeline.length - 1, index + 1);
   if (command === "backwardNote") return Math.max(0, index - 1);
@@ -325,6 +326,9 @@ export function runPlaybackCommand(
   command: PlaybackCommand,
   selectedGroup: VisualGroupRef | null = null,
 ): PlaybackState {
+  if (command === "stopPlayback") {
+    return state.active ? { ...state, active: false, currentMomentId: null } : state;
+  }
   if (command === "togglePlayback") {
     if (state.active) return { ...state, active: false, currentMomentId: null };
     const next = timeline.length === 0

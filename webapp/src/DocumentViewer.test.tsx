@@ -3,11 +3,28 @@ import test from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
   centeredPlaybackX,
+  committedTempoPercentage,
   DocumentViewer,
   shouldScrollPlaybackHorizontally,
+  validTempoPercentage,
 } from "./DocumentViewer";
 import type { PlaybackMoment } from "./playback";
 import type { DocumentPage, VisualGroup, VisualSidecar } from "./types";
+
+test("tempo input accepts partial edits and validates only complete percentages", () => {
+  assert.equal(validTempoPercentage(""), null);
+  assert.equal(validTempoPercentage("1"), null);
+  assert.equal(validTempoPercentage("10"), 10);
+  assert.equal(validTempoPercentage("250"), 250);
+  assert.equal(validTempoPercentage("301"), null);
+  assert.equal(validTempoPercentage("12.5"), null);
+
+  assert.equal(committedTempoPercentage(""), null);
+  assert.equal(committedTempoPercentage("1"), 10);
+  assert.equal(committedTempoPercentage("301"), 300);
+  assert.equal(committedTempoPercentage("45.6"), 46);
+  assert.equal(committedTempoPercentage("invalid"), null);
+});
 
 function group(id: string, staveIndex: number, x: number, y: number): VisualGroup {
   return {
@@ -99,6 +116,76 @@ test("renders all groups and note names in the active cross-clef moment", () => 
   assert.match(markup, />C4<\/text>/);
   assert.match(markup, />E3<\/text>/);
   assert.match(markup, /aria-pressed="true"/);
+});
+
+test("renders realtime selector, transport states, tempo, and vertical playhead", () => {
+  const markup = renderToStaticMarkup(
+    <DocumentViewer
+      documentKey="fixture"
+      pages={[page]}
+      selectedGroup={null}
+      highlightAllNotes={false}
+      showOriginalNoteheadContours={false}
+      showDetectedNoteheadContours={false}
+      showRefinedNoteheadContours={false}
+      showRawStemContours={false}
+      playbackActive
+      playbackNoteSoundsEnabled
+      playbackAvailable
+      playbackMoment={moment}
+      playbackMode="realtime"
+      playbackStatus="playing"
+      realtimeAvailable
+      realtimePlayhead={{ pageIndex: 0, staffIndex: 0, x: 360, y1: 300, y2: 570 }}
+      tempoBpm={135.4}
+      tempoMultiplier={1.25}
+      onPlaybackModeChange={() => undefined}
+      onTempoMultiplierChange={() => undefined}
+      onPlaybackCommand={() => undefined}
+      onSelectGroup={() => undefined}
+      onRetryPage={() => undefined}
+    />,
+  );
+
+  assert.match(markup, /aria-label="Playback type"/);
+  assert.match(markup, />Note-by-note<\/button>/);
+  assert.match(markup, />Realtime<\/button>/);
+  assert.match(markup, /aria-label="Pause"/);
+  assert.match(markup, /aria-label="Stop playback"/);
+  assert.match(markup, /aria-label="Tempo 135 BPM"/);
+  assert.match(markup, />135 BPM<\/button>/);
+  assert.match(markup, /data-testid="realtime-playhead"/);
+  assert.match(markup, /x1="360"[^>]*x2="360"[^>]*y1="300"[^>]*y2="570"/);
+  assert.doesNotMatch(markup, /Realtime is not available/);
+});
+
+test("explains why realtime playback is disabled", () => {
+  const markup = renderToStaticMarkup(
+    <DocumentViewer
+      documentKey="fixture"
+      pages={[page]}
+      selectedGroup={null}
+      highlightAllNotes={false}
+      showOriginalNoteheadContours={false}
+      showDetectedNoteheadContours={false}
+      showRefinedNoteheadContours={false}
+      showRawStemContours={false}
+      playbackActive={false}
+      playbackNoteSoundsEnabled
+      playbackAvailable
+      playbackMoment={null}
+      playbackMode="note-by-note"
+      realtimeAvailable={false}
+      onPlaybackModeChange={() => undefined}
+      onPlaybackCommand={() => undefined}
+      onSelectGroup={() => undefined}
+      onRetryPage={() => undefined}
+    />,
+  );
+
+  assert.match(markup, /aria-describedby="[^"]+"[^>]*disabled=""/);
+  assert.match(markup, /role="tooltip"/);
+  assert.match(markup, /Realtime is not available until all pages are ready\./);
 });
 
 test("omits pages that were skipped because they contain no music", () => {

@@ -1,7 +1,8 @@
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useId, useMemo, useRef, useState } from "react";
 import { layoutNoteLabels, selectedGroupIds } from "./noteLabels";
 import { playbackGroupIdsForPage } from "./playback";
 import type { PlaybackCommand, PlaybackMoment } from "./playback";
+import type { PlaybackMode, PlaybackStatus, RealtimePlayhead } from "./realtime";
 import type {
   DocumentPage,
   ViewportTransform,
@@ -17,7 +18,30 @@ const MAX_SCALE = 6;
 const CLICK_MOVE_TOLERANCE = 6;
 const PAGE_GAP = 28;
 const PLAYBACK_EDGE_CLEARANCE = 16;
+const MIN_TEMPO_PERCENTAGE = 10;
+const MAX_TEMPO_PERCENTAGE = 300;
 const DEFAULT_VIEWPORT_TRANSFORM: ViewportTransform = { scale: 1, x: 24, y: 24 };
+const NO_REALTIME_GROUPS: readonly string[] = [];
+
+export function validTempoPercentage(value: string): number | null {
+  if (value.trim() === "") return null;
+  const percentage = Number(value);
+  return Number.isInteger(percentage) &&
+    percentage >= MIN_TEMPO_PERCENTAGE &&
+    percentage <= MAX_TEMPO_PERCENTAGE
+    ? percentage
+    : null;
+}
+
+export function committedTempoPercentage(value: string): number | null {
+  if (value.trim() === "") return null;
+  const percentage = Number(value);
+  if (!Number.isFinite(percentage)) return null;
+  return Math.min(
+    MAX_TEMPO_PERCENTAGE,
+    Math.max(MIN_TEMPO_PERCENTAGE, Math.round(percentage)),
+  );
+}
 
 interface DocumentViewerProps {
   documentKey: string;
@@ -32,9 +56,20 @@ interface DocumentViewerProps {
   playbackNoteSoundsEnabled: boolean;
   playbackAvailable: boolean;
   playbackMoment: PlaybackMoment | null;
+  playbackMode?: PlaybackMode;
+  playbackStatus?: PlaybackStatus;
+  realtimeAvailable?: boolean;
+  realtimePlayhead?: RealtimePlayhead | null;
+  getRealtimePlayhead?: () => RealtimePlayhead | null;
+  realtimePlayheadAnimating?: boolean;
+  realtimeGroupIdsByPage?: Readonly<Record<number, readonly string[]>>;
+  tempoBpm?: number;
+  tempoMultiplier?: number;
   initialViewportTransform?: ViewportTransform;
   onViewportTransformChange?: (transform: ViewportTransform) => void;
   onPlaybackCommand: (command: PlaybackCommand) => void;
+  onPlaybackModeChange?: (mode: PlaybackMode) => void;
+  onTempoMultiplierChange?: (multiplier: number) => void;
   onSelectGroup: (group: VisualGroupRef | null) => void;
   onRetryPage: (pageIndex: number) => void;
 }
@@ -164,7 +199,83 @@ interface PageOverlayProps {
   showRawStemContours: boolean;
   playbackActive: boolean;
   playbackGroupIds: readonly string[];
+  realtimePlayhead?: RealtimePlayhead | null;
+  realtimePlayheadEnabled?: boolean;
 }
+
+interface VisualGroupLayerProps {
+  group: VisualGroup;
+  selected: boolean;
+  playback: boolean;
+  showOriginalNoteheadContours: boolean;
+  showDetectedNoteheadContours: boolean;
+  showRefinedNoteheadContours: boolean;
+  showRawStemContours: boolean;
+}
+
+const VisualGroupLayer = memo(function VisualGroupLayer({
+  group,
+  selected,
+  playback,
+  showOriginalNoteheadContours,
+  showDetectedNoteheadContours,
+  showRefinedNoteheadContours,
+  showRawStemContours,
+}: VisualGroupLayerProps) {
+  const fittedNoteheads = (group.notehead_ellipses?.length ?? 0) > 0;
+  return (
+    <g
+      className={`visual-group${selected ? " selected" : ""}${playback ? " playback-selected" : ""}`}
+      data-visual-group-id={group.visual_group_id}
+      data-playback-selected={playback ? "true" : undefined}
+    >
+      {fittedNoteheads && !showOriginalNoteheadContours
+        ? group.notehead_ellipses?.map((ellipse, index) => (
+            <ellipse
+              key={`ellipse-${index}`}
+              cx={ellipse.center[0]}
+              cy={ellipse.center[1]}
+              rx={ellipse.rx}
+              ry={ellipse.ry}
+              transform={`rotate(${ellipse.angle} ${ellipse.center[0]} ${ellipse.center[1]})`}
+            />
+          ))
+        : group.notehead_contours.map((contour, index) => (
+            <polygon key={`notehead-${index}`} points={pointsToSvg(contour)} />
+          ))}
+      {showDetectedNoteheadContours
+        ? group.detected_notehead_contours?.map((contour, index) => (
+            <polygon
+              key={`detected-notehead-${index}`}
+              className="detected-notehead-contour"
+              points={pointsToSvg(contour)}
+            />
+          ))
+        : null}
+      {showRefinedNoteheadContours
+        ? group.refined_notehead_contours?.map((contour, index) => (
+            <polygon
+              key={`refined-notehead-${index}`}
+              className="refined-notehead-contour"
+              points={pointsToSvg(contour)}
+            />
+          ))
+        : null}
+      {group.stem_contours.map((contour, index) => (
+        <polygon key={`stem-${index}`} points={pointsToSvg(contour)} />
+      ))}
+      {showRawStemContours
+        ? group.detected_stem_contours?.map((contour, index) => (
+            <polyline
+              key={`detected-stem-${index}`}
+              className="detected-stem-contour"
+              points={pointsToSvg(contour)}
+            />
+          ))
+        : null}
+    </g>
+  );
+});
 
 const PageOverlay = memo(function PageOverlay({
   page,
@@ -176,6 +287,8 @@ const PageOverlay = memo(function PageOverlay({
   showRawStemContours,
   playbackActive,
   playbackGroupIds,
+  realtimePlayhead,
+  realtimePlayheadEnabled = false,
 }: PageOverlayProps) {
   const selectedIds = useMemo(
     () => {
@@ -199,6 +312,60 @@ const PageOverlay = memo(function PageOverlay({
         : [],
     [page.height, page.musicXml, page.visualSidecar, page.width, selectedIds],
   );
+  const visualGroupsById = useMemo(
+    () => new Map(
+      page.visualSidecar?.visual_groups.map((group) => [group.visual_group_id, group]) ?? [],
+    ),
+    [page.visualSidecar],
+  );
+  const visualSelectionKey = playbackActive ? "" : [...selectedIds].sort().join("\u0000");
+  const visualGroupLayers = useMemo(() =>
+    page.visualSidecar?.visual_groups.map((group) => (
+      <VisualGroupLayer
+        key={group.visual_group_id}
+        group={group}
+        selected={!playbackActive && selectedIds.has(group.visual_group_id)}
+        playback={false}
+        showOriginalNoteheadContours={showOriginalNoteheadContours}
+        showDetectedNoteheadContours={showDetectedNoteheadContours}
+        showRefinedNoteheadContours={showRefinedNoteheadContours}
+        showRawStemContours={showRawStemContours}
+      />
+    )) ?? [], [
+      page.visualSidecar,
+      playbackActive,
+      showDetectedNoteheadContours,
+      showOriginalNoteheadContours,
+      showRawStemContours,
+      showRefinedNoteheadContours,
+      visualSelectionKey,
+    ]);
+  const playbackGroupLayers = useMemo(() => {
+    if (!playbackActive) return [];
+    return playbackGroupIds.flatMap((id) => {
+      const group = visualGroupsById.get(id);
+      return group ? [(
+        <VisualGroupLayer
+          key={`playback-${id}`}
+          group={group}
+          selected
+          playback
+          showOriginalNoteheadContours={showOriginalNoteheadContours}
+          showDetectedNoteheadContours={showDetectedNoteheadContours}
+          showRefinedNoteheadContours={showRefinedNoteheadContours}
+          showRawStemContours={showRawStemContours}
+        />
+      )] : [];
+    });
+  }, [
+    playbackActive,
+    playbackGroupIds,
+    showDetectedNoteheadContours,
+    showOriginalNoteheadContours,
+    showRawStemContours,
+    showRefinedNoteheadContours,
+    visualGroupsById,
+  ]);
   if (!page.visualSidecar) return null;
   const sidecar = page.visualSidecar;
   return (
@@ -207,6 +374,18 @@ const PageOverlay = memo(function PageOverlay({
       viewBox={`0 0 ${page.width} ${page.height}`}
       aria-hidden="true"
     >
+      {realtimePlayheadEnabled || realtimePlayhead?.pageIndex === page.index ? (
+        <line
+          className="realtime-playhead"
+          data-testid="realtime-playhead"
+          data-realtime-page={page.index}
+          x1={realtimePlayhead?.pageIndex === page.index ? realtimePlayhead.x : 0}
+          x2={realtimePlayhead?.pageIndex === page.index ? realtimePlayhead.x : 0}
+          y1={realtimePlayhead?.pageIndex === page.index ? realtimePlayhead.y1 : 0}
+          y2={realtimePlayhead?.pageIndex === page.index ? realtimePlayhead.y2 : 0}
+          style={{ display: realtimePlayhead?.pageIndex === page.index ? undefined : "none" }}
+        />
+      ) : null}
       {showRawStemContours
         ? sidecar.raw_stem_contours?.map((stem, index) => (
             <polyline
@@ -216,64 +395,8 @@ const PageOverlay = memo(function PageOverlay({
             />
           ))
         : null}
-      {sidecar.visual_groups.map((group) => {
-        const selectedClass = selectedIds.has(group.visual_group_id) ? " selected" : "";
-        const playbackClass = playbackActive && selectedClass ? " playback-selected" : "";
-        const fittedNoteheads = (group.notehead_ellipses?.length ?? 0) > 0;
-        return (
-          <g
-            key={group.visual_group_id}
-            className={`visual-group${selectedClass}${playbackClass}`}
-            data-visual-group-id={group.visual_group_id}
-            data-playback-selected={playbackClass ? "true" : undefined}
-          >
-            {fittedNoteheads && !showOriginalNoteheadContours
-              ? group.notehead_ellipses?.map((ellipse, index) => (
-                  <ellipse
-                    key={`ellipse-${index}`}
-                    cx={ellipse.center[0]}
-                    cy={ellipse.center[1]}
-                    rx={ellipse.rx}
-                    ry={ellipse.ry}
-                    transform={`rotate(${ellipse.angle} ${ellipse.center[0]} ${ellipse.center[1]})`}
-                  />
-                ))
-              : group.notehead_contours.map((contour, index) => (
-                  <polygon key={`notehead-${index}`} points={pointsToSvg(contour)} />
-                ))}
-            {showDetectedNoteheadContours
-              ? group.detected_notehead_contours?.map((contour, index) => (
-                  <polygon
-                    key={`detected-notehead-${index}`}
-                    className="detected-notehead-contour"
-                    points={pointsToSvg(contour)}
-                  />
-                ))
-              : null}
-            {showRefinedNoteheadContours
-              ? group.refined_notehead_contours?.map((contour, index) => (
-                  <polygon
-                    key={`refined-notehead-${index}`}
-                    className="refined-notehead-contour"
-                    points={pointsToSvg(contour)}
-                  />
-                ))
-              : null}
-            {group.stem_contours.map((contour, index) => (
-              <polygon key={`stem-${index}`} points={pointsToSvg(contour)} />
-            ))}
-            {showRawStemContours
-              ? group.detected_stem_contours?.map((contour, index) => (
-                  <polyline
-                    key={`detected-stem-${index}`}
-                    className="detected-stem-contour"
-                    points={pointsToSvg(contour)}
-                  />
-                ))
-              : null}
-          </g>
-        );
-      })}
+      {visualGroupLayers}
+      {playbackGroupLayers}
       <g className="note-label-connectors">
         {noteLabels.map((label) => (
           <line
@@ -331,9 +454,20 @@ export function DocumentViewer({
   playbackNoteSoundsEnabled,
   playbackAvailable,
   playbackMoment,
+  playbackMode = "note-by-note",
+  playbackStatus,
+  realtimeAvailable = false,
+  realtimePlayhead = null,
+  getRealtimePlayhead,
+  realtimePlayheadAnimating = false,
+  realtimeGroupIdsByPage,
+  tempoBpm = 120,
+  tempoMultiplier = 1,
   initialViewportTransform,
   onViewportTransformChange,
   onPlaybackCommand,
+  onPlaybackModeChange,
+  onTempoMultiplierChange,
   onSelectGroup,
   onRetryPage,
 }: DocumentViewerProps) {
@@ -356,12 +490,109 @@ export function DocumentViewer({
     initialViewportTransform ?? DEFAULT_VIEWPORT_TRANSFORM,
   );
   const [isPointerPanning, setIsPointerPanning] = useState(false);
+  const [tempoPopoverOpen, setTempoPopoverOpen] = useState(false);
+  const realtimeUnavailableTooltipId = useId();
+  const tempoPercentage = Math.round(tempoMultiplier * 100);
+  const [tempoPercentageText, setTempoPercentageText] = useState(String(tempoPercentage));
+  const tempoInputFocused = useRef(false);
+  const effectiveStatus: PlaybackStatus = playbackStatus ??
+    (playbackActive ? "note-by-note" : "inactive");
+  const effectivelyActive = effectiveStatus !== "inactive";
+  const primaryLabel = effectiveStatus === "playing"
+    ? "Pause"
+    : effectiveStatus === "paused"
+      ? "Resume"
+      : effectiveStatus === "note-by-note"
+        ? "Stop playback"
+        : "Play";
+  const primarySymbol = effectiveStatus === "playing"
+    ? "Ⅱ"
+    : effectiveStatus === "note-by-note"
+      ? "■"
+      : "▶";
   const pages = useMemo(
     () => documentPages.filter((page) => page.status !== "skipped"),
     [documentPages],
   );
   const hasCompletePageRef = useRef(pages.some((page) => page.status === "complete"));
   hasCompletePageRef.current = pages.some((page) => page.status === "complete");
+
+  useEffect(() => {
+    if (!tempoPopoverOpen) return;
+    function closeTempoPopover(event: KeyboardEvent) {
+      if (event.code !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      setTempoPopoverOpen(false);
+    }
+    window.addEventListener("keydown", closeTempoPopover, true);
+    return () => window.removeEventListener("keydown", closeTempoPopover, true);
+  }, [tempoPopoverOpen]);
+
+  useEffect(() => {
+    if (playbackMode !== "realtime") setTempoPopoverOpen(false);
+  }, [playbackMode]);
+
+  useEffect(() => {
+    if (!tempoInputFocused.current || !tempoPopoverOpen) {
+      setTempoPercentageText(String(tempoPercentage));
+    }
+  }, [tempoPercentage, tempoPopoverOpen]);
+
+  function commitTempoInput(): void {
+    const percentage = committedTempoPercentage(tempoPercentageText);
+    if (percentage === null) {
+      setTempoPercentageText(String(tempoPercentage));
+      return;
+    }
+    setTempoPercentageText(String(percentage));
+    onTempoMultiplierChange?.(percentage / 100);
+  }
+
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage || !getRealtimePlayhead) return;
+    const lines = new Map<number, SVGLineElement>();
+    for (const line of Array.from(stage.querySelectorAll<SVGLineElement>(".realtime-playhead"))) {
+      const pageIndex = Number(line.dataset.realtimePage);
+      if (Number.isInteger(pageIndex)) lines.set(pageIndex, line);
+    }
+    let animationFrame: number | null = null;
+    let visibleLine: SVGLineElement | null = null;
+    let visibleSystem = "";
+
+    const updatePlayhead = () => {
+      const playhead = getRealtimePlayhead();
+      const line = playhead ? lines.get(playhead.pageIndex) ?? null : null;
+      if (line !== visibleLine) {
+        if (visibleLine) visibleLine.style.display = "none";
+        visibleLine = line;
+        visibleSystem = "";
+        if (visibleLine) visibleLine.style.display = "";
+      }
+      if (line && playhead) {
+        const system = `${playhead.y1}:${playhead.y2}`;
+        if (system !== visibleSystem) {
+          line.setAttribute("y1", String(playhead.y1));
+          line.setAttribute("y2", String(playhead.y2));
+          visibleSystem = system;
+        }
+        line.style.transform = `translate3d(${playhead.x}px, 0, 0)`;
+      }
+    };
+    const animate = () => {
+      updatePlayhead();
+      animationFrame = requestAnimationFrame(animate);
+    };
+
+    updatePlayhead();
+    if (realtimePlayheadAnimating) animationFrame = requestAnimationFrame(animate);
+    return () => {
+      if (animationFrame !== null) cancelAnimationFrame(animationFrame);
+      if (visibleLine) visibleLine.style.display = "none";
+    };
+  }, [documentKey, getRealtimePlayhead, pages, realtimePlayheadAnimating]);
 
   function publishTransform(next: ViewportTransform) {
     if (hasCompletePageRef.current) onViewportTransformChangeRef.current?.(next);
@@ -685,66 +916,162 @@ export function DocumentViewer({
         >+</button>
         <div className="toolbar-separator" aria-hidden="true" />
         <div className="playback-controls" role="group" aria-label="Playback controls">
+          {onPlaybackModeChange ? <div className="playback-mode-selector" role="group" aria-label="Playback type">
+            <button
+              type="button"
+              className={playbackMode === "note-by-note" ? "selected" : ""}
+              aria-pressed={playbackMode === "note-by-note"}
+              onClick={() => onPlaybackModeChange?.("note-by-note")}
+            >Note-by-note</button>
+            <div className={`realtime-mode-control${realtimeAvailable ? "" : " unavailable"}`}>
+              <button
+                type="button"
+                className={playbackMode === "realtime" ? "selected" : ""}
+                aria-pressed={playbackMode === "realtime"}
+                aria-describedby={!realtimeAvailable ? realtimeUnavailableTooltipId : undefined}
+                title={realtimeAvailable ? "Use audio-clock playback" : undefined}
+                disabled={!realtimeAvailable}
+                onClick={() => onPlaybackModeChange?.("realtime")}
+              >Realtime</button>
+              {!realtimeAvailable ? (
+                <div
+                  id={realtimeUnavailableTooltipId}
+                  className="realtime-unavailable-tooltip"
+                  role="tooltip"
+                >Realtime is not available until all pages are ready.</div>
+              ) : null}
+            </div>
+          </div> : null}
           <button
             type="button"
-            className={`playback-toggle${playbackActive ? " active" : ""}`}
-            aria-label="Play"
-            aria-pressed={playbackActive}
-            title={playbackActive ? "Exit playback mode (Space)" : "Enter playback mode (Space)"}
-            disabled={!playbackAvailable && !playbackActive}
+            className={`playback-toggle${effectivelyActive ? " active" : ""}`}
+            aria-label={primaryLabel}
+            aria-pressed={effectivelyActive}
+            title={`${primaryLabel} (Space)`}
+            disabled={effectiveStatus === "inactive" && (
+              playbackMode === "realtime" ? !realtimeAvailable : !playbackAvailable
+            )}
             onClick={() => onPlaybackCommand("togglePlayback")}
-          >{playbackActive ? "■" : "▶"}</button>
+          >{primarySymbol}</button>
+          {playbackMode === "realtime" && effectivelyActive ? (
+            <button
+              type="button"
+              className="realtime-stop"
+              aria-label="Stop playback"
+              title="Stop playback (Escape)"
+              onClick={() => onPlaybackCommand("stopPlayback")}
+            >■</button>
+          ) : null}
           <button
             type="button"
             className={`sound-toggle${playbackNoteSoundsEnabled ? " active" : ""}`}
             aria-label={playbackNoteSoundsEnabled ? "Mute note sounds" : "Play note sounds"}
             aria-pressed={playbackNoteSoundsEnabled}
             title={playbackNoteSoundsEnabled ? "Mute note sounds (M)" : "Play note sounds (M)"}
-            disabled={!playbackActive}
+            disabled={!effectivelyActive}
             onClick={() => onPlaybackCommand("toggleNoteSounds")}
           >{playbackNoteSoundsEnabled ? "🔊" : "🔇"}</button>
           <button
             type="button"
             aria-label="Backward one page"
             title="Backward one page (Up arrow)"
-            disabled={!playbackActive}
+            disabled={!effectivelyActive}
             onClick={() => onPlaybackCommand("backwardPage")}
           >⇤</button>
           <button
             type="button"
             aria-label="Backward one bar"
             title="Backward one bar (Comma)"
-            disabled={!playbackActive}
+            disabled={!effectivelyActive}
             onClick={() => onPlaybackCommand("backwardBar")}
           >←│</button>
           <button
             type="button"
             aria-label="Backward one note"
             title="Backward one note (Left arrow)"
-            disabled={!playbackActive}
+            disabled={!effectivelyActive}
             onClick={() => onPlaybackCommand("backwardNote")}
           >←</button>
           <button
             type="button"
             aria-label="Forward one note"
             title="Forward one note (Right arrow)"
-            disabled={!playbackActive}
+            disabled={!effectivelyActive}
             onClick={() => onPlaybackCommand("forwardNote")}
           >→</button>
           <button
             type="button"
             aria-label="Forward one bar"
             title="Forward one bar (Period)"
-            disabled={!playbackActive}
+            disabled={!effectivelyActive}
             onClick={() => onPlaybackCommand("forwardBar")}
           >│→</button>
           <button
             type="button"
             aria-label="Forward one page"
             title="Forward one page (Down arrow)"
-            disabled={!playbackActive}
+            disabled={!effectivelyActive}
             onClick={() => onPlaybackCommand("forwardPage")}
           >⇥</button>
+          {playbackMode === "realtime" ? (
+            <div className="tempo-control">
+              <button
+                type="button"
+                className="tempo-button"
+                aria-label={`Tempo ${Math.round(tempoBpm)} BPM`}
+                aria-expanded={tempoPopoverOpen}
+                onClick={() => setTempoPopoverOpen((open) => !open)}
+              >{Math.round(tempoBpm)} BPM</button>
+              {tempoPopoverOpen ? (
+                <div className="tempo-popover" role="dialog" aria-label="Realtime tempo">
+                  <label>
+                    Tempo
+                    <span>
+                      <input
+                        type="number"
+                        min={10}
+                        max={300}
+                        step={1}
+                        aria-label="Tempo percentage"
+                        value={tempoPercentageText}
+                        onFocus={() => {
+                          tempoInputFocused.current = true;
+                        }}
+                        onBlur={() => {
+                          tempoInputFocused.current = false;
+                          commitTempoInput();
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key !== "Enter") return;
+                          event.preventDefault();
+                          event.currentTarget.blur();
+                        }}
+                        onChange={(event) => {
+                          const value = event.target.value;
+                          setTempoPercentageText(value);
+                          const percentage = validTempoPercentage(value);
+                          if (percentage !== null) onTempoMultiplierChange?.(percentage / 100);
+                        }}
+                      />%
+                    </span>
+                  </label>
+                  <input
+                    type="range"
+                    min={10}
+                    max={300}
+                    step={1}
+                    aria-label="Tempo percentage slider"
+                    value={tempoPercentage}
+                    onChange={(event) => {
+                      const percentage = Number(event.target.value);
+                      setTempoPercentageText(String(percentage));
+                      onTempoMultiplierChange?.(percentage / 100);
+                    }}
+                  />
+                </div>
+              ) : null}
+            </div>
+          ) : null}
         </div>
       </div>
       <div
@@ -780,7 +1107,13 @@ export function DocumentViewer({
                 selected={selectedGroup}
                 highlightAll={highlightAllNotes}
                 playbackActive={playbackActive}
-                playbackGroupIds={playbackGroupIdsForPage(playbackMoment, page.index)}
+                playbackGroupIds={
+                  realtimeGroupIdsByPage
+                    ? realtimeGroupIdsByPage[page.index] ?? NO_REALTIME_GROUPS
+                    : playbackGroupIdsForPage(playbackMoment, page.index)
+                }
+                realtimePlayhead={realtimePlayhead}
+                realtimePlayheadEnabled={Boolean(getRealtimePlayhead)}
                 showOriginalNoteheadContours={showOriginalNoteheadContours}
                 showDetectedNoteheadContours={showDetectedNoteheadContours}
                 showRefinedNoteheadContours={showRefinedNoteheadContours}

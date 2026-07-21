@@ -1,0 +1,290 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import {
+  buildRealtimeVisualMap,
+  expandPerformanceRoute,
+  parseRealtimeMusicXml,
+  RealtimeController,
+  scoreOffsetAfterSeconds,
+  scoreOffsetToSeconds,
+  seekStructuralPosition,
+  type PerformanceRoute,
+  type RealtimeAudioSink,
+  type RealtimeClock,
+} from "./realtime";
+import type { DocumentPage, VisualSidecar } from "./types";
+
+function score(measures: string, extraPart = ""): string {
+  return `<?xml version="1.0"?>
+    <score-partwise version="4.0">
+      <part-list><score-part id="P1"><part-name>Piano</part-name></score-part></part-list>
+      <part id="P1">${measures}</part>${extraPart}
+    </score-partwise>`;
+}
+
+function quarter(id: string, pitch = "C", octave = 4, extra = ""): string {
+  return `<note id="${id}"><pitch><step>${pitch}</step><octave>${octave}</octave></pitch>${extra}<duration>4</duration><voice>1</voice><type>quarter</type></note>`;
+}
+
+test("parses polyphonic cursors, chords, pages, tempo, and ties from partwise MusicXML", () => {
+  const parsed = parseRealtimeMusicXml(score(`
+    <measure number="1">
+      <print new-page="yes" page-number="1"/>
+      <attributes><divisions>4</divisions></attributes>
+      <direction><sound tempo="90"/></direction>
+      ${quarter("page-1-c")}
+      <note id="page-1-e"><chord/><pitch><step>E</step><octave>4</octave></pitch><duration>4</duration><voice>1</voice></note>
+      <backup><duration>4</duration></backup>
+      <note id="page-1-g"><pitch><step>G</step><octave>3</octave></pitch><duration>8</duration><voice>2</voice></note>
+    </measure>
+    <measure number="2">
+      <print new-page="yes" page-number="2"/>
+      ${quarter("page-2-a", "A", 4, '<tie type="start"/>')}
+    </measure>
+    <measure number="3">
+      ${quarter("page-2-a-tied", "A", 4, '<tie type="stop"/>')}
+      <direction><offset>4</offset><sound tempo="120"/></direction>
+    </measure>
+  `));
+
+  assert.equal(parsed.measures[0].duration, 2);
+  assert.deepEqual(parsed.measures[0].notes.map((note) => [note.pitch, note.onset]), [
+    ["C4", 0], ["E4", 0], ["G3", 0],
+  ]);
+  assert.deepEqual(parsed.measures[0].events[0].pitches, ["C4", "E4", "G3"]);
+  assert.equal(parsed.measures[0].tempos[0].bpm, 90);
+  assert.equal(parsed.measures[1].pageNumber, 2);
+
+  const route = expandPerformanceRoute(parsed);
+  const tied = route.notes.find((note) => note.musicXmlId === "page-2-a");
+  assert.equal(tied?.release, 4);
+  assert.equal(route.notes.some((note) => note.musicXmlId === "page-2-a-tied"), false);
+  assert.deepEqual(route.tempoSegments.map((tempo) => tempo.bpm), [90, 120]);
+});
+
+test("maps merged page-scoped MusicXML IDs back to page sidecars", () => {
+  const pages: DocumentPage[] = [0, 1].map((index) => {
+    const sidecar: VisualSidecar = {
+      version: 1,
+      source_image_size: [1000, 1400],
+      notes: [{
+        musicxml_id: `n${index + 1}`,
+        part: 1,
+        measure: index + 1,
+        staff: 1,
+        voice: 1,
+        pitch: "C4",
+        duration: "note_4",
+        match_confidence: 1,
+        visual_group_id: `g${index + 1}`,
+      }],
+      visual_groups: [{
+        visual_group_id: `g${index + 1}`,
+        staff_index: 0,
+        stave_index: 0,
+        staff_position: 0,
+        center: [100 + index * 20, 300],
+        bbox: [90, 290, 110, 310],
+        notehead_contours: [],
+        stem_contours: [],
+        musicxml_ids: [`n${index + 1}`],
+      }],
+      unmatched_musicxml_notes: [],
+      unmatched_visual_notes: [],
+    };
+    return {
+      index,
+      status: "complete",
+      width: 1000,
+      height: 1400,
+      musicXml: "<score-partwise/>",
+      visualSidecar: sidecar,
+    };
+  });
+  const map = buildRealtimeVisualMap(pages);
+  assert.equal(map.get("page-1-n1")?.visualGroupId, "g1");
+  assert.equal(map.get("page-2-n2")?.pageIndex, 1);
+});
+
+test("combines pitched notes and tempo information from every part", () => {
+  const parsed = parseRealtimeMusicXml(score(
+    `<measure number="1"><attributes><divisions>4</divisions></attributes>${quarter("p1", "C")}</measure>`,
+    `<part id="P2"><measure number="1"><attributes><divisions>8</divisions></attributes><direction><sound tempo="72"/></direction><note id="p2"><pitch><step>E</step><octave>3</octave></pitch><duration>8</duration><voice>1</voice></note></measure></part>`,
+  ));
+  assert.deepEqual(parsed.measures[0].notes.map((note) => note.pitch), ["C4", "E3"]);
+  assert.equal(parsed.measures[0].tempos[0].bpm, 72);
+});
+
+test("expands repeat counts and first/second endings", () => {
+  const parsed = parseRealtimeMusicXml(score(`
+    <measure number="1"><attributes><divisions>4</divisions></attributes><barline location="left"><repeat direction="forward"/></barline>${quarter("m1")}</measure>
+    <measure number="2"><barline location="left"><ending number="1" type="start"/></barline>${quarter("m2")}<barline location="right"><ending number="1" type="stop"/><repeat direction="backward" times="2"/></barline></measure>
+    <measure number="3"><barline location="left"><ending number="2" type="start"/></barline>${quarter("m3")}<barline location="right"><ending number="2" type="stop"/></barline></measure>
+  `));
+
+  const route = expandPerformanceRoute(parsed);
+  assert.deepEqual(route.occurrences.map((occurrence) => occurrence.measureNumber), ["1", "2", "1", "3"]);
+  assert.deepEqual(route.occurrences.map((occurrence) => occurrence.pass), [1, 1, 2, 2]);
+  assert.deepEqual(
+    expandPerformanceRoute(parsed, { startMeasureIndex: 2 }).occurrences.map((occurrence) => occurrence.measureNumber),
+    ["3"],
+  );
+});
+
+test("handles nested, sequential, implied, and after-jump repeats", () => {
+  const nested = parseRealtimeMusicXml(score(`
+    <measure number="1"><attributes><divisions>4</divisions></attributes><barline><repeat direction="forward"/></barline>${quarter("a")}</measure>
+    <measure number="2"><barline><repeat direction="forward"/></barline>${quarter("b")}</measure>
+    <measure number="3">${quarter("c")}<barline><repeat direction="backward"/></barline></measure>
+    <measure number="4">${quarter("d")}<barline><repeat direction="backward"/></barline></measure>
+    <measure number="5"><sound forward-repeat="yes"/>${quarter("e")}</measure>
+    <measure number="6">${quarter("f")}<barline><repeat direction="backward"/></barline></measure>
+  `));
+  assert.deepEqual(
+    expandPerformanceRoute(nested).occurrences.map((item) => item.measureNumber),
+    ["1", "2", "3", "2", "3", "4", "1", "2", "3", "2", "3", "4", "5", "6", "5", "6"],
+  );
+
+  const afterJump = parseRealtimeMusicXml(score(`
+    <measure number="1"><attributes><divisions>4</divisions></attributes><barline><repeat direction="forward"/></barline>${quarter("a")}</measure>
+    <measure number="2">${quarter("b")}<barline><repeat direction="backward" after-jump="yes"/></barline></measure>
+    <measure number="3">${quarter("c")}<sound dacapo="yes"/></measure>
+  `));
+  assert.deepEqual(
+    expandPerformanceRoute(afterJump).occurrences.map((item) => item.measureNumber),
+    ["1", "2", "1", "2", "3", "1", "2", "1", "2", "3"],
+  );
+});
+
+test("follows D.C. al Fine and D.S. al Coda using named sound tokens", () => {
+  const dc = parseRealtimeMusicXml(score(`
+    <measure number="1"><attributes><divisions>4</divisions></attributes>${quarter("a")}</measure>
+    <measure number="2">${quarter("b")}<sound dacapo="yes"/></measure>
+    <measure number="3">${quarter("fine")}<sound fine="yes"/></measure>
+  `));
+  assert.deepEqual(
+    expandPerformanceRoute(dc).occurrences.map((occurrence) => occurrence.measureNumber),
+    ["1", "2", "1", "2", "3"],
+  );
+
+  const ds = parseRealtimeMusicXml(score(`
+    <measure number="1"><attributes><divisions>4</divisions></attributes><sound segno="main"/>${quarter("a")}</measure>
+    <measure number="2">${quarter("b")}<sound tocoda="tail"/></measure>
+    <measure number="3">${quarter("c")}<sound dalsegno="main"/></measure>
+    <measure number="4"><sound coda="tail"/>${quarter("d")}</measure>
+  `));
+  assert.deepEqual(
+    expandPerformanceRoute(ds).occurrences.map((occurrence) => occurrence.measureNumber),
+    ["1", "2", "3", "1", "2", "4"],
+  );
+});
+
+test("starts structurally after skipped repeats and reports malformed loops", () => {
+  const parsed = parseRealtimeMusicXml(score(`
+    <measure number="1"><attributes><divisions>4</divisions></attributes><barline><repeat direction="forward"/></barline>${quarter("a")}</measure>
+    <measure number="2">${quarter("b")}<barline><repeat direction="backward" times="100"/></barline></measure>
+    <measure number="3">${quarter("c")}</measure>
+  `));
+  assert.deepEqual(
+    expandPerformanceRoute(parsed, { startMeasureIndex: 2 }).occurrences.map((item) => item.measureNumber),
+    ["3"],
+  );
+  assert.throws(
+    () => expandPerformanceRoute(parsed, { maxMeasureVisits: 3 }),
+    /visited more than 3 times.*repeat and D\.C\.\/D\.S\./,
+  );
+});
+
+test("seeks notes, bars, and pages in structural score order", () => {
+  const parsed = parseRealtimeMusicXml(score(`
+    <measure number="1"><print new-page="yes" page-number="1"/><attributes><divisions>4</divisions></attributes>${quarter("a")}${quarter("b", "D")}</measure>
+    <measure number="2">${quarter("c", "E")}</measure>
+    <measure number="3"><print new-page="yes" page-number="2"/>${quarter("d", "F")}</measure>
+  `));
+  assert.deepEqual(seekStructuralPosition(parsed, { measureIndex: 0, onset: 0 }, "forwardNote"), {
+    measureIndex: 0, onset: 1,
+  });
+  assert.deepEqual(seekStructuralPosition(parsed, { measureIndex: 0, onset: 1 }, "forwardBar"), {
+    measureIndex: 1, onset: 0,
+  });
+  assert.deepEqual(seekStructuralPosition(parsed, { measureIndex: 1, onset: 0 }, "forwardPage"), {
+    measureIndex: 2, onset: 0,
+  });
+  assert.deepEqual(seekStructuralPosition(parsed, { measureIndex: 2, onset: 0 }, "backwardPage"), {
+    measureIndex: 0, onset: 0,
+  });
+});
+
+test("converts score offsets through tempo changes and a live multiplier", () => {
+  const route: PerformanceRoute = {
+    occurrences: [],
+    notes: [],
+    events: [],
+    tempoSegments: [{ offset: 0, bpm: 60 }, { offset: 2, bpm: 120 }],
+    totalQuarters: 4,
+  };
+  assert.equal(scoreOffsetToSeconds(route, 4), 3);
+  assert.equal(scoreOffsetToSeconds(route, 4, 2), 1.5);
+  assert.ok(Math.abs(scoreOffsetAfterSeconds(route, 0, 2.5) - 3) < 1e-9);
+});
+
+test("controller pauses, resumes, changes tempo in place, and cancels sounding audio", () => {
+  let now = 0;
+  let tick: (() => void) | null = null;
+  const attacks: string[][] = [];
+  const releases: string[][] = [];
+  let stops = 0;
+  let completions = 0;
+  const clock: RealtimeClock = {
+    now: () => now,
+    setInterval: (callback) => { tick = callback; return 1; },
+    clearInterval: () => { tick = null; },
+  };
+  const sink: RealtimeAudioSink = {
+    attack: (pitches) => attacks.push([...pitches]),
+    release: (pitches) => releases.push([...pitches]),
+    stop: () => { stops += 1; },
+  };
+  const route: PerformanceRoute = {
+    occurrences: [],
+    notes: [
+      { id: "c", musicXmlId: "c", pitch: "C4", onset: 0, release: 1, visual: null },
+      { id: "d", musicXmlId: "d", pitch: "D4", onset: 1, release: 2, visual: null },
+    ],
+    events: [],
+    tempoSegments: [{ offset: 0, bpm: 60 }],
+    totalQuarters: 2,
+  };
+  const controller = new RealtimeController(
+    sink,
+    { onFrame: () => undefined, onComplete: () => { completions += 1; } },
+    clock,
+  );
+
+  controller.play(route);
+  assert.deepEqual(attacks, [["C4"]]);
+  now = 0.5;
+  (tick as (() => void) | null)?.();
+  controller.pause();
+  const pausedAt = controller.getOffset();
+  now = 10;
+  assert.equal(controller.getOffset(), pausedAt);
+  controller.setTempoMultiplier(2);
+  controller.resume();
+  now = 10.3;
+  (tick as (() => void) | null)?.();
+  assert.ok(controller.getOffset() > 1);
+  assert.deepEqual(attacks.at(-1), ["D4"]);
+  controller.stop();
+  assert.ok(stops >= 2);
+  assert.equal(completions, 0);
+  assert.equal(tick, null);
+  assert.ok(releases.length >= 1);
+
+  now = 20;
+  controller.play(route);
+  now = 23;
+  (tick as (() => void) | null)?.();
+  assert.equal(completions, 1);
+  assert.equal(tick, null);
+});

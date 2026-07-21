@@ -17,6 +17,20 @@ import {
   type PlaybackState,
 } from "./playback";
 import { pianoSampler } from "./piano";
+import {
+  buildRealtimeVisualMap,
+  expandPerformanceRoute,
+  parseRealtimeMusicXml,
+  realtimePlayheadAt,
+  RealtimeController,
+  seekStructuralPosition,
+  structuralPositionForGroup,
+  type PerformanceNote,
+  type PerformanceRoute,
+  type PlaybackMode,
+  type PlaybackStatus,
+  type StructuralPosition,
+} from "./realtime";
 import { loadDebugPanelEnabled, saveDebugPanelEnabled } from "./preferences";
 import {
   cancelJob,
@@ -129,7 +143,7 @@ function isEditableKeyboardTarget(target: EventTarget | null): boolean {
 }
 
 function isPlaybackToggleCommand(command: PlaybackCommand): boolean {
-  return command === "togglePlayback" || command === "toggleNoteSounds";
+  return command === "togglePlayback" || command === "stopPlayback" || command === "toggleNoteSounds";
 }
 
 function RefreshRateDiagnostic() {
@@ -215,12 +229,145 @@ export function App() {
     () => buildPlaybackTimeline(document?.pages ?? [], document?.predictedFingerings),
     [document?.pages, document?.predictedFingerings],
   );
+  const realtimeModel = useMemo(() => {
+    if (!document?.documentMusicXml) return { score: null, error: null };
+    try {
+      return { score: parseRealtimeMusicXml(document.documentMusicXml), error: null };
+    } catch (modelError) {
+      return {
+        score: null,
+        error: modelError instanceof Error ? modelError.message : String(modelError),
+      };
+    }
+  }, [document?.documentMusicXml]);
+  const realtimeVisualMap = useMemo(
+    () => buildRealtimeVisualMap(document?.pages ?? []),
+    [document?.pages],
+  );
+  const realtimeOpeningBpm = realtimeModel.score?.measures[0]?.tempos
+    .filter((tempo) => tempo.onset <= 0)
+    .at(-1)?.bpm ?? 120;
+  const [playbackMode, setPlaybackMode] = useState<PlaybackMode>("note-by-note");
+  const [realtimeStatus, setRealtimeStatus] = useState<"inactive" | "playing" | "paused">("inactive");
+  const [realtimeFrame, setRealtimeFrame] = useState<{
+    status: "playing" | "paused";
+    offset: number;
+    bpm: number;
+    activeNotes: PerformanceNote[];
+  } | null>(null);
+  const realtimeLatestFrameRef = useRef<{
+    status: "playing" | "paused";
+    offset: number;
+    bpm: number;
+    activeNotes: PerformanceNote[];
+  } | null>(null);
+  const realtimeRenderSignatureRef = useRef("");
+  const [tempoMultiplier, setTempoMultiplier] = useState(1);
+  const realtimeRouteRef = useRef<PerformanceRoute | null>(null);
+  const realtimeStartGenerationRef = useRef(0);
+  const documentPagesRef = useRef(document?.pages ?? []);
+  documentPagesRef.current = document?.pages ?? [];
   const [playbackState, setPlaybackState] = useState(initialPlaybackState);
   const playbackStateRef = useRef(playbackState);
   playbackStateRef.current = playbackState;
-  const playbackActiveRef = useRef(playbackState.active);
-  playbackActiveRef.current = playbackState.active;
-  const playbackMoment = currentPlaybackMoment(playbackTimeline, playbackState);
+  const playbackStatus: PlaybackStatus = playbackMode === "realtime"
+    ? realtimeStatus
+    : playbackState.active ? "note-by-note" : "inactive";
+  const playbackActive = playbackStatus !== "inactive";
+  const playbackActiveRef = useRef(playbackActive);
+  playbackActiveRef.current = playbackActive;
+  const notePlaybackMoment = currentPlaybackMoment(playbackTimeline, playbackState);
+  const realtimePlayhead = realtimeFrame && realtimeRouteRef.current && document
+    ? realtimePlayheadAt(realtimeRouteRef.current, realtimeFrame.offset, document.pages)
+    : null;
+  const getRealtimePlayhead = useCallback(() => {
+    const frame = realtimeLatestFrameRef.current;
+    const route = realtimeRouteRef.current;
+    return frame && route
+      ? realtimePlayheadAt(route, frame.offset, documentPagesRef.current)
+      : null;
+  }, []);
+  const realtimeDisplayNotes = useMemo(() => {
+    if (!realtimeFrame) return [];
+    return realtimeFrame.activeNotes.map((note) => {
+      const predicted = document?.predictedFingerings?.[note.musicXmlId];
+      return { pitch: note.pitch, ...predicted };
+    });
+  }, [document?.predictedFingerings, realtimeFrame]);
+  const realtimeGroupIdsByPage = useMemo(() => {
+    const result: Record<number, string[]> = {};
+    for (const note of realtimeFrame?.activeNotes ?? []) {
+      if (!note.visual) continue;
+      const ids = result[note.visual.pageIndex] ?? [];
+      if (!ids.includes(note.visual.visualGroupId)) ids.push(note.visual.visualGroupId);
+      result[note.visual.pageIndex] = ids;
+    }
+    return result;
+  }, [realtimeFrame]);
+  const realtimeMoment = useMemo(() => {
+    if (!realtimeFrame || !realtimeRouteRef.current) return null;
+    const route = realtimeRouteRef.current;
+    const visible = realtimeFrame.activeNotes.filter((note) => note.visual !== null);
+    const nearest = [...route.notes]
+      .filter((note) => note.visual !== null && note.onset <= realtimeFrame.offset + 1e-6)
+      .at(-1);
+    const anchor = visible[0] ?? nearest;
+    if (!anchor?.visual) return null;
+    const sameSystem = visible.filter((note) =>
+      note.visual?.pageIndex === anchor.visual?.pageIndex &&
+      note.visual?.staffIndex === anchor.visual?.staffIndex,
+    );
+    const groupIds = Array.from(new Set(
+      (sameSystem.length > 0 ? sameSystem : [anchor]).flatMap((note) =>
+        note.visual ? [note.visual.visualGroupId] : [],
+      ),
+    ));
+    return {
+      id: `realtime-${anchor.id}`,
+      pageIndex: anchor.visual.pageIndex,
+      staffIndex: anchor.visual.staffIndex,
+      measure: null,
+      barKey: `realtime-${anchor.visual.pageIndex}`,
+      visualGroupIds: groupIds,
+      pitches: realtimeFrame.activeNotes.map((note) => note.pitch),
+      keyboardNotes: realtimeDisplayNotes,
+      center: [realtimePlayhead?.x ?? anchor.visual.x, anchor.visual.y] as [number, number],
+    };
+  }, [realtimeDisplayNotes, realtimeFrame, realtimePlayhead]);
+  const playbackMoment = playbackMode === "realtime" ? realtimeMoment : notePlaybackMoment;
+  const realtimeControllerRef = useRef<RealtimeController | null>(null);
+  if (!realtimeControllerRef.current) {
+    realtimeControllerRef.current = new RealtimeController(
+      {
+        attack: (pitches) => pianoSampler.attack(pitches),
+        release: (pitches) => pianoSampler.release(pitches),
+        stop: () => pianoSampler.stop(),
+      },
+      {
+        onFrame: (frame) => {
+          realtimeLatestFrameRef.current = frame;
+          const signature = `${frame.status}:${frame.bpm}:${frame.activeNotes.map((note) => note.id).join(",")}`;
+          if (signature !== realtimeRenderSignatureRef.current) {
+            realtimeRenderSignatureRef.current = signature;
+            setRealtimeStatus(frame.status);
+            setRealtimeFrame(frame);
+          }
+        },
+        onComplete: () => {
+          realtimeRouteRef.current = null;
+          realtimeLatestFrameRef.current = null;
+          realtimeRenderSignatureRef.current = "";
+          setRealtimeStatus("inactive");
+          setRealtimeFrame(null);
+        },
+      },
+      {
+        now: () => pianoSampler.now(),
+        setInterval: (callback, milliseconds) => globalThis.setInterval(callback, milliseconds),
+        clearInterval: (handle) => globalThis.clearInterval(handle as ReturnType<typeof setInterval>),
+      },
+    );
+  }
   const commitPlaybackState = useCallback(
     (next: PlaybackState) => {
       playbackStateRef.current = next;
@@ -242,23 +389,208 @@ export function App() {
     },
     [playbackTimeline],
   );
+  const stopRealtime = useCallback(() => {
+    realtimeStartGenerationRef.current += 1;
+    realtimeControllerRef.current?.stop();
+    realtimeRouteRef.current = null;
+    realtimeLatestFrameRef.current = null;
+    realtimeRenderSignatureRef.current = "";
+    setRealtimeStatus("inactive");
+    setRealtimeFrame(null);
+    setPlaybackAudioError(null);
+  }, []);
+  const routeForPosition = useCallback((position: StructuralPosition | null): PerformanceRoute | null => {
+    if (!realtimeModel.score) return null;
+    return expandPerformanceRoute(realtimeModel.score, {
+      startMeasureIndex: position?.measureIndex ?? 0,
+      startOffset: position?.onset ?? 0,
+      visualMap: realtimeVisualMap,
+    });
+  }, [realtimeModel.score, realtimeVisualMap]);
+  const routeForGroup = useCallback((group: VisualGroupRef | null): PerformanceRoute | null => {
+    const position = realtimeModel.score
+      ? structuralPositionForGroup(realtimeModel.score, realtimeVisualMap, group)
+      : null;
+    return routeForPosition(position);
+  }, [realtimeModel.score, realtimeVisualMap, routeForPosition]);
+  const startRealtime = useCallback((group: VisualGroupRef | null) => {
+    let route: PerformanceRoute | null;
+    try {
+      route = routeForGroup(group);
+    } catch (routeError) {
+      setPlaybackAudioError(
+        `Realtime playback could not build a safe route: ${routeError instanceof Error ? routeError.message : String(routeError)}`,
+      );
+      return;
+    }
+    if (!route) return;
+    const generation = ++realtimeStartGenerationRef.current;
+    realtimeRouteRef.current = route;
+    realtimeLatestFrameRef.current = null;
+    realtimeRenderSignatureRef.current = "";
+    setRealtimeStatus("playing");
+    void pianoSampler.prepare()
+      .then(() => {
+        if (generation !== realtimeStartGenerationRef.current) return;
+        const controller = realtimeControllerRef.current;
+        if (!controller) return;
+        controller.setTempoMultiplier(tempoMultiplier);
+        controller.setMuted(!playbackStateRef.current.noteSoundsEnabled);
+        controller.play(route!, 0);
+        setPlaybackAudioError(null);
+      })
+      .catch((audioError: unknown) => {
+        if (generation !== realtimeStartGenerationRef.current) return;
+        stopRealtime();
+        setPlaybackAudioError(`Piano audio could not start: ${audioError instanceof Error ? audioError.message : String(audioError)}`);
+      });
+  }, [routeForGroup, stopRealtime, tempoMultiplier]);
+  const seekRealtime = useCallback((group: VisualGroupRef, status: "playing" | "paused") => {
+    try {
+      const route = routeForGroup(group);
+      if (!route) return;
+      realtimeRouteRef.current = route;
+      realtimeLatestFrameRef.current = null;
+      realtimeRenderSignatureRef.current = "";
+      realtimeControllerRef.current?.seek(route, status);
+      setPlaybackAudioError(null);
+    } catch (routeError) {
+      stopRealtime();
+      setPlaybackAudioError(
+        `Realtime playback could not build a safe route: ${routeError instanceof Error ? routeError.message : String(routeError)}`,
+      );
+    }
+  }, [routeForGroup, stopRealtime]);
+  const seekRealtimePosition = useCallback((
+    position: StructuralPosition,
+    status: "playing" | "paused",
+  ) => {
+    try {
+      const route = routeForPosition(position);
+      if (!route) return;
+      realtimeRouteRef.current = route;
+      realtimeLatestFrameRef.current = null;
+      realtimeRenderSignatureRef.current = "";
+      realtimeControllerRef.current?.seek(route, status);
+      setPlaybackAudioError(null);
+    } catch (routeError) {
+      stopRealtime();
+      setPlaybackAudioError(
+        `Realtime playback could not build a safe route: ${routeError instanceof Error ? routeError.message : String(routeError)}`,
+      );
+    }
+  }, [routeForPosition, stopRealtime]);
   const handlePlaybackCommand = useCallback(
     (command: PlaybackCommand) => {
+      if (playbackMode === "realtime") {
+        if (command === "stopPlayback") {
+          stopRealtime();
+          return;
+        }
+        if (command === "togglePlayback") {
+          if (realtimeStatus === "playing") realtimeControllerRef.current?.pause();
+          else if (realtimeStatus === "paused") realtimeControllerRef.current?.resume();
+          else startRealtime(selectedGroup);
+          return;
+        }
+        if (command === "toggleNoteSounds") {
+          const next = {
+            ...playbackStateRef.current,
+            noteSoundsEnabled: !playbackStateRef.current.noteSoundsEnabled,
+          };
+          playbackStateRef.current = next;
+          setPlaybackState(next);
+          realtimeControllerRef.current?.setMuted(!next.noteSoundsEnabled);
+          return;
+        }
+        if (realtimeStatus === "inactive" || !realtimeModel.score) return;
+        const route = realtimeRouteRef.current;
+        const offset = realtimeControllerRef.current?.getOffset() ?? realtimeFrame?.offset ?? 0;
+        const occurrence = route?.occurrences
+          .filter((item) => item.scoreStart <= offset + 1e-6)
+          .at(-1);
+        if (!occurrence) return;
+        const current = {
+          measureIndex: occurrence.measureIndex,
+          onset: occurrence.localStart + Math.max(0, offset - occurrence.scoreStart),
+        };
+        const destination = seekStructuralPosition(realtimeModel.score, current, command);
+        seekRealtimePosition(destination, realtimeStatus);
+        return;
+      }
       commitPlaybackState(
         applyPlaybackCommand(playbackTimeline, playbackStateRef.current, command, selectedGroup),
       );
     },
-    [commitPlaybackState, playbackTimeline, selectedGroup],
+    [
+      commitPlaybackState,
+      playbackMode,
+      playbackTimeline,
+      realtimeFrame?.offset,
+      realtimeModel.score,
+      realtimeStatus,
+      seekRealtime,
+      seekRealtimePosition,
+      selectedGroup,
+      startRealtime,
+      stopRealtime,
+    ],
   );
   const handleSelectGroup = useCallback(
     (group: VisualGroupRef | null) => {
       setSelectedGroup(group);
       setHighlightAllNotes(false);
+      if (group && playbackMode === "realtime" && realtimeStatus !== "inactive") {
+        seekRealtime(group, realtimeStatus);
+        return;
+      }
       const next = seekPlaybackToGroup(playbackTimeline, playbackStateRef.current, group);
       if (next !== playbackStateRef.current) commitPlaybackState(next);
     },
-    [commitPlaybackState, playbackTimeline],
+    [commitPlaybackState, playbackMode, playbackTimeline, realtimeStatus, seekRealtime],
   );
+  const handlePlaybackModeChange = useCallback((mode: PlaybackMode) => {
+    if (mode === playbackMode || (mode === "realtime" && !realtimeModel.score)) return;
+    const wasActive = playbackActive;
+    const playheadVisual = playbackMode === "realtime"
+      ? realtimeRouteRef.current?.notes
+          .filter((note) =>
+            note.visual !== null &&
+            note.onset <= (realtimeControllerRef.current?.getOffset() ?? 0) + 1e-6,
+          )
+          .at(-1)?.visual ?? null
+      : notePlaybackMoment
+        ? {
+            pageIndex: notePlaybackMoment.pageIndex,
+            visualGroupId: notePlaybackMoment.visualGroupIds[0],
+          }
+        : null;
+    if (playbackMode === "realtime") stopRealtime();
+    else commitPlaybackState({
+      ...playbackStateRef.current,
+      active: false,
+      currentMomentId: null,
+    });
+    setPlaybackMode(mode);
+    if (!wasActive) return;
+    const group = playheadVisual
+      ? { pageIndex: playheadVisual.pageIndex, visualGroupId: playheadVisual.visualGroupId }
+      : selectedGroup;
+    if (mode === "realtime") startRealtime(group);
+    else commitPlaybackState(
+      applyPlaybackCommand(playbackTimeline, playbackStateRef.current, "togglePlayback", group),
+    );
+  }, [
+    commitPlaybackState,
+    notePlaybackMoment,
+    playbackActive,
+    playbackMode,
+    playbackTimeline,
+    realtimeModel.score,
+    selectedGroup,
+    startRealtime,
+    stopRealtime,
+  ]);
   const handlePlaybackCommandRef = useRef(handlePlaybackCommand);
   handlePlaybackCommandRef.current = handlePlaybackCommand;
 
@@ -373,6 +705,7 @@ export function App() {
     });
     return () => {
       disposed = true;
+      realtimeControllerRef.current?.stop();
       pianoSampler.stop();
     };
   }, []);
@@ -380,6 +713,15 @@ export function App() {
   useEffect(() => {
     playbackStateRef.current = initialPlaybackState;
     setPlaybackState(initialPlaybackState);
+    realtimeStartGenerationRef.current += 1;
+    realtimeControllerRef.current?.stop();
+    realtimeRouteRef.current = null;
+    realtimeLatestFrameRef.current = null;
+    realtimeRenderSignatureRef.current = "";
+    setRealtimeStatus("inactive");
+    setRealtimeFrame(null);
+    setPlaybackMode("note-by-note");
+    setTempoMultiplier(1);
     setPlaybackAudioError(null);
     pianoSampler.stop();
   }, [document?.jobId]);
@@ -389,18 +731,22 @@ export function App() {
       if (activePage !== "viewer") return;
       if (isEditableKeyboardTarget(event.target)) return;
       const command = commandForKeyboardEvent(shortcuts, event);
-      if (!command || (command !== "togglePlayback" && !playbackState.active)) return;
+      if (!command || (
+        command !== "togglePlayback" &&
+        command !== "stopPlayback" &&
+        !playbackActive
+      )) return;
       if (isPlaybackToggleCommand(command) && event.repeat) return;
       event.preventDefault();
       handlePlaybackCommand(command);
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [activePage, handlePlaybackCommand, playbackState.active, shortcuts]);
+  }, [activePage, handlePlaybackCommand, playbackActive, shortcuts]);
 
   useEffect(() => {
-    if (!playbackState.active || activePage !== "viewer") stopMidiRepeat();
-  }, [activePage, playbackState.active, stopMidiRepeat]);
+    if (!playbackActive || activePage !== "viewer") stopMidiRepeat();
+  }, [activePage, playbackActive, stopMidiRepeat]);
 
   useEffect(() => {
     if (!nativeAvailable) return;
@@ -438,7 +784,11 @@ export function App() {
 
       if (activePageRef.current !== "viewer") return;
       const command = commandForMidiShortcut(shortcutsRef.current, received);
-      if (!command || (command !== "togglePlayback" && !playbackActiveRef.current)) return;
+      if (!command || (
+        command !== "togglePlayback" &&
+        command !== "stopPlayback" &&
+        !playbackActiveRef.current
+      )) return;
       stopMidiRepeat();
       handlePlaybackCommandRef.current(command);
       if (!isPlaybackToggleCommand(command)) startMidiRepeat(command, received);
@@ -506,6 +856,13 @@ export function App() {
         activeJobId.current = event.jobId;
         fingeringRequestRef.current = null;
         setError(null);
+        realtimeStartGenerationRef.current += 1;
+        realtimeControllerRef.current?.stop();
+        realtimeRouteRef.current = null;
+        realtimeLatestFrameRef.current = null;
+        realtimeRenderSignatureRef.current = "";
+        setRealtimeStatus("inactive");
+        setRealtimeFrame(null);
         setDocument((current) => {
           if (current?.jobId === event.jobId && current.pages.length === event.pageCount) {
             return {
@@ -514,6 +871,7 @@ export function App() {
               cacheStatus: event.cacheStatus,
               cachePath: event.cachePath,
               documentMusicXmlPath: undefined,
+              documentMusicXml: undefined,
               fingeringStatus: undefined,
               fingeringError: undefined,
               predictedFingerings: undefined,
@@ -524,6 +882,15 @@ export function App() {
           setSelectedGroup(null);
           setHighlightAllNotes(false);
           playbackStateRef.current = initialPlaybackState;
+          realtimeStartGenerationRef.current += 1;
+          realtimeControllerRef.current?.stop();
+          realtimeRouteRef.current = null;
+          realtimeLatestFrameRef.current = null;
+          realtimeRenderSignatureRef.current = "";
+          setRealtimeStatus("inactive");
+          setRealtimeFrame(null);
+          setPlaybackMode("note-by-note");
+          setTempoMultiplier(1);
           pianoSampler.stop();
           setPlaybackState(initialPlaybackState);
           return {
@@ -638,6 +1005,7 @@ export function App() {
                 ...current,
                 status: event.status,
                 documentMusicXmlPath: event.documentMusicXmlPath,
+                documentMusicXml: undefined,
                 fingeringStatus: event.documentMusicXmlPath ? "pending" : undefined,
                 fingeringError: undefined,
                 predictedFingerings: undefined,
@@ -675,6 +1043,9 @@ export function App() {
 
     void readMusicXml(path)
       .then(async (musicXml) => {
+        setDocument((current) =>
+          current?.jobId === jobId ? { ...current, documentMusicXml: musicXml } : current,
+        );
         const cached = cachedFingeringsFromMusicXml(musicXml);
         if (cached) return { result: cached, needsWrite: false };
         setDocument((current) =>
@@ -701,6 +1072,7 @@ export function App() {
           current?.jobId === jobId
             ? {
                 ...current,
+                documentMusicXml: result.musicXml,
                 fingeringStatus: "ready",
                 fingeringError: undefined,
                 predictedFingerings: result.fingeringsByMusicXmlId,
@@ -794,6 +1166,15 @@ export function App() {
       setSelectedGroup(null);
       setHighlightAllNotes(false);
       playbackStateRef.current = initialPlaybackState;
+      realtimeStartGenerationRef.current += 1;
+      realtimeControllerRef.current?.stop();
+      realtimeRouteRef.current = null;
+      realtimeLatestFrameRef.current = null;
+      realtimeRenderSignatureRef.current = "";
+      setRealtimeStatus("inactive");
+      setRealtimeFrame(null);
+      setPlaybackMode("note-by-note");
+      setTempoMultiplier(1);
       pianoSampler.stop();
       setPlaybackState(initialPlaybackState);
       const jobId = await openPdf(path);
@@ -847,6 +1228,12 @@ export function App() {
     if (!document) return;
     fingeringRequestRef.current = null;
     setError(null);
+    stopRealtime();
+    commitPlaybackState({
+      ...playbackStateRef.current,
+      active: false,
+      currentMomentId: null,
+    });
     setDocument((current) =>
       current
         ? replacePage(
@@ -854,6 +1241,7 @@ export function App() {
               ...current,
               status: "processing",
               documentMusicXmlPath: undefined,
+              documentMusicXml: undefined,
               fingeringStatus: undefined,
               fingeringError: undefined,
               predictedFingerings: undefined,
@@ -966,6 +1354,7 @@ export function App() {
           midiError={midiError}
           midiRefreshing={midiRefreshing}
           midiCaptureCommand={midiCaptureCommand}
+          showStopPlayback
           onChangeShortcuts={setShortcuts}
           onChangeDebugPanelEnabled={(enabled) => {
             setDebugPanelEnabled(enabled);
@@ -990,7 +1379,7 @@ export function App() {
           <strong>MIDI controls unavailable.</strong> {midiError}
         </div>
       ) : null}
-      {playbackState.active && document && (
+      {playbackActive && document && (
         document.status === "processing" ||
         document.fingeringStatus === "pending" ||
         document.fingeringStatus === "predicting"
@@ -999,6 +1388,11 @@ export function App() {
           <strong>Fingerings are not available yet.</strong>{" "}
           Playback can continue while recognition runs; fingering labels will appear after the
           entire score is processed and fingering prediction finishes.
+        </div>
+      ) : null}
+      {realtimeModel.error ? (
+        <div className="warning" role="alert">
+          <strong>Realtime playback is unavailable.</strong> {realtimeModel.error}
         </div>
       ) : null}
 
@@ -1014,10 +1408,23 @@ export function App() {
               showDetectedNoteheadContours={showDetectedNoteheadContours}
               showRefinedNoteheadContours={showRefinedNoteheadContours}
               showRawStemContours={showRawStemContours}
-              playbackActive={playbackState.active}
+              playbackActive={playbackActive}
               playbackNoteSoundsEnabled={playbackState.noteSoundsEnabled}
               playbackAvailable={playbackTimeline.length > 0}
               playbackMoment={playbackMoment}
+              playbackMode={playbackMode}
+              playbackStatus={playbackStatus}
+              realtimeAvailable={realtimeModel.score !== null}
+              realtimePlayhead={null}
+              getRealtimePlayhead={
+                playbackMode === "realtime" && realtimeStatus !== "inactive"
+                  ? getRealtimePlayhead
+                  : undefined
+              }
+              realtimePlayheadAnimating={playbackMode === "realtime" && realtimeStatus === "playing"}
+              realtimeGroupIdsByPage={playbackMode === "realtime" ? realtimeGroupIdsByPage : undefined}
+              tempoBpm={realtimeFrame?.bpm ?? realtimeOpeningBpm * tempoMultiplier}
+              tempoMultiplier={tempoMultiplier}
               initialViewportTransform={
                 viewerViewportRef.current?.documentKey === document.jobId
                   ? viewerViewportRef.current.transform
@@ -1027,6 +1434,11 @@ export function App() {
                 viewerViewportRef.current = { documentKey: document.jobId, transform };
               }}
               onPlaybackCommand={handlePlaybackCommand}
+              onPlaybackModeChange={handlePlaybackModeChange}
+              onTempoMultiplierChange={(multiplier) => {
+                setTempoMultiplier(multiplier);
+                realtimeControllerRef.current?.setTempoMultiplier(multiplier);
+              }}
               onSelectGroup={handleSelectGroup}
               onRetryPage={handleRetryPage}
             />
@@ -1103,8 +1515,12 @@ export function App() {
               </dl>
               {workerInfo ? <p className="worker-info">{workerInfo}</p> : null}
             </aside> : null}
-            {playbackState.active ? (
-              <PianoKeyboard notes={playbackMoment?.keyboardNotes ?? []} />
+            {playbackActive ? (
+              <PianoKeyboard
+                notes={playbackMode === "realtime"
+                  ? realtimeDisplayNotes
+                  : playbackMoment?.keyboardNotes ?? []}
+              />
             ) : null}
           </>
         ) : (

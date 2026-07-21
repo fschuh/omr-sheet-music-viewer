@@ -183,6 +183,11 @@ export class PianoSampler {
     return this.preparation;
   }
 
+  /** Current Tone audio-context time used by realtime score scheduling. */
+  now(): number {
+    return Tone.immediate();
+  }
+
   stop(): void {
     this.playGeneration += 1;
     if (this.engine) this.engine.release(this.activeNotes);
@@ -208,6 +213,33 @@ export class PianoSampler {
     const velocity = Math.min(0.78, 0.9 / Math.sqrt(notes.length));
     this.audioEngine().attack(notes, velocity);
     this.activeNotes = notes;
+  }
+
+  /** Attack additional notes without releasing sustained realtime notes. */
+  attack(pitches: readonly string[]): void {
+    const notes = Array.from(new Set(pitches.flatMap((pitch) => {
+      const midi = pitchToMidi(pitch);
+      return midi === null ? [] : [tonePitchForMidi(midi)];
+    })));
+    const newNotes = notes.filter((note) => !this.activeNotes.includes(note));
+    if (newNotes.length === 0) return;
+    const velocity = Math.min(0.78, 0.9 / Math.sqrt(newNotes.length));
+    this.audioEngine().attack(newNotes, velocity);
+    this.activeNotes = Array.from(new Set([...this.activeNotes, ...newNotes]));
+  }
+
+  /** Release only the requested notes, preserving other realtime sustains. */
+  release(pitches: readonly string[]): void {
+    if (!this.engine) return;
+    const notes = Array.from(new Set(pitches.flatMap((pitch) => {
+      const midi = pitchToMidi(pitch);
+      return midi === null ? [] : [tonePitchForMidi(midi)];
+    })));
+    const active = notes.filter((note) => this.activeNotes.includes(note));
+    if (active.length === 0) return;
+    this.engine.release(active);
+    const released = new Set(active);
+    this.activeNotes = this.activeNotes.filter((note) => !released.has(note));
   }
 }
 

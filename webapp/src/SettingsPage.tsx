@@ -23,6 +23,7 @@ interface SettingsPageProps {
   onBeginMidiCapture: (command: PlaybackCommand) => void;
   onCancelMidiCapture: () => void;
   onRefreshMidiInputs: () => void;
+  showStopPlayback?: boolean;
 }
 
 export function SettingsPage({
@@ -38,6 +39,7 @@ export function SettingsPage({
   onBeginMidiCapture,
   onCancelMidiCapture,
   onRefreshMidiInputs,
+  showStopPlayback = false,
 }: SettingsPageProps) {
   const [keyboardCaptureCommand, setKeyboardCaptureCommand] = useState<PlaybackCommand | null>(null);
   const [keyboardError, setKeyboardError] = useState<string | null>(null);
@@ -164,7 +166,9 @@ export function SettingsPage({
             <span role="columnheader">Keyboard</span>
             <span role="columnheader">MIDI message</span>
           </div>
-          {playbackCommandDetails.map(({ command, label, description }) => {
+          {playbackCommandDetails
+            .filter(({ command }) => showStopPlayback || command !== "stopPlayback")
+            .map(({ command, label, description }) => {
             const learningKeyboard = keyboardCaptureCommand === command;
             const learningMidi = midiCaptureCommand === command;
             const midi = shortcuts[command].midi;

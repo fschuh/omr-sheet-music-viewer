@@ -100,6 +100,8 @@ export interface LoadedDocument {
   cacheStatus: "miss" | "partial" | "complete";
   cachePath?: string;
   documentMusicXmlPath?: string;
+  /** Parsed document-level playback always uses the merged, page-scoped MusicXML. */
+  documentMusicXml?: string;
   fingeringStatus?: FingeringStatus;
   fingeringError?: string;
   predictedFingerings?: Record<string, import("./fingering").PredictedFingering>;
