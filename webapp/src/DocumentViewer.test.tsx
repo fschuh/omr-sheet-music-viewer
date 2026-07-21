@@ -129,3 +129,29 @@ test("omits pages that were skipped because they contain no music", () => {
   assert.match(markup, /class="page-number">2<\/span>/);
   assert.doesNotMatch(markup, /class="page-number">1<\/span>/);
 });
+
+test("restores a supplied viewport transform after remounting", () => {
+  const markup = renderToStaticMarkup(
+    <DocumentViewer
+      documentKey="fixture"
+      pages={[page]}
+      selectedGroup={null}
+      highlightAllNotes={false}
+      showOriginalNoteheadContours={false}
+      showDetectedNoteheadContours={false}
+      showRefinedNoteheadContours={false}
+      showRawStemContours={false}
+      playbackActive={false}
+      playbackNoteSoundsEnabled
+      playbackAvailable
+      playbackMoment={null}
+      initialViewportTransform={{ scale: 1.75, x: -320, y: -640 }}
+      onPlaybackCommand={() => undefined}
+      onSelectGroup={() => undefined}
+      onRetryPage={() => undefined}
+    />,
+  );
+
+  assert.match(markup, />175%<\/span>/);
+  assert.match(markup, /translate3d\(-320px, -640px, 0\) scale\(1.75\)/);
+});
