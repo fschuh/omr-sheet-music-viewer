@@ -52,6 +52,7 @@ import {
 import type {
   DocumentPage,
   LoadedDocument,
+  ViewportTransform,
   VisualGroupRef,
   VisualSidecarNote,
 } from "./types";
@@ -171,6 +172,10 @@ export function App() {
   const nativeAvailable = nativeViewerAvailable();
   const activeJobId = useRef<string | null>(null);
   const fingeringRequestRef = useRef<string | null>(null);
+  const viewerViewportRef = useRef<{
+    documentKey: string;
+    transform: ViewportTransform;
+  } | null>(null);
   const nextWorkerLogId = useRef(1);
   const workerLogOutput = useRef<HTMLDivElement | null>(null);
   const [activePage, setActivePage] = useState<"viewer" | "settings">("viewer");
@@ -1013,6 +1018,14 @@ export function App() {
               playbackNoteSoundsEnabled={playbackState.noteSoundsEnabled}
               playbackAvailable={playbackTimeline.length > 0}
               playbackMoment={playbackMoment}
+              initialViewportTransform={
+                viewerViewportRef.current?.documentKey === document.jobId
+                  ? viewerViewportRef.current.transform
+                  : undefined
+              }
+              onViewportTransformChange={(transform) => {
+                viewerViewportRef.current = { documentKey: document.jobId, transform };
+              }}
               onPlaybackCommand={handlePlaybackCommand}
               onSelectGroup={handleSelectGroup}
               onRetryPage={handleRetryPage}

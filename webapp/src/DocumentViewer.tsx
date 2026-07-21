@@ -17,6 +17,7 @@ const MAX_SCALE = 6;
 const CLICK_MOVE_TOLERANCE = 6;
 const PAGE_GAP = 28;
 const PLAYBACK_EDGE_CLEARANCE = 16;
+const DEFAULT_VIEWPORT_TRANSFORM: ViewportTransform = { scale: 1, x: 24, y: 24 };
 
 interface DocumentViewerProps {
   documentKey: string;
@@ -31,6 +32,8 @@ interface DocumentViewerProps {
   playbackNoteSoundsEnabled: boolean;
   playbackAvailable: boolean;
   playbackMoment: PlaybackMoment | null;
+  initialViewportTransform?: ViewportTransform;
+  onViewportTransformChange?: (transform: ViewportTransform) => void;
   onPlaybackCommand: (command: PlaybackCommand) => void;
   onSelectGroup: (group: VisualGroupRef | null) => void;
   onRetryPage: (pageIndex: number) => void;
@@ -328,6 +331,8 @@ export function DocumentViewer({
   playbackNoteSoundsEnabled,
   playbackAvailable,
   playbackMoment,
+  initialViewportTransform,
+  onViewportTransformChange,
   onPlaybackCommand,
   onSelectGroup,
   onRetryPage,
@@ -341,17 +346,26 @@ export function DocumentViewer({
     midpoint: VisualPoint;
     transform: ViewportTransform;
   } | null>(null);
-  const autoFitMarker = useRef<string | null>(null);
-  const initialTransform = useRef<ViewportTransform>({ scale: 1, x: 24, y: 24 });
-  const transformRef = useRef(initialTransform.current);
+  const autoFitMarker = useRef<string | null>(initialViewportTransform ? documentKey : null);
+  const transformRef = useRef(initialViewportTransform ?? DEFAULT_VIEWPORT_TRANSFORM);
   const pendingTransform = useRef<ViewportTransform | null>(null);
   const transformFrame = useRef<number | null>(null);
-  const [transform, setTransform] = useState<ViewportTransform>(initialTransform.current);
+  const onViewportTransformChangeRef = useRef(onViewportTransformChange);
+  onViewportTransformChangeRef.current = onViewportTransformChange;
+  const [transform, setTransform] = useState<ViewportTransform>(
+    initialViewportTransform ?? DEFAULT_VIEWPORT_TRANSFORM,
+  );
   const [isPointerPanning, setIsPointerPanning] = useState(false);
   const pages = useMemo(
     () => documentPages.filter((page) => page.status !== "skipped"),
     [documentPages],
   );
+  const hasCompletePageRef = useRef(pages.some((page) => page.status === "complete"));
+  hasCompletePageRef.current = pages.some((page) => page.status === "complete");
+
+  function publishTransform(next: ViewportTransform) {
+    if (hasCompletePageRef.current) onViewportTransformChangeRef.current?.(next);
+  }
 
   function commitTransform(next: ViewportTransform) {
     if (transformFrame.current !== null) cancelAnimationFrame(transformFrame.current);
@@ -359,6 +373,7 @@ export function DocumentViewer({
     pendingTransform.current = null;
     transformRef.current = next;
     setTransform(next);
+    publishTransform(next);
   }
 
   function scheduleTransform(update: (current: ViewportTransform) => ViewportTransform) {
@@ -372,12 +387,15 @@ export function DocumentViewer({
       if (!next) return;
       transformRef.current = next;
       setTransform(next);
+      publishTransform(next);
     });
   }
 
   useEffect(
     () => () => {
       if (transformFrame.current !== null) cancelAnimationFrame(transformFrame.current);
+      const latestTransform = pendingTransform.current ?? transformRef.current;
+      publishTransform(latestTransform);
     },
     [],
   );
@@ -402,9 +420,9 @@ export function DocumentViewer({
     activePointers.current.clear();
     dragStart.current = null;
     pinchStart.current = null;
-    autoFitMarker.current = null;
+    autoFitMarker.current = initialViewportTransform ? documentKey : null;
     setIsPointerPanning(false);
-    commitTransform(initialTransform.current);
+    commitTransform(initialViewportTransform ?? DEFAULT_VIEWPORT_TRANSFORM);
   }, [documentKey]);
 
   useEffect(() => {
@@ -644,7 +662,7 @@ export function DocumentViewer({
       <div className="viewer-toolbar">
         <button type="button" onClick={fitWidth}>Fit width</button>
         <button type="button" onClick={fitPage}>Fit page</button>
-        <button type="button" onClick={() => commitTransform(initialTransform.current)}>Reset</button>
+        <button type="button" onClick={() => commitTransform(DEFAULT_VIEWPORT_TRANSFORM)}>Reset</button>
         <button
           type="button"
           aria-label="Zoom out"
