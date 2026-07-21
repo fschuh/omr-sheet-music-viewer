@@ -146,6 +146,42 @@ test("does not synthesize a missing target from two lower target harmonics", () 
   assert.equal(frame.activePitches.some(({ midi }) => midi === 67), false);
 });
 
+test("does not infer the bass of G3/G4/E5 from the two upper notes", () => {
+  const detector = new SpectralPitchDetector(detectorOptions);
+  detector.setTarget([55, 67, 76]);
+  const missingBass = spectrum([67, 76]);
+  detector.process(spectrum([]), 0);
+  detector.process(missingBass, 16);
+  detector.process(missingBass, 32);
+  const frame = detector.process(missingBass, 48);
+  assert.equal(frame.onsets.some(({ midi }) => midi === 55), false);
+  assert.equal(frame.activePitches.some(({ midi }) => midi === 55), false);
+});
+
+test("retains a quiet bass fundamental beneath loud upper target notes", () => {
+  const detector = new SpectralPitchDetector(detectorOptions);
+  detector.setTarget([55, 67, 76]);
+  const unevenChord = spectrumAtLevels([[55, 0.1], [67, 0.7], [76, 0.7]]);
+  detector.process(spectrum([]), 0);
+  detector.process(unevenChord, 16);
+  detector.process(unevenChord, 32);
+  const frame = detector.process(unevenChord, 48);
+  assert.equal(frame.onsets.some(({ midi }) => midi === 55), true);
+  assert.equal(frame.activePitches.some(({ midi }) => midi === 55), true);
+});
+
+test("finds a quiet Ab3 fundamental despite a loud third-harmonic target", () => {
+  const detector = new SpectralPitchDetector(detectorOptions);
+  detector.setTarget([56, 75]);
+  const unevenChord = spectrumAtLevels([[56, 0.1], [75, 0.75]]);
+  detector.process(spectrum([]), 0);
+  detector.process(unevenChord, 16);
+  detector.process(unevenChord, 32);
+  const frame = detector.process(unevenChord, 48);
+  assert.equal(frame.onsets.some(({ midi }) => midi === 56), true);
+  assert.equal(frame.activePitches.some(({ midi }) => midi === 56), true);
+});
+
 test("retains a genuinely played extra octave for exact-match rejection", () => {
   const detector = new SpectralPitchDetector(detectorOptions);
   detector.setTarget([60]);

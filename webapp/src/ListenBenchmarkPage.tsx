@@ -48,10 +48,22 @@ export function ListenBenchmarkPage() {
     trials: summary.trials.length,
     correctTrials: summary.correctTrialCount,
     successRate: `${(summary.successRate * 100).toFixed(1)}%`,
-    falseAdvances: summary.falseAdvanceCount,
+    distinguishableFalseAdvances: summary.falseAdvanceCount,
+    mathematicallyAmbiguousAdvances: summary.ambiguousAdvanceCount,
     p95OnsetToAdvanceMs: summary.p95OnsetToAdvanceMs,
+    courseClear: {
+      correctTrials: summary.courseClear.correctTrialCount,
+      successRate: summary.courseClear.successRate === null
+        ? null
+        : `${(summary.courseClear.successRate * 100).toFixed(1)}%`,
+      passed: summary.courseClear.passed,
+    },
     acceptance: summary.acceptance,
     diagnostics: summary.trials.map((trial) => ({
+      fixtureGroup: trial.fixtureGroup,
+      measure: trial.measure,
+      moment: trial.moment,
+      mathematicallyAmbiguous: trial.mathematicallyAmbiguous,
       target: trial.targetPitches,
       played: trial.playedPitches,
       advanced: trial.advanced,
@@ -62,6 +74,15 @@ export function ListenBenchmarkPage() {
           ...onset,
           confidence: Number(onset.confidence.toFixed(3)),
           noteConfidence: Number(onset.noteConfidence.toFixed(3)),
+          fundamentalProminenceDb: onset.fundamentalProminenceDb === undefined
+            ? undefined
+            : Number(onset.fundamentalProminenceDb.toFixed(1)),
+          fundamentalRelativeDb: onset.fundamentalRelativeDb === undefined
+            ? undefined
+            : Number(onset.fundamentalRelativeDb.toFixed(1)),
+          independentEvidenceRelativeDb: onset.independentEvidenceRelativeDb === undefined
+            ? undefined
+            : Number(onset.independentEvidenceRelativeDb.toFixed(1)),
         })),
     })),
   }, null, 2);
@@ -72,7 +93,9 @@ export function ListenBenchmarkPage() {
       <p>
         This page runs the local spectral recognizer against isolated notes and one-to-six-note chords
         rendered from the bundled piano samples. Acceptance is fixed at p95 latency under
-        400 ms, at least 95% correct advancement, and zero wrong-note false advances.
+        400 ms, at least 95% correct advancement overall and for the Course Clear score,
+        and zero distinguishable wrong-note false advances. Exact upper-harmonic ties are
+        reported separately because the spectrum alone cannot identify their source note.
       </p>
       <button type="button" disabled={running} onClick={() => void run()}>
         {running ? "Running…" : "Run bundled-sample benchmark"}
