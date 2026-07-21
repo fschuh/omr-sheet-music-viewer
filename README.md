@@ -135,6 +135,82 @@ toggle messages and message types without a release signal remain one-shot.
 On Windows, the repeat delay and rate follow the system keyboard settings; other
 platforms use a 400 ms delay and 75 ms interval.
 
+## AI-assisted development disclosure
+
+This project was developed with substantial assistance from
+[OpenAI Codex](https://developers.openai.com/codex/) using GPT-5.6. GPT-5.6 was
+the model used for reasoning and code generation; Codex was the development
+agent that could inspect the repository, edit files, run commands, examine
+failures, and execute tests. It was used as an iterative engineering tool, not
+as an unsupervised one-shot application generator.
+
+### How Codex and GPT-5.6 were used
+
+- **Architecture and planning:** They helped turn the initial viewer concept
+  into a cross-language desktop architecture: a React/TypeScript interface, a
+  Rust/Tauri host, and a Python worker around HOMR. This included planning the
+  JSON worker protocol, PDF cache layout, per-page processing, MusicXML merging,
+  and the boundary between recognition and presentation.
+- **Application implementation:** They assisted with writing and revising the
+  PDF viewer, pan and zoom behavior, visual note overlays, note selection,
+  document-level playback, smart scrolling, the 88-key piano display, piano
+  audio, fingering display, configurable keyboard shortcuts, and MIDI input.
+- **HOMR integration and fork improvements:** They helped add and refine the
+  visual-sidecar data consumed by the viewer, map recognition geometry back to
+  the displayed PDF raster, and investigate difficult cases involving chords,
+  stems, whole notes, accidentals, repeated notes, tuplets, and cross-staff note
+  matching. The developer supplied failing musical examples and judged whether
+  the resulting geometry and MusicXML were musically correct.
+- **Debugging and performance:** Codex was used to inspect logs and trace
+  failures across Python, Rust, and TypeScript. Examples include worker protocol
+  output contamination, MIDI startup hangs, PDF rendering slowdowns, audio
+  startup latency, cache invalidation, overlay mismatches, and Windows-specific
+  Tauri rebuild behavior.
+- **Tests and verification:** It assisted in creating regression tests and in
+  running the Python worker, TypeScript/React, and Rust test suites after
+  changes. Test results and diffs were reviewed before changes were accepted;
+  recognition and playback behavior were also checked manually with real sheet
+  music.
+- **Repository and submission preparation:** Codex helped make the competition
+  branch self-contained by importing the modified HOMR fork as a Git subtree,
+  wiring the Python environment to the vendored source, creating a reproducible
+  lockfile, preserving third-party notices, and writing the setup and
+  troubleshooting instructions in this README.
+
+### Typical development loop
+
+1. The developer described a feature, bug, expected musical behavior, or a
+   concrete score where the current result was wrong.
+2. Codex inspected the relevant source, logs, tests, and repository history and
+   used GPT-5.6 to reason about the failure and propose an implementation.
+3. Codex applied a scoped patch and ran the relevant automated checks.
+4. The developer reviewed the diff and tested the visible or audible behavior
+   in the application.
+5. Further prompts corrected edge cases until the implementation and regression
+   tests matched the intended result, after which the change was committed.
+
+### Human direction and responsibility
+
+The human developer defined the product goals, selected features, supplied
+musical and visual failure cases, made architecture and usability decisions,
+reviewed proposed changes, tested the application interactively, and decided
+which results to keep or revise. Codex output was frequently refined through
+follow-up prompts and regression testing. The final design, submitted source,
+and competition entry remain the developer's responsibility.
+
+Because the work was iterative—AI suggestions were edited, tested, rejected, or
+reworked alongside human changes—the project does not claim a precise
+percentage of "AI-generated code." This task-based disclosure is intended to be
+more accurate than assigning authorship by line count.
+
+### No OpenAI dependency at runtime
+
+Codex and GPT-5.6 were development tools only. The application contains no
+OpenAI API integration, requires no OpenAI account or API key, and does not send
+the user's PDFs or recognition results to OpenAI. Optical music recognition is
+performed locally by the bundled HOMR fork and ONNX Runtime; playback and
+fingering inference also run locally.
+
 ## Development checks
 
 After completing the setup above, run the automated checks from the repository
