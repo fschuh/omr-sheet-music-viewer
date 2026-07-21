@@ -151,6 +151,20 @@ function visualGroupBBox(group: VisualGroup): VisualBBox {
   return [group.center[0] - 6, group.center[1] - 6, group.center[0] + 6, group.center[1] + 6];
 }
 
+export function shouldScrollPlaybackHorizontally(
+  momentLeft: number,
+  momentRight: number,
+  staffLeft: number,
+  staffRight: number,
+  safeLeft: number,
+  safeRight: number,
+  viewportWidth: number,
+): boolean {
+  const needsLeftwardReveal = momentLeft < safeLeft && staffLeft < 0;
+  const needsRightwardReveal = momentRight > safeRight && staffRight > viewportWidth;
+  return needsLeftwardReveal || needsRightwardReveal;
+}
+
 interface PageOverlayProps {
   page: DocumentPage;
   selected: VisualGroupRef | null;
@@ -583,8 +597,11 @@ export function DocumentViewer({
     const staffBoxes = staffGroups.map(visualGroupBBox);
     const momentBoxes = momentGroups.map(visualGroupBBox);
     const verticalPadding = Math.max(18, page.height * 0.018);
+    const horizontalPadding = Math.max(18, page.width * 0.02);
     const staffTop = pageTop + Math.min(...staffBoxes.map((box) => box[1])) - verticalPadding;
     const staffBottom = pageTop + Math.max(...staffBoxes.map((box) => box[3])) + verticalPadding;
+    const staffLeft = pageLeft + Math.min(...staffBoxes.map((box) => box[0])) - horizontalPadding;
+    const staffRight = pageLeft + Math.max(...staffBoxes.map((box) => box[2])) + horizontalPadding;
     const momentLeft = pageLeft + Math.min(...momentBoxes.map((box) => box[0]));
     const momentRight = pageLeft + Math.max(...momentBoxes.map((box) => box[2]));
     const current = transformRef.current;
@@ -595,6 +612,8 @@ export function DocumentViewer({
     const safeRight = rect.width * 0.88;
     const screenStaffTop = current.y + staffTop * current.scale;
     const screenStaffBottom = current.y + staffBottom * current.scale;
+    const screenStaffLeft = current.x + staffLeft * current.scale;
+    const screenStaffRight = current.x + staffRight * current.scale;
     const screenMomentLeft = current.x + momentLeft * current.scale;
     const screenMomentRight = current.x + momentRight * current.scale;
     let x = current.x;
@@ -604,7 +623,15 @@ export function DocumentViewer({
       const documentCenter = (staffTop + staffBottom) / 2;
       y = (safeTop + safeBottom) / 2 - documentCenter * current.scale;
     }
-    if (screenMomentLeft < safeLeft || screenMomentRight > safeRight) {
+    if (shouldScrollPlaybackHorizontally(
+      screenMomentLeft,
+      screenMomentRight,
+      screenStaffLeft,
+      screenStaffRight,
+      safeLeft,
+      safeRight,
+      rect.width,
+    )) {
       const documentCenter = (momentLeft + momentRight) / 2;
       x = rect.width / 2 - documentCenter * current.scale;
     }

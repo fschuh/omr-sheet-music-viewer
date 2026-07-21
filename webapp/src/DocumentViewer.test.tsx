@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { DocumentViewer } from "./DocumentViewer";
+import { DocumentViewer, shouldScrollPlaybackHorizontally } from "./DocumentViewer";
 import type { PlaybackMoment } from "./playback";
 import type { DocumentPage, VisualGroup, VisualSidecar } from "./types";
 
@@ -128,4 +128,26 @@ test("omits pages that were skipped because they contain no music", () => {
   assert.equal(markup.match(/class="document-page /g)?.length, 1);
   assert.match(markup, /class="page-number">2<\/span>/);
   assert.doesNotMatch(markup, /class="page-number">1<\/span>/);
+});
+
+test("does not scroll horizontally when the approached staff edge is already visible", () => {
+  assert.equal(
+    shouldScrollPlaybackHorizontally(850, 920, 40, 980, 120, 880, 1000),
+    false,
+  );
+  assert.equal(
+    shouldScrollPlaybackHorizontally(80, 150, 20, 960, 120, 880, 1000),
+    false,
+  );
+});
+
+test("scrolls horizontally when the playhead approaches music clipped on that side", () => {
+  assert.equal(
+    shouldScrollPlaybackHorizontally(850, 920, 40, 1120, 120, 880, 1000),
+    true,
+  );
+  assert.equal(
+    shouldScrollPlaybackHorizontally(80, 150, -120, 960, 120, 880, 1000),
+    true,
+  );
 });
