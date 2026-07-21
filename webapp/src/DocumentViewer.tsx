@@ -20,6 +20,7 @@ const PAGE_GAP = 28;
 const PLAYBACK_EDGE_CLEARANCE = 16;
 const MIN_TEMPO_PERCENTAGE = 10;
 const MAX_TEMPO_PERCENTAGE = 300;
+const MIN_VISIBLE_DOCUMENT_PX = 96;
 const DEFAULT_VIEWPORT_TRANSFORM: ViewportTransform = { scale: 1, x: 24, y: 24 };
 const NO_REALTIME_GROUPS: readonly string[] = [];
 
@@ -82,6 +83,26 @@ interface PointerState {
 
 function clampScale(scale: number): number {
   return Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale));
+}
+
+function clampViewportOffset(offset: number, viewportSize: number, contentSize: number): number {
+  if (viewportSize <= 0 || contentSize <= 0) return offset;
+  const visibleSize = Math.min(MIN_VISIBLE_DOCUMENT_PX, viewportSize, contentSize);
+  return Math.min(viewportSize - visibleSize, Math.max(visibleSize - contentSize, offset));
+}
+
+export function constrainViewportTransform(
+  transform: ViewportTransform,
+  viewportWidth: number,
+  viewportHeight: number,
+  documentWidth: number,
+  documentHeight: number,
+): ViewportTransform {
+  return {
+    ...transform,
+    x: clampViewportOffset(transform.x, viewportWidth, documentWidth * transform.scale),
+    y: clampViewportOffset(transform.y, viewportHeight, documentHeight * transform.scale),
+  };
 }
 
 function hasBBox(group: VisualGroup): group is VisualGroup & { bbox: VisualBBox } {
@@ -482,6 +503,7 @@ export function DocumentViewer({
   } | null>(null);
   const autoFitMarker = useRef<string | null>(initialViewportTransform ? `${documentKey}:restored` : null);
   const transformRef = useRef(initialViewportTransform ?? DEFAULT_VIEWPORT_TRANSFORM);
+  const layoutRef = useRef({ width: 1, height: 1 });
   const pendingTransform = useRef<ViewportTransform | null>(null);
   const transformFrame = useRef<number | null>(null);
   const onViewportTransformChangeRef = useRef(onViewportTransformChange);
@@ -614,18 +636,31 @@ export function DocumentViewer({
     if (hasCompletePageRef.current) onViewportTransformChangeRef.current?.(next);
   }
 
+  function constrainTransform(next: ViewportTransform): ViewportTransform {
+    const rect = stageRef.current?.getBoundingClientRect();
+    if (!rect) return next;
+    return constrainViewportTransform(
+      next,
+      rect.width,
+      rect.height,
+      layoutRef.current.width,
+      layoutRef.current.height,
+    );
+  }
+
   function commitTransform(next: ViewportTransform) {
     if (transformFrame.current !== null) cancelAnimationFrame(transformFrame.current);
     transformFrame.current = null;
     pendingTransform.current = null;
-    transformRef.current = next;
-    setTransform(next);
-    publishTransform(next);
+    const constrained = constrainTransform(next);
+    transformRef.current = constrained;
+    setTransform(constrained);
+    publishTransform(constrained);
   }
 
   function scheduleTransform(update: (current: ViewportTransform) => ViewportTransform) {
     const current = pendingTransform.current ?? transformRef.current;
-    pendingTransform.current = update(current);
+    pendingTransform.current = constrainTransform(update(current));
     if (transformFrame.current !== null) return;
     transformFrame.current = requestAnimationFrame(() => {
       transformFrame.current = null;
@@ -656,6 +691,7 @@ export function DocumentViewer({
     }),
     [displayPages],
   );
+  layoutRef.current = layout;
   const firstRealPage = pages.find((page) => page.status === "complete");
   const autoFitPhase = firstRealPage
     ? `${documentKey}:complete`

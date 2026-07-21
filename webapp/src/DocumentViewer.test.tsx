@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import {
   centeredPlaybackX,
   committedTempoPercentage,
+  constrainViewportTransform,
   DocumentViewer,
   shouldScrollPlaybackHorizontally,
   validTempoPercentage,
@@ -284,6 +285,42 @@ test("sizes unfinished pages like the first page with known PDF dimensions", () 
   assert.match(markup, /page-processing" style="width:1000px;height:1400px/);
   assert.match(markup, /class="page-placeholder-content loading" role="status"/);
   assert.doesNotMatch(markup, /viewer-loading-status/);
+});
+
+test("keeps a grabbable edge of the document on screen while panning", () => {
+  assert.deepEqual(
+    constrainViewportTransform(
+      { scale: 1, x: -5000, y: 5000 },
+      1000,
+      800,
+      900,
+      1400,
+    ),
+    { scale: 1, x: -804, y: 704 },
+  );
+  assert.deepEqual(
+    constrainViewportTransform(
+      { scale: 1, x: 5000, y: -5000 },
+      1000,
+      800,
+      900,
+      1400,
+    ),
+    { scale: 1, x: 904, y: -1304 },
+  );
+});
+
+test("keeps a document smaller than the viewport fully on screen", () => {
+  assert.deepEqual(
+    constrainViewportTransform(
+      { scale: 1, x: -100, y: 1000 },
+      1000,
+      800,
+      60,
+      50,
+    ),
+    { scale: 1, x: 0, y: 750 },
+  );
 });
 
 test("does not scroll horizontally when the approached staff edge is already visible", () => {
