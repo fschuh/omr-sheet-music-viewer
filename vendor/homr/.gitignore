@@ -1,0 +1,69 @@
+# MacOS
+.DS_Store
+
+__pycache__/
+.venv/
+*_cache/
+.idea/
+*.log
+*.env
+
+# Docs
+_build/
+
+# Build
+/dist
+/webapp/dist
+/webapp/node_modules
+/webapp/*.tsbuildinfo
+
+# Datasets
+/datasets/*
+!/datasets/*.py
+
+# Models
+/homr/segmentation/*
+!/homr/segmentation/*.py
+
+/datasets/*
+
+*.pth
+*.onnx
+*.pt
+*.onnx.data
+
+# Byprodcuts of a training run
+/seg_unet.keras
+/logs
+/current_training
+
+# Testdata
+/*.jpeg
+/*.jpg
+/*.png
+/*.npy
+/*.musicxml
+/testdata
+/examples
+/canon
+*_try_*
+
+# WSL
+*Zone.Identifier
+
+/*.txt
+*_ser.txt
+
+/lightning_logs
+/*.safetensors
+/runs
+/training/architecture/transformer/*/
+*.tokens
+/*.db
+/*.db-*
+/*.org
+/*.html
+/temp
+
+# test images
+/images/
