@@ -121,6 +121,7 @@ class SpectralBenchmarkClient {
       sampleRate: this.audioContext.sampleRate,
       fftSize: analyser.fftSize,
     });
+    detector.setTarget(targetPitches);
     const matcher = new ExactChordMatcher();
     const spectrum = new Float32Array(analyser.frequencyBinCount);
     const sources: AudioBufferSourceNode[] = [];
@@ -214,6 +215,9 @@ export async function runBundledListenBenchmark(
     [64],
     [67],
     [48, 60],
+    [52, 60],
+    [55, 64],
+    [48, 60, 67],
     [60, 64, 67],
     [48, 55, 60, 64],
     [48, 55, 60, 64, 67],
@@ -226,6 +230,11 @@ export async function runBundledListenBenchmark(
     { target: [60, 64], played: [60, 65] },
     { target: [60, 64, 67], played: [60, 64, 67, 72] },
     { target: [48, 55, 60], played: [48, 55] },
+    { target: [55], played: [55, 67] },
+    { target: [55], played: [55, 74] },
+    { target: [67], played: [67, 86] },
+    { target: [48, 60, 67], played: [48, 60] },
+    { target: [48, 60, 67], played: [48, 67] },
   ];
   const client = new SpectralBenchmarkClient();
   const trials: ListenBenchmarkTrial[] = [];

@@ -43,6 +43,8 @@ export interface NoteRecognizerCallbacks {
  */
 export interface NoteRecognizer {
   start(generation: number, callbacks: NoteRecognizerCallbacks): Promise<void>;
+  /** Supplies the score pitches so implementations can evaluate expected notes independently. */
+  setTarget(targetPitches: readonly number[]): void;
   setGeneration(generation: number): void;
   pause(generation: number): void;
   resume(generation: number): void;
@@ -55,6 +57,7 @@ export interface ListenModeFeedback {
   targetPitches: number[];
   detectedTargetPitches: number[];
   extraPitches: number[];
+  targetPitchConfidences: Array<{ midi: number; confidence: number }>;
   processingTimeMs: number | null;
 }
 

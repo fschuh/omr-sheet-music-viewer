@@ -381,6 +381,9 @@ export function DocumentViewer({
     const target = listenFeedback.targetPitches.map(midiToPitchName).join(" ") || "no pitched notes";
     const heard = listenFeedback.detectedTargetPitches.map(midiToPitchName).join(" ");
     const extras = listenFeedback.extraPitches.map(midiToPitchName).join(" ");
+    const targetSignals = listenFeedback.targetPitchConfidences
+      .map(({ midi, confidence }) => `${midiToPitchName(midi)} ${Math.round(confidence * 100)}%`)
+      .join(" ");
     const processing = listenFeedback.processingTimeMs === null
       ? ""
       : ` · ${Math.round(listenFeedback.processingTimeMs)} ms analysis`;
@@ -388,6 +391,7 @@ export function DocumentViewer({
       `Microphone ready · Analyzer ready · Target ${target}`,
       heard ? `Heard ${heard}` : "Waiting for a fresh onset",
       extras ? `Extra ${extras}` : "",
+      targetSignals ? `Signal ${targetSignals}` : "",
     ].filter(Boolean).join(" · ") + processing;
   }, [listenFeedback]);
   const hasCompletePageRef = useRef(pages.some((page) => page.status === "complete"));

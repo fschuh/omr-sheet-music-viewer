@@ -48,6 +48,7 @@ interface DetectorLike {
     onsets: Array<{ midi: number; confidence: number; noteConfidence: number; onsetTimeMs: number }>;
     activePitches: Array<{ midi: number; confidence: number }>;
   };
+  setTarget(targetPitches: readonly number[]): void;
   reset(): void;
 }
 
@@ -110,6 +111,7 @@ export class BrowserSpectralRecognizer implements NoteRecognizer {
   private animationFrame: number | null = null;
   private sessionToken = 0;
   private generation = 0;
+  private targetPitches: number[] = [];
   private paused = false;
 
   constructor(environment?: SpectralRecognizerEnvironment) {
@@ -164,6 +166,7 @@ export class BrowserSpectralRecognizer implements NoteRecognizer {
       analyser.connect(silentGain);
       silentGain.connect(audioContext.destination);
       this.detector = this.environment.createDetector(audioContext.sampleRate, analyser.fftSize);
+      this.detector.setTarget(this.targetPitches);
       this.spectrum = new Float32Array(analyser.frequencyBinCount);
       this.updateLifecycle({ analysis: "ready" });
       await audioContext.resume();
@@ -226,6 +229,13 @@ export class BrowserSpectralRecognizer implements NoteRecognizer {
   setGeneration(generation: number): void {
     this.generation = generation;
     this.detector?.reset();
+  }
+
+  setTarget(targetPitches: readonly number[]): void {
+    this.targetPitches = Array.from(
+      new Set(targetPitches.filter((pitch) => Number.isInteger(pitch))),
+    ).sort((left, right) => left - right);
+    this.detector?.setTarget(this.targetPitches);
   }
 
   pause(generation: number): void {
