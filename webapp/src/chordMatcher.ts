@@ -15,7 +15,7 @@ export interface ChordMatcherOptions {
 
 export const defaultChordMatcherOptions: ChordMatcherOptions = {
   onsetThreshold: 0.5,
-  targetNoteThreshold: 0.3,
+  targetNoteThreshold: 0.12,
   activeTargetThreshold: 0.35,
   noteThreshold: 0.6,
   preTargetExtraLookbackMs: 30,
@@ -126,6 +126,12 @@ export class ExactChordMatcher {
         ) &&
         onset.onsetTimeMs >= this.refractoryUntilMs
       ))
+      // A played upper note and the mathematically coincident partial of a
+      // lower target are indistinguishable without an instrument profile.
+      // Prefer the score target in that exact tie; benchmarks report these
+      // cases separately from distinguishable wrong notes.
+      .filter((onset) => this.target.has(onset.midi) || !Array.from(this.target)
+        .some((targetMidi) => looksLikeOvertoneAlias(onset.midi, targetMidi)))
       .sort((left, right) => left.onsetTimeMs - right.onsetTimeMs || left.midi - right.midi);
 
     for (const onset of confident) {
@@ -182,8 +188,10 @@ export class ExactChordMatcher {
       result.capturedAtMs - this.attemptStartMs <= this.options.collectionWindowMs
     ) {
       for (const active of result.activePitches) {
+        const lowestTarget = this.target.size > 0 ? Math.min(...this.target) : Infinity;
         if (
           !this.target.has(active.midi) ||
+          (this.target.size >= 3 && active.midi === lowestTarget) ||
           active.confidence < this.options.activeTargetThreshold ||
           this.accumulated.has(active.midi)
         ) continue;

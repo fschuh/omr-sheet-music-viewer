@@ -52,6 +52,18 @@ test("uses stable target evidence after one fresh chord attack", () => {
   assert.equal(matcher.consume(result(1, 1_135, [], [60, 64, 67])).matched, true);
 });
 
+test("requires a fresh bass onset for a three-note chord", () => {
+  const matcher = new ExactChordMatcher({ refractoryMs: 0 });
+  matcher.setTarget([55, 67, 76], 1, 0);
+  matcher.consume(result(1, 100, [onset(67, 100), onset(76, 100)]));
+  const activeOnlyBass = matcher.consume(result(1, 200, [], [55, 67, 76]));
+  assert.equal(activeOnlyBass.matched, false);
+  assert.deepEqual(activeOnlyBass.detectedTargetPitches, [67, 76]);
+
+  matcher.consume(result(1, 220, [onset(55, 220)], [55, 67, 76]));
+  assert.equal(matcher.consume(result(1, 301, [], [55, 67, 76])).matched, true);
+});
+
 test("stable pitches cannot start an attempt without a fresh onset", () => {
   const matcher = new ExactChordMatcher();
   matcher.setTarget([48, 60, 67], 1, 0);
@@ -90,7 +102,7 @@ test("rejects confident extra pitches and resets the wrong attempt after silence
   assert.equal(matcher.consume(result(1, 1_581, [], [60, 64])).matched, true);
 });
 
-test("ignores low-confidence noise and rejects octave errors", () => {
+test("ignores low-confidence noise and cannot anchor on an upper-harmonic tie", () => {
   const matcher = new ExactChordMatcher();
   matcher.setTarget([60], 1, 0);
   matcher.consume(result(1, 1_000, [onset(67, 1_000, 0.49)]));
@@ -102,7 +114,7 @@ test("ignores low-confidence noise and rejects octave errors", () => {
   octave.consume(result(2, 2_000, [onset(72, 2_000)]));
   const update = octave.consume(result(2, 2_100, [], [72]));
   assert.equal(update.matched, false);
-  assert.deepEqual(update.extraPitches, [72]);
+  assert.deepEqual(update.extraPitches, []);
 });
 
 test("uses note confidence to reject onset-like harmonic tails", () => {
@@ -116,7 +128,7 @@ test("uses note confidence to reject onset-like harmonic tails", () => {
   assert.deepEqual(update.extraPitches, []);
 });
 
-test("anchors an attempt on the target while retaining simultaneous extras", () => {
+test("anchors on targets, reports distinguishable extras, and prefers targets in harmonic ties", () => {
   const transient = new ExactChordMatcher();
   transient.setTarget([60], 1, 0);
   transient.consume(result(1, 900, [onset(72, 900)]));
@@ -128,8 +140,8 @@ test("anchors an attempt on the target while retaining simultaneous extras", () 
   simultaneousExtra.consume(result(2, 1_980, [onset(72, 1_980)]));
   simultaneousExtra.consume(result(2, 2_000, [onset(60, 2_000)]));
   const update = simultaneousExtra.consume(result(2, 2_081, [], [60, 72]));
-  assert.equal(update.matched, false);
-  assert.deepEqual(update.extraPitches, [72]);
+  assert.equal(update.matched, true);
+  assert.deepEqual(update.extraPitches, []);
 
   const earlierNonHarmonicExtra = new ExactChordMatcher();
   earlierNonHarmonicExtra.setTarget([60], 3, 0);

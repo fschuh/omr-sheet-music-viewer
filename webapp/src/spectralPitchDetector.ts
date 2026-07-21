@@ -22,7 +22,16 @@ export interface SpectralPitchDetectorOptions {
 
 export interface SpectralPitchFrame {
   onsets: RecognizedOnset[];
-  activePitches: Array<{ midi: number; confidence: number }>;
+  activePitches: Array<{
+    midi: number;
+    confidence: number;
+    /** Strength of a narrow peak at the pitch's own fundamental, above adjacent bins. */
+    fundamentalProminenceDb: number;
+    /** Fundamental level relative to the loudest analyzed spectral bin. */
+    fundamentalRelativeDb: number;
+    /** Strongest partial that cannot be produced by a higher target note. */
+    independentEvidenceRelativeDb: number;
+  }>;
 }
 
 interface Peak {
@@ -37,10 +46,14 @@ interface Fundamental {
   score: number;
   attackRatio: number;
   confidence: number;
+  fundamentalProminenceDb: number;
+  fundamentalRelativeDb: number;
+  independentEvidenceRelativeDb: number;
 }
 
 interface FundamentalCandidate extends Omit<Fundamental, "confidence"> {
   harmonicCount: number;
+  fundamentalConfidence: number;
   localConfidence: number;
   targeted: boolean;
 }
@@ -62,6 +75,9 @@ const defaultOptions: Omit<SpectralPitchDetectorOptions, "sampleRate" | "fftSize
 
 const STABILITY_FRAMES = 3;
 const MIN_REPORTED_CONFIDENCE = 0.12;
+const MIN_AMBIGUOUS_INDEPENDENT_RELATIVE_DB = -18;
+const MIN_POLYPHONIC_BASS_RELATIVE_DB = -18;
+const MIN_EXTRA_FUNDAMENTAL_RELATIVE_DB = -18;
 const RESIDUAL_HARMONICS = 12;
 
 function clamp(value: number, minimum = 0, maximum = 1): number {
@@ -113,6 +129,51 @@ function closestPeak(peaksByBin: readonly Peak[], expectedBin: number, tolerance
     }
   }
   return closest;
+}
+
+function strongestSpectrumBin(
+  spectrumDb: Float32Array,
+  expectedBin: number,
+  toleranceBins: number,
+): { bin: number; decibels: number } {
+  const first = Math.max(1, Math.floor(expectedBin - toleranceBins));
+  const last = Math.min(spectrumDb.length - 2, Math.ceil(expectedBin + toleranceBins));
+  let bin = Math.round(expectedBin);
+  let decibels = spectrumDb[bin] ?? -Infinity;
+  for (let candidate = first; candidate <= last; candidate += 1) {
+    if (spectrumDb[candidate] > decibels) {
+      bin = candidate;
+      decibels = spectrumDb[candidate];
+    }
+  }
+  return { bin, decibels };
+}
+
+function localSpectralProminenceDb(
+  spectrumDb: Float32Array,
+  expectedBin: number,
+  directBin: number,
+): number {
+  const neighboringBins: number[] = [];
+  const first = Math.max(1, Math.floor(expectedBin - 8));
+  const last = Math.min(spectrumDb.length - 2, Math.ceil(expectedBin + 8));
+  for (let bin = first; bin <= last; bin += 1) {
+    if (Math.abs(bin - directBin) <= 2.5 || !Number.isFinite(spectrumDb[bin])) continue;
+    neighboringBins.push(spectrumDb[bin]);
+  }
+  if (neighboringBins.length === 0) return 0;
+  neighboringBins.sort((left, right) => left - right);
+  const localBaselineDb = neighboringBins[Math.floor(neighboringBins.length * 0.6)];
+  return Math.max(0, spectrumDb[Math.round(directBin)] - localBaselineDb);
+}
+
+function harmonicRelationship(lowerMidi: number, upperMidi: number, maximum = 6): number | null {
+  if (upperMidi <= lowerMidi) return null;
+  const ratio = midiToFrequency(upperMidi) / midiToFrequency(lowerMidi);
+  const harmonic = Math.round(ratio);
+  return harmonic >= 2 && harmonic <= maximum && Math.abs(ratio - harmonic) < 0.035
+    ? harmonic
+    : null;
 }
 
 /**
@@ -228,6 +289,7 @@ export class SpectralPitchDetector {
       }
       if (harmonicCount < 2) continue;
       const weightedScore = score * Math.sqrt(harmonicCount);
+      const fundamentalDb = spectrumDb[Math.round(peak.bin)] ?? -Infinity;
       const value: FundamentalCandidate = {
         midi,
         frequency: midiToFrequency(midi),
@@ -235,7 +297,11 @@ export class SpectralPitchDetector {
         // rather than allowing one loud overtone to win on amplitude alone.
         score: weightedScore,
         attackRatio: currentEnergy > 0 ? positiveEnergy / currentEnergy : 0,
+        fundamentalProminenceDb: localSpectralProminenceDb(spectrumDb, peak.bin, peak.bin),
+        fundamentalRelativeDb: fundamentalDb - maximumDb,
+        independentEvidenceRelativeDb: fundamentalDb - maximumDb,
         harmonicCount,
+        fundamentalConfidence: clamp((fundamentalDb - noiseFloorDb - 10) / 24),
         localConfidence: clamp(
           (20 * Math.log10(Math.max(Number.EPSILON, weightedScore)) - peakThresholdDb) / 24,
         ),
@@ -251,12 +317,26 @@ export class SpectralPitchDetector {
     for (const midi of this.targetPitches) {
       const expectedBin = midiToFrequency(midi) / hzPerBin;
       if (expectedBin < firstBin || expectedBin > lastBin) continue;
+      const directFundamental = strongestSpectrumBin(
+        spectrumDb,
+        expectedBin,
+        Math.max(1, expectedBin * 0.006),
+      );
+      const fundamentalConfidence = clamp(
+        (directFundamental.decibels - noiseFloorDb - 10) / 24,
+      );
+      const fundamentalProminenceDb = localSpectralProminenceDb(
+        spectrumDb,
+        expectedBin,
+        directFundamental.bin,
+      );
       const fundamentalPeak = closestPeak(
         strongestPeaks,
         expectedBin,
         Math.max(1.25, expectedBin * 0.012),
       );
-      const baseBin = fundamentalPeak?.bin ?? expectedBin;
+      const baseBin = fundamentalPeak?.bin ?? directFundamental.bin;
+      let independentEvidenceDb = directFundamental.decibels;
       let score = 0;
       let currentEnergy = 0;
       let positiveEnergy = 0;
@@ -269,24 +349,50 @@ export class SpectralPitchDetector {
           harmonicBin,
           Math.max(1.25, harmonicBin * 0.012),
         );
-        if (!match) continue;
         const weight = 1 / harmonic;
-        score += match.amplitude * weight;
-        currentEnergy += match.amplitude * weight;
-        const slow = this.slowSpectrum[Math.round(match.bin)] ?? 0;
-        positiveEnergy += Math.max(0, match.amplitude - slow) * weight;
+        const matchBin = match?.bin ?? (harmonic === 1 ? directFundamental.bin : -1);
+        const matchAmplitude = match?.amplitude ?? (
+          harmonic === 1 && fundamentalConfidence > 0
+            ? decibelsToAmplitude(directFundamental.decibels)
+            : 0
+        );
+        if (matchBin < 0 || matchAmplitude <= 0) continue;
+        const harmonicFrequency = midiToFrequency(midi) * harmonic;
+        const explainedByUpperTarget = Array.from(this.targetPitches).some((upperMidi) => {
+          if (upperMidi <= midi) return false;
+          const upperRatio = harmonicFrequency / midiToFrequency(upperMidi);
+          const upperHarmonic = Math.round(upperRatio);
+          return upperHarmonic >= 1 &&
+            upperHarmonic <= RESIDUAL_HARMONICS &&
+            Math.abs(upperRatio - upperHarmonic) < 0.035;
+        });
+        if (!explainedByUpperTarget) {
+          independentEvidenceDb = Math.max(
+            independentEvidenceDb,
+            20 * Math.log10(Math.max(Number.EPSILON, matchAmplitude)),
+          );
+        }
+        score += matchAmplitude * weight;
+        currentEnergy += matchAmplitude * weight;
+        const slow = this.slowSpectrum[Math.round(matchBin)] ?? 0;
+        positiveEnergy += Math.max(0, matchAmplitude - slow) * weight;
         harmonicCount += 1;
       }
-      if (harmonicCount < 2) continue;
+      if (harmonicCount < 2 && fundamentalConfidence < 0.7) continue;
       const weightedScore = score * Math.sqrt(harmonicCount);
+      const targetThresholdDb = Math.max(-90, noiseFloorDb + this.options.minPeakMarginDb);
       const targeted: FundamentalCandidate = {
         midi,
         frequency: midiToFrequency(midi),
         score: weightedScore,
         attackRatio: currentEnergy > 0 ? positiveEnergy / currentEnergy : 0,
+        fundamentalProminenceDb,
+        fundamentalRelativeDb: directFundamental.decibels - maximumDb,
+        independentEvidenceRelativeDb: independentEvidenceDb - maximumDb,
         harmonicCount,
+        fundamentalConfidence,
         localConfidence: clamp(
-          (20 * Math.log10(Math.max(Number.EPSILON, weightedScore)) - peakThresholdDb) / 24,
+          (20 * Math.log10(Math.max(Number.EPSILON, weightedScore)) - targetThresholdDb) / 24,
         ),
         targeted: true,
       };
@@ -294,7 +400,23 @@ export class SpectralPitchDetector {
       if (!existing || targeted.score > existing.score) candidates.set(midi, targeted);
       else {
         existing.targeted = true;
+        existing.fundamentalConfidence = Math.max(
+          existing.fundamentalConfidence,
+          targeted.fundamentalConfidence,
+        );
         existing.localConfidence = Math.max(existing.localConfidence, targeted.localConfidence);
+        existing.fundamentalProminenceDb = Math.max(
+          existing.fundamentalProminenceDb,
+          targeted.fundamentalProminenceDb,
+        );
+        existing.fundamentalRelativeDb = Math.max(
+          existing.fundamentalRelativeDb,
+          targeted.fundamentalRelativeDb,
+        );
+        existing.independentEvidenceRelativeDb = Math.max(
+          existing.independentEvidenceRelativeDb,
+          targeted.independentEvidenceRelativeDb,
+        );
       }
     }
 
@@ -332,6 +454,10 @@ export class SpectralPitchDetector {
           break;
         }
         if (lowerStep === 0) continue;
+        // A rational 3/2-style overlap has no exclusive bins at this FFT
+        // resolution. For score targets, prefer the target hypothesis and let
+        // fresh-onset/exact-chord matching make the temporal decision.
+        if (candidate.targeted && candidateStep > 1) continue;
         // Rational overlap can explain a target hypothesis, but it is not
         // sufficient grounds to discard a genuinely played non-target pitch
         // such as the F in a C/F wrong chord. Only integer-harmonic extras are
@@ -427,6 +553,10 @@ export class SpectralPitchDetector {
     for (const candidate of orderedCandidates) {
       const relativeScore = maximumScore > 0 ? candidate.score / maximumScore : 0;
       if (!candidate.targeted && relativeScore < this.options.minRelativeScore) continue;
+      if (
+        !candidate.targeted &&
+        candidate.fundamentalRelativeDb < MIN_EXTRA_FUNDAMENTAL_RELATIVE_DB
+      ) continue;
       const explainedBySelected = accepted.some((selected) => {
         const ratio = candidate.frequency / selected.frequency;
         const harmonic = Math.round(ratio);
@@ -437,6 +567,22 @@ export class SpectralPitchDetector {
       });
       if (explainedBySelected && !candidate.targeted) continue;
       const residualConfidence = aliasResidualConfidence(candidate);
+      const needsIndependentFundamental = candidate.targeted && Array.from(this.targetPitches)
+        .some((upperMidi) => harmonicRelationship(candidate.midi, upperMidi) !== null);
+      if (
+        needsIndependentFundamental &&
+        candidate.independentEvidenceRelativeDb < MIN_AMBIGUOUS_INDEPENDENT_RELATIVE_DB
+      ) continue;
+      const lowestTarget = this.targetPitches.size > 0
+        ? Math.min(...this.targetPitches)
+        : Infinity;
+      const needsPolyphonicBassAttack = candidate.targeted &&
+        this.targetPitches.size >= 3 &&
+        candidate.midi === lowestTarget;
+      if (
+        needsPolyphonicBassAttack &&
+        candidate.fundamentalRelativeDb < MIN_POLYPHONIC_BASS_RELATIVE_DB
+      ) continue;
       const confidence = candidate.targeted
         ? candidate.localConfidence * residualConfidence
         : clamp(relativeScore) * residualConfidence;
@@ -446,6 +592,9 @@ export class SpectralPitchDetector {
         frequency: candidate.frequency,
         score: candidate.score,
         attackRatio: candidate.attackRatio,
+        fundamentalProminenceDb: candidate.fundamentalProminenceDb,
+        fundamentalRelativeDb: candidate.fundamentalRelativeDb,
+        independentEvidenceRelativeDb: candidate.independentEvidenceRelativeDb,
         // Preserve score separation here. Saturating most candidates made
         // weak resonances indistinguishable from independently played notes.
         confidence,
@@ -456,7 +605,19 @@ export class SpectralPitchDetector {
       .sort((left, right) => right.score - left.score)
       .slice(0, this.options.maxFundamentals)
       .sort((left, right) => left.midi - right.midi);
-    const activePitches = fundamentals.map(({ midi, confidence }) => ({ midi, confidence }));
+    const activePitches = fundamentals.map(({
+      midi,
+      confidence,
+      fundamentalProminenceDb,
+      fundamentalRelativeDb,
+      independentEvidenceRelativeDb,
+    }) => ({
+      midi,
+      confidence,
+      fundamentalProminenceDb,
+      fundamentalRelativeDb,
+      independentEvidenceRelativeDb,
+    }));
     const currentPitches = new Set(fundamentals.map(({ midi }) => midi));
     const onsets: RecognizedOnset[] = [];
 
