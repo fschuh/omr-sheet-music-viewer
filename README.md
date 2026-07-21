@@ -8,6 +8,10 @@ playback navigation. The merged
 file is stored at the PDF cache root using the PDF filename with a `.musicxml`
 extension.
 
+The cached page image remains a 300-DPI raster for viewing. Recognition uses a
+separate temporary image scaled to HOMR's native 1,920-pixel width with HAMMING
+resampling; visual-sidecar geometry is mapped back onto the 300-DPI display image.
+
 After the document-level MusicXML is generated, the app runs the bundled piano
 fingering models locally for both hands and adds each prediction as a MusicXML
 `<fingering>` technical notation. This first hand-assignment pass treats bass-clef

@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 import pypdfium2 as pdfium
+from PIL import Image
 
 from sheet_music_worker import WORKER_VERSION
 from sheet_music_worker.homr_engine import HomrEngine, NoMusicDetectedError
@@ -19,8 +20,11 @@ from sheet_music_worker.logging import worker_log
 from sheet_music_worker.musicxml_merge import merge_musicxml_pages
 
 RASTER_DPI = 300
+OMR_TARGET_WIDTH = 1920
+OMR_RESAMPLING_FILTER = Image.Resampling.HAMMING
+OMR_RESAMPLING = OMR_RESAMPLING_FILTER.name
 MANIFEST_SCHEMA_VERSION = 1
-VISUAL_SIDECAR_CACHE_REVISION = 13
+VISUAL_SIDECAR_CACHE_REVISION = 14
 
 EventEmitter = Callable[[dict[str, Any]], None]
 
@@ -54,6 +58,101 @@ def read_visual_sidecar(path: Path) -> dict[str, Any]:
         or not isinstance(sidecar.get("notes"), list)
     ):
         raise ValueError("HOMR visual sidecar has an invalid structure")
+    return sidecar
+
+
+def _scale_point(point: list[float], scale_x: float, scale_y: float) -> list[float]:
+    return [round(float(point[0]) * scale_x, 3), round(float(point[1]) * scale_y, 3)]
+
+
+def scale_visual_sidecar(
+    sidecar: dict[str, Any],
+    *,
+    source_size: tuple[int, int],
+    target_size: tuple[int, int],
+) -> dict[str, Any]:
+    """Move HOMR geometry from its private OMR raster onto the displayed raster."""
+    declared_source = sidecar.get("source_image_size")
+    if (
+        isinstance(declared_source, list)
+        and len(declared_source) == 2
+        and all(
+            isinstance(value, (int, float)) and value > 0 for value in declared_source
+        )
+    ):
+        source_width, source_height = declared_source
+    else:
+        source_width, source_height = source_size
+
+    target_width, target_height = target_size
+    scale_x = target_width / source_width
+    scale_y = target_height / source_height
+    radius_scale = (scale_x + scale_y) / 2
+
+    preprocessing = sidecar.get("preprocessing")
+    if isinstance(preprocessing, dict):
+        autocrop_box = preprocessing.get("autocrop_box")
+        if isinstance(autocrop_box, list) and len(autocrop_box) == 4:
+            preprocessing["autocrop_box"] = [
+                round(float(autocrop_box[0]) * scale_x),
+                round(float(autocrop_box[1]) * scale_y),
+                round(float(autocrop_box[2]) * scale_x),
+                round(float(autocrop_box[3]) * scale_y),
+            ]
+        cropped_size = preprocessing.get("cropped_size")
+        if isinstance(cropped_size, list) and len(cropped_size) == 2:
+            scaled_cropped_size = [
+                round(float(cropped_size[0]) * scale_x),
+                round(float(cropped_size[1]) * scale_y),
+            ]
+            preprocessing["cropped_size"] = scaled_cropped_size
+            resized_size = preprocessing.get("resized_size")
+            if (
+                isinstance(resized_size, list)
+                and len(resized_size) == 2
+                and all(value > 0 for value in scaled_cropped_size)
+            ):
+                preprocessing["resize_scale"] = [
+                    round(float(resized_size[0]) / scaled_cropped_size[0], 8),
+                    round(float(resized_size[1]) / scaled_cropped_size[1], 8),
+                ]
+
+    for stem in sidecar.get("raw_stem_contours", []):
+        for field in ("contour", "bbox"):
+            points = stem.get(field, [])
+            stem[field] = [_scale_point(point, scale_x, scale_y) for point in points]
+
+    contour_fields = (
+        "notehead_contours",
+        "detected_notehead_contours",
+        "refined_notehead_contours",
+        "detected_stem_contours",
+        "stem_contours",
+    )
+    for group in sidecar.get("visual_groups", []):
+        center = group.get("center")
+        if isinstance(center, list) and len(center) == 2:
+            group["center"] = _scale_point(center, scale_x, scale_y)
+        bbox = group.get("bbox")
+        if isinstance(bbox, list) and len(bbox) == 4:
+            group["bbox"] = [
+                round(float(bbox[0]) * scale_x, 3),
+                round(float(bbox[1]) * scale_y, 3),
+                round(float(bbox[2]) * scale_x, 3),
+                round(float(bbox[3]) * scale_y, 3),
+            ]
+        for ellipse in group.get("notehead_ellipses", []):
+            ellipse["center"] = _scale_point(ellipse["center"], scale_x, scale_y)
+            ellipse["rx"] = round(float(ellipse["rx"]) * radius_scale, 3)
+            ellipse["ry"] = round(float(ellipse["ry"]) * radius_scale, 3)
+        for field in contour_fields:
+            contours = group.get(field, [])
+            group[field] = [
+                [_scale_point(point, scale_x, scale_y) for point in contour]
+                for contour in contours
+            ]
+
+    sidecar["source_image_size"] = [target_width, target_height]
     return sidecar
 
 
@@ -135,7 +234,10 @@ class PdfProcessor:
         document = pdfium.PdfDocument(str(pdf_path))
         try:
             page_count = len(document)
-            worker_log(f"Opened {pdf_path.name}: {page_count} page(s), rendering at {RASTER_DPI} DPI")
+            worker_log(
+                f"Opened {pdf_path.name}: {page_count} page(s), rendering display images at "
+                f"{RASTER_DPI} DPI and HOMR inputs at {OMR_TARGET_WIDTH}px/{OMR_RESAMPLING}"
+            )
             manifest = self._load_manifest(manifest_path, identity, page_count)
             reusable = sum(
                 1 for page in manifest["pages"] if page_is_reusable(page, cache_directory)
@@ -201,9 +303,18 @@ class PdfProcessor:
                     rendered = self._render_page(document, page_index, pages_directory)
                     worker_log(
                         f"Page {page_index + 1}/{page_count}: rasterized to "
-                        f"{rendered['width']}x{rendered['height']}; starting HOMR"
+                        f"{rendered['width']}x{rendered['height']} for display and "
+                        f"{rendered['omr_width']}x{rendered['omr_height']} for HOMR"
                     )
-                    music_xml, visual_sidecar = self._homr.process_image(rendered["path"])
+                    try:
+                        generated_xml, generated_sidecar = self._homr.process_image(
+                            rendered["omr_path"]
+                        )
+                        music_xml, visual_sidecar = self._promote_homr_artifacts(
+                            rendered, generated_xml, generated_sidecar
+                        )
+                    finally:
+                        self._cleanup_omr_intermediates(rendered)
                     if len(read_visual_sidecar(visual_sidecar)["notes"]) == 0:
                         raise NoMusicDetectedError("No notes detected")
                     page_manifest.clear()
@@ -334,6 +445,11 @@ class PdfProcessor:
                 "dpi": RASTER_DPI,
                 "background": "white",
             },
+            "omrInput": {
+                "source": "displayRaster",
+                "targetWidth": OMR_TARGET_WIDTH,
+                "resampling": OMR_RESAMPLING,
+            },
         }
         if path.is_file():
             try:
@@ -358,6 +474,8 @@ class PdfProcessor:
     ) -> dict[str, Any]:
         page_path = pages_directory / f"{page_index + 1:04d}.png"
         temporary = pages_directory / f"{page_index + 1:04d}.rendering.png"
+        omr_path = pages_directory / f"{page_index + 1:04d}.omr.png"
+        omr_temporary = pages_directory / f"{page_index + 1:04d}.omr.rendering.png"
         page = document[page_index]
         try:
             bitmap = page.render(
@@ -368,12 +486,60 @@ class PdfProcessor:
                 image = bitmap.to_pil().convert("RGB")
                 image.save(temporary, format="PNG")
                 width, height = image.size
+                omr_width = OMR_TARGET_WIDTH
+                omr_height = round(height * omr_width / width)
+                omr_image = image.resize(
+                    (omr_width, omr_height), resample=OMR_RESAMPLING_FILTER
+                )
+                try:
+                    omr_image.save(omr_temporary, format="PNG")
+                finally:
+                    omr_image.close()
             finally:
                 bitmap.close()
         finally:
             page.close()
         os.replace(temporary, page_path)
-        return {"path": page_path, "width": width, "height": height}
+        os.replace(omr_temporary, omr_path)
+        return {
+            "path": page_path,
+            "width": width,
+            "height": height,
+            "omr_path": omr_path,
+            "omr_width": omr_width,
+            "omr_height": omr_height,
+        }
+
+    @staticmethod
+    def _promote_homr_artifacts(
+        rendered: dict[str, Any], generated_xml: Path, generated_sidecar: Path
+    ) -> tuple[Path, Path]:
+        page_path = rendered["path"]
+        music_xml = page_path.with_suffix(".musicxml")
+        visual_sidecar = page_path.with_suffix(".homr.visual.json")
+        sidecar = read_visual_sidecar(generated_sidecar)
+        scale_visual_sidecar(
+            sidecar,
+            source_size=(rendered["omr_width"], rendered["omr_height"]),
+            target_size=(rendered["width"], rendered["height"]),
+        )
+        atomic_write_json(visual_sidecar, sidecar)
+        if generated_xml != music_xml:
+            os.replace(generated_xml, music_xml)
+        if generated_sidecar != visual_sidecar:
+            generated_sidecar.unlink(missing_ok=True)
+        return music_xml, visual_sidecar
+
+    @staticmethod
+    def _cleanup_omr_intermediates(rendered: dict[str, Any]) -> None:
+        omr_path = rendered["omr_path"]
+        for path in (
+            omr_path,
+            omr_path.with_suffix(".musicxml"),
+            omr_path.with_suffix(".homr.visual.json"),
+            omr_path.with_name(f"{omr_path.stem}_teaser.png"),
+        ):
+            path.unlink(missing_ok=True)
 
     def _emit_page_completed(
         self,
