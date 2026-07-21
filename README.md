@@ -1,7 +1,7 @@
 # OMR Sheet Music Viewer
 
 This first desktop iteration opens a PDF, rasterizes it page by page, runs the
-local HOMR checkout, caches the generated PNG/MusicXML/visual-sidecar artifacts,
+bundled HOMR fork, caches the generated PNG/MusicXML/visual-sidecar artifacts,
 merges successfully recognized pages into a document-level MusicXML file, and
 overlays recognized note geometry for selection, highlighting, and note-by-note
 playback navigation. The merged
@@ -51,12 +51,19 @@ platforms use a 400 ms delay and 75 ms interval.
 
 ## Development
 
-The repository expects the existing root `.venv` and editable sibling HOMR
-installation. Install the worker's remaining dependencies into that environment:
+The repository contains the application and its modified HOMR fork in
+`vendor/homr`. Create the root Python environment and install the worker and
+bundled HOMR source from the repository lockfile:
 
 ```powershell
 $env:UV_CACHE_DIR = "$PWD\.uv-cache"
-uv pip install pypdfium2 --python .venv\Scripts\python.exe
+uv sync --locked
+```
+
+On macOS or Linux, the equivalent setup is:
+
+```bash
+UV_CACHE_DIR="$PWD/.uv-cache" uv sync --locked
 ```
 
 Then install the frontend dependencies and start the desktop app from the
@@ -72,6 +79,22 @@ The Python worker protocol can be smoke-tested independently:
 ```powershell
 Set-Location worker
 ..\.venv\Scripts\python.exe -m sheet_music_worker
+```
+
+On macOS or Linux, run `../.venv/bin/python -m sheet_music_worker` from the
+`worker` directory.
+
+## Bundled HOMR fork
+
+`vendor/homr` is a squashed Git subtree of the `fschuh/homr` fork. A fresh clone
+therefore contains the exact HOMR source used by the application and does not
+need a second repository or Git submodule. See `THIRD_PARTY_NOTICES.md` and
+`vendor/homr/LICENSE` for provenance and licensing details.
+
+Maintainers can update the subtree from a local HOMR checkout with:
+
+```bash
+git subtree pull --prefix=vendor/homr ../homr main --squash
 ```
 
 ## Worker diagnostics

@@ -18,3 +18,5 @@ build-backend = "hatchling.build"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
+[tool.uv.sources]
+homr = { path = "../vendor/homr", editable = true }
