@@ -30,6 +30,8 @@ export const playbackCommandDetails: ReadonlyArray<{
 }> = [
   { command: "togglePlayback", label: "Start or exit playback", description: "Enter or leave note-by-note playback mode." },
   { command: "toggleNoteSounds", label: "Play or mute notes", description: "Toggle piano sound for the current note or chord." },
+  { command: "toggleListenMode", label: "Listen for notes", description: "Use the microphone to advance after the current chord is played." },
+  { command: "playCurrentNotes", label: "Play current notes", description: "Audition the current note or chord even while playback sounds are muted." },
   { command: "forwardNote", label: "Next note", description: "Move to the next note or chord." },
   { command: "backwardNote", label: "Previous note", description: "Move to the previous note or chord." },
   { command: "forwardBar", label: "Next bar", description: "Move to the first note of the next bar." },
@@ -46,6 +48,8 @@ export function defaultPlaybackShortcuts(): PlaybackShortcuts {
   return {
     togglePlayback: { keyboard: keyboard("Space"), midi: null },
     toggleNoteSounds: { keyboard: keyboard("KeyM"), midi: null },
+    toggleListenMode: { keyboard: keyboard("KeyL"), midi: null },
+    playCurrentNotes: { keyboard: keyboard("KeyP"), midi: null },
     forwardNote: { keyboard: keyboard("ArrowRight"), midi: null },
     backwardNote: { keyboard: keyboard("ArrowLeft"), midi: null },
     forwardBar: { keyboard: keyboard("Period"), midi: null },

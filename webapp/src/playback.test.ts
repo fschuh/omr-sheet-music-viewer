@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildPlaybackTimeline,
+  effectivePlaybackNoteSounds,
   initialPlaybackState,
   playbackPitchForNote,
   playbackGroupIdsForPage,
@@ -232,6 +233,32 @@ test("note sounds toggle only in playback mode and survive leaving playback", ()
   assert.equal(inactive.active, false);
   assert.equal(inactive.noteSoundsEnabled, false);
   assert.equal(run(timeline, inactive, "togglePlayback").noteSoundsEnabled, false);
+});
+
+test("listen mode forces effective muting without changing the sound preference", () => {
+  const timeline = buildPlaybackTimeline([page(0, [group("a", 0, 0, 100, 200)], [1])]);
+  const active = run(timeline, initialPlaybackState, "togglePlayback");
+  assert.equal(effectivePlaybackNoteSounds(active), true);
+  const listening = run(timeline, active, "toggleListenMode");
+  assert.equal(listening.listenModeEnabled, true);
+  assert.equal(listening.noteSoundsEnabled, true);
+  assert.equal(effectivePlaybackNoteSounds(listening), false);
+
+  const preferenceMuted = run(timeline, listening, "toggleNoteSounds");
+  assert.equal(preferenceMuted.noteSoundsEnabled, false);
+  const stoppedListening = run(timeline, preferenceMuted, "toggleListenMode");
+  assert.equal(stoppedListening.noteSoundsEnabled, false);
+  assert.equal(effectivePlaybackNoteSounds(stoppedListening), false);
+});
+
+test("audition is a state-free command and exiting playback disables listen mode", () => {
+  const timeline = buildPlaybackTimeline([page(0, [group("a", 0, 0, 100, 200)], [1])]);
+  const active = run(timeline, initialPlaybackState, "togglePlayback");
+  assert.equal(run(timeline, active, "playCurrentNotes"), active);
+  const listening = run(timeline, active, "toggleListenMode");
+  const inactive = run(timeline, listening, "togglePlayback");
+  assert.equal(inactive.active, false);
+  assert.equal(inactive.listenModeEnabled, false);
 });
 
 test("reuses the empty page selection so memoized overlays stay memoized", () => {

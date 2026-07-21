@@ -475,6 +475,42 @@ button:disabled {
   opacity: 1;
 }
 
+.viewer-toolbar .playback-controls .listen-toggle {
+  filter: grayscale(1);
+  font-size: 0.86rem;
+  opacity: 0.68;
+}
+
+.viewer-toolbar .playback-controls .listen-toggle.active {
+  background: #e5eef7;
+  border-color: #7597b6;
+  color: #174f7d;
+  filter: none;
+  opacity: 1;
+}
+
+.viewer-toolbar .playback-controls .audition-button {
+  color: #4c3a70;
+  margin-right: 2px;
+}
+
+.viewer-toolbar .listen-status {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.viewer-toolbar .listen-status-error {
+  color: #9f2525;
+}
+
+.viewer-toolbar .listen-status-paused {
+  color: #6b4c0f;
+}
+
 .viewer-stage {
   background-color: #6e6b67;
   background-image: radial-gradient(rgb(255 255 255 / 8%) 0.7px, transparent 0.7px);
@@ -488,6 +524,35 @@ button:disabled {
 }
 
 .viewer-stage.is-pointer-panning { cursor: grabbing; }
+
+.benchmark-page {
+  margin: 0 auto;
+  max-width: 960px;
+  padding: 32px;
+}
+
+.benchmark-page pre {
+  background: #22211f;
+  border-radius: 8px;
+  color: #f5f1e9;
+  overflow: auto;
+  padding: 16px;
+}
+
+.benchmark-progress { margin-left: 12px; }
+
+.benchmark-form {
+  align-items: end;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.benchmark-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
 
 .document-content {
   backface-visibility: hidden;

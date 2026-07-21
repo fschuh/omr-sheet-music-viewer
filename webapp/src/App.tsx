@@ -9,6 +9,7 @@ import { SettingsPage } from "./SettingsPage";
 import {
   buildPlaybackTimeline,
   currentPlaybackMoment,
+  effectivePlaybackNoteSounds,
   initialPlaybackState,
   playbackCommandNames,
   runPlaybackCommand as applyPlaybackCommand,
@@ -16,7 +17,15 @@ import {
   type PlaybackCommand,
   type PlaybackState,
 } from "./playback";
-import { pianoSampler } from "./piano";
+import { pianoSampler, pitchToMidi } from "./piano";
+import { BrowserBasicPitchRecognizer } from "./basicPitchRecognizer";
+import { ExactChordMatcher } from "./chordMatcher";
+import {
+  stoppedRecognizerLifecycle,
+  type ListenModeFeedback,
+  type NoteRecognizer,
+  type RecognizerResult,
+} from "./noteRecognizer";
 import {
   cancelJob,
   choosePdf,
@@ -128,7 +137,17 @@ function isEditableKeyboardTarget(target: EventTarget | null): boolean {
 }
 
 function isPlaybackToggleCommand(command: PlaybackCommand): boolean {
-  return command === "togglePlayback" || command === "toggleNoteSounds";
+  return command === "togglePlayback" ||
+    command === "toggleNoteSounds" ||
+    command === "toggleListenMode" ||
+    command === "playCurrentNotes";
+}
+
+function midiPitches(pitches: readonly string[]): number[] {
+  return Array.from(new Set(pitches.flatMap((pitch) => {
+    const midi = pitchToMidi(pitch);
+    return midi === null ? [] : [midi];
+  }))).sort((left, right) => left - right);
 }
 
 export function App() {
@@ -183,11 +202,24 @@ export function App() {
   const playbackActiveRef = useRef(playbackState.active);
   playbackActiveRef.current = playbackState.active;
   const playbackMoment = currentPlaybackMoment(playbackTimeline, playbackState);
+  const playbackPitchKey = playbackMoment?.pitches.join("|") ?? "";
+  const recognizerRef = useRef<NoteRecognizer | null>(null);
+  const chordMatcherRef = useRef(new ExactChordMatcher());
+  const playheadGenerationRef = useRef(0);
+  const listenOperationRef = useRef(0);
+  const auditionOperationRef = useRef(0);
+  const [listenFeedback, setListenFeedback] = useState<ListenModeFeedback>({
+    lifecycle: stoppedRecognizerLifecycle,
+    targetPitches: [],
+    detectedTargetPitches: [],
+    extraPitches: [],
+    processingTimeMs: null,
+  });
   const commitPlaybackState = useCallback(
-    (next: PlaybackState) => {
+    (next: PlaybackState, playNormalSound = true) => {
       playbackStateRef.current = next;
       setPlaybackState(next);
-      if (!next.active || !next.noteSoundsEnabled) {
+      if (!playNormalSound || !effectivePlaybackNoteSounds(next)) {
         pianoSampler.stop();
         setPlaybackAudioError(null);
         return;
@@ -204,7 +236,7 @@ export function App() {
     },
     [playbackTimeline],
   );
-  const handlePlaybackCommand = useCallback(
+  const applyPlaybackStateCommand = useCallback(
     (command: PlaybackCommand) => {
       commitPlaybackState(
         applyPlaybackCommand(playbackTimeline, playbackStateRef.current, command, selectedGroup),
@@ -221,8 +253,177 @@ export function App() {
     },
     [commitPlaybackState, playbackTimeline],
   );
-  const handlePlaybackCommandRef = useRef(handlePlaybackCommand);
+  const handlePlaybackCommandRef = useRef<(command: PlaybackCommand) => void>(() => undefined);
+
+  const stopListenMode = useCallback((preserveError = false) => {
+    listenOperationRef.current += 1;
+    auditionOperationRef.current += 1;
+    recognizerRef.current?.stop();
+    recognizerRef.current = null;
+    const generation = ++playheadGenerationRef.current;
+    chordMatcherRef.current.setTarget([], generation, performance.now());
+    const current = playbackStateRef.current;
+    if (current.listenModeEnabled) {
+      commitPlaybackState({ ...current, listenModeEnabled: false }, false);
+    }
+    setListenFeedback((feedback) => ({
+      lifecycle: preserveError && feedback.lifecycle.state === "error"
+        ? feedback.lifecycle
+        : stoppedRecognizerLifecycle,
+      targetPitches: [],
+      detectedTargetPitches: [],
+      extraPitches: [],
+      processingTimeMs: null,
+    }));
+  }, [commitPlaybackState]);
+
+  const handleRecognizerResult = useCallback((result: RecognizerResult) => {
+    if (!playbackStateRef.current.listenModeEnabled) return;
+    const update = chordMatcherRef.current.consume(result);
+    if (update.stale) return;
+    setListenFeedback((feedback) => ({
+      ...feedback,
+      targetPitches: update.targetPitches,
+      detectedTargetPitches: update.detectedTargetPitches,
+      extraPitches: update.extraPitches,
+      processingTimeMs: result.processingTimeMs,
+    }));
+    if (update.matched) handlePlaybackCommandRef.current("forwardNote");
+  }, []);
+
+  const startListenMode = useCallback(async () => {
+    if (!playbackStateRef.current.active || recognizerRef.current) return;
+    const operation = ++listenOperationRef.current;
+    const generation = ++playheadGenerationRef.current;
+    const target = midiPitches(
+      currentPlaybackMoment(playbackTimeline, playbackStateRef.current)?.pitches ?? [],
+    );
+    chordMatcherRef.current.setTarget(target, generation, performance.now());
+    setListenFeedback({
+      lifecycle: { state: "initializing", microphone: "loading", model: "loading" },
+      targetPitches: target,
+      detectedTargetPitches: [],
+      extraPitches: [],
+      processingTimeMs: null,
+    });
+    const recognizer = new BrowserBasicPitchRecognizer();
+    recognizerRef.current = recognizer;
+    try {
+      await recognizer.start(generation, {
+        onLifecycle: (lifecycle) => {
+          if (recognizerRef.current !== recognizer) return;
+          setListenFeedback((feedback) => ({ ...feedback, lifecycle }));
+          if (lifecycle.state === "error") {
+            recognizerRef.current = null;
+            if (playbackStateRef.current.listenModeEnabled) {
+              commitPlaybackState(
+                { ...playbackStateRef.current, listenModeEnabled: false },
+                false,
+              );
+            }
+          }
+        },
+        onResult: handleRecognizerResult,
+      });
+      if (
+        operation !== listenOperationRef.current ||
+        recognizerRef.current !== recognizer ||
+        !playbackStateRef.current.active ||
+        activePageRef.current !== "viewer"
+      ) {
+        recognizer.stop();
+        return;
+      }
+      commitPlaybackState(
+        { ...playbackStateRef.current, listenModeEnabled: true },
+        false,
+      );
+    } catch {
+      if (recognizerRef.current === recognizer) recognizerRef.current = null;
+      // The lifecycle callback already exposes the specific model/device error.
+    }
+  }, [commitPlaybackState, handleRecognizerResult, playbackTimeline]);
+
+  const auditionCurrentNotes = useCallback(async () => {
+    const moment = currentPlaybackMoment(playbackTimeline, playbackStateRef.current);
+    if (!playbackStateRef.current.active || !moment || moment.pitches.length === 0) return;
+    const operation = ++auditionOperationRef.current;
+    const recognizer = recognizerRef.current;
+    const listening = playbackStateRef.current.listenModeEnabled && recognizer !== null;
+    if (listening) {
+      const generation = ++playheadGenerationRef.current;
+      recognizer.pause(generation);
+      chordMatcherRef.current.reset(generation, performance.now());
+    }
+    try {
+      await pianoSampler.audition(moment.pitches);
+      setPlaybackAudioError(null);
+    } catch (audioError) {
+      const message = audioError instanceof Error ? audioError.message : String(audioError);
+      setPlaybackAudioError(`Piano audio could not start: ${message}`);
+    } finally {
+      if (
+        listening &&
+        operation === auditionOperationRef.current &&
+        recognizerRef.current === recognizer &&
+        playbackStateRef.current.active &&
+        playbackStateRef.current.listenModeEnabled
+      ) {
+        const generation = ++playheadGenerationRef.current;
+        recognizer.flush();
+        chordMatcherRef.current.setTarget(
+          midiPitches(
+            currentPlaybackMoment(playbackTimeline, playbackStateRef.current)?.pitches ?? [],
+          ),
+          generation,
+          performance.now(),
+        );
+        recognizer.resume(generation);
+        setListenFeedback((feedback) => ({
+          ...feedback,
+          targetPitches: midiPitches(
+            currentPlaybackMoment(playbackTimeline, playbackStateRef.current)?.pitches ?? [],
+          ),
+          detectedTargetPitches: [],
+          extraPitches: [],
+          processingTimeMs: null,
+        }));
+      }
+    }
+  }, [playbackTimeline]);
+
+  const handlePlaybackCommand = useCallback((command: PlaybackCommand) => {
+    if (command === "toggleListenMode") {
+      if (recognizerRef.current) stopListenMode();
+      else void startListenMode();
+      return;
+    }
+    if (command === "playCurrentNotes") {
+      void auditionCurrentNotes();
+      return;
+    }
+    if (command === "togglePlayback" && playbackStateRef.current.active && recognizerRef.current) {
+      stopListenMode();
+    }
+    applyPlaybackStateCommand(command);
+  }, [applyPlaybackStateCommand, auditionCurrentNotes, startListenMode, stopListenMode]);
   handlePlaybackCommandRef.current = handlePlaybackCommand;
+
+  useEffect(() => {
+    const recognizer = recognizerRef.current;
+    if (!playbackState.listenModeEnabled || !recognizer) return;
+    const generation = ++playheadGenerationRef.current;
+    const target = midiPitches(playbackMoment?.pitches ?? []);
+    recognizer.setGeneration(generation);
+    chordMatcherRef.current.setTarget(target, generation, performance.now());
+    setListenFeedback((feedback) => ({
+      ...feedback,
+      targetPitches: target,
+      detectedTargetPitches: [],
+      extraPitches: [],
+      processingTimeMs: null,
+    }));
+  }, [playbackMoment?.id, playbackPitchKey, playbackState.listenModeEnabled]);
 
   const stopMidiRepeat = useCallback(() => {
     const activeRepeat = activeMidiRepeatRef.current;
@@ -327,13 +528,27 @@ export function App() {
   }, [nativeAvailable]);
 
   useEffect(() => {
+    recognizerRef.current?.stop();
+    recognizerRef.current = null;
+    listenOperationRef.current += 1;
+    auditionOperationRef.current += 1;
     playbackStateRef.current = initialPlaybackState;
     setPlaybackState(initialPlaybackState);
+    setListenFeedback({
+      lifecycle: stoppedRecognizerLifecycle,
+      targetPitches: [],
+      detectedTargetPitches: [],
+      extraPitches: [],
+      processingTimeMs: null,
+    });
     setPlaybackAudioError(null);
     pianoSampler.stop();
   }, [document?.jobId]);
 
-  useEffect(() => () => pianoSampler.stop(), []);
+  useEffect(() => () => {
+    recognizerRef.current?.stop();
+    pianoSampler.stop();
+  }, []);
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -407,11 +622,12 @@ export function App() {
 
   useEffect(() => {
     if (activePage === "settings") {
+      if (recognizerRef.current) stopListenMode();
       stopMidiRepeat();
       handleRefreshMidiInputs();
     }
     else cancelMidiCapture();
-  }, [activePage, cancelMidiCapture, handleRefreshMidiInputs, stopMidiRepeat]);
+  }, [activePage, cancelMidiCapture, handleRefreshMidiInputs, stopListenMode, stopMidiRepeat]);
 
   useEffect(() => {
     if (!nativeAvailable) return;
@@ -744,6 +960,7 @@ export function App() {
       if (!path) return;
       setSelectedGroup(null);
       setHighlightAllNotes(false);
+      stopListenMode();
       playbackStateRef.current = initialPlaybackState;
       pianoSampler.stop();
       setPlaybackState(initialPlaybackState);
@@ -968,9 +1185,10 @@ export function App() {
               showRefinedNoteheadContours={showRefinedNoteheadContours}
               showRawStemContours={showRawStemContours}
               playbackActive={playbackState.active}
-              playbackNoteSoundsEnabled={playbackState.noteSoundsEnabled}
+              playbackNoteSoundsEnabled={effectivePlaybackNoteSounds(playbackState)}
               playbackAvailable={playbackTimeline.length > 0}
               playbackMoment={playbackMoment}
+              listenFeedback={listenFeedback}
               initialViewportTransform={
                 viewerViewportRef.current?.documentKey === document.jobId
                   ? viewerViewportRef.current.transform

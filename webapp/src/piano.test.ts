@@ -50,3 +50,17 @@ test("attacks distinct Tone.js pitches and releases them on navigation", async (
   sampler.stop();
   assert.deepEqual(releases, [["C4", "E4", "G#3"], ["D4"]]);
 });
+
+test("audition plays while muted independently, releases, and waits for its guard", async () => {
+  const attacks: Array<readonly string[]> = [];
+  const releases: Array<readonly string[]> = [];
+  const engine: PianoPlaybackEngine = {
+    ready: async () => undefined,
+    attack: (notes) => attacks.push(notes),
+    release: (notes) => releases.push(notes),
+  };
+  const sampler = new PianoSampler(() => engine);
+  await sampler.audition(["C4", "E4"], { holdMs: 0, decayGuardMs: 0 });
+  assert.deepEqual(attacks, [["C4", "E4"]]);
+  assert.deepEqual(releases, [["C4", "E4"]]);
+});

@@ -2,6 +2,8 @@ import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { layoutNoteLabels, selectedGroupIds } from "./noteLabels";
 import { playbackGroupIdsForPage } from "./playback";
 import type { PlaybackCommand, PlaybackMoment } from "./playback";
+import type { ListenModeFeedback } from "./noteRecognizer";
+import { midiToPitchName } from "./piano";
 import type {
   DocumentPage,
   ViewportTransform,
@@ -33,6 +35,7 @@ interface DocumentViewerProps {
   playbackNoteSoundsEnabled: boolean;
   playbackAvailable: boolean;
   playbackMoment: PlaybackMoment | null;
+  listenFeedback: ListenModeFeedback;
   initialViewportTransform?: ViewportTransform;
   onViewportTransformChange?: (transform: ViewportTransform) => void;
   onPlaybackCommand: (command: PlaybackCommand) => void;
@@ -331,6 +334,7 @@ export function DocumentViewer({
   playbackNoteSoundsEnabled,
   playbackAvailable,
   playbackMoment,
+  listenFeedback,
   initialViewportTransform,
   onViewportTransformChange,
   onPlaybackCommand,
@@ -361,6 +365,31 @@ export function DocumentViewer({
     () => documentPages.filter((page) => page.status !== "skipped"),
     [documentPages],
   );
+  const listenActive = ["initializing", "listening", "paused"].includes(
+    listenFeedback.lifecycle.state,
+  );
+  const listenStatus = useMemo(() => {
+    const lifecycle = listenFeedback.lifecycle;
+    if (lifecycle.state === "error") return `Listen error: ${lifecycle.error ?? "Unknown error"}`;
+    if (lifecycle.state === "initializing") {
+      const microphone = lifecycle.microphone === "ready" ? "Microphone ready" : "Requesting microphone";
+      const model = lifecycle.model === "ready" ? "Basic Pitch ready" : "Loading Basic Pitch";
+      return `${microphone} · ${model}`;
+    }
+    if (lifecycle.state === "paused") return "Listening paused while the target chord plays";
+    if (lifecycle.state !== "listening") return null;
+    const target = listenFeedback.targetPitches.map(midiToPitchName).join(" ") || "no pitched notes";
+    const heard = listenFeedback.detectedTargetPitches.map(midiToPitchName).join(" ");
+    const extras = listenFeedback.extraPitches.map(midiToPitchName).join(" ");
+    const processing = listenFeedback.processingTimeMs === null
+      ? ""
+      : ` · ${Math.round(listenFeedback.processingTimeMs)} ms inference`;
+    return [
+      `Microphone ready · Basic Pitch ready · Target ${target}`,
+      heard ? `Heard ${heard}` : "Waiting for a fresh onset",
+      extras ? `Extra ${extras}` : "",
+    ].filter(Boolean).join(" · ") + processing;
+  }, [listenFeedback]);
   const hasCompletePageRef = useRef(pages.some((page) => page.status === "complete"));
   hasCompletePageRef.current = pages.some((page) => page.status === "complete");
 
@@ -679,6 +708,23 @@ export function DocumentViewer({
           >{playbackNoteSoundsEnabled ? "🔊" : "🔇"}</button>
           <button
             type="button"
+            className={`listen-toggle${listenActive ? " active" : ""}`}
+            aria-label={listenActive ? "Disable listen mode" : "Enable listen mode"}
+            aria-pressed={listenActive}
+            title={listenActive ? "Disable listen mode (L)" : "Listen and advance when the chord is played (L)"}
+            disabled={!playbackActive}
+            onClick={() => onPlaybackCommand("toggleListenMode")}
+          >🎙</button>
+          <button
+            type="button"
+            className="audition-button"
+            aria-label="Play current notes"
+            title="Play the current note or chord (P)"
+            disabled={!playbackActive || (playbackMoment?.pitches.length ?? 0) === 0}
+            onClick={() => onPlaybackCommand("playCurrentNotes")}
+          >♬</button>
+          <button
+            type="button"
             aria-label="Backward one page"
             title="Backward one page (Up arrow)"
             disabled={!playbackActive}
@@ -720,6 +766,13 @@ export function DocumentViewer({
             onClick={() => onPlaybackCommand("forwardPage")}
           >⇥</button>
         </div>
+        {listenStatus ? (
+          <span
+            className={`listen-status listen-status-${listenFeedback.lifecycle.state}`}
+            role={listenFeedback.lifecycle.state === "error" ? "alert" : "status"}
+            title={listenStatus}
+          >{listenStatus}</span>
+        ) : null}
       </div>
       <div
         ref={stageRef}

@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { DocumentViewer } from "./DocumentViewer";
+import { stoppedRecognizerLifecycle } from "./noteRecognizer";
+import type { ListenModeFeedback } from "./noteRecognizer";
 import type { PlaybackMoment } from "./playback";
 import type { DocumentPage, VisualGroup, VisualSidecar } from "./types";
 
@@ -57,8 +59,15 @@ const moment: PlaybackMoment = {
   keyboardNotes: [{ pitch: "C4" }, { pitch: "E3" }],
   center: [301, 435],
 };
+const listenFeedback = {
+  lifecycle: stoppedRecognizerLifecycle,
+  targetPitches: [],
+  detectedTargetPitches: [],
+  extraPitches: [],
+  processingTimeMs: null,
+};
 
-function render(playbackActive: boolean): string {
+function render(playbackActive: boolean, feedback: ListenModeFeedback = listenFeedback): string {
   return renderToStaticMarkup(
     <DocumentViewer
       documentKey="fixture"
@@ -73,6 +82,7 @@ function render(playbackActive: boolean): string {
       playbackNoteSoundsEnabled
       playbackAvailable
       playbackMoment={playbackActive ? moment : null}
+      listenFeedback={feedback}
       onPlaybackCommand={() => undefined}
       onSelectGroup={() => undefined}
       onRetryPage={() => undefined}
@@ -84,7 +94,7 @@ test("renders compact playback controls disabled outside playback mode", () => {
   const markup = render(false);
   assert.match(markup, /aria-label="Play"/);
   assert.match(markup, /aria-label="Mute note sounds"/);
-  assert.equal(markup.match(/disabled=""/g)?.length, 7);
+  assert.equal(markup.match(/disabled=""/g)?.length, 9);
   assert.doesNotMatch(markup, /data-playback-selected="true"/);
 });
 
@@ -95,6 +105,19 @@ test("renders all groups and note names in the active cross-clef moment", () => 
   assert.match(markup, />C4<\/text>/);
   assert.match(markup, />E3<\/text>/);
   assert.match(markup, /aria-pressed="true"/);
+});
+
+test("shows listen lifecycle, target detections, extras, and inference time", () => {
+  const markup = render(true, {
+    lifecycle: { state: "listening", microphone: "ready", model: "ready" },
+    targetPitches: [60, 64],
+    detectedTargetPitches: [60],
+    extraPitches: [67],
+    processingTimeMs: 123.4,
+  });
+  assert.match(markup, /Microphone ready · Basic Pitch ready · Target C4 E4/);
+  assert.match(markup, /Heard C4 · Extra G4 · 123 ms inference/);
+  assert.match(markup, /aria-label="Disable listen mode"/);
 });
 
 test("omits pages that were skipped because they contain no music", () => {
@@ -119,6 +142,7 @@ test("omits pages that were skipped because they contain no music", () => {
       playbackNoteSoundsEnabled
       playbackAvailable
       playbackMoment={null}
+      listenFeedback={listenFeedback}
       onPlaybackCommand={() => undefined}
       onSelectGroup={() => undefined}
       onRetryPage={() => undefined}
@@ -145,6 +169,7 @@ test("restores a supplied viewport transform after remounting", () => {
       playbackNoteSoundsEnabled
       playbackAvailable
       playbackMoment={null}
+      listenFeedback={listenFeedback}
       initialViewportTransform={{ scale: 1.75, x: -320, y: -640 }}
       onPlaybackCommand={() => undefined}
       onSelectGroup={() => undefined}
