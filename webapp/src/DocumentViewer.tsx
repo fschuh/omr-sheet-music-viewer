@@ -514,6 +514,22 @@ export function DocumentViewer({
     () => documentPages.filter((page) => page.status !== "skipped"),
     [documentPages],
   );
+  const firstSizedPage = pages.find(
+    (page) => page.status === "loading" || page.status === "complete",
+  );
+  const displayPages = useMemo(
+    () =>
+      pages.map((page) => {
+        const useKnownPageSize =
+          firstSizedPage && page.status !== "loading" && page.status !== "complete";
+        return {
+          page,
+          width: useKnownPageSize ? firstSizedPage.width : page.width,
+          height: useKnownPageSize ? firstSizedPage.height : page.height,
+        };
+      }),
+    [firstSizedPage, pages],
+  );
   const hasCompletePageRef = useRef(pages.some((page) => page.status === "complete"));
   hasCompletePageRef.current = pages.some((page) => page.status === "complete");
 
@@ -633,10 +649,12 @@ export function DocumentViewer({
 
   const layout = useMemo(
     () => ({
-      width: Math.max(1, ...pages.map((page) => page.width)),
-      height: pages.reduce((total, page) => total + page.height, 0) + PAGE_GAP * Math.max(0, pages.length - 1),
+      width: Math.max(1, ...displayPages.map((displayPage) => displayPage.width)),
+      height:
+        displayPages.reduce((total, displayPage) => total + displayPage.height, 0) +
+        PAGE_GAP * Math.max(0, displayPages.length - 1),
     }),
-    [pages],
+    [displayPages],
   );
   const firstRealPage = pages.find((page) => page.status === "complete");
   const autoFitPhase = firstRealPage
@@ -670,15 +688,19 @@ export function DocumentViewer({
     if (!rect || pages.length === 0) return;
     const page =
       pages.find((candidate) => candidate.index === selectedGroup?.pageIndex) ?? firstRealPage ?? pages[0];
-    const pagePosition = pages.indexOf(page);
-    const pageTop = pages
+    const displayPage = displayPages.find((candidate) => candidate.page.index === page.index);
+    if (!displayPage) return;
+    const pagePosition = displayPages.indexOf(displayPage);
+    const pageTop = displayPages
       .slice(0, pagePosition)
       .reduce((total, candidate) => total + candidate.height + PAGE_GAP, 0);
-    const scale = clampScale(Math.min((rect.width - 64) / page.width, (rect.height - 64) / page.height));
+    const scale = clampScale(
+      Math.min((rect.width - 64) / displayPage.width, (rect.height - 64) / displayPage.height),
+    );
     commitTransform({
       scale,
       x: (rect.width - layout.width * scale) / 2,
-      y: (rect.height - page.height * scale) / 2 - pageTop * scale,
+      y: (rect.height - displayPage.height * scale) / 2 - pageTop * scale,
     });
   }
 
@@ -1090,7 +1112,7 @@ export function DocumentViewer({
             transform: `translate3d(${transform.x}px, ${transform.y}px, 0) scale(${transform.scale})`,
           }}
         >
-          {pages.map((page, pagePosition) => (
+          {displayPages.map(({ page, width, height }, pagePosition) => (
             <div
               key={page.index}
               ref={(element) => {
@@ -1098,7 +1120,7 @@ export function DocumentViewer({
                 else pageRefs.current.delete(page.index);
               }}
               className={`document-page page-${page.status}`}
-              style={{ width: page.width, height: page.height, marginBottom: pagePosition === pages.length - 1 ? 0 : PAGE_GAP }}
+              style={{ width, height, marginBottom: pagePosition === displayPages.length - 1 ? 0 : PAGE_GAP }}
             >
               <span className="page-number">{page.index + 1}</span>
               {page.imageUrl ? <img src={page.imageUrl} alt={`Sheet music page ${page.index + 1}`} draggable={false} /> : null}
@@ -1121,13 +1143,12 @@ export function DocumentViewer({
               />
               {page.status !== "complete" ? (
                 <div className="page-placeholder">
-                  <div
-                    className={`page-placeholder-content${page.status === "failed" ? " failed" : ""}`}
-                    role={page.status === "failed" ? "alert" : "status"}
-                    style={{ transform: `scale(${1 / transform.scale})` }}
-                  >
-                    {page.status === "failed" ? (
-                      <>
+                  {page.status === "failed" ? (
+                    <div
+                      className="page-placeholder-content failed"
+                      role="alert"
+                      style={{ transform: `scale(${1 / transform.scale})` }}
+                    >
                         <strong>Page {page.index + 1} failed</strong>
                         <span>{page.error}</span>
                         <button
@@ -1135,10 +1156,18 @@ export function DocumentViewer({
                           onPointerDown={(event) => event.stopPropagation()}
                           onClick={() => onRetryPage(page.index)}
                         >Retry page</button>
-                      </>
-                    ) : (
-                      <>
-                        <span className={page.status === "processing" ? "spinner" : "page-pending-dot"} aria-hidden="true" />
+                    </div>
+                  ) : (
+                    <div
+                      className="page-placeholder-content loading"
+                      role="status"
+                      style={{ transform: `scale(${1 / transform.scale})` }}
+                    >
+                      <span
+                        className={page.status === "processing" ? "spinner" : "page-pending-dot"}
+                        aria-hidden="true"
+                      />
+                      <span className="page-loading-copy">
                         <strong>
                           {page.status === "loading"
                             ? `Preparing page ${page.index + 1}`
@@ -1153,9 +1182,9 @@ export function DocumentViewer({
                               ? "Reading notation and building MusicXML…"
                               : "Waiting for recognition to begin…"}
                         </span>
-                      </>
-                    )}
-                  </div>
+                      </span>
+                    </div>
+                  )}
                 </div>
               ) : null}
               {page.cached && page.status === "complete" ? <span className="cache-badge">Cached</span> : null}

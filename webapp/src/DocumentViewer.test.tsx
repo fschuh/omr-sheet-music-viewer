@@ -254,6 +254,38 @@ test("renders an explicit recognition state inside a pending page", () => {
   assert.match(markup, /Reading notation and building MusicXML…/);
 });
 
+test("sizes unfinished pages like the first page with known PDF dimensions", () => {
+  const processingPage: DocumentPage = {
+    index: 1,
+    status: "processing",
+    width: 850,
+    height: 1100,
+  };
+  const markup = renderToStaticMarkup(
+    <DocumentViewer
+      documentKey="mixed-size-fixture"
+      pages={[page, processingPage]}
+      selectedGroup={null}
+      highlightAllNotes={false}
+      showOriginalNoteheadContours={false}
+      showDetectedNoteheadContours={false}
+      showRefinedNoteheadContours={false}
+      showRawStemContours={false}
+      playbackActive={false}
+      playbackNoteSoundsEnabled
+      playbackAvailable={false}
+      playbackMoment={null}
+      onPlaybackCommand={() => undefined}
+      onSelectGroup={() => undefined}
+      onRetryPage={() => undefined}
+    />,
+  );
+
+  assert.match(markup, /page-processing" style="width:1000px;height:1400px/);
+  assert.match(markup, /class="page-placeholder-content loading" role="status"/);
+  assert.doesNotMatch(markup, /viewer-loading-status/);
+});
+
 test("does not scroll horizontally when the approached staff edge is already visible", () => {
   assert.equal(
     shouldScrollPlaybackHorizontally(850, 920, 40, 980, 120, 880, 1000),
