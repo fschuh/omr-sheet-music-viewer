@@ -17,8 +17,6 @@ const MAX_SCALE = 6;
 const CLICK_MOVE_TOLERANCE = 6;
 const PAGE_GAP = 28;
 const PLAYBACK_EDGE_CLEARANCE = 16;
-const SHOW_REFRESH_DIAGNOSTIC =
-  typeof window !== "undefined" && window.location.hostname === "localhost";
 
 interface DocumentViewerProps {
   documentKey: string;
@@ -46,32 +44,6 @@ interface PointerState {
 
 function clampScale(scale: number): number {
   return Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale));
-}
-
-function useDisplayRefreshRate(enabled: boolean): number | null {
-  const [refreshRate, setRefreshRate] = useState<number | null>(null);
-  useEffect(() => {
-    if (!enabled) return;
-    let frame = 0;
-    let previous: number | null = null;
-    const intervals: number[] = [];
-    function sample(timestamp: number) {
-      if (previous !== null) {
-        const interval = timestamp - previous;
-        if (interval > 4 && interval < 40) intervals.push(interval);
-      }
-      previous = timestamp;
-      if (intervals.length >= 90) {
-        intervals.sort((first, second) => first - second);
-        setRefreshRate(Math.round(1000 / intervals[Math.floor(intervals.length / 2)]));
-        intervals.length = 0;
-      }
-      frame = requestAnimationFrame(sample);
-    }
-    frame = requestAnimationFrame(sample);
-    return () => cancelAnimationFrame(frame);
-  }, [enabled]);
-  return refreshRate;
 }
 
 function hasBBox(group: VisualGroup): group is VisualGroup & { bbox: VisualBBox } {
@@ -376,7 +348,6 @@ export function DocumentViewer({
   const transformFrame = useRef<number | null>(null);
   const [transform, setTransform] = useState<ViewportTransform>(initialTransform.current);
   const [isPointerPanning, setIsPointerPanning] = useState(false);
-  const displayRefreshRate = useDisplayRefreshRate(SHOW_REFRESH_DIAGNOSTIC);
   const pages = useMemo(
     () => documentPages.filter((page) => page.status !== "skipped"),
     [documentPages],
@@ -683,9 +654,6 @@ export function DocumentViewer({
           }}
         >−</button>
         <span>{Math.round(transform.scale * 100)}%</span>
-        {SHOW_REFRESH_DIAGNOSTIC && displayRefreshRate ? (
-          <span title="Measured requestAnimationFrame cadence">~{displayRefreshRate} Hz</span>
-        ) : null}
         <button
           type="button"
           aria-label="Zoom in"

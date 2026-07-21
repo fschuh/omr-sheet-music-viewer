@@ -12,12 +12,14 @@ import {
 
 interface SettingsPageProps {
   shortcuts: PlaybackShortcuts;
+  debugPanelEnabled: boolean;
   nativeAvailable: boolean;
   midiPorts: string[];
   midiError: string | null;
   midiRefreshing: boolean;
   midiCaptureCommand: PlaybackCommand | null;
   onChangeShortcuts: (shortcuts: PlaybackShortcuts) => void;
+  onChangeDebugPanelEnabled: (enabled: boolean) => void;
   onBeginMidiCapture: (command: PlaybackCommand) => void;
   onCancelMidiCapture: () => void;
   onRefreshMidiInputs: () => void;
@@ -25,12 +27,14 @@ interface SettingsPageProps {
 
 export function SettingsPage({
   shortcuts,
+  debugPanelEnabled,
   nativeAvailable,
   midiPorts,
   midiError,
   midiRefreshing,
   midiCaptureCommand,
   onChangeShortcuts,
+  onChangeDebugPanelEnabled,
   onBeginMidiCapture,
   onCancelMidiCapture,
   onRefreshMidiInputs,
@@ -101,7 +105,7 @@ export function SettingsPage({
       <div className="settings-heading">
         <span className="settings-kicker">Preferences</span>
         <h2 id="settings-title">Settings</h2>
-        <p>Customize how keyboard keys and MIDI page turners control note-by-note playback.</p>
+        <p>Customize playback controls and optional diagnostics.</p>
       </div>
 
       <section className="settings-card" aria-labelledby="shortcuts-title">
@@ -200,6 +204,26 @@ export function SettingsPage({
             );
           })}
         </div>
+      </section>
+
+      <section className="settings-card" aria-labelledby="debug-title">
+        <header className="settings-card-header">
+          <div>
+            <h3 id="debug-title">Debug</h3>
+            <p>Show troubleshooting tools and recognition details alongside the score.</p>
+          </div>
+        </header>
+        <label className="settings-toggle-row">
+          <input
+            type="checkbox"
+            checked={debugPanelEnabled}
+            onChange={(event) => onChangeDebugPanelEnabled(event.target.checked)}
+          />
+          <span>
+            <strong>Enable debug panel</strong>
+            <small>Displays the right-side panel with note highlighting, overlays, diagnostics, and document data.</small>
+          </span>
+        </label>
       </section>
     </section>
   );

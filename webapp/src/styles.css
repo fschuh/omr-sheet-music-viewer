@@ -189,6 +189,10 @@ button:disabled {
   position: relative;
 }
 
+.workspace.debug-panel-hidden {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .piano-keyboard-overlay {
   animation: piano-keyboard-enter 180ms ease-out;
   background: linear-gradient(180deg, #2d2a27 0%, #171614 100%);
@@ -704,6 +708,16 @@ button:disabled {
 
 .inspector h2:not(:first-child) { margin-top: 25px; }
 
+.inspector > .log-button {
+  width: 100%;
+}
+
+.inspector .diagnostics-data {
+  border-bottom: 1px solid #e0dcd5;
+  margin-top: 14px;
+  padding-bottom: 14px;
+}
+
 .inspector p {
   color: #716960;
   font-size: 0.87rem;
@@ -902,6 +916,10 @@ button:disabled {
   overflow: hidden;
 }
 
+.settings-card + .settings-card {
+  margin-top: 22px;
+}
+
 .settings-card-header {
   align-items: flex-start;
   display: flex;
@@ -927,6 +945,40 @@ button:disabled {
 }
 
 .secondary-button { flex: 0 0 auto; }
+
+.settings-toggle-row {
+  align-items: flex-start;
+  border-top: 1px solid #ddd7cf;
+  cursor: pointer;
+  display: flex;
+  gap: 12px;
+  padding: 18px 26px 22px;
+}
+
+.settings-toggle-row input {
+  accent-color: #8f4d2a;
+  flex: 0 0 auto;
+  height: 17px;
+  margin: 2px 0 0;
+  width: 17px;
+}
+
+.settings-toggle-row span {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.settings-toggle-row strong {
+  color: #342e29;
+  font-size: 0.9rem;
+}
+
+.settings-toggle-row small {
+  color: #746c63;
+  font-size: 0.79rem;
+  line-height: 1.45;
+}
 
 .midi-status {
   align-items: center;

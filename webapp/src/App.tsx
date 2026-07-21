@@ -17,6 +17,7 @@ import {
   type PlaybackState,
 } from "./playback";
 import { pianoSampler } from "./piano";
+import { loadDebugPanelEnabled, saveDebugPanelEnabled } from "./preferences";
 import {
   cancelJob,
   choosePdf,
@@ -130,6 +131,42 @@ function isPlaybackToggleCommand(command: PlaybackCommand): boolean {
   return command === "togglePlayback" || command === "toggleNoteSounds";
 }
 
+function RefreshRateDiagnostic() {
+  const [refreshRate, setRefreshRate] = useState<number | null>(null);
+
+  useEffect(() => {
+    let frame = 0;
+    let previous: number | null = null;
+    const intervals: number[] = [];
+
+    function sample(timestamp: number) {
+      if (previous !== null) {
+        const interval = timestamp - previous;
+        if (interval > 4 && interval < 40) intervals.push(interval);
+      }
+      previous = timestamp;
+      if (intervals.length >= 90) {
+        intervals.sort((first, second) => first - second);
+        setRefreshRate(Math.round(1000 / intervals[Math.floor(intervals.length / 2)]));
+        intervals.length = 0;
+      }
+      frame = requestAnimationFrame(sample);
+    }
+
+    frame = requestAnimationFrame(sample);
+    return () => cancelAnimationFrame(frame);
+  }, []);
+
+  return (
+    <>
+      <dt>Refresh rate</dt>
+      <dd title="Measured requestAnimationFrame cadence">
+        {refreshRate ? `~${refreshRate} Hz` : "Measuring…"}
+      </dd>
+    </>
+  );
+}
+
 export function App() {
   const nativeAvailable = nativeViewerAvailable();
   const activeJobId = useRef<string | null>(null);
@@ -137,6 +174,7 @@ export function App() {
   const nextWorkerLogId = useRef(1);
   const workerLogOutput = useRef<HTMLDivElement | null>(null);
   const [activePage, setActivePage] = useState<"viewer" | "settings">("viewer");
+  const [debugPanelEnabled, setDebugPanelEnabled] = useState(loadDebugPanelEnabled);
   const activePageRef = useRef(activePage);
   activePageRef.current = activePage;
   const [shortcuts, setShortcuts] = useState<PlaybackShortcuts>(loadPlaybackShortcuts);
@@ -862,14 +900,6 @@ export function App() {
         <div className="actions">
           {activePage === "viewer" ? (
             <>
-          <button
-            type="button"
-            className={showWorkerLogs ? "log-button active" : "log-button"}
-            title={latestWorkerLog ?? "Show Python worker logs"}
-            onClick={() => setShowWorkerLogs((current) => !current)}
-          >
-            Worker logs{workerLogs.length ? ` (${workerLogs.length})` : ""}
-          </button>
           {document ? (
             <button
               type="button"
@@ -925,12 +955,18 @@ export function App() {
       {activePage === "settings" ? (
         <SettingsPage
           shortcuts={shortcuts}
+          debugPanelEnabled={debugPanelEnabled}
           nativeAvailable={nativeAvailable}
           midiPorts={midiPorts}
           midiError={midiError}
           midiRefreshing={midiRefreshing}
           midiCaptureCommand={midiCaptureCommand}
           onChangeShortcuts={setShortcuts}
+          onChangeDebugPanelEnabled={(enabled) => {
+            setDebugPanelEnabled(enabled);
+            saveDebugPanelEnabled(enabled);
+            if (!enabled) setShowWorkerLogs(false);
+          }}
           onBeginMidiCapture={beginMidiCapture}
           onCancelMidiCapture={cancelMidiCapture}
           onRefreshMidiInputs={handleRefreshMidiInputs}
@@ -961,7 +997,7 @@ export function App() {
         </div>
       ) : null}
 
-      <section className="workspace">
+      <section className={`workspace${debugPanelEnabled ? "" : " debug-panel-hidden"}`}>
         {document && document.pages.length > 0 ? (
           <>
             <DocumentViewer
@@ -981,7 +1017,19 @@ export function App() {
               onSelectGroup={handleSelectGroup}
               onRetryPage={handleRetryPage}
             />
-            <aside className="inspector">
+            {debugPanelEnabled ? <aside className="inspector" aria-label="Debug panel">
+              <h2>Diagnostics</h2>
+              <button
+                type="button"
+                className={showWorkerLogs ? "log-button active" : "log-button"}
+                title={latestWorkerLog ?? "Show Python worker logs"}
+                onClick={() => setShowWorkerLogs((current) => !current)}
+              >
+                Worker logs{workerLogs.length ? ` (${workerLogs.length})` : ""}
+              </button>
+              <dl className="diagnostics-data">
+                <RefreshRateDiagnostic />
+              </dl>
               <h2>Highlighting</h2>
               <button
                 type="button"
@@ -1041,7 +1089,7 @@ export function App() {
                 <dt>Unmatched visual</dt><dd>{totals.unmatchedVisual.toLocaleString()}</dd>
               </dl>
               {workerInfo ? <p className="worker-info">{workerInfo}</p> : null}
-            </aside>
+            </aside> : null}
             {playbackState.active ? (
               <PianoKeyboard notes={playbackMoment?.keyboardNotes ?? []} />
             ) : null}
