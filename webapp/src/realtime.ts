@@ -10,6 +10,24 @@ import type {
 export type PlaybackMode = "note-by-note" | "realtime";
 export type PlaybackStatus = "inactive" | "note-by-note" | "playing" | "paused";
 
+export type RealtimeTremoloType = "single" | "start" | "stop" | "unmeasured";
+
+export interface RealtimeTremolo {
+  type: RealtimeTremoloType;
+  marks: number;
+  beamCount: number;
+}
+
+export type RealtimeTrillStartNote = "main" | "upper" | "below";
+
+export interface RealtimeTrill {
+  auxiliaryPitch: string;
+  lowerPitch: string;
+  startNote: RealtimeTrillStartNote;
+  beats: number | null;
+  accelerate: boolean;
+}
+
 export interface RealtimeScoreNote {
   musicXmlId: string;
   partId: string;
@@ -20,6 +38,8 @@ export interface RealtimeScoreNote {
   duration: number;
   tieStart: boolean;
   tieStop: boolean;
+  tremolo: RealtimeTremolo | null;
+  trill: RealtimeTrill | null;
 }
 
 export interface RealtimeTempoChange {
@@ -85,6 +105,7 @@ export interface PerformanceNote {
   onset: number;
   release: number;
   visual: VisualNoteTarget | null;
+  fingeringMusicXmlId?: string | null;
 }
 
 export interface PerformanceOccurrence {
@@ -113,6 +134,7 @@ export interface TempoSegment {
 export interface PerformanceRoute {
   occurrences: PerformanceOccurrence[];
   notes: PerformanceNote[];
+  playheadNotes?: PerformanceNote[];
   events: PerformanceEvent[];
   tempoSegments: TempoSegment[];
   totalQuarters: number;
@@ -231,6 +253,162 @@ const BEAT_UNIT_QUARTERS: Readonly<Record<string, number>> = {
   "64th": 0.0625,
 };
 
+const NOTE_TYPE_BEAMS: Readonly<Record<string, number>> = {
+  eighth: 1,
+  "16th": 2,
+  "32nd": 3,
+  "64th": 4,
+  "128th": 5,
+  "256th": 6,
+  "512th": 7,
+  "1024th": 8,
+};
+
+const PITCH_STEP_SEMITONES: Readonly<Record<string, number>> = {
+  C: 0,
+  D: 2,
+  E: 4,
+  F: 5,
+  G: 7,
+  A: 9,
+  B: 11,
+};
+const PITCH_STEPS = ["C", "D", "E", "F", "G", "A", "B"] as const;
+const SHARP_KEY_ORDER = ["F", "C", "G", "D", "A", "E", "B"] as const;
+const FLAT_KEY_ORDER = ["B", "E", "A", "D", "G", "C", "F"] as const;
+
+function keyAlter(step: string, fifths: number): number {
+  const direction = Math.sign(fifths);
+  if (direction === 0) return 0;
+  const order: readonly string[] = direction > 0 ? SHARP_KEY_ORDER : FLAT_KEY_ORDER;
+  const index = order.indexOf(step.toUpperCase());
+  const count = Math.abs(Math.trunc(fifths));
+  if (index < 0 || count <= index) return 0;
+  return direction * (Math.floor((count - index - 1) / order.length) + 1);
+}
+
+function adjacentDiatonicPitch(
+  step: string,
+  octave: number,
+  direction: -1 | 1,
+  fifths: number,
+): { step: string; octave: number; alter: number } {
+  const index = PITCH_STEPS.indexOf(step.toUpperCase() as typeof PITCH_STEPS[number]);
+  const safeIndex = index >= 0 ? index : 0;
+  const adjacentIndex = (safeIndex + direction + PITCH_STEPS.length) % PITCH_STEPS.length;
+  const adjacentStep = PITCH_STEPS[adjacentIndex];
+  const octaveChange = direction > 0 && adjacentIndex === 0
+    ? 1
+    : direction < 0 && adjacentIndex === PITCH_STEPS.length - 1
+      ? -1
+      : 0;
+  return {
+    step: adjacentStep,
+    octave: octave + octaveChange,
+    alter: keyAlter(adjacentStep, fifths),
+  };
+}
+
+function pitchSemitone(step: string, octave: number, alter: number): number {
+  return (octave + 1) * 12 + (PITCH_STEP_SEMITONES[step.toUpperCase()] ?? 0) + alter;
+}
+
+function accidentalAlter(value: string | null): number | null {
+  switch (value?.trim().toLowerCase()) {
+    case "sharp": return 1;
+    case "flat": return -1;
+    case "natural": return 0;
+    case "double-sharp":
+    case "sharp-sharp": return 2;
+    case "flat-flat": return -2;
+    default: return null;
+  }
+}
+
+function trillAdjacentPitch(
+  step: string,
+  octave: number,
+  alter: number,
+  direction: -1 | 1,
+  fifths: number,
+  trillStep: string | null,
+  accidental: number | null,
+): string {
+  if (trillStep === "unison") return formatPitchName(step, octave, alter);
+  const adjacent = adjacentDiatonicPitch(step, octave, direction, fifths);
+  if (trillStep === "half" || trillStep === "whole") {
+    const semitones = trillStep === "half" ? 1 : 2;
+    const target = pitchSemitone(step, octave, alter) + direction * semitones;
+    adjacent.alter = target - pitchSemitone(adjacent.step, adjacent.octave, 0);
+  }
+  if (accidental !== null && direction > 0) adjacent.alter = accidental;
+  return formatPitchName(adjacent.step, adjacent.octave, adjacent.alter);
+}
+
+function parseTrill(
+  note: Element,
+  step: string,
+  octave: number,
+  alter: number,
+  fifths: number,
+): RealtimeTrill | null {
+  const element = descendants(note, "trill-mark")[0];
+  if (!element) return null;
+  const rawStart = element.getAttribute("start-note");
+  const startNote: RealtimeTrillStartNote = rawStart === "upper" || rawStart === "below"
+    ? rawStart
+    : "main";
+  const rawBeats = element.getAttribute("beats");
+  const parsedBeats = rawBeats === null ? null : finiteNumber(rawBeats, 0);
+  const ornaments = descendants(note, "ornaments")
+    .find((candidate) => descendants(candidate, "trill-mark").includes(element));
+  const accidental = accidentalAlter(
+    ornaments ? descendants(ornaments, "accidental-mark")[0]?.textContent ?? null : null,
+  );
+  const trillStep = element.getAttribute("trill-step");
+  return {
+    auxiliaryPitch: trillAdjacentPitch(
+      step,
+      octave,
+      alter,
+      1,
+      fifths,
+      trillStep,
+      accidental,
+    ),
+    lowerPitch: trillAdjacentPitch(step, octave, alter, -1, fifths, trillStep, null),
+    startNote,
+    beats: parsedBeats !== null && parsedBeats > 0
+      ? Math.min(4096, Math.max(1, Math.round(parsedBeats)))
+      : null,
+    accelerate: yes(element.getAttribute("accelerate")),
+  };
+}
+
+function parseTremolo(note: Element): RealtimeTremolo | null {
+  const element = descendants(note, "tremolo")[0];
+  if (!element) return null;
+  const rawType = element.getAttribute("type") ?? "single";
+  const type: RealtimeTremoloType =
+    rawType === "start" || rawType === "stop" || rawType === "unmeasured"
+      ? rawType
+      : "single";
+  const fallbackMarks = type === "unmeasured" ? 0 : 3;
+  const marks = Math.min(8, Math.max(
+    0,
+    Math.trunc(finiteNumber(element.textContent, fallbackMarks)),
+  ));
+  const explicitBeamNumbers = new Set(
+    elements(note, "beam").map((beam) => beam.getAttribute("number") ?? "1"),
+  );
+  const typeBeamCount = NOTE_TYPE_BEAMS[text(note, "type")?.toLowerCase() ?? ""] ?? 0;
+  return {
+    type,
+    marks,
+    beamCount: Math.max(typeBeamCount, explicitBeamNumbers.size),
+  };
+}
+
 function metronomeTempo(direction: Element): number | null {
   const metronome = descendants(direction, "metronome")[0];
   if (!metronome) return null;
@@ -289,10 +467,12 @@ function parsePartMeasure(
   measureIndex: number,
   divisionsAtStart: number,
   pageAtStart: number,
+  fifthsAtStart: number,
   includeNavigation: boolean,
-): { data: PartMeasureData; divisions: number; pageNumber: number } {
+): { data: PartMeasureData; divisions: number; pageNumber: number; fifths: number } {
   let divisions = divisionsAtStart;
   let pageNumber = pageAtStart;
+  let fifths = fifthsAtStart;
   let cursor = 0;
   let furthest = 0;
   let chordOnset = 0;
@@ -311,6 +491,8 @@ function parsePartMeasure(
     if (child.localName === "attributes" || child.nodeName.endsWith(":attributes")) {
       const value = finiteNumber(text(child, "divisions"), divisions);
       if (value > 0) divisions = value;
+      const key = elements(child, "key")[0];
+      if (key) fifths = Math.trunc(finiteNumber(text(key, "fifths"), fifths));
       continue;
     }
     if (child.localName === "backup" || child.nodeName.endsWith(":backup")) {
@@ -333,6 +515,7 @@ function parsePartMeasure(
         const octave = text(pitchElement, "octave");
         const alter = finiteNumber(text(pitchElement, "alter"));
         if (step && octave !== null) {
+          const octaveNumber = Math.trunc(finiteNumber(octave, 4));
           const tieTypes = new Set(elements(child, "tie").map((tie) => tie.getAttribute("type")));
           for (const tied of descendants(child, "tied")) tieTypes.add(tied.getAttribute("type"));
           notes.push({
@@ -345,6 +528,8 @@ function parsePartMeasure(
             duration,
             tieStart: tieTypes.has("start"),
             tieStop: tieTypes.has("stop"),
+            tremolo: parseTremolo(child),
+            trill: parseTrill(child, step, octaveNumber, alter, fifths),
           });
         }
       }
@@ -416,6 +601,7 @@ function parsePartMeasure(
     },
     divisions,
     pageNumber,
+    fifths,
   };
 }
 
@@ -435,6 +621,7 @@ export function parseRealtimeMusicXml(musicXml: string): RealtimeScore {
   parts.forEach((part, partIndex) => {
     let divisions = 1;
     let pageNumber = 1;
+    let fifths = 0;
     const parsed: PartMeasureData[] = [];
     elements(part, "measure").forEach((measure, measureIndex) => {
       const result = parsePartMeasure(
@@ -443,10 +630,12 @@ export function parseRealtimeMusicXml(musicXml: string): RealtimeScore {
         measureIndex,
         divisions,
         pageNumber,
+        fifths,
         true,
       );
       divisions = result.divisions;
       pageNumber = result.pageNumber;
+      fifths = result.fifths;
       parsed.push(result.data);
     });
     partMeasures.push(parsed);
@@ -596,6 +785,177 @@ interface ActiveRepeat extends RepeatPair {
   pass: number;
 }
 
+interface RouteScoreNote extends RealtimeScoreNote {
+  onset: number;
+  release: number;
+  occurrenceId: string;
+}
+
+interface TremoloGroup {
+  onset: number;
+  release: number;
+  notes: RouteScoreNote[];
+  tremolo: RealtimeTremolo | null;
+}
+
+const DEFAULT_UNMEASURED_TREMOLO_QUARTERS = 0.125;
+const MIN_TREMOLO_INTERVAL_QUARTERS = 1 / 32;
+const DEFAULT_TRILL_INTERVAL_QUARTERS = 0.125;
+
+function tremoloInterval(tremolo: RealtimeTremolo): number {
+  if (tremolo.type === "unmeasured" || tremolo.marks === 0) {
+    return DEFAULT_UNMEASURED_TREMOLO_QUARTERS;
+  }
+  return Math.max(
+    MIN_TREMOLO_INTERVAL_QUARTERS,
+    1 / (2 ** Math.min(8, tremolo.marks + tremolo.beamCount)),
+  );
+}
+
+function performanceNote(
+  note: RouteScoreNote,
+  onset: number,
+  release: number,
+  index: number,
+  visualMap?: ReadonlyMap<string, VisualNoteTarget>,
+  pitch = note.pitch,
+  fingeringMusicXmlId?: string | null,
+): PerformanceNote {
+  return {
+    id: `${note.occurrenceId}:${note.musicXmlId}:${index}`,
+    musicXmlId: note.musicXmlId,
+    pitch,
+    onset,
+    release,
+    visual: visualMap?.get(note.musicXmlId) ?? null,
+    fingeringMusicXmlId,
+  };
+}
+
+function expandOrnamentNotes(
+  notes: RouteScoreNote[],
+  visualMap?: ReadonlyMap<string, VisualNoteTarget>,
+): PerformanceNote[] {
+  const lanes = new Map<string, TremoloGroup[]>();
+  for (const note of notes) {
+    const laneKey = `${note.partId}:${note.staff}:${note.voice}`;
+    const groups = lanes.get(laneKey) ?? [];
+    const group = groups.at(-1);
+    if (group?.onset === note.onset) {
+      group.notes.push(note);
+      group.release = Math.max(group.release, note.release);
+      group.tremolo ??= note.tremolo;
+    } else {
+      groups.push({
+        onset: note.onset,
+        release: note.release,
+        notes: [note],
+        tremolo: note.tremolo,
+      });
+    }
+    lanes.set(laneKey, groups);
+  }
+
+  const result: PerformanceNote[] = [];
+  const addNote = (
+    note: RouteScoreNote,
+    onset: number,
+    release: number,
+    pitch = note.pitch,
+  ) => {
+    result.push(performanceNote(
+      note,
+      onset,
+      release,
+      result.length,
+      visualMap,
+      pitch,
+      pitch === note.pitch ? undefined : null,
+    ));
+  };
+  const addSingleTremolo = (group: TremoloGroup, tremolo: RealtimeTremolo) => {
+    const interval = tremoloInterval(tremolo);
+    const pulseCount = Math.min(
+      4096,
+      Math.max(1, Math.ceil((group.release - group.onset) / interval - 1e-9)),
+    );
+    for (let pulse = 0; pulse < pulseCount; pulse += 1) {
+      const onset = group.onset + pulse * interval;
+      for (const note of group.notes) {
+        if (onset >= note.release - 1e-9) continue;
+        addNote(note, onset, Math.min(note.release, onset + interval));
+      }
+    }
+  };
+  const addDoubleTremolo = (start: TremoloGroup, stop: TremoloGroup) => {
+    const startTremolo = start.tremolo!;
+    const stopTremolo = stop.tremolo!;
+    const interval = Math.min(tremoloInterval(startTremolo), tremoloInterval(stopTremolo));
+    const end = Math.max(stop.release, stop.onset);
+    const pulseCount = Math.min(
+      4096,
+      Math.max(2, Math.ceil((end - start.onset) / interval - 1e-9)),
+    );
+    for (let pulse = 0; pulse < pulseCount; pulse += 1) {
+      const onset = start.onset + pulse * interval;
+      if (onset >= end - 1e-9) break;
+      const source = pulse % 2 === 0 ? start : stop;
+      for (const note of source.notes) addNote(note, onset, Math.min(end, onset + interval));
+    }
+  };
+  const addTrill = (note: RouteScoreNote, trill: RealtimeTrill) => {
+    const duration = Math.max(0, note.release - note.onset);
+    const pulseCount = trill.beats ?? Math.min(
+      4096,
+      Math.max(2, Math.ceil(duration / DEFAULT_TRILL_INTERVAL_QUARTERS - 1e-9)),
+    );
+    const progressAt = (pulse: number) => {
+      const progress = Math.min(1, Math.max(0, pulse / pulseCount));
+      return trill.accelerate ? 1 - ((1 - progress) ** 1.8) : progress;
+    };
+    for (let pulse = 0; pulse < pulseCount; pulse += 1) {
+      const onset = note.onset + duration * progressAt(pulse);
+      const release = note.onset + duration * progressAt(pulse + 1);
+      let pitch: string;
+      if (trill.startNote === "below" && pulse === 0) {
+        pitch = trill.lowerPitch;
+      } else {
+        const phase = trill.startNote === "below" ? pulse - 1 : pulse;
+        const upper = trill.startNote === "upper" ? phase % 2 === 0 : phase % 2 === 1;
+        pitch = upper ? trill.auxiliaryPitch : note.pitch;
+      }
+      addNote(note, onset, release, pitch);
+    }
+  };
+
+  for (const groups of lanes.values()) {
+    for (let index = 0; index < groups.length; index += 1) {
+      const group = groups[index];
+      const tremolo = group.tremolo;
+      if (tremolo?.type === "single" || tremolo?.type === "unmeasured") {
+        addSingleTremolo(group, tremolo);
+        continue;
+      }
+      const stop = groups[index + 1];
+      if (
+        tremolo?.type === "start" &&
+        stop?.tremolo?.type === "stop"
+      ) {
+        addDoubleTremolo(group, stop);
+        index += 1;
+        continue;
+      }
+      for (const note of group.notes) {
+        if (note.trill) addTrill(note, note.trill);
+        else addNote(note, note.onset, note.release);
+      }
+    }
+  }
+  return result.sort((left, right) =>
+    left.onset - right.onset || left.release - right.release || left.id.localeCompare(right.id),
+  );
+}
+
 export function expandPerformanceRoute(
   score: RealtimeScore,
   options: ExpandRouteOptions = {},
@@ -604,6 +964,7 @@ export function expandPerformanceRoute(
     return {
       occurrences: [],
       notes: [],
+      playheadNotes: [],
       events: [],
       tempoSegments: [{ offset: 0, bpm: 120 }],
       totalQuarters: 0,
@@ -623,7 +984,7 @@ export function expandPerformanceRoute(
   const activeRepeats: ActiveRepeat[] = [];
   const usedJumps = new Set<string>();
   const occurrences: PerformanceOccurrence[] = [];
-  const rawNotes: Array<RealtimeScoreNote & { onset: number; release: number; occurrenceId: string }> = [];
+  const rawNotes: RouteScoreNote[] = [];
   const rawTempos: TempoSegment[] = [{ offset: 0, bpm: effectiveTempoBefore(score, startMeasure, startOffset) }];
   let index = startMeasure;
   let scoreOffset = 0;
@@ -739,8 +1100,8 @@ export function expandPerformanceRoute(
     index += 1;
   }
 
-  const performanceNotes: PerformanceNote[] = [];
-  const activeTies = new Map<string, PerformanceNote>();
+  const sustainedNotes: RouteScoreNote[] = [];
+  const activeTies = new Map<string, RouteScoreNote>();
   for (const note of rawNotes.sort((left, right) => left.onset - right.onset || left.release - right.release)) {
     const tieKey = `${note.partId}:${note.staff}:${note.voice}:${note.pitch}`;
     const tied = note.tieStop ? activeTies.get(tieKey) : undefined;
@@ -749,17 +1110,13 @@ export function expandPerformanceRoute(
       if (!note.tieStart) activeTies.delete(tieKey);
       continue;
     }
-    const performance: PerformanceNote = {
-      id: `${note.occurrenceId}:${note.musicXmlId}:${performanceNotes.length}`,
-      musicXmlId: note.musicXmlId,
-      pitch: note.pitch,
-      onset: note.onset,
-      release: note.release,
-      visual: options.visualMap?.get(note.musicXmlId) ?? null,
-    };
-    performanceNotes.push(performance);
-    if (note.tieStart) activeTies.set(tieKey, performance);
+    sustainedNotes.push(note);
+    if (note.tieStart) activeTies.set(tieKey, note);
   }
+  const playheadNotes = sustainedNotes.map((note, index) =>
+    performanceNote(note, note.onset, note.release, index, options.visualMap),
+  );
+  const performanceNotes = expandOrnamentNotes(sustainedNotes, options.visualMap);
 
   const sortedTempos = rawTempos
     .sort((left, right) => left.offset - right.offset)
@@ -767,19 +1124,26 @@ export function expandPerformanceRoute(
       index === all.length - 1 || all[index + 1].offset !== tempo.offset,
     )
     .filter((tempo, index, all) => index === 0 || tempo.bpm !== all[index - 1].bpm);
-  const performanceEvents: PerformanceEvent[] = [];
+  const eventsByOnset = new Map<number, PerformanceEvent>();
   for (const note of performanceNotes) {
-    const event = performanceEvents.find((candidate) => candidate.onset === note.onset);
+    const event = eventsByOnset.get(note.onset);
     if (event) {
       event.notes.push(note);
       if (!event.pitches.includes(note.pitch)) event.pitches.push(note.pitch);
     } else {
-      performanceEvents.push({ onset: note.onset, notes: [note], pitches: [note.pitch] });
+      eventsByOnset.set(note.onset, {
+        onset: note.onset,
+        notes: [note],
+        pitches: [note.pitch],
+      });
     }
   }
+  const performanceEvents = [...eventsByOnset.values()]
+    .sort((left, right) => left.onset - right.onset);
   return {
     occurrences,
     notes: performanceNotes,
+    playheadNotes,
     events: performanceEvents,
     tempoSegments: sortedTempos,
     totalQuarters: scoreOffset,
@@ -975,7 +1339,7 @@ const playheadNotesCache = new WeakMap<PerformanceRoute, PerformanceNote[]>();
 function visibleRouteNotes(route: PerformanceRoute): PerformanceNote[] {
   const cached = playheadNotesCache.get(route);
   if (cached) return cached;
-  const visible = route.notes.filter((note) => note.visual !== null);
+  const visible = (route.playheadNotes ?? route.notes).filter((note) => note.visual !== null);
   playheadNotesCache.set(route, visible);
   return visible;
 }

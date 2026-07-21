@@ -62,6 +62,164 @@ test("parses polyphonic cursors, chords, pages, tempo, and ties from partwise Mu
   assert.deepEqual(route.tempoSegments.map((tempo) => tempo.bpm), [90, 120]);
 });
 
+test("expands measured chord tremolos and unmeasured rolls into repeated attacks", () => {
+  const parsed = parseRealtimeMusicXml(score(`
+    <measure number="1">
+      <attributes><divisions>4</divisions></attributes>
+      <note id="c">
+        <pitch><step>C</step><octave>4</octave></pitch>
+        <duration>4</duration><voice>1</voice><type>quarter</type>
+        <notations><ornaments><tremolo type="single">2</tremolo></ornaments></notations>
+      </note>
+      <note id="e">
+        <chord/><pitch><step>E</step><octave>4</octave></pitch>
+        <duration>4</duration><voice>1</voice><type>quarter</type>
+      </note>
+      <note id="g">
+        <pitch><step>G</step><octave>4</octave></pitch>
+        <duration>4</duration><voice>1</voice><type>quarter</type>
+        <notations><ornaments><tremolo type="unmeasured">0</tremolo></ornaments></notations>
+      </note>
+    </measure>
+  `));
+
+  assert.deepEqual(parsed.measures[0].notes[0].tremolo, {
+    type: "single",
+    marks: 2,
+    beamCount: 0,
+  });
+  const route = expandPerformanceRoute(parsed);
+  assert.deepEqual(
+    route.notes.filter((note) => note.pitch === "C4").map((note) => note.onset),
+    [0, 0.25, 0.5, 0.75],
+  );
+  assert.deepEqual(
+    route.notes.filter((note) => note.pitch === "E4").map((note) => note.onset),
+    [0, 0.25, 0.5, 0.75],
+  );
+  assert.deepEqual(
+    route.notes.filter((note) => note.pitch === "G4").map((note) => note.onset),
+    [1, 1.125, 1.25, 1.375, 1.5, 1.625, 1.75, 1.875],
+  );
+  assert.equal(route.playheadNotes?.length, 3);
+});
+
+test("alternates double-note tremolos using marks and attached beams", () => {
+  const parsed = parseRealtimeMusicXml(score(`
+    <measure number="1">
+      <attributes><divisions>4</divisions></attributes>
+      <note id="low-a">
+        <pitch><step>A</step><octave>3</octave></pitch>
+        <duration>4</duration><voice>1</voice><type>half</type>
+        <time-modification><actual-notes>2</actual-notes><normal-notes>1</normal-notes></time-modification>
+        <beam number="1">begin</beam>
+        <notations><ornaments><tremolo type="start">2</tremolo></ornaments></notations>
+      </note>
+      <note id="high-a">
+        <pitch><step>A</step><octave>4</octave></pitch>
+        <duration>4</duration><voice>1</voice><type>half</type>
+        <time-modification><actual-notes>2</actual-notes><normal-notes>1</normal-notes></time-modification>
+        <beam number="1">end</beam>
+        <notations><ornaments><tremolo type="stop">2</tremolo></ornaments></notations>
+      </note>
+    </measure>
+  `));
+
+  const route = expandPerformanceRoute(parsed);
+  assert.equal(parsed.measures[0].notes[0].tremolo?.beamCount, 1);
+  assert.equal(route.notes.length, 16);
+  assert.deepEqual(
+    route.notes.slice(0, 6).map((note) => [note.pitch, note.onset, note.release]),
+    [
+      ["A3", 0, 0.125],
+      ["A4", 0.125, 0.25],
+      ["A3", 0.25, 0.375],
+      ["A4", 0.375, 0.5],
+      ["A3", 0.5, 0.625],
+      ["A4", 0.625, 0.75],
+    ],
+  );
+  assert.deepEqual(
+    route.playheadNotes?.map((note) => [note.pitch, note.onset]),
+    [["A3", 0], ["A4", 1]],
+  );
+});
+
+test("plays bare trill marks with a diatonic upper auxiliary", () => {
+  const parsed = parseRealtimeMusicXml(score(`
+    <measure number="1">
+      <attributes>
+        <divisions>4</divisions>
+        <key><fifths>0</fifths></key>
+      </attributes>
+      <note id="trill-f">
+        <pitch><step>F</step><octave>5</octave></pitch>
+        <duration>2</duration><voice>1</voice><type>eighth</type>
+        <notations><ornaments><trill-mark/></ornaments></notations>
+      </note>
+    </measure>
+  `));
+
+  assert.deepEqual(parsed.measures[0].notes[0].trill, {
+    auxiliaryPitch: "G5",
+    lowerPitch: "E5",
+    startNote: "main",
+    beats: null,
+    accelerate: false,
+  });
+  const route = expandPerformanceRoute(parsed);
+  assert.deepEqual(
+    route.notes.map((note) => [note.pitch, note.onset, note.release]),
+    [
+      ["F5", 0, 0.125],
+      ["G5", 0.125, 0.25],
+      ["F5", 0.25, 0.375],
+      ["G5", 0.375, 0.5],
+    ],
+  );
+  assert.equal(route.playheadNotes?.length, 1);
+});
+
+test("uses persistent key signatures and ornament accidentals for trills", () => {
+  const parsed = parseRealtimeMusicXml(score(`
+    <measure number="1">
+      <attributes>
+        <divisions>4</divisions>
+        <key><fifths>-1</fifths></key>
+      </attributes>
+      ${quarter("lead-in", "C")}
+    </measure>
+    <measure number="2">
+      <note id="trill-a-flat-key">
+        <pitch><step>A</step><octave>4</octave></pitch>
+        <duration>4</duration><voice>1</voice><type>quarter</type>
+        <notations><ornaments><trill-mark beats="4" start-note="upper"/></ornaments></notations>
+      </note>
+      <note id="trill-a-natural">
+        <pitch><step>A</step><octave>4</octave></pitch>
+        <duration>4</duration><voice>1</voice><type>quarter</type>
+        <notations><ornaments><trill-mark beats="4"/><accidental-mark>natural</accidental-mark></ornaments></notations>
+      </note>
+    </measure>
+  `));
+
+  assert.equal(parsed.measures[1].notes[0].trill?.auxiliaryPitch, "B♭4");
+  assert.equal(parsed.measures[1].notes[1].trill?.auxiliaryPitch, "B4");
+  const route = expandPerformanceRoute(parsed);
+  assert.deepEqual(
+    route.notes
+      .filter((note) => note.musicXmlId === "trill-a-flat-key")
+      .map((note) => note.pitch),
+    ["B♭4", "A4", "B♭4", "A4"],
+  );
+  assert.deepEqual(
+    route.notes
+      .filter((note) => note.musicXmlId === "trill-a-natural")
+      .map((note) => note.pitch),
+    ["A4", "B4", "A4", "B4"],
+  );
+});
+
 test("maps merged page-scoped MusicXML IDs back to page sidecars", () => {
   const pages: DocumentPage[] = [0, 1].map((index) => {
     const sidecar: VisualSidecar = {
@@ -226,6 +384,45 @@ test("converts score offsets through tempo changes and a live multiplier", () =>
   assert.equal(scoreOffsetToSeconds(route, 4), 3);
   assert.equal(scoreOffsetToSeconds(route, 4, 2), 1.5);
   assert.ok(Math.abs(scoreOffsetAfterSeconds(route, 0, 2.5) - 3) < 1e-9);
+});
+
+test("controller releases and retriggers repeated tremolo pitches", () => {
+  const parsed = parseRealtimeMusicXml(score(`
+    <measure number="1">
+      <attributes><divisions>4</divisions></attributes>
+      <direction><sound tempo="60"/></direction>
+      <note id="roll">
+        <pitch><step>C</step><octave>4</octave></pitch>
+        <duration>4</duration><voice>1</voice><type>quarter</type>
+        <notations><ornaments><tremolo type="single">2</tremolo></ornaments></notations>
+      </note>
+    </measure>
+  `));
+  const route = expandPerformanceRoute(parsed);
+  let now = 0;
+  let tick: (() => void) | null = null;
+  const attacks: string[][] = [];
+  const releases: string[][] = [];
+  const controller = new RealtimeController(
+    {
+      attack: (pitches) => attacks.push([...pitches]),
+      release: (pitches) => releases.push([...pitches]),
+      stop: () => undefined,
+    },
+    { onFrame: () => undefined, onComplete: () => undefined },
+    {
+      now: () => now,
+      setInterval: (callback) => { tick = callback; return 1; },
+      clearInterval: () => { tick = null; },
+    },
+  );
+
+  controller.play(route);
+  assert.deepEqual(attacks, [["C4"]]);
+  now = 0.26;
+  (tick as (() => void) | null)?.();
+  assert.deepEqual(releases, [["C4"]]);
+  assert.deepEqual(attacks, [["C4"], ["C4"]]);
 });
 
 test("controller pauses, resumes, changes tempo in place, and cancels sounding audio", () => {

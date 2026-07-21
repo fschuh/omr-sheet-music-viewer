@@ -290,7 +290,10 @@ export function App() {
   const realtimeDisplayNotes = useMemo(() => {
     if (!realtimeFrame) return [];
     return realtimeFrame.activeNotes.map((note) => {
-      const predicted = document?.predictedFingerings?.[note.musicXmlId];
+      const fingeringId = note.fingeringMusicXmlId === undefined
+        ? note.musicXmlId
+        : note.fingeringMusicXmlId;
+      const predicted = fingeringId ? document?.predictedFingerings?.[fingeringId] : undefined;
       return { pitch: note.pitch, ...predicted };
     });
   }, [document?.predictedFingerings, realtimeFrame]);
@@ -308,7 +311,7 @@ export function App() {
     if (!realtimeFrame || !realtimeRouteRef.current) return null;
     const route = realtimeRouteRef.current;
     const visible = realtimeFrame.activeNotes.filter((note) => note.visual !== null);
-    const nearest = [...route.notes]
+    const nearest = [...(route.playheadNotes ?? route.notes)]
       .filter((note) => note.visual !== null && note.onset <= realtimeFrame.offset + 1e-6)
       .at(-1);
     const anchor = visible[0] ?? nearest;
@@ -346,7 +349,9 @@ export function App() {
       {
         onFrame: (frame) => {
           realtimeLatestFrameRef.current = frame;
-          const signature = `${frame.status}:${frame.bpm}:${frame.activeNotes.map((note) => note.id).join(",")}`;
+          const signature = `${frame.status}:${frame.bpm}:${frame.activeNotes
+            .map((note) => `${note.musicXmlId}:${note.pitch}`)
+            .join(",")}`;
           if (signature !== realtimeRenderSignatureRef.current) {
             realtimeRenderSignatureRef.current = signature;
             setRealtimeStatus(frame.status);
