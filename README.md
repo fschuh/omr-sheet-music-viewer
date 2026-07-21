@@ -10,6 +10,10 @@ extension.
 
 ## Run the app from source
 
+> **Recommended platform:** Use Windows 10 or Windows 11 for the smoothest
+> setup and competition evaluation. macOS and Linux setup guidance is included
+> below, but Windows is the primary supported platform.
+
 ### 1. Install the prerequisites
 
 Install these once before cloning the repository:
