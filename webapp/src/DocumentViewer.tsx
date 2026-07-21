@@ -346,7 +346,7 @@ export function DocumentViewer({
     midpoint: VisualPoint;
     transform: ViewportTransform;
   } | null>(null);
-  const autoFitMarker = useRef<string | null>(initialViewportTransform ? documentKey : null);
+  const autoFitMarker = useRef<string | null>(initialViewportTransform ? `${documentKey}:restored` : null);
   const transformRef = useRef(initialViewportTransform ?? DEFAULT_VIEWPORT_TRANSFORM);
   const pendingTransform = useRef<ViewportTransform | null>(null);
   const transformFrame = useRef<number | null>(null);
@@ -408,6 +408,9 @@ export function DocumentViewer({
     [pages],
   );
   const firstRealPage = pages.find((page) => page.status === "complete");
+  const autoFitPhase = firstRealPage
+    ? `${documentKey}:complete`
+    : `${documentKey}:loading:${layout.width}:${layout.height}`;
 
   function fitWidth() {
     const rect = stageRef.current?.getBoundingClientRect();
@@ -420,16 +423,16 @@ export function DocumentViewer({
     activePointers.current.clear();
     dragStart.current = null;
     pinchStart.current = null;
-    autoFitMarker.current = initialViewportTransform ? documentKey : null;
+    autoFitMarker.current = initialViewportTransform ? `${documentKey}:restored` : null;
     setIsPointerPanning(false);
     commitTransform(initialViewportTransform ?? DEFAULT_VIEWPORT_TRANSFORM);
   }, [documentKey]);
 
   useEffect(() => {
-    if (!firstRealPage || autoFitMarker.current === documentKey) return;
-    autoFitMarker.current = documentKey;
+    if (initialViewportTransform || pages.length === 0 || autoFitMarker.current === autoFitPhase) return;
+    autoFitMarker.current = autoFitPhase;
     fitWidth();
-  }, [documentKey, firstRealPage, layout.width]);
+  }, [autoFitPhase, initialViewportTransform, pages.length]);
 
   function fitPage() {
     const rect = stageRef.current?.getBoundingClientRect();
@@ -785,22 +788,41 @@ export function DocumentViewer({
               />
               {page.status !== "complete" ? (
                 <div className="page-placeholder">
-                  {page.status === "failed" ? (
-                    <>
-                      <strong>Page {page.index + 1} failed</strong>
-                      <span>{page.error}</span>
-                      <button
-                        type="button"
-                        onPointerDown={(event) => event.stopPropagation()}
-                        onClick={() => onRetryPage(page.index)}
-                      >Retry page</button>
-                    </>
-                  ) : (
-                    <>
-                      <span className={page.status === "processing" ? "spinner" : "page-pending-dot"} />
-                      <span>{page.status === "loading" ? "Loading recognized notes…" : page.status === "processing" ? "Recognizing page…" : "Waiting to process…"}</span>
-                    </>
-                  )}
+                  <div
+                    className={`page-placeholder-content${page.status === "failed" ? " failed" : ""}`}
+                    role={page.status === "failed" ? "alert" : "status"}
+                    style={{ transform: `scale(${1 / transform.scale})` }}
+                  >
+                    {page.status === "failed" ? (
+                      <>
+                        <strong>Page {page.index + 1} failed</strong>
+                        <span>{page.error}</span>
+                        <button
+                          type="button"
+                          onPointerDown={(event) => event.stopPropagation()}
+                          onClick={() => onRetryPage(page.index)}
+                        >Retry page</button>
+                      </>
+                    ) : (
+                      <>
+                        <span className={page.status === "processing" ? "spinner" : "page-pending-dot"} aria-hidden="true" />
+                        <strong>
+                          {page.status === "loading"
+                            ? `Preparing page ${page.index + 1}`
+                            : page.status === "processing"
+                              ? `Recognizing page ${page.index + 1}`
+                              : `Page ${page.index + 1} is queued`}
+                        </strong>
+                        <span>
+                          {page.status === "loading"
+                            ? "Loading the recognized score…"
+                            : page.status === "processing"
+                              ? "Reading notation and building MusicXML…"
+                              : "Waiting for recognition to begin…"}
+                        </span>
+                      </>
+                    )}
+                  </div>
                 </div>
               ) : null}
               {page.cached && page.status === "complete" ? <span className="cache-badge">Cached</span> : null}

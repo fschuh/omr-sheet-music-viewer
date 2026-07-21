@@ -134,6 +134,39 @@ test("omits pages that were skipped because they contain no music", () => {
   assert.doesNotMatch(markup, /class="page-number">1<\/span>/);
 });
 
+test("renders an explicit recognition state inside a pending page", () => {
+  const processingPage: DocumentPage = {
+    index: 0,
+    status: "processing",
+    width: 850,
+    height: 1100,
+  };
+  const markup = renderToStaticMarkup(
+    <DocumentViewer
+      documentKey="processing-fixture"
+      pages={[processingPage]}
+      selectedGroup={null}
+      highlightAllNotes={false}
+      showOriginalNoteheadContours={false}
+      showDetectedNoteheadContours={false}
+      showRefinedNoteheadContours={false}
+      showRawStemContours={false}
+      playbackActive={false}
+      playbackNoteSoundsEnabled
+      playbackAvailable={false}
+      playbackMoment={null}
+      onPlaybackCommand={() => undefined}
+      onSelectGroup={() => undefined}
+      onRetryPage={() => undefined}
+    />,
+  );
+
+  assert.match(markup, /class="document-page page-processing"/);
+  assert.match(markup, /role="status"/);
+  assert.match(markup, /Recognizing page 1/);
+  assert.match(markup, /Reading notation and building MusicXML…/);
+});
+
 test("does not scroll horizontally when the approached staff edge is already visible", () => {
   assert.equal(
     shouldScrollPlaybackHorizontally(850, 920, 40, 980, 120, 880, 1000),
