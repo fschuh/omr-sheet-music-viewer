@@ -15,7 +15,12 @@ export interface ListenBenchmarkTrial {
   advanced: boolean;
   onsetToAdvanceMs: number | null;
   analysisMs: number;
-  recognizedOnsets?: Array<{ midi: number; confidence: number; noteConfidence: number }>;
+  recognizedOnsets?: Array<{
+    midi: number;
+    confidence: number;
+    noteConfidence: number;
+    onsetAfterAttackMs: number;
+  }>;
 }
 
 export interface ListenBenchmarkSummary {
@@ -148,7 +153,12 @@ class SpectralBenchmarkClient {
             analysisMs: maximumAnalysisMs,
             recognizedOnsets: Array.from(recognized.values())
               .sort((left, right) => left.midi - right.midi)
-              .map(({ midi, confidence, noteConfidence }) => ({ midi, confidence, noteConfidence })),
+              .map(({ midi, confidence, noteConfidence, onsetTimeMs }) => ({
+                midi,
+                confidence,
+                noteConfidence,
+                onsetAfterAttackMs: onsetTimeMs - onsetAtMs,
+              })),
           });
         };
         const analyze = () => {
@@ -198,7 +208,11 @@ export async function runBundledListenBenchmark(
   onProgress: (completed: number, total: number) => void = () => undefined,
 ): Promise<ListenBenchmarkSummary> {
   const correct = [
+    [48],
+    [55],
     [60],
+    [64],
+    [67],
     [48, 60],
     [60, 64, 67],
     [48, 55, 60, 64],
@@ -208,6 +222,7 @@ export async function runBundledListenBenchmark(
   const cases = [
     ...correct.flatMap((pitches) => Array.from({ length: 4 }, () => ({ target: pitches, played: pitches }))),
     { target: [60], played: [61] },
+    { target: [60], played: [60, 72] },
     { target: [60, 64], played: [60, 65] },
     { target: [60, 64, 67], played: [60, 64, 67, 72] },
     { target: [48, 55, 60], played: [48, 55] },

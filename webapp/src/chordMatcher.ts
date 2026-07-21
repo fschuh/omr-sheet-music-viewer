@@ -4,6 +4,7 @@ export interface ChordMatcherOptions {
   onsetThreshold: number;
   targetNoteThreshold: number;
   noteThreshold: number;
+  preTargetExtraLookbackMs: number;
   collectionWindowMs: number;
   settleMs: number;
   duplicateOnsetMs: number;
@@ -14,7 +15,8 @@ export interface ChordMatcherOptions {
 export const defaultChordMatcherOptions: ChordMatcherOptions = {
   onsetThreshold: 0.5,
   targetNoteThreshold: 0.3,
-  noteThreshold: 0.5,
+  noteThreshold: 0.6,
+  preTargetExtraLookbackMs: 30,
   collectionWindowMs: 400,
   settleMs: 80,
   duplicateOnsetMs: 120,
@@ -34,6 +36,13 @@ function sorted(values: Iterable<number>): number[] {
   return Array.from(values).sort((left, right) => left - right);
 }
 
+function looksLikeOvertoneAlias(extraMidi: number, targetMidi: number): boolean {
+  if (extraMidi <= targetMidi) return false;
+  const ratio = 2 ** ((extraMidi - targetMidi) / 12);
+  const harmonic = Math.round(ratio);
+  return harmonic >= 2 && harmonic <= 6 && Math.abs(ratio - harmonic) < 0.035;
+}
+
 /**
  * Collects fresh, confident onsets into an exact score chord. It intentionally
  * knows nothing about spectrum analysis, microphone capture, or playback navigation.
@@ -43,9 +52,11 @@ export class ExactChordMatcher {
   private generation = 0;
   private target = new Set<number>();
   private accumulated = new Map<number, RecognizedOnset>();
+  private unanchoredExtras = new Map<number, RecognizedOnset>();
   private lastOnsetByPitch = new Map<number, number>();
   private attemptStartMs: number | null = null;
   private lastNewOnsetMs: number | null = null;
+  private lastUnanchoredOnsetMs: number | null = null;
   private refractoryUntilMs = 0;
   private rejected = false;
   private matched = false;
@@ -73,8 +84,10 @@ export class ExactChordMatcher {
 
   private clearAttempt(): void {
     this.accumulated.clear();
+    this.unanchoredExtras.clear();
     this.attemptStartMs = null;
     this.lastNewOnsetMs = null;
+    this.lastUnanchoredOnsetMs = null;
     this.rejected = false;
   }
 
@@ -83,7 +96,10 @@ export class ExactChordMatcher {
       Array.from(this.accumulated.keys()).filter((pitch) => this.target.has(pitch)),
     );
     const extraPitches = sorted(
-      Array.from(this.accumulated.keys()).filter((pitch) => !this.target.has(pitch)),
+      new Set([
+        ...Array.from(this.accumulated.keys()).filter((pitch) => !this.target.has(pitch)),
+        ...this.unanchoredExtras.keys(),
+      ]),
     );
     return {
       matched,
@@ -116,7 +132,31 @@ export class ExactChordMatcher {
         continue;
       }
       this.lastOnsetByPitch.set(onset.midi, onset.onsetTimeMs);
-      if (this.attemptStartMs === null) this.attemptStartMs = onset.onsetTimeMs;
+      if (this.attemptStartMs === null && !this.target.has(onset.midi)) {
+        const existing = this.unanchoredExtras.get(onset.midi);
+        if (!existing || existing.confidence < onset.confidence) {
+          this.unanchoredExtras.set(onset.midi, onset);
+        }
+        this.lastUnanchoredOnsetMs = Math.max(
+          this.lastUnanchoredOnsetMs ?? 0,
+          onset.onsetTimeMs,
+        );
+        continue;
+      }
+      if (this.attemptStartMs === null) {
+        this.attemptStartMs = onset.onsetTimeMs;
+        for (const extra of this.unanchoredExtras.values()) {
+          if (
+            onset.onsetTimeMs - extra.onsetTimeMs <= this.options.preTargetExtraLookbackMs ||
+            !looksLikeOvertoneAlias(extra.midi, onset.midi)
+          ) {
+            this.accumulated.set(extra.midi, extra);
+            this.rejected = true;
+          }
+        }
+        this.unanchoredExtras.clear();
+        this.lastUnanchoredOnsetMs = null;
+      }
       if (onset.onsetTimeMs - this.attemptStartMs > this.options.collectionWindowMs) {
         this.rejected = true;
         continue;
@@ -143,6 +183,14 @@ export class ExactChordMatcher {
     }
 
     const silent = result.activePitches.length === 0;
+    if (
+      silent &&
+      this.lastUnanchoredOnsetMs !== null &&
+      result.capturedAtMs - this.lastUnanchoredOnsetMs >= this.options.wrongAttemptSilenceMs
+    ) {
+      this.unanchoredExtras.clear();
+      this.lastUnanchoredOnsetMs = null;
+    }
     if (
       silent &&
       this.lastNewOnsetMs !== null &&

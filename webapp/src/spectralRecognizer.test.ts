@@ -41,6 +41,7 @@ function fixture(options: {
   const analyser = new MockAnalyser();
   const detector = new MockDetector();
   const source = new MockNode();
+  const silentGain = Object.assign(new MockNode(), { gain: { value: 1 } });
   let closed = false;
   let stopped = false;
   let constraints: MediaStreamConstraints | null = null;
@@ -57,8 +58,10 @@ function fixture(options: {
       if (options.audioContextError) throw options.audioContextError;
       return {
         sampleRate: 48_000,
+        destination: {},
         createMediaStreamSource: () => source,
         createAnalyser: () => analyser,
+        createGain: () => silentGain,
         resume: async () => undefined,
         close: async () => { closed = true; },
       };
@@ -80,6 +83,7 @@ function fixture(options: {
     analyser,
     detector,
     source,
+    silentGain,
     stream,
     frames,
     cancelledFrames,
@@ -108,6 +112,7 @@ test("starts only after the microphone and spectrum analyzer are ready", async (
   assert.equal(lifecycle.at(-1)?.analysis, "ready");
   assert.equal(mock.analyser.fftSize, 16_384);
   assert.equal(mock.analyser.smoothingTimeConstant, 0);
+  assert.equal(mock.silentGain.gain.value, 0);
   assert.deepEqual(mock.constraints, {
     audio: {
       channelCount: 1,
@@ -190,4 +195,5 @@ test("pause flushes analysis and stop closes every resource", async () => {
   assert.equal(mock.closed, true);
   assert.equal(mock.source.disconnected, true);
   assert.equal(mock.analyser.disconnected, true);
+  assert.equal(mock.silentGain.disconnected, true);
 });

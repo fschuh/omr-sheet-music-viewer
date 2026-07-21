@@ -82,6 +82,28 @@ test("uses note confidence to reject onset-like harmonic tails", () => {
   assert.deepEqual(update.extraPitches, []);
 });
 
+test("anchors an attempt on the target while retaining simultaneous extras", () => {
+  const transient = new ExactChordMatcher();
+  transient.setTarget([60], 1, 0);
+  transient.consume(result(1, 900, [onset(72, 900)]));
+  transient.consume(result(1, 1_000, [onset(60, 1_000)]));
+  assert.equal(transient.consume(result(1, 1_081, [], [60])).matched, true);
+
+  const simultaneousExtra = new ExactChordMatcher();
+  simultaneousExtra.setTarget([60], 2, 0);
+  simultaneousExtra.consume(result(2, 1_980, [onset(72, 1_980)]));
+  simultaneousExtra.consume(result(2, 2_000, [onset(60, 2_000)]));
+  const update = simultaneousExtra.consume(result(2, 2_081, [], [60, 72]));
+  assert.equal(update.matched, false);
+  assert.deepEqual(update.extraPitches, [72]);
+
+  const earlierNonHarmonicExtra = new ExactChordMatcher();
+  earlierNonHarmonicExtra.setTarget([60], 3, 0);
+  earlierNonHarmonicExtra.consume(result(3, 2_900, [onset(67, 2_900)]));
+  earlierNonHarmonicExtra.consume(result(3, 3_000, [onset(60, 3_000)]));
+  assert.equal(earlierNonHarmonicExtra.consume(result(3, 3_081, [], [60, 67])).matched, false);
+});
+
 test("times out rolled notes beyond the collection window", () => {
   const matcher = new ExactChordMatcher();
   matcher.setTarget([60, 64], 1, 0);

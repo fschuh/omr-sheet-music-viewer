@@ -4,6 +4,7 @@ import { midiToFrequency, SpectralPitchDetector } from "./spectralPitchDetector"
 
 const SAMPLE_RATE = 48_000;
 const FFT_SIZE = 16_384;
+const detectorOptions = { sampleRate: SAMPLE_RATE, fftSize: FFT_SIZE };
 
 function spectrum(pitches: readonly number[], level = 0.7): Float32Array {
   const amplitudes = new Float32Array(FFT_SIZE / 2);
@@ -25,12 +26,27 @@ function spectrum(pitches: readonly number[], level = 0.7): Float32Array {
   ));
 }
 
+function overtoneHeavySpectrum(midi: number): Float32Array {
+  const amplitudes = new Float32Array(FFT_SIZE / 2);
+  const harmonicLevels = [0.2, 0.6, 1, 0.4, 0.3, 0.2];
+  for (let harmonic = 1; harmonic <= harmonicLevels.length; harmonic += 1) {
+    const exactBin = midiToFrequency(midi) * harmonic * FFT_SIZE / SAMPLE_RATE;
+    for (let bin = Math.floor(exactBin) - 1; bin <= Math.ceil(exactBin) + 1; bin += 1) {
+      const distance = Math.abs(bin - exactBin);
+      amplitudes[bin] += harmonicLevels[harmonic - 1] * Math.max(0, 1 - distance / 1.8);
+    }
+  }
+  return Float32Array.from(amplitudes, (amplitude) => (
+    amplitude > 0 ? 20 * Math.log10(amplitude) : -110
+  ));
+}
+
 function detectedPitches(detector: SpectralPitchDetector, values: Float32Array, nowMs: number): number[] {
   return detector.process(values, nowMs).onsets.map((onset) => onset.midi);
 }
 
 test("emits simultaneous polyphonic attacks and ignores their sustained tails", () => {
-  const detector = new SpectralPitchDetector({ sampleRate: SAMPLE_RATE, fftSize: FFT_SIZE });
+  const detector = new SpectralPitchDetector(detectorOptions);
   detector.process(spectrum([]), 0);
   assert.deepEqual(detectedPitches(detector, spectrum([60, 64, 67]), 16), []);
   detector.process(spectrum([60, 64, 67]), 32);
@@ -41,7 +57,7 @@ test("emits simultaneous polyphonic attacks and ignores their sustained tails", 
 });
 
 test("rearms a pitch after its attack flux settles so a repeated note is fresh", () => {
-  const detector = new SpectralPitchDetector({ sampleRate: SAMPLE_RATE, fftSize: FFT_SIZE });
+  const detector = new SpectralPitchDetector(detectorOptions);
   detector.process(spectrum([]), 0);
   detector.process(spectrum([60]), 16);
   detector.process(spectrum([60]), 32);
@@ -56,7 +72,7 @@ test("rearms a pitch after its attack flux settles so a repeated note is fresh",
 });
 
 test("detects a newly rolled chord tone while earlier notes continue sounding", () => {
-  const detector = new SpectralPitchDetector({ sampleRate: SAMPLE_RATE, fftSize: FFT_SIZE });
+  const detector = new SpectralPitchDetector(detectorOptions);
   detector.process(spectrum([]), 0);
   detector.process(spectrum([60]), 16);
   detector.process(spectrum([60]), 32);
@@ -71,7 +87,7 @@ test("detects a newly rolled chord tone while earlier notes continue sounding", 
 });
 
 test("rejects low-level noise and covers the top of the 88-key range", () => {
-  const detector = new SpectralPitchDetector({ sampleRate: SAMPLE_RATE, fftSize: FFT_SIZE });
+  const detector = new SpectralPitchDetector(detectorOptions);
   const noise = new Float32Array(FFT_SIZE / 2).fill(-95);
   for (let bin = 20; bin < noise.length; bin += 47) noise[bin] = -91;
   detector.process(noise, 0);
@@ -79,4 +95,13 @@ test("rejects low-level noise and covers the top of the 88-key range", () => {
   detector.process(spectrum([108]), 32);
   detector.process(spectrum([108]), 48);
   assert.deepEqual(detectedPitches(detector, spectrum([108]), 64), [108]);
+});
+
+test("keeps an overtone-heavy piano attack anchored to its fundamental", () => {
+  const detector = new SpectralPitchDetector(detectorOptions);
+  const attack = overtoneHeavySpectrum(55);
+  detector.process(spectrum([]), 0);
+  detector.process(attack, 16);
+  detector.process(attack, 32);
+  assert.deepEqual(detectedPitches(detector, attack, 48), [55]);
 });

@@ -40,7 +40,6 @@ interface Fundamental {
 }
 
 interface FundamentalCandidate extends Omit<Fundamental, "confidence"> {
-  fundamentalAmplitude: number;
   harmonicCount: number;
 }
 
@@ -50,7 +49,7 @@ const defaultOptions: Omit<SpectralPitchDetectorOptions, "sampleRate" | "fftSize
   maxFundamentals: 10,
   numHarmonics: 6,
   minPeakMarginDb: 16,
-  minRelativeScore: 0.18,
+  minRelativeScore: 0.5,
   harmonicSuppressionRatio: 0.78,
   attackThreshold: 0.5,
   attackReleaseThreshold: 0.16,
@@ -215,9 +214,10 @@ export class SpectralPitchDetector {
       const value = {
         midi,
         frequency: midiToFrequency(midi),
-        score,
+        // PitchPlease promotes candidates supported by several harmonics,
+        // rather than allowing one loud overtone to win on amplitude alone.
+        score: score * Math.sqrt(harmonicCount),
         attackRatio: currentEnergy > 0 ? positiveEnergy / currentEnergy : 0,
-        fundamentalAmplitude: peak.amplitude,
         harmonicCount,
       };
       const existing = candidates.get(midi);
@@ -227,40 +227,27 @@ export class SpectralPitchDetector {
     let maximumScore = 0;
     for (const candidate of candidates.values()) maximumScore = Math.max(maximumScore, candidate.score);
     const accepted: Fundamental[] = [];
-    const orderedCandidates = Array.from(candidates.values()).sort((left, right) => left.midi - right.midi);
+    const orderedCandidates = Array.from(candidates.values()).sort((left, right) => right.score - left.score);
     for (const candidate of orderedCandidates) {
       const relativeScore = maximumScore > 0 ? candidate.score / maximumScore : 0;
       if (relativeScore < this.options.minRelativeScore) continue;
-      // A low-frequency peak followed by a much stronger real note can look
-      // like a subharmonic fundamental. Require meaningful energy at the
-      // candidate itself instead of allowing its harmonics to dominate.
-      if (candidate.fundamentalAmplitude / Math.max(candidate.score, Number.EPSILON) < 0.1) continue;
-      const subharmonicOfHigher = orderedCandidates.some((higher) => {
-        if (higher.midi <= candidate.midi || higher.score <= candidate.score) return false;
-        const ratio = higher.frequency / candidate.frequency;
+      const explainedBySelected = accepted.some((selected) => {
+        const ratio = candidate.frequency / selected.frequency;
         const harmonic = Math.round(ratio);
         return harmonic >= 2 &&
           harmonic <= this.options.numHarmonics &&
           Math.abs(ratio - harmonic) < 0.035 &&
-          candidate.score < higher.score * 0.8 &&
-          candidate.fundamentalAmplitude < higher.fundamentalAmplitude * 0.45;
+          candidate.score < selected.score * this.options.harmonicSuppressionRatio;
       });
-      if (subharmonicOfHigher) continue;
-      const explainedByLower = accepted.some((lower) => {
-        const ratio = candidate.frequency / lower.frequency;
-        const harmonic = Math.round(ratio);
-        return harmonic >= 2 &&
-          harmonic <= this.options.numHarmonics &&
-          Math.abs(ratio - harmonic) < 0.035 &&
-          candidate.score < lower.score * this.options.harmonicSuppressionRatio;
-      });
-      if (explainedByLower) continue;
+      if (explainedBySelected) continue;
       accepted.push({
         midi: candidate.midi,
         frequency: candidate.frequency,
         score: candidate.score,
         attackRatio: candidate.attackRatio,
-        confidence: clamp(relativeScore * 1.65),
+        // Preserve score separation here. Saturating most candidates made
+        // weak resonances indistinguishable from independently played notes.
+        confidence: clamp(relativeScore),
       });
     }
 
