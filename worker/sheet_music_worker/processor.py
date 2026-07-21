@@ -279,16 +279,26 @@ class PdfProcessor:
             ]
             if all_pages_resolved and page_music_xml:
                 document_music_xml = document_music_xml_path
-                worker_log(
-                    f"Post-processing {len(page_music_xml)} page(s) into "
-                    f"{document_music_xml.name}"
-                )
-                merge_musicxml_pages(page_music_xml, document_music_xml)
-                manifest["documentMusicXml"] = self._relative(
+                relative_document_music_xml = self._relative(
                     cache_directory, document_music_xml
                 )
-                atomic_write_json(manifest_path, manifest)
-                worker_log(f"Merged MusicXML is ready at {document_music_xml}")
+                merged_score_is_reusable = (
+                    force_page_index is None
+                    and reusable == page_count
+                    and manifest.get("documentMusicXml") == relative_document_music_xml
+                    and document_music_xml.is_file()
+                )
+                if merged_score_is_reusable:
+                    worker_log(f"Using cached merged MusicXML at {document_music_xml}")
+                else:
+                    worker_log(
+                        f"Post-processing {len(page_music_xml)} page(s) into "
+                        f"{document_music_xml.name}"
+                    )
+                    merge_musicxml_pages(page_music_xml, document_music_xml)
+                    manifest["documentMusicXml"] = relative_document_music_xml
+                    atomic_write_json(manifest_path, manifest)
+                    worker_log(f"Merged MusicXML is ready at {document_music_xml}")
 
             status = "complete" if failed == 0 else "partial"
             worker_log(

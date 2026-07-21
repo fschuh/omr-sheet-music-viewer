@@ -1,6 +1,9 @@
 import type { Note as PianoFingeringNote } from "@lumikey/piano-fingering-model";
 
 const DEFAULT_TEMPO_BPM = 120;
+const FINGERING_CACHE_FIELD_NAME = "homr-piano-fingering-cache";
+// Bump this whenever the model version or hand-assignment rules change.
+const FINGERING_CACHE_VERSION = "lumikey-0.3.0-staff-hands-v1";
 const STEP_SEMITONES: Readonly<Record<string, number>> = {
   C: 0,
   D: 2,
@@ -331,6 +334,59 @@ function replaceFingering(note: Element, finger: number): void {
   technical.appendChild(fingering);
 }
 
+function fingeringForNote(note: Element): number | null {
+  for (const notations of childrenNamed(note, "notations")) {
+    for (const technical of childrenNamed(notations, "technical")) {
+      for (const fingering of childrenNamed(technical, "fingering")) {
+        const finger = finiteNumber(fingering.textContent);
+        if (finger !== null && Number.isInteger(finger) && finger >= 1 && finger <= 5) {
+          return finger;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+function fingeringCacheField(document: XMLDocument): Element | null {
+  const identification = firstChild(document.documentElement, "identification");
+  const miscellaneous = identification && firstChild(identification, "miscellaneous");
+  return miscellaneous
+    ? childrenNamed(miscellaneous, "miscellaneous-field").find(
+        (field) => field.getAttribute("name") === FINGERING_CACHE_FIELD_NAME,
+      ) ?? null
+    : null;
+}
+
+function markFingeringCacheCurrent(document: XMLDocument): void {
+  const score = document.documentElement;
+  let identification = firstChild(score, "identification");
+  if (!identification) {
+    identification = createMusicXmlElement(score, "identification");
+    const laterChild = elements(score).find((child) =>
+      child.localName === "defaults" ||
+      child.localName === "credit" ||
+      child.localName === "part-list" ||
+      child.localName === "part",
+    );
+    score.insertBefore(identification, laterChild ?? null);
+  }
+  let miscellaneous = firstChild(identification, "miscellaneous");
+  if (!miscellaneous) {
+    miscellaneous = createMusicXmlElement(identification, "miscellaneous");
+    identification.appendChild(miscellaneous);
+  }
+  let field = childrenNamed(miscellaneous, "miscellaneous-field").find(
+    (candidate) => candidate.getAttribute("name") === FINGERING_CACHE_FIELD_NAME,
+  );
+  if (!field) {
+    field = createMusicXmlElement(miscellaneous, "miscellaneous-field");
+    field.setAttribute("name", FINGERING_CACHE_FIELD_NAME);
+    miscellaneous.appendChild(field);
+  }
+  field.textContent = FINGERING_CACHE_VERSION;
+}
+
 function serializeMusicXml(document: XMLDocument): string {
   if (typeof XMLSerializer === "undefined") {
     throw new Error("MusicXML serialization is unavailable in this runtime");
@@ -339,6 +395,34 @@ function serializeMusicXml(document: XMLDocument): string {
   return /^\s*<\?xml/.test(serialized)
     ? serialized
     : `<?xml version="1.0" encoding="UTF-8"?>\n${serialized}`;
+}
+
+export function cachedFingeringsFromMusicXml(
+  musicXml: string,
+): MusicXmlFingeringResult | null {
+  const document = musicXmlDocument(musicXml);
+  if (fingeringCacheField(document)?.textContent?.trim() !== FINGERING_CACHE_VERSION) {
+    return null;
+  }
+
+  const tempoOrder = { value: 0 };
+  const parts = childrenNamed(document.documentElement, "part").map((part) =>
+    parsePart(part, tempoOrder),
+  );
+  const { indexed, raw } = modelNotes(parts);
+  const fingeringsByMusicXmlId: Record<string, PredictedFingering> = {};
+  for (const source of raw) {
+    const finger = fingeringForNote(source.element);
+    if (finger === null) return null;
+    if (source.musicXmlId) {
+      fingeringsByMusicXmlId[source.musicXmlId] = { finger, left: source.left };
+    }
+  }
+  return {
+    musicXml,
+    fingeringsByMusicXmlId,
+    noteCount: indexed.length,
+  };
 }
 
 export async function addPredictedFingeringsToMusicXml(
@@ -379,6 +463,7 @@ export async function addPredictedFingeringsToMusicXml(
       `The fingering model returned ${annotatedCount} usable predictions for ${indexed.length} notes`,
     );
   }
+  markFingeringCacheCurrent(document);
 
   return {
     musicXml: serializeMusicXml(document),

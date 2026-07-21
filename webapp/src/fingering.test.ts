@@ -3,6 +3,7 @@ import test from "node:test";
 import { DOMParser as XmldomParser, XMLSerializer as XmldomSerializer } from "@xmldom/xmldom";
 import {
   addPredictedFingeringsToMusicXml,
+  cachedFingeringsFromMusicXml,
   type IndexedFingeringNote,
 } from "./fingering";
 
@@ -105,6 +106,23 @@ test("assigns staff 2 to the left hand even when its clef is treble", async () =
   ]);
   assert.deepEqual(result.fingeringsByMusicXmlId.upper, { finger: 1, left: false });
   assert.deepEqual(result.fingeringsByMusicXmlId.lower, { finger: 5, left: true });
+});
+
+test("loads complete versioned fingerings from MusicXML without inference", async () => {
+  assert.equal(cachedFingeringsFromMusicXml(SCORE), null);
+
+  const predicted = await addPredictedFingeringsToMusicXml(SCORE, async (notes) =>
+    notes.map((note) => ({ ...note, finger: note.left ? 4 : 2 })),
+  );
+  const cached = cachedFingeringsFromMusicXml(predicted.musicXml);
+
+  assert.ok(cached);
+  assert.equal(cached.musicXml, predicted.musicXml);
+  assert.equal(cached.noteCount, predicted.noteCount);
+  assert.deepEqual(cached.fingeringsByMusicXmlId, predicted.fingeringsByMusicXmlId);
+
+  const incomplete = predicted.musicXml.replace(/<fingering>[^<]+<\/fingering>/, "");
+  assert.equal(cachedFingeringsFromMusicXml(incomplete), null);
 });
 
 test("honors backup and forward when voices share a measure", async () => {

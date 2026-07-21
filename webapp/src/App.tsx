@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DocumentViewer } from "./DocumentViewer";
-import { addPredictedFingeringsToMusicXml } from "./fingering";
+import {
+  addPredictedFingeringsToMusicXml,
+  cachedFingeringsFromMusicXml,
+} from "./fingering";
 import { PianoKeyboard } from "./PianoKeyboard";
 import { SettingsPage } from "./SettingsPage";
 import {
@@ -108,9 +111,8 @@ function statusLabel(document: LoadedDocument): string {
   if (document.status === "partial") return "Finished with page errors";
   if (document.status === "cancelled") return "Cancelled — completed pages were cached";
   if (document.status === "failed") return "Document processing failed";
-  if (document.fingeringStatus === "pending" || document.fingeringStatus === "predicting") {
-    return "Predicting piano fingerings…";
-  }
+  if (document.fingeringStatus === "pending") return "Loading piano fingerings…";
+  if (document.fingeringStatus === "predicting") return "Predicting piano fingerings…";
   if (document.fingeringStatus === "failed") return "Recognition complete · fingerings unavailable";
   return document.cacheStatus === "complete" ? "Loaded from cache" : "Recognition complete";
 }
@@ -616,21 +618,27 @@ export function App() {
     if (fingeringRequestRef.current === requestKey) return;
     fingeringRequestRef.current = requestKey;
     const jobId = document.jobId;
-    setDocument((current) =>
-      current?.jobId === jobId ? { ...current, fingeringStatus: "predicting" } : current,
-    );
 
     void readMusicXml(path)
       .then(async (musicXml) => {
+        const cached = cachedFingeringsFromMusicXml(musicXml);
+        if (cached) return { result: cached, needsWrite: false };
+        setDocument((current) =>
+          current?.jobId === jobId ? { ...current, fingeringStatus: "predicting" } : current,
+        );
         const { predictPianoFingerings } = await import("./fingeringModel");
-        return addPredictedFingeringsToMusicXml(musicXml, predictPianoFingerings);
+        const result = await addPredictedFingeringsToMusicXml(
+          musicXml,
+          predictPianoFingerings,
+        );
+        return { result, needsWrite: true };
       })
-      .then(async (result) => {
+      .then(async ({ result, needsWrite }) => {
         if (
           activeJobId.current !== jobId ||
           fingeringRequestRef.current !== requestKey
         ) return;
-        await writeMusicXml(path, result.musicXml);
+        if (needsWrite) await writeMusicXml(path, result.musicXml);
         if (
           activeJobId.current !== jobId ||
           fingeringRequestRef.current !== requestKey
@@ -855,7 +863,9 @@ export function App() {
             <button
               type="button"
               title={
-                document.fingeringStatus === "pending" || document.fingeringStatus === "predicting"
+                document.fingeringStatus === "pending"
+                  ? "Piano fingerings are being loaded from the MusicXML"
+                  : document.fingeringStatus === "predicting"
                   ? "The MusicXML is being annotated with predicted piano fingerings"
                   : document.documentMusicXmlPath
                   ? `Open ${fileName(document.documentMusicXmlPath)} with the system default application`

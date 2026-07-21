@@ -168,6 +168,12 @@ def test_pdf_processing_rasterizes_then_reuses_cache(tmp_path: Path) -> None:
     first_completed = [event for event in first_events if event.get("type") == "job_completed"]
     assert first_completed[0]["documentMusicXmlPath"] == str(merged_music_xml.resolve())
 
+    annotated_music_xml = merged_music_xml.read_text(encoding="utf-8").replace(
+        "</score-partwise>",
+        "<!-- fingering-cache:v1 --></score-partwise>",
+    )
+    merged_music_xml.write_text(annotated_music_xml, encoding="utf-8")
+
     cached_events: list[dict[str, object]] = []
     PdfProcessor(cached_events.append, engine).process_pdf(  # type: ignore[arg-type]
         job_id="second",
@@ -180,6 +186,7 @@ def test_pdf_processing_rasterizes_then_reuses_cache(tmp_path: Path) -> None:
     assert len(completed) == 2
     assert all(event["cached"] is True for event in completed)
     assert merged_music_xml.is_file()
+    assert merged_music_xml.read_text(encoding="utf-8") == annotated_music_xml
 
 
 def test_pdf_processing_invalidates_an_older_sidecar_cache_revision(tmp_path: Path) -> None:
