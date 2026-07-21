@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DocumentViewer } from "./DocumentViewer";
+import { addPredictedFingeringsToMusicXml } from "./fingering";
 import { PianoKeyboard } from "./PianoKeyboard";
 import { SettingsPage } from "./SettingsPage";
 import {
@@ -24,11 +25,13 @@ import {
   openMusicXml,
   openPdf,
   pageImageUrl,
+  readMusicXml,
   refreshMidiInputs,
   retryPage,
   subscribeToMidiMessages,
   subscribeToWorkerEvents,
   type WorkerEvent,
+  writeMusicXml,
 } from "./native";
 import {
   commandForKeyboardEvent,
@@ -105,6 +108,10 @@ function statusLabel(document: LoadedDocument): string {
   if (document.status === "partial") return "Finished with page errors";
   if (document.status === "cancelled") return "Cancelled — completed pages were cached";
   if (document.status === "failed") return "Document processing failed";
+  if (document.fingeringStatus === "pending" || document.fingeringStatus === "predicting") {
+    return "Predicting piano fingerings…";
+  }
+  if (document.fingeringStatus === "failed") return "Recognition complete · fingerings unavailable";
   return document.cacheStatus === "complete" ? "Loaded from cache" : "Recognition complete";
 }
 
@@ -124,6 +131,7 @@ function isPlaybackToggleCommand(command: PlaybackCommand): boolean {
 export function App() {
   const nativeAvailable = nativeViewerAvailable();
   const activeJobId = useRef<string | null>(null);
+  const fingeringRequestRef = useRef<string | null>(null);
   const nextWorkerLogId = useRef(1);
   const workerLogOutput = useRef<HTMLDivElement | null>(null);
   const [activePage, setActivePage] = useState<"viewer" | "settings">("viewer");
@@ -159,8 +167,8 @@ export function App() {
     nativeAvailable ? null : "PDF processing is available in the Tauri desktop app. Run npm run tauri dev.",
   );
   const playbackTimeline = useMemo(
-    () => buildPlaybackTimeline(document?.pages ?? []),
-    [document?.pages],
+    () => buildPlaybackTimeline(document?.pages ?? [], document?.predictedFingerings),
+    [document?.pages, document?.predictedFingerings],
   );
   const [playbackState, setPlaybackState] = useState(initialPlaybackState);
   const playbackStateRef = useRef(playbackState);
@@ -440,6 +448,7 @@ export function App() {
       }
       if (event.type === "job_started") {
         activeJobId.current = event.jobId;
+        fingeringRequestRef.current = null;
         setError(null);
         setDocument((current) => {
           if (current?.jobId === event.jobId && current.pages.length === event.pageCount) {
@@ -449,6 +458,10 @@ export function App() {
               cacheStatus: event.cacheStatus,
               cachePath: event.cachePath,
               documentMusicXmlPath: undefined,
+              fingeringStatus: undefined,
+              fingeringError: undefined,
+              predictedFingerings: undefined,
+              predictedFingeringCount: undefined,
               status: "processing",
             };
           }
@@ -478,6 +491,9 @@ export function App() {
                 ...page,
                 status: "processing",
                 error: undefined,
+                artifacts: undefined,
+                musicXml: undefined,
+                visualSidecar: undefined,
               }))
             : current,
         );
@@ -493,6 +509,8 @@ export function App() {
                 height: event.artifacts.height,
                 artifacts: event.artifacts,
                 cached: event.cached,
+                musicXml: undefined,
+                visualSidecar: undefined,
               }))
             : current,
         );
@@ -534,6 +552,9 @@ export function App() {
                 status: "skipped",
                 cached: event.cached,
                 error: undefined,
+                artifacts: undefined,
+                musicXml: undefined,
+                visualSidecar: undefined,
               }))
             : current,
         );
@@ -546,6 +567,9 @@ export function App() {
                 ...page,
                 status: "failed",
                 error: event.error.message,
+                artifacts: undefined,
+                musicXml: undefined,
+                visualSidecar: undefined,
               }))
             : current,
         );
@@ -558,6 +582,10 @@ export function App() {
                 ...current,
                 status: event.status,
                 documentMusicXmlPath: event.documentMusicXmlPath,
+                fingeringStatus: event.documentMusicXmlPath ? "pending" : undefined,
+                fingeringError: undefined,
+                predictedFingerings: undefined,
+                predictedFingeringCount: undefined,
               }
             : current,
         );
@@ -580,6 +608,61 @@ export function App() {
       unsubscribe?.();
     };
   }, [nativeAvailable]);
+
+  useEffect(() => {
+    const path = document?.documentMusicXmlPath;
+    if (!document || !path || document.fingeringStatus !== "pending") return;
+    const requestKey = `${document.jobId}:${path}`;
+    if (fingeringRequestRef.current === requestKey) return;
+    fingeringRequestRef.current = requestKey;
+    const jobId = document.jobId;
+    setDocument((current) =>
+      current?.jobId === jobId ? { ...current, fingeringStatus: "predicting" } : current,
+    );
+
+    void readMusicXml(path)
+      .then(async (musicXml) => {
+        const { predictPianoFingerings } = await import("./fingeringModel");
+        return addPredictedFingeringsToMusicXml(musicXml, predictPianoFingerings);
+      })
+      .then(async (result) => {
+        if (
+          activeJobId.current !== jobId ||
+          fingeringRequestRef.current !== requestKey
+        ) return;
+        await writeMusicXml(path, result.musicXml);
+        if (
+          activeJobId.current !== jobId ||
+          fingeringRequestRef.current !== requestKey
+        ) return;
+        setDocument((current) =>
+          current?.jobId === jobId
+            ? {
+                ...current,
+                fingeringStatus: "ready",
+                fingeringError: undefined,
+                predictedFingerings: result.fingeringsByMusicXmlId,
+                predictedFingeringCount: result.noteCount,
+              }
+            : current,
+        );
+      })
+      .catch((fingeringError: unknown) => {
+        if (
+          activeJobId.current !== jobId ||
+          fingeringRequestRef.current !== requestKey
+        ) return;
+        const message = fingeringError instanceof Error
+          ? fingeringError.message
+          : String(fingeringError);
+        setDocument((current) =>
+          current?.jobId === jobId
+            ? { ...current, fingeringStatus: "failed", fingeringError: message }
+            : current,
+        );
+        setError(`Piano fingering prediction failed: ${message}`);
+      });
+  }, [document?.documentMusicXmlPath, document?.fingeringStatus, document?.jobId]);
 
   useEffect(() => {
     if (!nativeAvailable) return;
@@ -700,16 +783,28 @@ export function App() {
 
   async function handleRetryPage(pageIndex: number) {
     if (!document) return;
+    fingeringRequestRef.current = null;
     setError(null);
     setDocument((current) =>
       current
         ? replacePage(
-            { ...current, status: "processing", documentMusicXmlPath: undefined },
+            {
+              ...current,
+              status: "processing",
+              documentMusicXmlPath: undefined,
+              fingeringStatus: undefined,
+              fingeringError: undefined,
+              predictedFingerings: undefined,
+              predictedFingeringCount: undefined,
+            },
             pageIndex,
             (page) => ({
               ...page,
               status: "processing",
               error: undefined,
+              artifacts: undefined,
+              musicXml: undefined,
+              visualSidecar: undefined,
             }),
           )
         : current,
@@ -760,11 +855,17 @@ export function App() {
             <button
               type="button"
               title={
-                document.documentMusicXmlPath
+                document.fingeringStatus === "pending" || document.fingeringStatus === "predicting"
+                  ? "The MusicXML is being annotated with predicted piano fingerings"
+                  : document.documentMusicXmlPath
                   ? `Open ${fileName(document.documentMusicXmlPath)} with the system default application`
                   : "MusicXML is available after every page is recognized"
               }
-              disabled={!document.documentMusicXmlPath}
+              disabled={
+                !document.documentMusicXmlPath ||
+                document.fingeringStatus === "pending" ||
+                document.fingeringStatus === "predicting"
+              }
               onClick={handleOpenMusicXml}
             >
               Open MusicXML
@@ -903,13 +1004,14 @@ export function App() {
                 <dt>Failed pages</dt><dd>{totals.failedPages}</dd>
                 <dt>Visual groups</dt><dd>{totals.visualGroups.toLocaleString()}</dd>
                 <dt>Linked notes</dt><dd>{totals.linkedNotes.toLocaleString()}</dd>
+                <dt>Predicted fingerings</dt><dd>{(document.predictedFingeringCount ?? 0).toLocaleString()}</dd>
                 <dt>Unmatched XML</dt><dd>{totals.unmatchedMusicXml.toLocaleString()}</dd>
                 <dt>Unmatched visual</dt><dd>{totals.unmatchedVisual.toLocaleString()}</dd>
               </dl>
               {workerInfo ? <p className="worker-info">{workerInfo}</p> : null}
             </aside>
             {playbackState.active ? (
-              <PianoKeyboard pitches={playbackMoment?.pitches ?? []} />
+              <PianoKeyboard notes={playbackMoment?.keyboardNotes ?? []} />
             ) : null}
           </>
         ) : (

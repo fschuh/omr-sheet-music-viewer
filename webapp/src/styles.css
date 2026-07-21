@@ -314,16 +314,19 @@ button:disabled {
 }
 
 .piano-key-label {
+  align-items: center;
   background: #075f51;
   border: 1px solid rgb(255 255 255 / 72%);
   border-radius: 999px;
   bottom: 13%;
   color: #fff;
+  display: flex;
+  flex-direction: column;
   font-size: clamp(0.48rem, 0.72vw, 0.7rem);
   font-weight: 800;
   left: 50%;
   line-height: 1;
-  padding: 3px 4px;
+  padding: 3px 4px 4px;
   position: absolute;
   text-shadow: 0 1px 1px rgb(0 0 0 / 34%);
   transform: translateX(-50%);
@@ -331,12 +334,31 @@ button:disabled {
   z-index: 4;
 }
 
+.piano-key-fingering {
+  background: #172c28;
+  border: 1px solid rgb(255 255 255 / 88%);
+  border-radius: 999px;
+  color: #fff;
+  font-size: clamp(0.46rem, 0.7vw, 0.68rem);
+  line-height: 1;
+  margin-bottom: 2px;
+  padding: 2px 4px;
+}
+
+.piano-key-note-name { line-height: 1; }
+
 .piano-key-black .piano-key-label {
   background: #f7fffc;
   border-color: #075f51;
   bottom: 8px;
   color: #075f51;
   text-shadow: none;
+}
+
+.piano-key-black .piano-key-fingering {
+  background: #064f44;
+  border-color: #fff;
+  color: #fff;
 }
 
 .empty-state {

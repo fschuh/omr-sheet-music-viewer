@@ -8,6 +8,13 @@ playback navigation. The merged
 file is stored at the PDF cache root using the PDF filename with a `.musicxml`
 extension.
 
+After the document-level MusicXML is generated, the app runs the bundled piano
+fingering models locally for both hands and adds each prediction as a MusicXML
+`<fingering>` technical notation. This first hand-assignment pass treats bass-clef
+notes as left hand and treble-clef notes as right hand. During playback, the
+keyboard shows the predicted hand and finger above each active note name (for
+example, `L5` or `R1`).
+
 After the merged file is ready, **Open MusicXML** delegates it to the operating
 system. The configured default application opens it, or the system can prompt
 for an application when no association exists.

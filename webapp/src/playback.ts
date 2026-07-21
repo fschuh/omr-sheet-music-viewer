@@ -1,4 +1,5 @@
 import type { DocumentPage, VisualGroup, VisualGroupRef, VisualSidecarNote } from "./types";
+import type { PredictedFingering } from "./fingering";
 import { musicXmlPitchNames } from "./noteLabels";
 
 export const playbackCommandNames = [
@@ -22,7 +23,14 @@ export interface PlaybackMoment {
   barKey: string;
   visualGroupIds: string[];
   pitches: string[];
+  keyboardNotes: PlaybackKeyboardNote[];
   center: [number, number];
+}
+
+export interface PlaybackKeyboardNote {
+  pitch: string;
+  finger?: number;
+  left?: boolean;
 }
 
 const NO_PLAYBACK_GROUPS: readonly string[] = [];
@@ -169,9 +177,17 @@ function clustersForStaff(
   return clusters;
 }
 
-export function buildPlaybackTimeline(pages: DocumentPage[]): PlaybackMoment[] {
+export function buildPlaybackTimeline(
+  pages: DocumentPage[],
+  predictedFingerings: Readonly<Record<string, PredictedFingering>> = {},
+): PlaybackMoment[] {
   const result: PlaybackMoment[] = [];
+  let musicPageNumber = 0;
   for (const page of [...pages].sort((first, second) => first.index - second.index)) {
+    const hasRecognizedScore = Boolean(
+      page.musicXml || page.visualSidecar || page.artifacts?.musicXmlPath,
+    );
+    if (hasRecognizedScore) musicPageNumber += 1;
     const sidecar = page.visualSidecar;
     if (!sidecar) continue;
     const pitchNames = musicXmlPitchNames(page.musicXml);
@@ -193,6 +209,21 @@ export function buildPlaybackTimeline(pages: DocumentPage[]): PlaybackMoment[] {
             }),
           ),
         ));
+        const keyboardNotes: PlaybackKeyboardNote[] = [];
+        const seenKeyboardNotes = new Set<string>();
+        for (const entry of cluster.groups) {
+          for (const note of entry.notes) {
+            const pitch = playbackPitchForNote(note, pitchNames);
+            if (pitch === null) continue;
+            const predicted = predictedFingerings[
+              `page-${musicPageNumber}-${note.musicxml_id}`
+            ];
+            const key = `${pitch}:${predicted?.left ?? ""}:${predicted?.finger ?? ""}`;
+            if (seenKeyboardNotes.has(key)) continue;
+            seenKeyboardNotes.add(key);
+            keyboardNotes.push({ pitch, ...predicted });
+          }
+        }
         const centerY =
           cluster.groups.reduce((total, entry) => total + entry.group.center[1], 0) /
           cluster.groups.length;
@@ -205,6 +236,7 @@ export function buildPlaybackTimeline(pages: DocumentPage[]): PlaybackMoment[] {
           barKey: cluster.measure === null ? unknownBarKey : `page-${page.index}-measure-${cluster.measure}`,
           visualGroupIds,
           pitches,
+          keyboardNotes,
           center: [cluster.x, centerY],
         });
       });

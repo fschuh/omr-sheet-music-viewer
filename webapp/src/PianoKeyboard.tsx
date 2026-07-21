@@ -16,7 +16,18 @@ interface PianoKey {
 }
 
 interface PianoKeyboardProps {
-  pitches: readonly string[];
+  notes: readonly PianoKeyboardNote[];
+}
+
+export interface PianoKeyboardNote {
+  pitch: string;
+  finger?: number;
+  left?: boolean;
+}
+
+interface PianoKeyLabels {
+  names: string[];
+  fingerings: string[];
 }
 
 function pianoKeyName(midi: number): string {
@@ -50,27 +61,53 @@ export function formatKeyboardPitch(pitch: string): string {
   return `${match[1].toUpperCase()}${accidental}${octave}`;
 }
 
-export function PianoKeyboard({ pitches }: PianoKeyboardProps) {
+export function PianoKeyboard({ notes }: PianoKeyboardProps) {
   const activeLabels = useMemo(() => {
-    const labels = new Map<number, string[]>();
-    for (const pitch of pitches) {
-      const midi = pitchToMidi(pitch);
+    const labels = new Map<number, PianoKeyLabels>();
+    for (const note of notes) {
+      const midi = pitchToMidi(note.pitch);
       if (midi === null || midi < FIRST_PIANO_MIDI || midi > LAST_PIANO_MIDI) continue;
-      const label = formatKeyboardPitch(pitch);
-      const keyLabels = labels.get(midi) ?? [];
-      if (!keyLabels.includes(label)) keyLabels.push(label);
+      const label = formatKeyboardPitch(note.pitch);
+      const keyLabels = labels.get(midi) ?? { names: [], fingerings: [] };
+      if (!keyLabels.names.includes(label)) keyLabels.names.push(label);
+      if (note.finger !== undefined) {
+        const fingering = `${note.left ? "L" : "R"}${note.finger}`;
+        if (!keyLabels.fingerings.includes(fingering)) keyLabels.fingerings.push(fingering);
+      }
       labels.set(midi, keyLabels);
     }
     return labels;
-  }, [pitches]);
-  const activePitchNames = Array.from(activeLabels.values()).flat();
+  }, [notes]);
+  const activePitchNames = Array.from(activeLabels.values()).flatMap((labels) => labels.names);
+  const accessibleNotes = Array.from(activeLabels.values()).flatMap((labels) =>
+    labels.names.map((name) => {
+      const spokenFingerings = labels.fingerings.map((fingering) =>
+        `${fingering.startsWith("L") ? "left" : "right"} hand finger ${fingering.slice(1)}`,
+      );
+      const fingering = spokenFingerings.length > 0
+        ? `, ${spokenFingerings.join(" or ")}`
+        : "";
+      return `${name}${fingering}`;
+    }),
+  );
+
+  function keyLabel(labels: PianoKeyLabels) {
+    return (
+      <span className="piano-key-label">
+        {labels.fingerings.length > 0 ? (
+          <span className="piano-key-fingering">{labels.fingerings.join("/")}</span>
+        ) : null}
+        <span className="piano-key-note-name">{labels.names.join("/")}</span>
+      </span>
+    );
+  }
 
   return (
     <section
       className="piano-keyboard-overlay"
       aria-label={`88-key piano keyboard. ${
         activePitchNames.length > 0
-          ? `Notes under the playhead: ${activePitchNames.join(", ")}`
+          ? `Notes under the playhead: ${accessibleNotes.join("; ")}`
           : "No pitched notes under the playhead"
       }`}
     >
@@ -100,7 +137,7 @@ export function PianoKeyboard({ pitches }: PianoKeyboardProps) {
                 data-midi={key.midi}
                 data-active={labels ? "true" : undefined}
               >
-                {labels ? <span className="piano-key-label">{labels.join("/")}</span> : null}
+                {labels ? keyLabel(labels) : null}
               </div>
             );
           })}
@@ -119,7 +156,7 @@ export function PianoKeyboard({ pitches }: PianoKeyboardProps) {
                 data-midi={key.midi}
                 data-active={labels ? "true" : undefined}
               >
-                {labels ? <span className="piano-key-label">{labels.join("/")}</span> : null}
+                {labels ? keyLabel(labels) : null}
               </div>
             );
           })}

@@ -101,6 +101,21 @@ test("keeps vertically aligned notes on different systems as separate moments", 
   assert.equal(timeline[1].visualGroupIds[0], "system-2");
 });
 
+test("attaches page-scoped predicted fingerings to keyboard notes after skipped pages", () => {
+  const recognized = page(1, [group("right", 0, 0, 200, 250)], [1]);
+  const timeline = buildPlaybackTimeline(
+    [
+      { index: 0, status: "skipped", width: 1000, height: 1400 },
+      recognized,
+    ],
+    { "page-1-note-right": { finger: 2, left: false } },
+  );
+
+  assert.deepEqual(timeline[0].keyboardNotes, [
+    { pitch: "C4", finger: 2, left: false },
+  ]);
+});
+
 test("moves by notes and clamps at the first and last moments", () => {
   const { timeline, state: first } = activeAtFirst([
     page(0, [group("a", 0, 0, 100, 200), group("b", 0, 0, 200, 200)], [1, 1]),

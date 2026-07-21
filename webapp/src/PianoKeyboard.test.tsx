@@ -13,7 +13,14 @@ test("builds the complete 88-key piano range", () => {
 
 test("highlights every distinct in-range playhead pitch and labels its key", () => {
   const markup = renderToStaticMarkup(
-    <PianoKeyboard pitches={["C4", "E4", "A♭3", "C4", "C9", "rest"]} />,
+    <PianoKeyboard notes={[
+      { pitch: "C4", finger: 1, left: false },
+      { pitch: "E4", finger: 3, left: false },
+      { pitch: "A♭3", finger: 2, left: true },
+      { pitch: "C4", finger: 1, left: false },
+      { pitch: "C9" },
+      { pitch: "rest" },
+    ]} />,
   );
 
   assert.equal(markup.match(/data-piano-key=/g)?.length, 88);
@@ -24,6 +31,10 @@ test("highlights every distinct in-range playhead pitch and labels its key", () 
   assert.match(markup, />C4<\/span>/);
   assert.match(markup, />E4<\/span>/);
   assert.match(markup, />A♭3<\/span>/);
+  assert.match(markup, />R1<\/span>/);
+  assert.match(markup, />R3<\/span>/);
+  assert.match(markup, />L2<\/span>/);
+  assert.match(markup, /C4, right hand finger 1/);
 });
 
 test("formats stored accidental spellings like the staff note labels", () => {

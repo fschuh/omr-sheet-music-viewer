@@ -91,6 +91,7 @@ export interface DocumentPage {
 }
 
 export type JobStatus = "opening" | "processing" | "complete" | "partial" | "cancelled" | "failed";
+export type FingeringStatus = "pending" | "predicting" | "ready" | "failed";
 
 export interface LoadedDocument {
   jobId: string;
@@ -99,6 +100,10 @@ export interface LoadedDocument {
   cacheStatus: "miss" | "partial" | "complete";
   cachePath?: string;
   documentMusicXmlPath?: string;
+  fingeringStatus?: FingeringStatus;
+  fingeringError?: string;
+  predictedFingerings?: Record<string, import("./fingering").PredictedFingering>;
+  predictedFingeringCount?: number;
   status: JobStatus;
   pages: DocumentPage[];
 }

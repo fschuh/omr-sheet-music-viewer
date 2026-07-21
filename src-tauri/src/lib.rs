@@ -584,6 +584,24 @@ fn load_page_artifacts(
 }
 
 #[tauri::command]
+fn read_music_xml(app: AppHandle, path: String) -> Result<String, String> {
+    let music_xml = checked_cache_path(&app, &path)?;
+    if !music_xml.is_file() || !has_music_xml_extension(&music_xml) {
+        return Err("The merged MusicXML file does not exist".into());
+    }
+    fs::read_to_string(music_xml).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn write_music_xml(app: AppHandle, path: String, contents: String) -> Result<(), String> {
+    let music_xml = checked_cache_path(&app, &path)?;
+    if !music_xml.is_file() || !has_music_xml_extension(&music_xml) {
+        return Err("The merged MusicXML file does not exist".into());
+    }
+    fs::write(music_xml, contents).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn get_worker_log_path(app: AppHandle) -> Result<String, String> {
     Ok(worker_log_path(&app)?.to_string_lossy().into_owned())
 }
@@ -672,6 +690,8 @@ pub fn run() {
             cancel_job,
             retry_page,
             load_page_artifacts,
+            read_music_xml,
+            write_music_xml,
             get_worker_log_path,
             refresh_midi_inputs,
             get_keyboard_repeat_timing,

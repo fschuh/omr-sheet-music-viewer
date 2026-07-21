@@ -114,6 +114,14 @@ export async function loadPageArtifacts(artifacts: PageArtifacts): Promise<PageA
   });
 }
 
+export async function readMusicXml(path: string): Promise<string> {
+  return invoke<string>("read_music_xml", { path });
+}
+
+export async function writeMusicXml(path: string, contents: string): Promise<void> {
+  return invoke("write_music_xml", { path, contents });
+}
+
 export function pageImageUrl(path: string): string {
   return convertFileSrc(path);
 }
