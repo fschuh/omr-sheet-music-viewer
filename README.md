@@ -8,6 +8,88 @@ playback navigation. The merged
 file is stored at the PDF cache root using the PDF filename with a `.musicxml`
 extension.
 
+## Run the app from source
+
+### 1. Install the prerequisites
+
+Install these once before cloning the repository:
+
+- [Git](https://git-scm.com/downloads).
+- [Node.js](https://nodejs.org/) 22.12 or newer, including `npm`.
+- [uv](https://docs.astral.sh/uv/getting-started/installation/), which creates
+  the Python environment and installs Python when needed.
+- The [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) for your
+  operating system, including Rust. On Windows, select **Desktop development
+  with C++** in the Microsoft C++ Build Tools installer. On macOS, install the
+  Xcode command-line tools. On Linux, install the WebKit and system packages
+  listed for your distribution.
+
+Open a new terminal after installing them and check that every command works:
+
+```text
+git --version
+node --version
+npm --version
+uv --version
+rustc --version
+cargo --version
+```
+
+The app supports Python 3.11 through 3.15. You do not need to install Python or
+create a virtual environment manually; `uv` handles both.
+
+### 2. Clone and start the competition branch
+
+Run these commands in PowerShell, Terminal, or a Linux shell:
+
+```text
+git clone --branch competition-monorepo --single-branch https://github.com/fschuh/sheet-music-viewer.git
+cd sheet-music-viewer
+uv sync --locked
+npm --prefix webapp ci
+npm run tauri:dev
+```
+
+The first launch compiles the Rust application, so it can take several minutes.
+The application window opens automatically when compilation finishes. Keep the
+terminal open while using the app; press `Ctrl+C` there to stop it.
+
+For later launches, open a terminal in the repository and run only:
+
+```text
+npm run tauri:dev
+```
+
+### 3. Open sheet music
+
+1. Select **Open PDF** in the application window.
+2. Choose a PDF containing printed sheet music.
+3. Wait while the pages are rasterized and recognized. The first PDF triggers a
+   one-time download of the HOMR recognition models and therefore requires an
+   internet connection. Later runs reuse the downloaded models and cached PDF
+   results.
+4. Select recognized notes, use the playback controls, or open the generated
+   MusicXML file from the toolbar.
+
+If recognition fails, open **Worker logs** in the toolbar to see the active
+step and error message.
+
+### Common setup problems
+
+- **`cargo` or `rustc` is not found:** restart the terminal after installing
+  Rust. On Windows, confirm that the default Rust toolchain is MSVC.
+- **A Windows linker or `link.exe` error appears:** install the Microsoft C++
+  Build Tools workload named **Desktop development with C++**.
+- **A Linux WebKit, GTK, or linker package is missing:** install the packages
+  for your distribution from the Tauri prerequisites linked above.
+- **The viewer reports that its Python environment is missing:** run
+  `uv sync --locked` from the repository root, not from `worker`.
+- **The first recognition cannot download models:** check the internet
+  connection, then reopen the PDF. The **Worker logs** panel shows the download
+  status.
+
+## How it works
+
 The cached page image remains a 300-DPI raster for viewing. Recognition uses a
 separate temporary image scaled to HOMR's native 1,920-pixel width with HAMMING
 resampling; visual-sidecar geometry is mapped back onto the 300-DPI display image.
@@ -49,40 +131,16 @@ toggle messages and message types without a release signal remain one-shot.
 On Windows, the repeat delay and rate follow the system keyboard settings; other
 platforms use a 400 ms delay and 75 ms interval.
 
-## Development
+## Development checks
 
-The repository contains the application and its modified HOMR fork in
-`vendor/homr`. Create the root Python environment and install the worker and
-bundled HOMR source from the repository lockfile:
+After completing the setup above, run the automated checks from the repository
+root with:
 
-```powershell
-$env:UV_CACHE_DIR = "$PWD\.uv-cache"
-uv sync --locked
+```text
+uv run pytest worker/tests
+npm --prefix webapp test
+cargo test --manifest-path src-tauri/Cargo.toml
 ```
-
-On macOS or Linux, the equivalent setup is:
-
-```bash
-UV_CACHE_DIR="$PWD/.uv-cache" uv sync --locked
-```
-
-Then install the frontend dependencies and start the desktop app from the
-repository root:
-
-```powershell
-npm --prefix webapp install
-npm run tauri:dev
-```
-
-The Python worker protocol can be smoke-tested independently:
-
-```powershell
-Set-Location worker
-..\.venv\Scripts\python.exe -m sheet_music_worker
-```
-
-On macOS or Linux, run `../.venv/bin/python -m sheet_music_worker` from the
-`worker` directory.
 
 ## Bundled HOMR fork
 
