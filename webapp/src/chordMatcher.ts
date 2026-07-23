@@ -3,6 +3,7 @@ import type { RecognizedOnset, RecognizerResult } from "./noteRecognizer";
 export interface ChordMatcherOptions {
   onsetThreshold: number;
   targetNoteThreshold: number;
+  activeTargetThreshold: number;
   noteThreshold: number;
   preTargetExtraLookbackMs: number;
   collectionWindowMs: number;
@@ -15,6 +16,7 @@ export interface ChordMatcherOptions {
 export const defaultChordMatcherOptions: ChordMatcherOptions = {
   onsetThreshold: 0.5,
   targetNoteThreshold: 0.3,
+  activeTargetThreshold: 0.35,
   noteThreshold: 0.6,
   preTargetExtraLookbackMs: 30,
   collectionWindowMs: 400,
@@ -167,6 +169,32 @@ export class ExactChordMatcher {
       }
       this.lastNewOnsetMs = Math.max(this.lastNewOnsetMs ?? 0, onset.onsetTimeMs);
       if (!this.target.has(onset.midi)) this.rejected = true;
+    }
+
+    // A chord produces one shared physical attack, but a quieter constituent
+    // may not produce its own stable per-pitch onset. Once a fresh target onset
+    // has anchored the attempt, allow stable target evidence to complete it.
+    // This cannot start an attempt, so held notes and repeated score moments
+    // still require a genuinely fresh attack.
+    if (
+      this.attemptStartMs !== null &&
+      result.capturedAtMs >= this.refractoryUntilMs &&
+      result.capturedAtMs - this.attemptStartMs <= this.options.collectionWindowMs
+    ) {
+      for (const active of result.activePitches) {
+        if (
+          !this.target.has(active.midi) ||
+          active.confidence < this.options.activeTargetThreshold ||
+          this.accumulated.has(active.midi)
+        ) continue;
+        this.accumulated.set(active.midi, {
+          midi: active.midi,
+          confidence: this.options.onsetThreshold,
+          noteConfidence: active.confidence,
+          onsetTimeMs: result.capturedAtMs,
+        });
+        this.lastNewOnsetMs = Math.max(this.lastNewOnsetMs ?? 0, result.capturedAtMs);
+      }
     }
 
     if (this.attemptStartMs !== null && result.capturedAtMs - this.attemptStartMs > this.options.collectionWindowMs) {

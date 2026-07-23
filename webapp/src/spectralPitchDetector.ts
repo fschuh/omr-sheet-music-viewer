@@ -41,6 +41,8 @@ interface Fundamental {
 
 interface FundamentalCandidate extends Omit<Fundamental, "confidence"> {
   harmonicCount: number;
+  localConfidence: number;
+  targeted: boolean;
 }
 
 const defaultOptions: Omit<SpectralPitchDetectorOptions, "sampleRate" | "fftSize"> = {
@@ -59,6 +61,8 @@ const defaultOptions: Omit<SpectralPitchDetectorOptions, "sampleRate" | "fftSize
 };
 
 const STABILITY_FRAMES = 3;
+const MIN_REPORTED_CONFIDENCE = 0.12;
+const RESIDUAL_HARMONICS = 12;
 
 function clamp(value: number, minimum = 0, maximum = 1): number {
   return Math.min(maximum, Math.max(minimum, value));
@@ -124,6 +128,7 @@ export class SpectralPitchDetector {
   private readonly releasedAttackFrames = new Map<number, number>();
   private readonly presentFrames = new Map<number, number>();
   private readonly pendingAttacks = new Map<number, RecognizedOnset>();
+  private targetPitches = new Set<number>();
 
   constructor(options: Pick<SpectralPitchDetectorOptions, "sampleRate" | "fftSize"> & Partial<SpectralPitchDetectorOptions>) {
     this.options = { ...defaultOptions, ...options };
@@ -136,6 +141,17 @@ export class SpectralPitchDetector {
     this.releasedAttackFrames.clear();
     this.presentFrames.clear();
     this.pendingAttacks.clear();
+  }
+
+  setTarget(targetPitches: readonly number[]): void {
+    this.targetPitches = new Set(
+      targetPitches.filter((pitch) => (
+        Number.isInteger(pitch) &&
+        pitch >= this.options.midiMin &&
+        pitch <= this.options.midiMax
+      )),
+    );
+    this.reset();
   }
 
   process(spectrumDb: Float32Array, capturedAtMs: number): SpectralPitchFrame {
@@ -211,26 +227,206 @@ export class SpectralPitchDetector {
         harmonicCount += 1;
       }
       if (harmonicCount < 2) continue;
-      const value = {
+      const weightedScore = score * Math.sqrt(harmonicCount);
+      const value: FundamentalCandidate = {
         midi,
         frequency: midiToFrequency(midi),
         // PitchPlease promotes candidates supported by several harmonics,
         // rather than allowing one loud overtone to win on amplitude alone.
-        score: score * Math.sqrt(harmonicCount),
+        score: weightedScore,
         attackRatio: currentEnergy > 0 ? positiveEnergy / currentEnergy : 0,
         harmonicCount,
+        localConfidence: clamp(
+          (20 * Math.log10(Math.max(Number.EPSILON, weightedScore)) - peakThresholdDb) / 24,
+        ),
+        targeted: this.targetPitches.has(midi),
       };
       const existing = candidates.get(midi);
       if (!existing || value.score > existing.score) candidates.set(midi, value);
     }
+    // Expected notes are evaluated at their known frequencies, independently
+    // of whichever note happens to be loudest in the frame. This is a bounded
+    // hypothesis test for the score chord, not a relaxation of extra-note
+    // detection: unknown pitches still use the open-set relative threshold.
+    for (const midi of this.targetPitches) {
+      const expectedBin = midiToFrequency(midi) / hzPerBin;
+      if (expectedBin < firstBin || expectedBin > lastBin) continue;
+      const fundamentalPeak = closestPeak(
+        strongestPeaks,
+        expectedBin,
+        Math.max(1.25, expectedBin * 0.012),
+      );
+      const baseBin = fundamentalPeak?.bin ?? expectedBin;
+      let score = 0;
+      let currentEnergy = 0;
+      let positiveEnergy = 0;
+      let harmonicCount = 0;
+      for (let harmonic = 1; harmonic <= this.options.numHarmonics; harmonic += 1) {
+        const harmonicBin = baseBin * harmonic;
+        if (harmonicBin > lastBin) break;
+        const match = closestPeak(
+          strongestPeaks,
+          harmonicBin,
+          Math.max(1.25, harmonicBin * 0.012),
+        );
+        if (!match) continue;
+        const weight = 1 / harmonic;
+        score += match.amplitude * weight;
+        currentEnergy += match.amplitude * weight;
+        const slow = this.slowSpectrum[Math.round(match.bin)] ?? 0;
+        positiveEnergy += Math.max(0, match.amplitude - slow) * weight;
+        harmonicCount += 1;
+      }
+      if (harmonicCount < 2) continue;
+      const weightedScore = score * Math.sqrt(harmonicCount);
+      const targeted: FundamentalCandidate = {
+        midi,
+        frequency: midiToFrequency(midi),
+        score: weightedScore,
+        attackRatio: currentEnergy > 0 ? positiveEnergy / currentEnergy : 0,
+        harmonicCount,
+        localConfidence: clamp(
+          (20 * Math.log10(Math.max(Number.EPSILON, weightedScore)) - peakThresholdDb) / 24,
+        ),
+        targeted: true,
+      };
+      const existing = candidates.get(midi);
+      if (!existing || targeted.score > existing.score) candidates.set(midi, targeted);
+      else {
+        existing.targeted = true;
+        existing.localConfidence = Math.max(existing.localConfidence, targeted.localConfidence);
+      }
+    }
 
     let maximumScore = 0;
     for (const candidate of candidates.values()) maximumScore = Math.max(maximumScore, candidate.score);
+
+    // Harmonic aliases need special treatment because an upper candidate may
+    // be supported entirely by a lower note's partials (an octave is 2/1, a
+    // fifth-shaped alias is 3/2, and so on). Estimate the lower note's local
+    // harmonic envelope from adjacent partials and retain only unexplained
+    // energy. A lower note by itself therefore cannot become a target or an
+    // extra merely through its overtones.
+    const aliasResidualConfidence = (candidate: FundamentalCandidate): number => {
+      let confidence = 1;
+      for (const lower of candidates.values()) {
+        if (
+          lower.midi >= candidate.midi ||
+          !lower.targeted ||
+          lower.score < maximumScore * 0.12
+        ) {
+          continue;
+        }
+        const frequencyRatio = candidate.frequency / lower.frequency;
+        let lowerStep = 0;
+        let candidateStep = 0;
+        for (let possibleCandidateStep = 1; possibleCandidateStep <= this.options.numHarmonics; possibleCandidateStep += 1) {
+          const possibleLowerStep = Math.round(frequencyRatio * possibleCandidateStep);
+          if (
+            possibleLowerStep <= possibleCandidateStep ||
+            possibleLowerStep > this.options.numHarmonics ||
+            Math.abs(frequencyRatio - possibleLowerStep / possibleCandidateStep) >= 0.035
+          ) continue;
+          lowerStep = possibleLowerStep;
+          candidateStep = possibleCandidateStep;
+          break;
+        }
+        if (lowerStep === 0) continue;
+        // Rational overlap can explain a target hypothesis, but it is not
+        // sufficient grounds to discard a genuinely played non-target pitch
+        // such as the F in a C/F wrong chord. Only integer-harmonic extras are
+        // eligible for alias suppression.
+        if (!candidate.targeted && candidateStep > 1) continue;
+        if (
+          candidate.targeted &&
+          candidateStep === 1 &&
+          lowerStep >= 3 &&
+          candidate.score < lower.score * 0.5
+        ) {
+          confidence = 0;
+          continue;
+        }
+
+        let totalEnergy = 0;
+        let residualEnergy = 0;
+        let comparisons = 0;
+        for (let multiple = 1; ; multiple += 1) {
+          const candidateHarmonic = candidateStep * multiple;
+          const lowerHarmonic = lowerStep * multiple;
+          if (candidateHarmonic > this.options.numHarmonics) break;
+          if (lowerHarmonic + 1 > RESIDUAL_HARMONICS) break;
+          const currentBin = candidate.frequency * candidateHarmonic / hzPerBin;
+          if (currentBin > lastBin) break;
+          const tolerance = Math.max(1.25, currentBin * 0.012);
+          const current = closestPeak(strongestPeaks, currentBin, tolerance);
+          const overlapsAnotherTarget = (frequency: number): boolean => Array.from(this.targetPitches)
+            .some((targetMidi) => {
+              if (targetMidi === lower.midi) return false;
+              const ratio = frequency / midiToFrequency(targetMidi);
+              const harmonic = Math.round(ratio);
+              return harmonic >= 1 &&
+                harmonic <= RESIDUAL_HARMONICS &&
+                Math.abs(ratio - harmonic) < 0.035;
+            });
+          const cleanNeighbor = (direction: -1 | 1): { peak: Peak; harmonic: number } | null => {
+            for (
+              let harmonic = lowerHarmonic + direction;
+              harmonic >= 1 && harmonic <= RESIDUAL_HARMONICS;
+              harmonic += direction
+            ) {
+              const frequency = lower.frequency * harmonic;
+              if (overlapsAnotherTarget(frequency)) continue;
+              const bin = frequency / hzPerBin;
+              const peak = closestPeak(
+                strongestPeaks,
+                bin,
+                Math.max(1.25, bin * 0.012),
+              );
+              if (peak) return { peak, harmonic };
+            }
+            return null;
+          };
+          const previous = cleanNeighbor(-1);
+          const next = cleanNeighbor(1);
+          if (!current || (!previous && !next)) continue;
+          const weight = 1 / candidateHarmonic;
+          const predictions: number[] = [];
+          if (previous) {
+            predictions.push(previous.peak.amplitude * previous.harmonic / lowerHarmonic);
+          }
+          if (next) predictions.push(next.peak.amplitude * next.harmonic / lowerHarmonic);
+          const predictedLowerEnergy = predictions.length === 2
+            ? Math.sqrt(predictions[0] * predictions[1])
+            : predictions[0];
+          totalEnergy += current.amplitude * weight;
+          residualEnergy += Math.max(0, current.amplitude - predictedLowerEnergy) * weight;
+          comparisons += 1;
+        }
+        if (comparisons === 0 || totalEnergy <= 0) continue;
+        const residualRatio = residualEnergy / totalEnergy;
+        // Piano third harmonics are often strong enough to look like an
+        // independent note. Require substantially more excess energy for a
+        // 3/1-or-higher alias, while keeping octave and rational-interval
+        // thresholds low enough to retain genuinely played extra notes.
+        const residualStart = candidateStep === 1 && lowerStep >= 3
+          ? 0.22
+          : lowerStep === 2 && candidateStep === 1
+            ? 0.18
+            : 0.12;
+        const residualSpan = candidateStep === 1 && lowerStep >= 3 ? 0.45 : 0.38;
+        confidence = Math.min(
+          confidence,
+          clamp((residualRatio - residualStart) / residualSpan),
+        );
+      }
+      return confidence;
+    };
+
     const accepted: Fundamental[] = [];
     const orderedCandidates = Array.from(candidates.values()).sort((left, right) => right.score - left.score);
     for (const candidate of orderedCandidates) {
       const relativeScore = maximumScore > 0 ? candidate.score / maximumScore : 0;
-      if (relativeScore < this.options.minRelativeScore) continue;
+      if (!candidate.targeted && relativeScore < this.options.minRelativeScore) continue;
       const explainedBySelected = accepted.some((selected) => {
         const ratio = candidate.frequency / selected.frequency;
         const harmonic = Math.round(ratio);
@@ -239,7 +435,12 @@ export class SpectralPitchDetector {
           Math.abs(ratio - harmonic) < 0.035 &&
           candidate.score < selected.score * this.options.harmonicSuppressionRatio;
       });
-      if (explainedBySelected) continue;
+      if (explainedBySelected && !candidate.targeted) continue;
+      const residualConfidence = aliasResidualConfidence(candidate);
+      const confidence = candidate.targeted
+        ? candidate.localConfidence * residualConfidence
+        : clamp(relativeScore) * residualConfidence;
+      if (confidence < MIN_REPORTED_CONFIDENCE) continue;
       accepted.push({
         midi: candidate.midi,
         frequency: candidate.frequency,
@@ -247,7 +448,7 @@ export class SpectralPitchDetector {
         attackRatio: candidate.attackRatio,
         // Preserve score separation here. Saturating most candidates made
         // weak resonances indistinguishable from independently played notes.
-        confidence: clamp(relativeScore),
+        confidence,
       });
     }
 

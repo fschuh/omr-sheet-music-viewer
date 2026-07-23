@@ -86,6 +86,7 @@ const listenFeedback = {
   targetPitches: [],
   detectedTargetPitches: [],
   extraPitches: [],
+  targetPitchConfidences: [],
   processingTimeMs: null,
 };
 
@@ -207,10 +208,15 @@ test("shows listen lifecycle, target detections, extras, and analysis time", () 
     targetPitches: [60, 64],
     detectedTargetPitches: [60],
     extraPitches: [67],
+    targetPitchConfidences: [
+      { midi: 60, confidence: 0.82 },
+      { midi: 64, confidence: 0.34 },
+    ],
     processingTimeMs: 123.4,
   });
   assert.match(markup, /Microphone ready · Analyzer ready · Target C4 E4/);
-  assert.match(markup, /Heard C4 · Extra G4 · 123 ms analysis/);
+  assert.match(markup, /Heard C4 · Extra G4/);
+  assert.match(markup, /Signal C4 82% E4 34% · 123 ms analysis/);
   assert.match(markup, /aria-label="Disable listen mode"/);
 });
 

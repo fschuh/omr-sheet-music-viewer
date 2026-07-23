@@ -43,6 +43,40 @@ test("matches simultaneous and briefly rolled exact chords", () => {
   assert.equal(rolled.consume(result(2, 2_421, [], [60, 64, 67])).matched, true);
 });
 
+test("uses stable target evidence after one fresh chord attack", () => {
+  const matcher = new ExactChordMatcher();
+  matcher.setTarget([60, 64, 67], 1, 0);
+  matcher.consume(result(1, 1_000, [onset(60, 1_000)], [60, 64, 67]));
+  const collected = matcher.consume(result(1, 1_050, [], [60, 64, 67]));
+  assert.deepEqual(collected.detectedTargetPitches, [60, 64, 67]);
+  assert.equal(matcher.consume(result(1, 1_135, [], [60, 64, 67])).matched, true);
+});
+
+test("stable pitches cannot start an attempt without a fresh onset", () => {
+  const matcher = new ExactChordMatcher();
+  matcher.setTarget([48, 60, 67], 1, 0);
+  assert.equal(matcher.consume(result(1, 1_000, [], [48, 60, 67])).matched, false);
+  assert.deepEqual(
+    matcher.consume(result(1, 1_200, [], [48, 60, 67])).detectedTargetPitches,
+    [],
+  );
+});
+
+test("low-confidence active evidence cannot complete a chord", () => {
+  const matcher = new ExactChordMatcher();
+  matcher.setTarget([60, 64], 1, 0);
+  matcher.consume(result(1, 1_000, [onset(60, 1_000)], [60]));
+  const weak: RecognizerResult = {
+    ...result(1, 1_050, [], [60]),
+    activePitches: [
+      { midi: 60, confidence: 0.8 },
+      { midi: 64, confidence: 0.34 },
+    ],
+  };
+  assert.equal(matcher.consume(weak).matched, false);
+  assert.deepEqual(matcher.consume(result(1, 1_135, [], [60])).detectedTargetPitches, [60]);
+});
+
 test("rejects confident extra pitches and resets the wrong attempt after silence", () => {
   const matcher = new ExactChordMatcher();
   matcher.setTarget([60, 64], 1, 0);

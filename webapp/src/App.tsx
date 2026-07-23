@@ -404,6 +404,7 @@ export function App() {
     targetPitches: [],
     detectedTargetPitches: [],
     extraPitches: [],
+    targetPitchConfidences: [],
     processingTimeMs: null,
   });
   const commitPlaybackState = useCallback(
@@ -653,6 +654,7 @@ export function App() {
       targetPitches: [],
       detectedTargetPitches: [],
       extraPitches: [],
+      targetPitchConfidences: [],
       processingTimeMs: null,
     }));
   }, [commitPlaybackState]);
@@ -661,11 +663,18 @@ export function App() {
     if (!playbackStateRef.current.listenModeEnabled) return;
     const update = chordMatcherRef.current.consume(result);
     if (update.stale) return;
+    const activeConfidence = new Map(
+      result.activePitches.map(({ midi, confidence }) => [midi, confidence]),
+    );
     setListenFeedback((feedback) => ({
       ...feedback,
       targetPitches: update.targetPitches,
       detectedTargetPitches: update.detectedTargetPitches,
       extraPitches: update.extraPitches,
+      targetPitchConfidences: update.targetPitches.map((midi) => ({
+        midi,
+        confidence: activeConfidence.get(midi) ?? 0,
+      })),
       processingTimeMs: result.processingTimeMs,
     }));
     if (update.matched) handlePlaybackCommandRef.current("forwardNote");
@@ -684,9 +693,11 @@ export function App() {
       targetPitches: target,
       detectedTargetPitches: [],
       extraPitches: [],
+      targetPitchConfidences: target.map((midi) => ({ midi, confidence: 0 })),
       processingTimeMs: null,
     });
     const recognizer = new BrowserSpectralRecognizer();
+    recognizer.setTarget(target);
     recognizerRef.current = recognizer;
     try {
       await recognizer.start(generation, {
@@ -750,22 +761,23 @@ export function App() {
         playbackStateRef.current.listenModeEnabled
       ) {
         const generation = ++playheadGenerationRef.current;
+        const target = midiPitches(
+          currentPlaybackMoment(playbackTimeline, playbackStateRef.current)?.pitches ?? [],
+        );
         recognizer.flush();
+        recognizer.setTarget(target);
         chordMatcherRef.current.setTarget(
-          midiPitches(
-            currentPlaybackMoment(playbackTimeline, playbackStateRef.current)?.pitches ?? [],
-          ),
+          target,
           generation,
           performance.now(),
         );
         recognizer.resume(generation);
         setListenFeedback((feedback) => ({
           ...feedback,
-          targetPitches: midiPitches(
-            currentPlaybackMoment(playbackTimeline, playbackStateRef.current)?.pitches ?? [],
-          ),
+          targetPitches: target,
           detectedTargetPitches: [],
           extraPitches: [],
+          targetPitchConfidences: target.map((midi) => ({ midi, confidence: 0 })),
           processingTimeMs: null,
         }));
       }
@@ -806,6 +818,7 @@ export function App() {
     if (!playbackState.listenModeEnabled || !recognizer) return;
     const generation = ++playheadGenerationRef.current;
     const target = midiPitches(notePlaybackMoment?.pitches ?? []);
+    recognizer.setTarget(target);
     recognizer.setGeneration(generation);
     chordMatcherRef.current.setTarget(target, generation, performance.now());
     setListenFeedback((feedback) => ({
@@ -813,6 +826,7 @@ export function App() {
       targetPitches: target,
       detectedTargetPitches: [],
       extraPitches: [],
+      targetPitchConfidences: target.map((midi) => ({ midi, confidence: 0 })),
       processingTimeMs: null,
     }));
   }, [notePlaybackMoment?.id, playbackPitchKey, playbackState.listenModeEnabled]);
@@ -955,6 +969,7 @@ export function App() {
       targetPitches: [],
       detectedTargetPitches: [],
       extraPitches: [],
+      targetPitchConfidences: [],
       processingTimeMs: null,
     });
     setPlaybackAudioError(null);

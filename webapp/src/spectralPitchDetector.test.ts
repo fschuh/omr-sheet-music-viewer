@@ -7,8 +7,12 @@ const FFT_SIZE = 16_384;
 const detectorOptions = { sampleRate: SAMPLE_RATE, fftSize: FFT_SIZE };
 
 function spectrum(pitches: readonly number[], level = 0.7): Float32Array {
+  return spectrumAtLevels(pitches.map((midi) => [midi, level] as const));
+}
+
+function spectrumAtLevels(pitches: ReadonlyArray<readonly [number, number]>): Float32Array {
   const amplitudes = new Float32Array(FFT_SIZE / 2);
-  for (const midi of pitches) {
+  for (const [midi, level] of pitches) {
     const fundamental = midiToFrequency(midi);
     for (let harmonic = 1; harmonic <= 6; harmonic += 1) {
       const exactBin = fundamental * harmonic * FFT_SIZE / SAMPLE_RATE;
@@ -104,4 +108,62 @@ test("keeps an overtone-heavy piano attack anchored to its fundamental", () => {
   detector.process(attack, 16);
   detector.process(attack, 32);
   assert.deepEqual(detectedPitches(detector, attack, 48), [55]);
+});
+
+test("scores a known uneven three-note target independently", () => {
+  const detector = new SpectralPitchDetector(detectorOptions);
+  detector.setTarget([48, 60, 67]);
+  const chord = spectrumAtLevels([[48, 0.9], [60, 0.28], [67, 0.2]]);
+  detector.process(spectrum([]), 0);
+  detector.process(chord, 16);
+  detector.process(chord, 32);
+  const frame = detector.process(chord, 48);
+  assert.deepEqual(frame.onsets.map(({ midi }) => midi), [48, 60, 67]);
+  assert.equal(frame.activePitches.every(({ confidence }) => confidence >= 0.35), true);
+});
+
+test("does not mistake a target's lower octave for the missing upper note", () => {
+  const detector = new SpectralPitchDetector(detectorOptions);
+  detector.setTarget([48, 60]);
+  const lowerOnly = spectrum([48]);
+  detector.process(spectrum([]), 0);
+  detector.process(lowerOnly, 16);
+  detector.process(lowerOnly, 32);
+  const frame = detector.process(lowerOnly, 48);
+  assert.deepEqual(frame.onsets.map(({ midi }) => midi), [48]);
+  assert.deepEqual(frame.activePitches.map(({ midi }) => midi), [48]);
+});
+
+test("does not synthesize a missing target from two lower target harmonics", () => {
+  const detector = new SpectralPitchDetector(detectorOptions);
+  detector.setTarget([48, 60, 67]);
+  const missingG = spectrum([48, 60]);
+  detector.process(spectrum([]), 0);
+  detector.process(missingG, 16);
+  detector.process(missingG, 32);
+  const frame = detector.process(missingG, 48);
+  assert.equal(frame.onsets.some(({ midi }) => midi === 67), false);
+  assert.equal(frame.activePitches.some(({ midi }) => midi === 67), false);
+});
+
+test("retains a genuinely played extra octave for exact-match rejection", () => {
+  const detector = new SpectralPitchDetector(detectorOptions);
+  detector.setTarget([60]);
+  const wrongChord = spectrum([60, 72]);
+  detector.process(spectrum([]), 0);
+  detector.process(wrongChord, 16);
+  detector.process(wrongChord, 32);
+  const frame = detector.process(wrongChord, 48);
+  assert.deepEqual(frame.onsets.map(({ midi }) => midi), [60, 72]);
+});
+
+test("retains a genuinely played rational-interval extra", () => {
+  const detector = new SpectralPitchDetector(detectorOptions);
+  detector.setTarget([60, 64]);
+  const wrongChord = spectrum([60, 65]);
+  detector.process(spectrum([]), 0);
+  detector.process(wrongChord, 16);
+  detector.process(wrongChord, 32);
+  const frame = detector.process(wrongChord, 48);
+  assert.equal(frame.onsets.some(({ midi }) => midi === 65), true);
 });

@@ -24,6 +24,7 @@ class MockAnalyser extends MockNode {
 class MockDetector {
   resetCount = 0;
   processCount = 0;
+  targets: number[] = [];
   process(_spectrum: Float32Array, capturedAtMs: number) {
     this.processCount += 1;
     return {
@@ -31,6 +32,7 @@ class MockDetector {
       activePitches: [{ midi: 60, confidence: 0.8 }],
     };
   }
+  setTarget(targetPitches: readonly number[]): void { this.targets = [...targetPitches]; }
   reset(): void { this.resetCount += 1; }
 }
 
@@ -128,7 +130,9 @@ test("reports each animation-frame result with the current playhead generation",
   const mock = fixture();
   const results: RecognizerResult[] = [];
   const recognizer = new BrowserSpectralRecognizer(mock.environment);
+  recognizer.setTarget([48, 60, 67]);
   await recognizer.start(3, { onLifecycle: () => undefined, onResult: (value) => results.push(value) });
+  assert.deepEqual(mock.detector.targets, [48, 60, 67]);
   mock.runFrame();
   assert.equal(results[0].generation, 3);
   assert.deepEqual(results[0].onsets.map((onset) => onset.midi), [60]);
@@ -137,6 +141,9 @@ test("reports each animation-frame result with the current playhead generation",
   mock.runFrame();
   assert.equal(results[1].generation, 4);
   assert.equal(mock.detector.resetCount, 1);
+
+  recognizer.setTarget([62]);
+  assert.deepEqual(mock.detector.targets, [62]);
 });
 
 test("permission denial and analyzer initialization failure clean up resources", async () => {
