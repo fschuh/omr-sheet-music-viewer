@@ -9,6 +9,8 @@ import {
   shouldScrollPlaybackHorizontally,
   validTempoPercentage,
 } from "./DocumentViewer";
+import { stoppedRecognizerLifecycle } from "./noteRecognizer";
+import type { ListenModeFeedback } from "./noteRecognizer";
 import type { PlaybackMoment } from "./playback";
 import type { DocumentPage, VisualGroup, VisualSidecar } from "./types";
 
@@ -79,8 +81,15 @@ const moment: PlaybackMoment = {
   keyboardNotes: [{ pitch: "C4" }, { pitch: "E3" }],
   center: [301, 435],
 };
+const listenFeedback = {
+  lifecycle: stoppedRecognizerLifecycle,
+  targetPitches: [],
+  detectedTargetPitches: [],
+  extraPitches: [],
+  processingTimeMs: null,
+};
 
-function render(playbackActive: boolean): string {
+function render(playbackActive: boolean, feedback: ListenModeFeedback = listenFeedback): string {
   return renderToStaticMarkup(
     <DocumentViewer
       documentKey="fixture"
@@ -95,6 +104,7 @@ function render(playbackActive: boolean): string {
       playbackNoteSoundsEnabled
       playbackAvailable
       playbackMoment={playbackActive ? moment : null}
+      listenFeedback={feedback}
       onPlaybackCommand={() => undefined}
       onSelectGroup={() => undefined}
       onRetryPage={() => undefined}
@@ -106,7 +116,7 @@ test("renders compact playback controls disabled outside playback mode", () => {
   const markup = render(false);
   assert.match(markup, /aria-label="Play"/);
   assert.match(markup, /aria-label="Mute note sounds"/);
-  assert.equal(markup.match(/disabled=""/g)?.length, 7);
+  assert.equal(markup.match(/disabled=""/g)?.length, 9);
   assert.doesNotMatch(markup, /data-playback-selected="true"/);
 });
 
@@ -140,6 +150,7 @@ test("renders realtime selector, transport states, tempo, and vertical playhead"
       realtimePlayhead={{ pageIndex: 0, staffIndex: 0, x: 360, y1: 300, y2: 570 }}
       tempoBpm={135.4}
       tempoMultiplier={1.25}
+      listenFeedback={listenFeedback}
       onPlaybackModeChange={() => undefined}
       onTempoMultiplierChange={() => undefined}
       onPlaybackCommand={() => undefined}
@@ -177,6 +188,7 @@ test("explains why realtime playback is disabled", () => {
       playbackMoment={null}
       playbackMode="note-by-note"
       realtimeAvailable={false}
+      listenFeedback={listenFeedback}
       onPlaybackModeChange={() => undefined}
       onPlaybackCommand={() => undefined}
       onSelectGroup={() => undefined}
@@ -187,6 +199,19 @@ test("explains why realtime playback is disabled", () => {
   assert.match(markup, /aria-describedby="[^"]+"[^>]*disabled=""/);
   assert.match(markup, /role="tooltip"/);
   assert.match(markup, /Realtime is not available until all pages are ready\./);
+});
+
+test("shows listen lifecycle, target detections, extras, and inference time", () => {
+  const markup = render(true, {
+    lifecycle: { state: "listening", microphone: "ready", model: "ready" },
+    targetPitches: [60, 64],
+    detectedTargetPitches: [60],
+    extraPitches: [67],
+    processingTimeMs: 123.4,
+  });
+  assert.match(markup, /Microphone ready · Basic Pitch ready · Target C4 E4/);
+  assert.match(markup, /Heard C4 · Extra G4 · 123 ms inference/);
+  assert.match(markup, /aria-label="Disable listen mode"/);
 });
 
 test("omits pages that were skipped because they contain no music", () => {
@@ -211,6 +236,7 @@ test("omits pages that were skipped because they contain no music", () => {
       playbackNoteSoundsEnabled
       playbackAvailable
       playbackMoment={null}
+      listenFeedback={listenFeedback}
       onPlaybackCommand={() => undefined}
       onSelectGroup={() => undefined}
       onRetryPage={() => undefined}
@@ -243,6 +269,7 @@ test("renders an explicit recognition state inside a pending page", () => {
       playbackNoteSoundsEnabled
       playbackAvailable={false}
       playbackMoment={null}
+      listenFeedback={listenFeedback}
       onPlaybackCommand={() => undefined}
       onSelectGroup={() => undefined}
       onRetryPage={() => undefined}
@@ -276,6 +303,7 @@ test("sizes unfinished pages like the first page with known PDF dimensions", () 
       playbackNoteSoundsEnabled
       playbackAvailable={false}
       playbackMoment={null}
+      listenFeedback={listenFeedback}
       onPlaybackCommand={() => undefined}
       onSelectGroup={() => undefined}
       onRetryPage={() => undefined}
@@ -382,6 +410,7 @@ test("restores a supplied viewport transform after remounting", () => {
       playbackNoteSoundsEnabled
       playbackAvailable
       playbackMoment={null}
+      listenFeedback={listenFeedback}
       initialViewportTransform={{ scale: 1.75, x: -320, y: -640 }}
       onPlaybackCommand={() => undefined}
       onSelectGroup={() => undefined}

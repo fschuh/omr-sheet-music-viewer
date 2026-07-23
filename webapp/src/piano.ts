@@ -12,6 +12,8 @@ const SAMPLE_FILES = [
 ] as const;
 
 const NOTE_RELEASE_SECONDS = 0.35;
+const AUDITION_HOLD_MS = 420;
+const AUDITION_DECAY_GUARD_MS = NOTE_RELEASE_SECONDS * 1_000 + 200;
 const SAMPLER_VOLUME_DB = -4;
 const LIMITER_THRESHOLD_DB = -1;
 const WARMUP_NOTE = "C4";
@@ -60,8 +62,12 @@ export function pianoSampleUrls(): Record<number, string> {
 
 const PITCH_CLASSES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"] as const;
 
-function tonePitchForMidi(midi: number): string {
+export function midiToPitchName(midi: number): string {
   return `${PITCH_CLASSES[midi % 12]}${Math.floor(midi / 12) - 1}`;
+}
+
+function wait(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => globalThis.setTimeout(resolve, milliseconds));
 }
 
 export interface PianoPlaybackEngine {
@@ -209,7 +215,7 @@ export class PianoSampler {
     await this.prepare();
     if (generation !== this.playGeneration) return;
 
-    const notes = midiNotes.map(tonePitchForMidi);
+    const notes = midiNotes.map(midiToPitchName);
     const velocity = Math.min(0.78, 0.9 / Math.sqrt(notes.length));
     this.audioEngine().attack(notes, velocity);
     this.activeNotes = notes;
@@ -219,7 +225,7 @@ export class PianoSampler {
   attack(pitches: readonly string[]): void {
     const notes = Array.from(new Set(pitches.flatMap((pitch) => {
       const midi = pitchToMidi(pitch);
-      return midi === null ? [] : [tonePitchForMidi(midi)];
+      return midi === null ? [] : [midiToPitchName(midi)];
     })));
     const newNotes = notes.filter((note) => !this.activeNotes.includes(note));
     if (newNotes.length === 0) return;
@@ -233,13 +239,41 @@ export class PianoSampler {
     if (!this.engine) return;
     const notes = Array.from(new Set(pitches.flatMap((pitch) => {
       const midi = pitchToMidi(pitch);
-      return midi === null ? [] : [tonePitchForMidi(midi)];
+      return midi === null ? [] : [midiToPitchName(midi)];
     })));
     const active = notes.filter((note) => this.activeNotes.includes(note));
     if (active.length === 0) return;
     this.engine.release(active);
     const released = new Set(active);
     this.activeNotes = this.activeNotes.filter((note) => !released.has(note));
+  }
+
+  async audition(
+    pitches: readonly string[],
+    timing: { holdMs?: number; decayGuardMs?: number } = {},
+  ): Promise<void> {
+    const midiNotes = Array.from(new Set(
+      pitches.flatMap((pitch) => {
+        const midi = pitchToMidi(pitch);
+        return midi === null ? [] : [midi];
+      }),
+    ));
+    const generation = ++this.playGeneration;
+    if (this.engine) this.engine.release(this.activeNotes);
+    this.activeNotes = [];
+    if (midiNotes.length === 0) return;
+
+    await this.prepare();
+    if (generation !== this.playGeneration) return;
+    const engine = this.audioEngine();
+    const notes = midiNotes.map(midiToPitchName);
+    engine.attack(notes, Math.min(0.78, 0.9 / Math.sqrt(notes.length)));
+    this.activeNotes = notes;
+    await wait(timing.holdMs ?? AUDITION_HOLD_MS);
+    if (generation !== this.playGeneration) return;
+    engine.release(notes);
+    this.activeNotes = [];
+    await wait(timing.decayGuardMs ?? AUDITION_DECAY_GUARD_MS);
   }
 }
 

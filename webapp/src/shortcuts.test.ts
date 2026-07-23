@@ -20,12 +20,26 @@ test("default shortcuts reproduce the existing playback keys", () => {
   assert.equal(commandForKeyboardEvent(shortcuts, keyEvent("Space")), "togglePlayback");
   assert.equal(commandForKeyboardEvent(shortcuts, keyEvent("Escape")), "stopPlayback");
   assert.equal(commandForKeyboardEvent(shortcuts, keyEvent("KeyM")), "toggleNoteSounds");
+  assert.equal(commandForKeyboardEvent(shortcuts, keyEvent("KeyL")), "toggleListenMode");
+  assert.equal(commandForKeyboardEvent(shortcuts, keyEvent("KeyP")), "playCurrentNotes");
   assert.equal(commandForKeyboardEvent(shortcuts, keyEvent("ArrowRight")), "forwardNote");
   assert.equal(commandForKeyboardEvent(shortcuts, keyEvent("ArrowLeft")), "backwardNote");
   assert.equal(commandForKeyboardEvent(shortcuts, keyEvent("Period")), "forwardBar");
   assert.equal(commandForKeyboardEvent(shortcuts, keyEvent("Comma")), "backwardBar");
   assert.equal(commandForKeyboardEvent(shortcuts, keyEvent("ArrowDown")), "forwardPage");
   assert.equal(commandForKeyboardEvent(shortcuts, keyEvent("ArrowUp")), "backwardPage");
+});
+
+test("old persisted settings receive the new listen and audition defaults", () => {
+  const parsed = parsePlaybackShortcuts({
+    togglePlayback: {
+      keyboard: { code: "Enter", ctrl: false, alt: false, shift: false, meta: false },
+      midi: null,
+    },
+  });
+  assert.equal(commandForKeyboardEvent(parsed, keyEvent("Enter")), "togglePlayback");
+  assert.equal(commandForKeyboardEvent(parsed, keyEvent("KeyL")), "toggleListenMode");
+  assert.equal(commandForKeyboardEvent(parsed, keyEvent("KeyP")), "playCurrentNotes");
 });
 
 test("keyboard matching includes modifiers", () => {

@@ -6,6 +6,8 @@ export const playbackCommandNames = [
   "togglePlayback",
   "stopPlayback",
   "toggleNoteSounds",
+  "toggleListenMode",
+  "playCurrentNotes",
   "forwardNote",
   "backwardNote",
   "forwardBar",
@@ -47,13 +49,19 @@ export interface PlaybackState {
   active: boolean;
   currentMomentId: string | null;
   noteSoundsEnabled: boolean;
+  listenModeEnabled: boolean;
 }
 
 export const initialPlaybackState: PlaybackState = {
   active: false,
   currentMomentId: null,
   noteSoundsEnabled: true,
+  listenModeEnabled: false,
 };
+
+export function effectivePlaybackNoteSounds(state: PlaybackState): boolean {
+  return state.active && state.noteSoundsEnabled && !state.listenModeEnabled;
+}
 
 interface TimelineGroup {
   group: VisualGroup;
@@ -287,7 +295,14 @@ function firstMomentOfPreviousBar(timeline: PlaybackMoment[], index: number): nu
 function commandDestination(
   timeline: PlaybackMoment[],
   index: number,
-  command: Exclude<PlaybackCommand, "togglePlayback" | "stopPlayback" | "toggleNoteSounds">,
+  command: Exclude<
+    PlaybackCommand,
+    | "togglePlayback"
+    | "stopPlayback"
+    | "toggleNoteSounds"
+    | "toggleListenMode"
+    | "playCurrentNotes"
+  >,
 ): number {
   if (command === "forwardNote") return Math.min(timeline.length - 1, index + 1);
   if (command === "backwardNote") return Math.max(0, index - 1);
@@ -330,7 +345,9 @@ export function runPlaybackCommand(
     return state.active ? { ...state, active: false, currentMomentId: null } : state;
   }
   if (command === "togglePlayback") {
-    if (state.active) return { ...state, active: false, currentMomentId: null };
+    if (state.active) {
+      return { ...state, active: false, currentMomentId: null, listenModeEnabled: false };
+    }
     const next = timeline.length === 0
       ? { ...state, active: false, currentMomentId: null }
       : { ...state, active: true, currentMomentId: timeline[0].id };
@@ -339,6 +356,10 @@ export function runPlaybackCommand(
   if (command === "toggleNoteSounds") {
     return state.active ? { ...state, noteSoundsEnabled: !state.noteSoundsEnabled } : state;
   }
+  if (command === "toggleListenMode") {
+    return state.active ? { ...state, listenModeEnabled: !state.listenModeEnabled } : state;
+  }
+  if (command === "playCurrentNotes") return state;
   if (!state.active || timeline.length === 0) return state;
   const destination = commandDestination(timeline, currentIndex(timeline, state), command);
   return { ...state, active: true, currentMomentId: timeline[destination].id };

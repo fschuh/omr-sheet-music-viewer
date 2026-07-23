@@ -49,6 +49,25 @@ toggle messages and message types without a release signal remain one-shot.
 On Windows, the repeat delay and rate follow the system keyboard settings; other
 platforms use a 400 ms delay and 75 ms interval.
 
+Listen mode is opt-in during note-by-note playback. Use the microphone button or
+the default `L` shortcut to load the bundled Spotify Basic Pitch model and request
+the system-default microphone. Audio is downmixed and resampled locally, evaluated
+in rolling two-second windows, and is never saved or transmitted. An exact fresh
+note or chord advances the playhead; confident extra notes prevent advancement.
+Normal playhead sounds are suppressed while listening without changing the saved
+speaker preference. The audition button or default `P` shortcut explicitly plays
+the current chord, including while muted; matching pauses through the sample decay.
+
+The local model and license provenance are recorded in
+`webapp/public/models/basic-pitch/SOURCE.md`. To run the instrumented browser
+benchmark, start the web development server and open
+`http://localhost:5173/?listen-benchmark=1`. It renders isolated notes and
+one-to-six-note chords from the bundled piano samples, reports inference and
+onset-to-advance latency, and keeps the acceptance gate fixed at p95 below 400 ms,
+95% correct advancement, and zero wrong-note false advances. The same page records
+manual acoustic- and digital-piano trials; a target desktop run is still required
+before treating the gate as passed.
+
 ## Development
 
 The repository expects the existing root `.venv` and editable sibling HOMR
