@@ -10,7 +10,7 @@ function trial(update: Partial<ListenBenchmarkTrial> = {}): ListenBenchmarkTrial
     expectedCorrect: true,
     advanced: true,
     onsetToAdvanceMs: 300,
-    inferenceMs: 80,
+    analysisMs: 80,
     ...update,
   };
 }
@@ -31,4 +31,3 @@ test("benchmark gate preserves the fixed latency, success, and false-advance cri
   assert.equal(summarizeListenBenchmark([trial({ onsetToAdvanceMs: 400 })]).acceptance.latency, false);
   assert.equal(summarizeListenBenchmark([trial({ expectedCorrect: false })]).acceptance.falseAdvances, false);
 });
-

@@ -10,15 +10,15 @@ export type RecognizerResourceState = "idle" | "loading" | "ready" | "error";
 export interface RecognizerLifecycle {
   state: RecognizerRunState;
   microphone: RecognizerResourceState;
-  model: RecognizerResourceState;
+  analysis: RecognizerResourceState;
   error?: string;
 }
 
 export interface RecognizedOnset {
   midi: number;
-  /** Raw Basic Pitch onset probability in the range 0–1. */
+  /** Normalized positive spectral-flux confidence in the range 0–1. */
   confidence: number;
-  /** Raw Basic Pitch note/frame probability at the onset. */
+  /** Normalized harmonic-sieve confidence at the onset. */
   noteConfidence: number;
   /** Monotonic capture-clock time, not wall-clock time. */
   onsetTimeMs: number;
@@ -38,7 +38,7 @@ export interface NoteRecognizerCallbacks {
 }
 
 /**
- * Replaceable boundary between microphone/model inference and score matching.
+ * Replaceable boundary between microphone analysis and score matching.
  * Implementations must never persist or transmit captured audio.
  */
 export interface NoteRecognizer {
@@ -61,6 +61,5 @@ export interface ListenModeFeedback {
 export const stoppedRecognizerLifecycle: RecognizerLifecycle = {
   state: "stopped",
   microphone: "idle",
-  model: "idle",
+  analysis: "idle",
 };
-

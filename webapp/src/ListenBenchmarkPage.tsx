@@ -18,7 +18,7 @@ export function ListenBenchmarkPage() {
   const [manualCorrect, setManualCorrect] = useState(true);
   const [manualAdvanced, setManualAdvanced] = useState(true);
   const [manualLatency, setManualLatency] = useState("300");
-  const [manualInference, setManualInference] = useState("0");
+  const [manualAnalysis, setManualAnalysis] = useState("0");
   const manualSummary = useMemo(() => summarizeListenBenchmark(manual), [manual]);
   useEffect(() => {
     if (
@@ -55,7 +55,7 @@ export function ListenBenchmarkPage() {
       target: trial.targetPitches,
       played: trial.playedPitches,
       advanced: trial.advanced,
-      inferenceMs: Math.round(trial.inferenceMs),
+      analysisMs: Math.round(trial.analysisMs),
       recognizedOnsets: trial.recognizedOnsets
         ?.filter((onset) => onset.confidence >= 0.4 || onset.noteConfidence >= 0.2)
         .map((onset) => ({
@@ -70,7 +70,7 @@ export function ListenBenchmarkPage() {
     <main className="benchmark-page">
       <h1>Listen-mode benchmark</h1>
       <p>
-        This page runs Basic Pitch locally against isolated notes and one-to-six-note chords
+        This page runs the local spectral recognizer against isolated notes and one-to-six-note chords
         rendered from the bundled piano samples. Acceptance is fixed at p95 latency under
         400 ms, at least 95% correct advancement, and zero wrong-note false advances.
       </p>
@@ -84,7 +84,7 @@ export function ListenBenchmarkPage() {
       <h2>Manual acoustic and digital-piano trials</h2>
       <p>
         Run listen mode in the score, then enter each correct or deliberately wrong trial.
-        Use the toolbar inference duration and measure onset-to-advance latency externally.
+        Use the toolbar analysis duration and measure onset-to-advance latency externally.
       </p>
       <div className="benchmark-form">
         <label>Source
@@ -96,7 +96,7 @@ export function ListenBenchmarkPage() {
         <label><input type="checkbox" checked={manualCorrect} onChange={(event) => setManualCorrect(event.target.checked)} /> Correct target</label>
         <label><input type="checkbox" checked={manualAdvanced} onChange={(event) => setManualAdvanced(event.target.checked)} /> Viewer advanced</label>
         <label>Onset-to-advance ms<input type="number" value={manualLatency} onChange={(event) => setManualLatency(event.target.value)} /></label>
-        <label>Inference ms<input type="number" value={manualInference} onChange={(event) => setManualInference(event.target.value)} /></label>
+        <label>Analysis ms<input type="number" value={manualAnalysis} onChange={(event) => setManualAnalysis(event.target.value)} /></label>
         <button type="button" onClick={() => setManual((trials) => [...trials, {
           source: manualSource,
           targetPitches: [],
@@ -104,7 +104,7 @@ export function ListenBenchmarkPage() {
           expectedCorrect: manualCorrect,
           advanced: manualAdvanced,
           onsetToAdvanceMs: manualAdvanced ? Number(manualLatency) : null,
-          inferenceMs: Number(manualInference),
+          analysisMs: Number(manualAnalysis),
         }])}>Record trial</button>
         <button type="button" disabled={manual.length === 0} onClick={() => setManual([])}>Clear manual trials</button>
       </div>

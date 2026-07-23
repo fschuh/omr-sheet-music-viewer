@@ -1,11 +1,11 @@
-import { defaultChordMatcherOptions } from "./chordMatcher";
+import { ExactChordMatcher } from "./chordMatcher";
 import { pianoSampleUrls } from "./piano";
-import type { RecognizerResult } from "./noteRecognizer";
+import { SpectralPitchDetector } from "./spectralPitchDetector";
+import type { RecognizedOnset, RecognizerResult } from "./noteRecognizer";
 
-const SAMPLE_RATE = 22_050;
-const WINDOW_SAMPLES = SAMPLE_RATE * 2 - 256;
-const WINDOW_DURATION_MS = (WINDOW_SAMPLES / SAMPLE_RATE) * 1_000;
-const FIXTURE_ONSET_BEFORE_END_MS = 180;
+const FFT_SIZE = 16_384;
+const PRE_ROLL_MS = 220;
+const MAX_AFTER_ONSET_MS = 900;
 
 export interface ListenBenchmarkTrial {
   source: "bundled" | "acoustic" | "digital";
@@ -14,7 +14,7 @@ export interface ListenBenchmarkTrial {
   expectedCorrect: boolean;
   advanced: boolean;
   onsetToAdvanceMs: number | null;
-  inferenceMs: number;
+  analysisMs: number;
   recognizedOnsets?: Array<{ midi: number; confidence: number; noteConfidence: number }>;
 }
 
@@ -66,73 +66,6 @@ export function summarizeListenBenchmark(trials: ListenBenchmarkTrial[]): Listen
   };
 }
 
-class BenchmarkWorkerClient {
-  private readonly worker = new Worker(
-    new URL("./basicPitch.worker.ts", import.meta.url),
-    { type: "module" },
-  );
-  private nextRequestId = 1;
-  private readonly pending = new Map<
-    number,
-    { resolve: (result: RecognizerResult) => void; reject: (error: Error) => void }
-  >();
-  private readonly ready: Promise<void>;
-
-  constructor() {
-    let resolveReady!: () => void;
-    let rejectReady!: (error: Error) => void;
-    this.ready = new Promise((resolve, reject) => {
-      resolveReady = resolve;
-      rejectReady = reject;
-    });
-    this.worker.onmessage = (event) => {
-      const message = event.data as { type?: string; requestId?: number; message?: string };
-      if (message.type === "ready") {
-        resolveReady();
-        return;
-      }
-      if (message.type === "error") {
-        const error = new Error(message.message ?? "Basic Pitch benchmark failed.");
-        if (message.requestId === undefined) rejectReady(error);
-        else {
-          this.pending.get(message.requestId)?.reject(error);
-          this.pending.delete(message.requestId);
-        }
-        return;
-      }
-      if (message.type === "result" && message.requestId !== undefined) {
-        this.pending.get(message.requestId)?.resolve(event.data as RecognizerResult);
-        this.pending.delete(message.requestId);
-      }
-    };
-    this.worker.onerror = (event) => rejectReady(new Error(event.message));
-    this.worker.postMessage({
-      type: "initialize",
-      modelUrl: new URL("/models/basic-pitch/model.json", window.location.href).href,
-    });
-  }
-
-  async evaluate(samples: Float32Array): Promise<RecognizerResult> {
-    await this.ready;
-    const requestId = this.nextRequestId++;
-    const capturedAtMs = performance.now();
-    const promise = new Promise<RecognizerResult>((resolve, reject) => {
-      this.pending.set(requestId, { resolve, reject });
-    });
-    this.worker.postMessage(
-      { type: "infer", requestId, generation: requestId, samples, capturedAtMs },
-      [samples.buffer],
-    );
-    return promise;
-  }
-
-  dispose(): void {
-    this.worker.terminate();
-    for (const pending of this.pending.values()) pending.reject(new Error("Benchmark stopped."));
-    this.pending.clear();
-  }
-}
-
 function nearestSample(midi: number): [number, string] {
   const samples = Object.entries(pianoSampleUrls()).map(
     ([pitch, url]): [number, string] => [Number(pitch), url],
@@ -142,50 +75,123 @@ function nearestSample(midi: number): [number, string] {
   ));
 }
 
-async function renderBundledPianoFixture(
-  audioContext: AudioContext,
-  pitches: readonly number[],
-): Promise<Float32Array> {
-  const decoded = new Map<string, AudioBuffer>();
-  for (const midi of pitches) {
-    const [, url] = nearestSample(midi);
-    if (!decoded.has(url)) {
-      const response = await fetch(url);
-      if (!response.ok) throw new Error(`Could not load benchmark sample ${url}.`);
-      decoded.set(url, await audioContext.decodeAudioData(await response.arrayBuffer()));
-    }
-  }
-  const offline = new OfflineAudioContext(1, WINDOW_SAMPLES, SAMPLE_RATE);
-  const onsetSeconds = (WINDOW_DURATION_MS - FIXTURE_ONSET_BEFORE_END_MS) / 1_000;
-  for (const midi of pitches) {
-    const [sampleMidi, url] = nearestSample(midi);
-    const source = offline.createBufferSource();
-    source.buffer = decoded.get(url)!;
-    source.playbackRate.value = 2 ** ((midi - sampleMidi) / 12);
-    const gain = offline.createGain();
-    gain.gain.value = Math.min(0.8, 0.9 / Math.sqrt(pitches.length));
-    source.connect(gain).connect(offline.destination);
-    source.start(onsetSeconds);
-  }
-  return (await offline.startRendering()).getChannelData(0).slice();
-}
-
-function exactDetectedPitches(result: RecognizerResult, targetPitches: readonly number[]): number[] {
-  const target = new Set(targetPitches);
-  return Array.from(new Set(
-    result.onsets
-      .filter((onset) => onset.confidence >= defaultChordMatcherOptions.onsetThreshold)
-      .filter((onset) => onset.noteConfidence >= (
-        target.has(onset.midi)
-          ? defaultChordMatcherOptions.targetNoteThreshold
-          : defaultChordMatcherOptions.noteThreshold
-      ))
-      .map((onset) => onset.midi),
-  )).sort((left, right) => left - right);
-}
-
 function samePitches(left: readonly number[], right: readonly number[]): boolean {
   return left.length === right.length && left.every((pitch, index) => pitch === right[index]);
+}
+
+class SpectralBenchmarkClient {
+  private readonly audioContext = new AudioContext({ latencyHint: "interactive" });
+  private readonly decoded = new Map<string, AudioBuffer>();
+
+  private async sample(url: string): Promise<AudioBuffer> {
+    const cached = this.decoded.get(url);
+    if (cached) return cached;
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`Could not load benchmark sample ${url}.`);
+    const decoded = await this.audioContext.decodeAudioData(await response.arrayBuffer());
+    this.decoded.set(url, decoded);
+    return decoded;
+  }
+
+  async evaluate(
+    generation: number,
+    targetPitches: readonly number[],
+    playedPitches: readonly number[],
+  ): Promise<Pick<ListenBenchmarkTrial, "advanced" | "onsetToAdvanceMs" | "analysisMs" | "recognizedOnsets">> {
+    await this.audioContext.resume();
+    const prepared = await Promise.all(playedPitches.map(async (midi) => {
+      const [sampleMidi, url] = nearestSample(midi);
+      return { midi, sampleMidi, buffer: await this.sample(url) };
+    }));
+
+    const analyser = this.audioContext.createAnalyser();
+    analyser.fftSize = FFT_SIZE;
+    analyser.smoothingTimeConstant = 0;
+    analyser.minDecibels = -100;
+    analyser.maxDecibels = -15;
+    const silence = this.audioContext.createGain();
+    silence.gain.value = 0;
+    analyser.connect(silence).connect(this.audioContext.destination);
+    const detector = new SpectralPitchDetector({
+      sampleRate: this.audioContext.sampleRate,
+      fftSize: analyser.fftSize,
+    });
+    const matcher = new ExactChordMatcher();
+    const spectrum = new Float32Array(analyser.frequencyBinCount);
+    const sources: AudioBufferSourceNode[] = [];
+    const onsetContextTime = this.audioContext.currentTime + PRE_ROLL_MS / 1_000;
+    const scheduledAtMs = performance.now();
+    const onsetAtMs = scheduledAtMs + PRE_ROLL_MS;
+    matcher.setTarget(targetPitches, generation, scheduledAtMs);
+
+    for (const { midi, sampleMidi, buffer } of prepared) {
+      const source = this.audioContext.createBufferSource();
+      source.buffer = buffer;
+      source.playbackRate.value = 2 ** ((midi - sampleMidi) / 12);
+      const gain = this.audioContext.createGain();
+      gain.gain.value = Math.min(0.8, 0.9 / Math.sqrt(playedPitches.length));
+      source.connect(gain).connect(analyser);
+      source.start(onsetContextTime);
+      sources.push(source);
+    }
+
+    const recognized = new Map<number, RecognizedOnset>();
+    let maximumAnalysisMs = 0;
+    try {
+      return await new Promise((resolve) => {
+        let frame = 0;
+        const finish = (advanced: boolean, capturedAtMs: number) => {
+          cancelAnimationFrame(frame);
+          resolve({
+            advanced,
+            onsetToAdvanceMs: advanced ? Math.max(0, capturedAtMs - onsetAtMs) : null,
+            analysisMs: maximumAnalysisMs,
+            recognizedOnsets: Array.from(recognized.values())
+              .sort((left, right) => left.midi - right.midi)
+              .map(({ midi, confidence, noteConfidence }) => ({ midi, confidence, noteConfidence })),
+          });
+        };
+        const analyze = () => {
+          const startedAt = performance.now();
+          analyser.getFloatFrequencyData(spectrum);
+          const capturedAtMs = performance.now();
+          const detection = detector.process(spectrum, capturedAtMs);
+          maximumAnalysisMs = Math.max(maximumAnalysisMs, performance.now() - startedAt);
+          for (const onset of detection.onsets) {
+            const previous = recognized.get(onset.midi);
+            if (!previous || previous.confidence < onset.confidence) recognized.set(onset.midi, onset);
+          }
+          const result: RecognizerResult = {
+            generation,
+            ...detection,
+            capturedAtMs,
+            processingTimeMs: maximumAnalysisMs,
+          };
+          if (matcher.consume(result).matched) {
+            finish(true, capturedAtMs);
+            return;
+          }
+          if (capturedAtMs - onsetAtMs >= MAX_AFTER_ONSET_MS) {
+            finish(false, capturedAtMs);
+            return;
+          }
+          frame = requestAnimationFrame(analyze);
+        };
+        frame = requestAnimationFrame(analyze);
+      });
+    } finally {
+      for (const source of sources) {
+        try { source.stop(); } catch { /* The sample may already have ended. */ }
+        source.disconnect();
+      }
+      analyser.disconnect();
+      silence.disconnect();
+    }
+  }
+
+  async dispose(): Promise<void> {
+    await this.audioContext.close();
+  }
 }
 
 export async function runBundledListenBenchmark(
@@ -206,42 +212,25 @@ export async function runBundledListenBenchmark(
     { target: [60, 64, 67], played: [60, 64, 67, 72] },
     { target: [48, 55, 60], played: [48, 55] },
   ];
-  const audioContext = new AudioContext({ sampleRate: SAMPLE_RATE });
-  const client = new BenchmarkWorkerClient();
+  const client = new SpectralBenchmarkClient();
   const trials: ListenBenchmarkTrial[] = [];
   try {
     for (let index = 0; index < cases.length; index += 1) {
       const benchmarkCase = cases[index];
       const played = [...benchmarkCase.played].sort((left, right) => left - right);
       const target = [...benchmarkCase.target].sort((left, right) => left - right);
-      const result = await client.evaluate(
-        await renderBundledPianoFixture(audioContext, played),
-      );
-      const detected = exactDetectedPitches(result, target);
-      const advanced = samePitches(target, detected);
-      const expectedCorrect = samePitches(target, played);
+      const evaluation = await client.evaluate(index + 1, target, played);
       trials.push({
         source: "bundled",
         targetPitches: target,
         playedPitches: played,
-        expectedCorrect,
-        advanced,
-        // The rendered onset-to-window-end interval includes capture/model look-ahead.
-        onsetToAdvanceMs: advanced
-          ? FIXTURE_ONSET_BEFORE_END_MS + defaultChordMatcherOptions.settleMs + result.processingTimeMs
-          : null,
-        inferenceMs: result.processingTimeMs,
-        recognizedOnsets: result.onsets.map(({ midi, confidence, noteConfidence }) => ({
-          midi,
-          confidence,
-          noteConfidence,
-        })),
+        expectedCorrect: samePitches(target, played),
+        ...evaluation,
       });
       onProgress(index + 1, cases.length);
     }
     return summarizeListenBenchmark(trials);
   } finally {
-    client.dispose();
-    await audioContext.close();
+    await client.dispose();
   }
 }
