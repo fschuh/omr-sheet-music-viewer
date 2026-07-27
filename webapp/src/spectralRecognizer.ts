@@ -208,10 +208,12 @@ export class BrowserSpectralRecognizer implements NoteRecognizer {
       analyser.getFloatFrequencyData(spectrum);
       const capturedAtMs = this.environment.now();
       const frame = detector.process(spectrum, capturedAtMs);
+      const targets = new Set(this.targetPitches);
       this.callbacks?.onResult({
         generation: this.generation,
         onsets: frame.onsets,
-        activePitches: frame.activePitches,
+        recognizedActivePitches: frame.activePitches,
+        targetPitchEvidence: frame.activePitches.filter(({ midi }) => targets.has(midi)),
         processingTimeMs: this.environment.now() - startedAt,
         capturedAtMs,
       });

@@ -1,7 +1,7 @@
 /// <reference lib="webworker" />
 
 import { OnlineAmtSession, type OnlineAmtSessionOptions } from "./onlineAmtSession";
-import { decodeOnlineAmtOutput } from "./onlineAmtOutput";
+import { OnlineAmtOutputDecoder } from "./onlineAmtOutput";
 
 interface InitializeMessage extends OnlineAmtSessionOptions {
   type: "initialize";
@@ -26,6 +26,7 @@ interface StopMessage {
 type WorkerRequest = InitializeMessage | AudioMessage | ResetMessage | StopMessage;
 
 let session: OnlineAmtSession | null = null;
+let decoder = new OnlineAmtOutputDecoder();
 let operation = Promise.resolve();
 
 function errorMessage(error: unknown): string {
@@ -35,7 +36,7 @@ function errorMessage(error: unknown): string {
 async function processAudio(message: AudioMessage): Promise<void> {
   if (!session) throw new Error("online_amt is not initialized");
   const result = await session.run(new Float32Array(message.audio));
-  const { onsets, activePitches } = decodeOnlineAmtOutput(
+  const decoded = decoder.decode(
     result.scores,
     result.states,
     result.signalActive,
@@ -45,8 +46,7 @@ async function processAudio(message: AudioMessage): Promise<void> {
   self.postMessage({
     type: "result",
     generation: message.generation,
-    onsets,
-    activePitches,
+    ...decoded,
     processingTimeMs: result.inferenceTimeMs,
     capturedAtMs: message.capturedAtMs,
   });
@@ -57,6 +57,7 @@ self.onmessage = ({ data }: MessageEvent<WorkerRequest>) => {
     operation = operation.then(async () => {
       const startedAt = performance.now();
       session = await OnlineAmtSession.create(data);
+      decoder.reset();
       self.postMessage({
         type: "initialized",
         loadTimeMs: performance.now() - startedAt,
@@ -75,6 +76,7 @@ self.onmessage = ({ data }: MessageEvent<WorkerRequest>) => {
   if (data.type === "reset") {
     operation = operation.then(() => {
       session?.reset();
+      decoder.reset();
     }).catch((error: unknown) => {
       self.postMessage({ type: "error", message: errorMessage(error) });
     });

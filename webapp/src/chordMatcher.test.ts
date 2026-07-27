@@ -12,12 +12,14 @@ function result(
   capturedAtMs: number,
   onsets: RecognizedOnset[] = [],
   activePitches: number[] = onsets.map((value) => value.midi),
+  targetEvidencePitches: number[] = activePitches,
 ): RecognizerResult {
   return {
     generation,
     capturedAtMs,
     onsets,
-    activePitches: activePitches.map((midi) => ({ midi, confidence: 0.8 })),
+    recognizedActivePitches: activePitches.map((midi) => ({ midi, confidence: 0.8 })),
+    targetPitchEvidence: targetEvidencePitches.map((midi) => ({ midi, confidence: 0.8 })),
     processingTimeMs: 42,
   };
 }
@@ -46,10 +48,10 @@ test("matches simultaneous and briefly rolled exact chords", () => {
 test("uses stable target evidence after one fresh chord attack", () => {
   const matcher = new ExactChordMatcher();
   matcher.setTarget([60, 64, 67], 1, 0);
-  matcher.consume(result(1, 1_000, [onset(60, 1_000)], [60, 64, 67]));
-  const collected = matcher.consume(result(1, 1_050, [], [60, 64, 67]));
+  matcher.consume(result(1, 1_000, [onset(60, 1_000)], [60], [60, 64, 67]));
+  const collected = matcher.consume(result(1, 1_050, [], [60], [60, 64, 67]));
   assert.deepEqual(collected.detectedTargetPitches, [60, 64, 67]);
-  assert.equal(matcher.consume(result(1, 1_135, [], [60, 64, 67])).matched, true);
+  assert.equal(matcher.consume(result(1, 1_135, [], [60], [60, 64, 67])).matched, true);
 });
 
 test("requires a fresh bass onset for a three-note chord", () => {
@@ -80,7 +82,7 @@ test("low-confidence active evidence cannot complete a chord", () => {
   matcher.consume(result(1, 1_000, [onset(60, 1_000)], [60]));
   const weak: RecognizerResult = {
     ...result(1, 1_050, [], [60]),
-    activePitches: [
+    targetPitchEvidence: [
       { midi: 60, confidence: 0.8 },
       { midi: 64, confidence: 0.34 },
     ],
@@ -113,10 +115,14 @@ test("sustained pitches do not keep a rejected onset alive", () => {
 
   const sustained: RecognizerResult = {
     ...result(1, 1_200),
-    activePitches: [
+    recognizedActivePitches: [
       { midi: 60, confidence: 0.9 },
       { midi: 64, confidence: 0.9 },
       { midi: 67, confidence: 0.9 },
+    ],
+    targetPitchEvidence: [
+      { midi: 60, confidence: 0.9 },
+      { midi: 64, confidence: 0.9 },
     ],
   };
   const cleared = matcher.consume(sustained);
@@ -138,7 +144,7 @@ test("a later correct onset starts clean without an intervening silence frame", 
 
   matcher.consume({
     ...result(1, 1_250, [onset(60, 1_250), onset(64, 1_250)]),
-    activePitches: [
+    recognizedActivePitches: [
       { midi: 60, confidence: 0.9 },
       { midi: 64, confidence: 0.9 },
       { midi: 67, confidence: 0.9 },
@@ -146,7 +152,7 @@ test("a later correct onset starts clean without an intervening silence frame", 
   });
   const settled = matcher.consume({
     ...result(1, 1_331, [], [60, 64]),
-    activePitches: [
+    recognizedActivePitches: [
       { midi: 60, confidence: 0.9 },
       { midi: 64, confidence: 0.9 },
       { midi: 67, confidence: 0.9 },

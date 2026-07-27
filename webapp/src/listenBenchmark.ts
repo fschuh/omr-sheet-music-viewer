@@ -2,7 +2,7 @@ import { ExactChordMatcher } from "./chordMatcher";
 import { ONLINE_AMT_CHUNK_SIZE } from "./onlineAmtProtocol";
 import { OnlineAmtSession } from "./onlineAmtSession";
 import {
-  decodeOnlineAmtOutput,
+  OnlineAmtOutputDecoder,
   onlineAmtChordMatcherOptions,
 } from "./onlineAmtOutput";
 import { pianoSampleUrls } from "./piano";
@@ -301,7 +301,11 @@ class SpectralBenchmarkClient {
           }
           const result: RecognizerResult = {
             generation,
-            ...detection,
+            onsets: detection.onsets,
+            recognizedActivePitches: detection.activePitches,
+            targetPitchEvidence: detection.activePitches.filter(
+              ({ midi }) => targetPitches.includes(midi),
+            ),
             capturedAtMs,
             processingTimeMs: maximumAnalysisMs,
           };
@@ -391,6 +395,7 @@ class OnlineAmtBenchmarkClient {
       this.render(playedPitches),
     ]);
     session.reset();
+    const decoder = new OnlineAmtOutputDecoder();
     const matcher = new ExactChordMatcher(onlineAmtChordMatcherOptions);
     matcher.setTarget(targetPitches, generation, 0);
     const recognized = new Map<number, {
@@ -412,13 +417,14 @@ class OnlineAmtBenchmarkClient {
       const capturedAtMs = (
         sampleOffset + ONLINE_AMT_CHUNK_SIZE
       ) * 1_000 / 16_000;
-      const { onsets, activePitches } = decodeOnlineAmtOutput(
+      const decoded = decoder.decode(
         output.scores,
         output.states,
         output.signalActive,
         capturedAtMs,
         targetPitches,
       );
+      const { onsets } = decoded;
       for (const onset of onsets) {
         if (!recognized.has(onset.midi)) {
           recognized.set(onset.midi, {
@@ -431,8 +437,7 @@ class OnlineAmtBenchmarkClient {
       }
       const update = matcher.consume({
         generation,
-        onsets,
-        activePitches,
+        ...decoded,
         processingTimeMs: output.inferenceTimeMs,
         capturedAtMs,
       });

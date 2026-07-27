@@ -136,6 +136,10 @@ test("reports each animation-frame result with the current playhead generation",
   mock.runFrame();
   assert.equal(results[0].generation, 3);
   assert.deepEqual(results[0].onsets.map((onset) => onset.midi), [60]);
+  assert.deepEqual(results[0].recognizedActivePitches, [{ midi: 60, confidence: 0.8 }]);
+  assert.deepEqual(results[0].targetPitchEvidence, [{ midi: 60, confidence: 0.8 }]);
+  assert.equal(results[0].noteStates, undefined);
+  assert.equal(results[0].noteEvents, undefined);
 
   recognizer.setGeneration(4);
   mock.runFrame();

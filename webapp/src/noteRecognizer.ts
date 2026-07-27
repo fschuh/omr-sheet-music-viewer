@@ -24,10 +24,45 @@ export interface RecognizedOnset {
   onsetTimeMs: number;
 }
 
+export interface RecognizedPitchEvidence {
+  midi: number;
+  /** Recognizer-specific confidence that the pitch is sounding. */
+  confidence: number;
+}
+
+export type RecognizedNoteStateName =
+  | "off"
+  | "offset"
+  | "sustain"
+  | "onset"
+  | "reOnset";
+
+export interface RecognizedNoteState extends RecognizedPitchEvidence {
+  state: RecognizedNoteStateName;
+}
+
+export type RecognizedNoteEventType = "onset" | "reOnset" | "offset";
+
+export interface RecognizedNoteEvent {
+  midi: number;
+  type: RecognizedNoteEventType;
+  /** Confidence in the state transition that produced this event. */
+  confidence: number;
+  /** Monotonic capture-clock time, not wall-clock time. */
+  eventTimeMs: number;
+}
+
 export interface RecognizerResult {
   generation: number;
   onsets: RecognizedOnset[];
-  activePitches: Array<{ midi: number; confidence: number }>;
+  /** Current recognizer state only; this must not contain score-injected pitches. */
+  recognizedActivePitches: RecognizedPitchEvidence[];
+  /** Score-target evidence, including sub-argmax evidence when available. */
+  targetPitchEvidence: RecognizedPitchEvidence[];
+  /** Optional richer state snapshot supplied by state-aware recognizers. */
+  noteStates?: RecognizedNoteState[];
+  /** Optional state-transition events supplied by state-aware recognizers. */
+  noteEvents?: RecognizedNoteEvent[];
   processingTimeMs: number;
   capturedAtMs: number;
 }

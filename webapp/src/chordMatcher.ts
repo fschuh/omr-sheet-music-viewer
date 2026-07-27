@@ -192,7 +192,7 @@ export class ExactChordMatcher {
       result.capturedAtMs >= this.refractoryUntilMs &&
       result.capturedAtMs - this.attemptStartMs <= this.options.collectionWindowMs
     ) {
-      for (const active of result.activePitches) {
+      for (const active of result.targetPitchEvidence) {
         const lowestTarget = this.target.size > 0 ? Math.min(...this.target) : Infinity;
         if (
           !this.target.has(active.midi) ||
@@ -226,7 +226,7 @@ export class ExactChordMatcher {
     // Target-aware recognizers may report every expected pitch so the matcher
     // can inspect sub-argmax evidence. Use confidence rather than list length
     // when an incomplete, otherwise valid attempt needs a release reset.
-    const silent = result.activePitches.every(
+    const silent = result.recognizedActivePitches.every(
       (active) => active.confidence < this.options.activeTargetThreshold,
     );
     for (const [midi, onset] of this.unanchoredExtras) {

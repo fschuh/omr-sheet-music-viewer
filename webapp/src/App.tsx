@@ -665,7 +665,7 @@ export function App() {
     const update = chordMatcherRef.current.consume(result);
     if (update.stale) return;
     const activeConfidence = new Map(
-      result.activePitches.map(({ midi, confidence }) => [midi, confidence]),
+      result.targetPitchEvidence.map(({ midi, confidence }) => [midi, confidence]),
     );
     setListenFeedback((feedback) => ({
       ...feedback,
