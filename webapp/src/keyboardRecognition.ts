@@ -23,11 +23,25 @@ export class KeyboardRecognitionTracker {
     { midi: number; attackTimeMs: number }
   >();
   private readonly suppressedUntilRelease = new Set<number>();
+  private readonly visiblePitches = new Set<number>();
 
   reset(): void {
     this.activeSince.clear();
     this.attacks.clear();
     this.suppressedUntilRelease.clear();
+    this.visiblePitches.clear();
+  }
+
+  suppressVisibleUntilRelease(): number[] {
+    const suppressed = Array.from(this.visiblePitches)
+      .sort((left, right) => left - right);
+    for (const midi of suppressed) {
+      this.activeSince.delete(midi);
+      this.attacks.delete(midi);
+      this.suppressedUntilRelease.add(midi);
+    }
+    this.visiblePitches.clear();
+    return suppressed;
   }
 
   consume(result: RecognizerResult): KeyboardRecognitionSnapshot {
@@ -39,22 +53,26 @@ export class KeyboardRecognitionTracker {
     // snapshot. Preserve that behavior and use their onsets only for pulses.
     if (result.noteEvents === undefined) {
       this.activeSince.clear();
-      this.suppressedUntilRelease.clear();
+      for (const midi of this.suppressedUntilRelease) {
+        if (!activeByPitch.has(midi)) this.suppressedUntilRelease.delete(midi);
+      }
       for (const midi of this.attacks.keys()) {
         if (!activeByPitch.has(midi)) this.attacks.delete(midi);
       }
       for (const onset of result.onsets) {
         if (!activeByPitch.has(onset.midi)) continue;
+        this.suppressedUntilRelease.delete(onset.midi);
         this.attacks.set(onset.midi, {
           midi: onset.midi,
           attackTimeMs: onset.onsetTimeMs,
         });
       }
-      return {
+      return this.remember({
         activePitches: Array.from(activeByPitch.values())
+          .filter(({ midi }) => !this.suppressedUntilRelease.has(midi))
           .sort((left, right) => left.midi - right.midi),
         attacks: this.attackSnapshot(activeByPitch),
-      };
+      });
     }
 
     for (const midi of new Set([
@@ -100,7 +118,7 @@ export class KeyboardRecognitionTracker {
       this.suppressedUntilRelease.add(midi);
     }
 
-    return this.snapshot(activeByPitch);
+    return this.remember(this.snapshot(activeByPitch));
   }
 
   private snapshot(
@@ -121,5 +139,11 @@ export class KeyboardRecognitionTracker {
     return Array.from(this.attacks.values())
       .filter(({ midi }) => activeByPitch.has(midi))
       .sort((left, right) => left.midi - right.midi);
+  }
+
+  private remember(snapshot: KeyboardRecognitionSnapshot): KeyboardRecognitionSnapshot {
+    this.visiblePitches.clear();
+    for (const { midi } of snapshot.activePitches) this.visiblePitches.add(midi);
+    return snapshot;
   }
 }

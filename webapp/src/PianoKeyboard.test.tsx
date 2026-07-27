@@ -118,6 +118,28 @@ test("uses the attack timestamp as a fresh animation identity for repeated notes
   assert.match(repeatedAttack, /data-attack-time-ms="250"/);
 });
 
+test("flashes a completed chord without reclassifying it against the next target", () => {
+  const markup = renderToStaticMarkup(
+    <PianoKeyboard
+      notes={[{ pitch: "D4" }]}
+      recognizedPitches={[]}
+      attackPitches={[]}
+      successPitches={[{ midi: 60, successTimeMs: 500 }]}
+    />,
+  );
+
+  assert.match(
+    markup,
+    /class="piano-key piano-key-white" data-piano-key="C4" data-midi="60" data-success="500"/,
+  );
+  assert.match(markup, /class="piano-key-success" data-success-time-ms="500"/);
+  assert.match(
+    markup,
+    /class="piano-key piano-key-white active" data-piano-key="D4" data-midi="62" data-active="true"/,
+  );
+  assert.doesNotMatch(markup, /data-piano-key="C4"[^>]*data-result="wrong"/);
+});
+
 test("removes the pressed state and attack feedback after an offset", () => {
   const markup = renderToStaticMarkup(
     <PianoKeyboard
@@ -132,6 +154,45 @@ test("removes the pressed state and attack feedback after an offset", () => {
     markup,
     /class="piano-key piano-key-white active" data-piano-key="C4" data-midi="60" data-active="true"/,
   );
+});
+
+test("hides carry-over notes until an offset or fresh re-onset", () => {
+  const tracker = new KeyboardRecognitionTracker();
+  tracker.consume(recognizerResult(100, [60], [{
+    midi: 60,
+    type: "onset",
+    confidence: 0.99,
+    eventTimeMs: 100,
+  }]));
+
+  assert.deepEqual(tracker.suppressVisibleUntilRelease(), [60]);
+  const carried = tracker.consume(recognizerResult(132, [60], []));
+  assert.deepEqual(carried.activePitches, []);
+  assert.deepEqual(carried.attacks, []);
+
+  const repeated = tracker.consume(recognizerResult(164, [60], [{
+    midi: 60,
+    type: "reOnset",
+    confidence: 0.99,
+    eventTimeMs: 164,
+  }]));
+  assert.deepEqual(repeated.activePitches.map(({ midi }) => midi), [60]);
+  assert.deepEqual(repeated.attacks, [{ midi: 60, attackTimeMs: 164 }]);
+
+  tracker.suppressVisibleUntilRelease();
+  tracker.consume(recognizerResult(196, [], [{
+    midi: 60,
+    type: "offset",
+    confidence: 0.99,
+    eventTimeMs: 196,
+  }]));
+  const afterRelease = tracker.consume(recognizerResult(228, [60], [{
+    midi: 60,
+    type: "onset",
+    confidence: 0.99,
+    eventTimeMs: 228,
+  }]));
+  assert.deepEqual(afterRelease.activePitches.map(({ midi }) => midi), [60]);
 });
 
 test("suppresses a latched online-AMT sustain until release or a fresh attack", () => {
@@ -192,21 +253,29 @@ test("suppresses a latched online-AMT sustain until release or a fresh attack", 
 
 test("does not time-limit the spectral detector's refreshed active snapshots", () => {
   const tracker = new KeyboardRecognitionTracker();
-  const result: RecognizerResult = {
+  const result = (onsets: RecognizerResult["onsets"]): RecognizerResult => ({
     generation: 1,
-    onsets: [{
-      midi: 60,
-      confidence: 0.8,
-      noteConfidence: 0.8,
-      onsetTimeMs: 100,
-    }],
+    onsets,
     recognizedActivePitches: [{ midi: 60, confidence: 0.8 }],
     targetPitchEvidence: [],
     processingTimeMs: 10,
     capturedAtMs: 100 + KEYBOARD_STALE_SUSTAIN_MS,
-  };
+  });
 
-  const snapshot = tracker.consume(result);
+  const onset = {
+    midi: 60,
+    confidence: 0.8,
+    noteConfidence: 0.8,
+    onsetTimeMs: 100,
+  };
+  const snapshot = tracker.consume(result([onset]));
   assert.deepEqual(snapshot.activePitches, [{ midi: 60, confidence: 0.8 }]);
   assert.deepEqual(snapshot.attacks, [{ midi: 60, attackTimeMs: 100 }]);
+
+  tracker.suppressVisibleUntilRelease();
+  assert.deepEqual(tracker.consume(result([])).activePitches, []);
+  assert.deepEqual(
+    tracker.consume(result([{ ...onset, onsetTimeMs: 200 }])).activePitches,
+    [{ midi: 60, confidence: 0.8 }],
+  );
 });

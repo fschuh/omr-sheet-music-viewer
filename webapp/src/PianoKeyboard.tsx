@@ -19,6 +19,7 @@ interface PianoKeyboardProps {
   notes: readonly PianoKeyboardNote[];
   recognizedPitches?: readonly number[];
   attackPitches?: readonly PianoKeyboardAttack[];
+  successPitches?: readonly PianoKeyboardSuccess[];
 }
 
 export interface PianoKeyboardNote {
@@ -30,6 +31,11 @@ export interface PianoKeyboardNote {
 export interface PianoKeyboardAttack {
   midi: number;
   attackTimeMs: number;
+}
+
+export interface PianoKeyboardSuccess {
+  midi: number;
+  successTimeMs: number;
 }
 
 interface PianoKeyLabels {
@@ -72,6 +78,7 @@ export function PianoKeyboard({
   notes,
   recognizedPitches = [],
   attackPitches = [],
+  successPitches = [],
 }: PianoKeyboardProps) {
   const activeLabels = useMemo(() => {
     const labels = new Map<number, PianoKeyLabels>();
@@ -105,6 +112,14 @@ export function PianoKeyboard({
     ),
     [attackPitches],
   );
+  const successByPitch = useMemo(
+    () => new Map(
+      successPitches
+        .filter(({ midi }) => midi >= FIRST_PIANO_MIDI && midi <= LAST_PIANO_MIDI)
+        .map((success) => [success.midi, success]),
+    ),
+    [successPitches],
+  );
   const activePitchNames = Array.from(activeLabels.values()).flatMap((labels) => labels.names);
   const accessibleNotes = Array.from(activeLabels.values()).flatMap((labels) =>
     labels.names.map((name) => {
@@ -137,6 +152,17 @@ export function PianoKeyboard({
         key={attack.attackTimeMs}
         className="piano-key-attack"
         data-attack-time-ms={attack.attackTimeMs}
+      />
+    ) : null;
+  }
+
+  function successFeedback(midi: number) {
+    const success = successByPitch.get(midi);
+    return success ? (
+      <span
+        key={success.successTimeMs}
+        className="piano-key-success"
+        data-success-time-ms={success.successTimeMs}
       />
     ) : null;
   }
@@ -181,6 +207,7 @@ export function PianoKeyboard({
             const labels = activeLabels.get(key.midi);
             const recognized = recognizedPitchSet.has(key.midi);
             const attack = attackByPitch.get(key.midi);
+            const success = successByPitch.get(key.midi);
             return (
               <div
                 key={key.midi}
@@ -191,8 +218,10 @@ export function PianoKeyboard({
                 data-recognized={recognized ? "true" : undefined}
                 data-result={recognized ? (labels ? "correct" : "wrong") : undefined}
                 data-attack={attack ? attack.attackTimeMs : undefined}
+                data-success={success ? success.successTimeMs : undefined}
               >
                 {attackFeedback(key.midi)}
+                {successFeedback(key.midi)}
                 {labels ? keyLabel(labels) : null}
               </div>
             );
@@ -203,6 +232,7 @@ export function PianoKeyboard({
             const labels = activeLabels.get(key.midi);
             const recognized = recognizedPitchSet.has(key.midi);
             const attack = attackByPitch.get(key.midi);
+            const success = successByPitch.get(key.midi);
             const width = (BLACK_KEY_WIDTH_IN_WHITE_KEYS / WHITE_KEY_COUNT) * 100;
             const left = ((key.whiteIndex - BLACK_KEY_WIDTH_IN_WHITE_KEYS / 2) / WHITE_KEY_COUNT) * 100;
             return (
@@ -216,8 +246,10 @@ export function PianoKeyboard({
                 data-recognized={recognized ? "true" : undefined}
                 data-result={recognized ? (labels ? "correct" : "wrong") : undefined}
                 data-attack={attack ? attack.attackTimeMs : undefined}
+                data-success={success ? success.successTimeMs : undefined}
               >
                 {attackFeedback(key.midi)}
+                {successFeedback(key.midi)}
                 {labels ? keyLabel(labels) : null}
               </div>
             );

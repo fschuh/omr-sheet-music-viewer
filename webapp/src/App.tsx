@@ -410,6 +410,7 @@ export function App() {
     targetPitchConfidences: [],
     recognizedActivePitches: [],
     attackPitches: [],
+    successPitches: [],
     processingTimeMs: null,
   });
   const commitPlaybackState = useCallback(
@@ -663,6 +664,7 @@ export function App() {
       targetPitchConfidences: [],
       recognizedActivePitches: [],
       attackPitches: [],
+      successPitches: [],
       processingTimeMs: null,
     }));
   }, [commitPlaybackState]);
@@ -675,6 +677,7 @@ export function App() {
       result.targetPitchEvidence.map(({ midi, confidence }) => [midi, confidence]),
     );
     const keyboardRecognition = keyboardRecognitionRef.current.consume(result);
+    if (update.matched) keyboardRecognitionRef.current.suppressVisibleUntilRelease();
     setListenFeedback((feedback) => ({
       ...feedback,
       targetPitches: update.targetPitches,
@@ -684,8 +687,14 @@ export function App() {
         midi,
         confidence: activeConfidence.get(midi) ?? 0,
       })),
-      recognizedActivePitches: keyboardRecognition.activePitches,
-      attackPitches: keyboardRecognition.attacks,
+      recognizedActivePitches: update.matched ? [] : keyboardRecognition.activePitches,
+      attackPitches: update.matched ? [] : keyboardRecognition.attacks,
+      successPitches: update.matched
+        ? update.targetPitches.map((midi) => ({
+            midi,
+            successTimeMs: result.capturedAtMs,
+          }))
+        : feedback.successPitches,
       processingTimeMs: result.processingTimeMs,
     }));
     if (update.matched) handlePlaybackCommandRef.current("forwardNote");
@@ -714,6 +723,7 @@ export function App() {
       targetPitchConfidences: target.map((midi) => ({ midi, confidence: 0 })),
       recognizedActivePitches: [],
       attackPitches: [],
+      successPitches: [],
       processingTimeMs: null,
     });
     const recognizer = new BrowserOnlineAmtRecognizer();
@@ -774,6 +784,7 @@ export function App() {
         ...feedback,
         recognizedActivePitches: [],
         attackPitches: [],
+        successPitches: [],
       }));
     }
     try {
@@ -810,6 +821,7 @@ export function App() {
           targetPitchConfidences: target.map((midi) => ({ midi, confidence: 0 })),
           recognizedActivePitches: [],
           attackPitches: [],
+          successPitches: [],
           processingTimeMs: null,
         }));
       }
@@ -853,12 +865,15 @@ export function App() {
     recognizer.setTarget(target);
     recognizer.setGeneration(generation);
     chordMatcherRef.current.setTarget(target, generation, performance.now());
+    keyboardRecognitionRef.current.suppressVisibleUntilRelease();
     setListenFeedback((feedback) => ({
       ...feedback,
       targetPitches: target,
       detectedTargetPitches: [],
       extraPitches: [],
       targetPitchConfidences: target.map((midi) => ({ midi, confidence: 0 })),
+      recognizedActivePitches: [],
+      attackPitches: [],
       processingTimeMs: null,
     }));
   }, [notePlaybackMoment?.id, playbackPitchKey, playbackState.listenModeEnabled]);
@@ -1004,6 +1019,7 @@ export function App() {
       targetPitchConfidences: [],
       recognizedActivePitches: [],
       attackPitches: [],
+      successPitches: [],
       processingTimeMs: null,
     });
     setPlaybackAudioError(null);
@@ -1817,6 +1833,9 @@ export function App() {
                   : []}
                 attackPitches={playbackState.listenModeEnabled
                   ? listenFeedback.attackPitches
+                  : []}
+                successPitches={playbackState.listenModeEnabled
+                  ? listenFeedback.successPitches
                   : []}
               />
             ) : null}

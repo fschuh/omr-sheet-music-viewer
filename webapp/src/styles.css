@@ -393,6 +393,44 @@ button:disabled {
   }
 }
 
+.piano-key-success {
+  /* TODO: this animation is still not looking good and feels glitchy. Need to tweak it to be softer and less harsh. */
+  animation: piano-key-success 70ms ease-out both;
+  background: linear-gradient(180deg, #e5ffdd 0%, #65e47d 58%, #16883b 100%);
+  border: 2px solid rgb(231 255 226 / 96%);
+  border-radius: inherit;
+  inset: 1px;
+  pointer-events: none;
+  position: absolute;
+  z-index: 3;
+}
+
+@keyframes piano-key-success {
+  0% {
+    box-shadow: 0 0 4px rgb(116 255 143 / 0%);
+    opacity: 0;
+  }
+
+  18% {
+    box-shadow:
+      inset 0 0 0 3px rgb(255 255 255 / 62%),
+      0 0 20px 6px rgb(103 244 130 / 92%);
+    opacity: 1;
+  }
+
+  58% {
+    box-shadow:
+      inset 0 0 0 2px rgb(255 255 255 / 38%),
+      0 0 14px 3px rgb(103 244 130 / 68%);
+    opacity: 0.9;
+  }
+
+  100% {
+    box-shadow: 0 0 3px rgb(103 244 130 / 0%);
+    opacity: 0;
+  }
+}
+
 .piano-key-label {
   align-items: center;
   background: #075f51;
