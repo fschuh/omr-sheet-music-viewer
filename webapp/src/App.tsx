@@ -685,6 +685,12 @@ export function App() {
     if (!playbackStateRef.current.active || recognizerRef.current) return;
     const operation = ++listenOperationRef.current;
     const generation = ++playheadGenerationRef.current;
+    // Mute before microphone/model initialization so navigation during startup
+    // cannot play samples into the recognizer when it becomes ready.
+    commitPlaybackState(
+      { ...playbackStateRef.current, listenModeEnabled: true },
+      false,
+    );
     const target = midiPitches(
       currentPlaybackMoment(playbackTimeline, playbackStateRef.current)?.pitches ?? [],
     );
@@ -726,13 +732,17 @@ export function App() {
         recognizer.stop();
         return;
       }
-      commitPlaybackState(
-        { ...playbackStateRef.current, listenModeEnabled: true },
-        false,
-      );
     } catch {
-      if (recognizerRef.current === recognizer) recognizerRef.current = null;
-      // The lifecycle callback already exposes the specific analyzer/device error.
+      if (recognizerRef.current === recognizer) {
+        recognizerRef.current = null;
+        if (playbackStateRef.current.listenModeEnabled) {
+          commitPlaybackState(
+            { ...playbackStateRef.current, listenModeEnabled: false },
+            false,
+          );
+        }
+      }
+      // The lifecycle callback exposes the specific analyzer/device error.
     }
   }, [commitPlaybackState, handleRecognizerResult, playbackTimeline]);
 

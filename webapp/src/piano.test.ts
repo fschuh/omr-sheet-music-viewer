@@ -81,6 +81,29 @@ test("preloads, activates, and reuses the playback engine before the first note"
   assert.equal(preparations, 1);
 });
 
+test("stop cancels a note waiting for asynchronous sampler preparation", async () => {
+  let finishPreparation!: () => void;
+  const preparation = new Promise<void>((resolve) => {
+    finishPreparation = resolve;
+  });
+  const attacks: Array<readonly string[]> = [];
+  const engine: PianoPlaybackEngine = {
+    load: async () => undefined,
+    activate: async () => undefined,
+    prepare: () => preparation,
+    attack: (notes) => attacks.push(notes),
+    release: () => undefined,
+  };
+  const sampler = new PianoSampler(() => engine);
+
+  const playing = sampler.play(["C4"]);
+  sampler.stop();
+  finishPreparation();
+  await playing;
+
+  assert.deepEqual(attacks, []);
+});
+
 test("audition plays while muted independently, releases, and waits for its guard", async () => {
   const attacks: Array<readonly string[]> = [];
   const releases: Array<readonly string[]> = [];
