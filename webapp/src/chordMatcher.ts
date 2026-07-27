@@ -9,7 +9,7 @@ export interface ChordMatcherOptions {
   collectionWindowMs: number;
   settleMs: number;
   duplicateOnsetMs: number;
-  wrongAttemptSilenceMs: number;
+  wrongAttemptResetMs: number;
   refractoryMs: number;
 }
 
@@ -22,7 +22,7 @@ export const defaultChordMatcherOptions: ChordMatcherOptions = {
   collectionWindowMs: 400,
   settleMs: 80,
   duplicateOnsetMs: 120,
-  wrongAttemptSilenceMs: 180,
+  wrongAttemptResetMs: 180,
   refractoryMs: 180,
 };
 
@@ -58,7 +58,6 @@ export class ExactChordMatcher {
   private lastOnsetByPitch = new Map<number, number>();
   private attemptStartMs: number | null = null;
   private lastNewOnsetMs: number | null = null;
-  private lastUnanchoredOnsetMs: number | null = null;
   private refractoryUntilMs = 0;
   private rejected = false;
   private matched = false;
@@ -89,7 +88,6 @@ export class ExactChordMatcher {
     this.unanchoredExtras.clear();
     this.attemptStartMs = null;
     this.lastNewOnsetMs = null;
-    this.lastUnanchoredOnsetMs = null;
     this.rejected = false;
   }
 
@@ -134,6 +132,19 @@ export class ExactChordMatcher {
         .some((targetMidi) => looksLikeOvertoneAlias(onset.midi, targetMidi)))
       .sort((left, right) => left.onsetTimeMs - right.onsetTimeMs || left.midi - right.midi);
 
+    // A fresh attack after the retry interval belongs to a new attempt. Reset
+    // before consuming it so notes from a previously rejected onset cannot
+    // contaminate the retry, even while their piano tails remain active.
+    const firstFreshOnsetMs = confident[0]?.onsetTimeMs;
+    if (
+      this.rejected &&
+      this.lastNewOnsetMs !== null &&
+      firstFreshOnsetMs !== undefined &&
+      firstFreshOnsetMs - this.lastNewOnsetMs >= this.options.wrongAttemptResetMs
+    ) {
+      this.clearAttempt();
+    }
+
     for (const onset of confident) {
       const previous = this.lastOnsetByPitch.get(onset.midi);
       if (previous !== undefined && onset.onsetTimeMs - previous < this.options.duplicateOnsetMs) {
@@ -145,25 +156,19 @@ export class ExactChordMatcher {
         if (!existing || existing.confidence < onset.confidence) {
           this.unanchoredExtras.set(onset.midi, onset);
         }
-        this.lastUnanchoredOnsetMs = Math.max(
-          this.lastUnanchoredOnsetMs ?? 0,
-          onset.onsetTimeMs,
-        );
         continue;
       }
       if (this.attemptStartMs === null) {
         this.attemptStartMs = onset.onsetTimeMs;
         for (const extra of this.unanchoredExtras.values()) {
           if (
-            onset.onsetTimeMs - extra.onsetTimeMs <= this.options.preTargetExtraLookbackMs ||
-            !looksLikeOvertoneAlias(extra.midi, onset.midi)
+            onset.onsetTimeMs - extra.onsetTimeMs <= this.options.preTargetExtraLookbackMs
           ) {
             this.accumulated.set(extra.midi, extra);
             this.rejected = true;
           }
         }
         this.unanchoredExtras.clear();
-        this.lastUnanchoredOnsetMs = null;
       }
       if (onset.onsetTimeMs - this.attemptStartMs > this.options.collectionWindowMs) {
         this.rejected = true;
@@ -218,20 +223,42 @@ export class ExactChordMatcher {
       return this.update(true);
     }
 
-    const silent = result.activePitches.length === 0;
-    if (
-      silent &&
-      this.lastUnanchoredOnsetMs !== null &&
-      result.capturedAtMs - this.lastUnanchoredOnsetMs >= this.options.wrongAttemptSilenceMs
-    ) {
-      this.unanchoredExtras.clear();
-      this.lastUnanchoredOnsetMs = null;
+    // Target-aware recognizers may report every expected pitch so the matcher
+    // can inspect sub-argmax evidence. Use confidence rather than list length
+    // when an incomplete, otherwise valid attempt needs a release reset.
+    const silent = result.activePitches.every(
+      (active) => active.confidence < this.options.activeTargetThreshold,
+    );
+    for (const [midi, onset] of this.unanchoredExtras) {
+      if (
+        result.capturedAtMs - onset.onsetTimeMs >=
+        this.options.wrongAttemptResetMs
+      ) {
+        this.unanchoredExtras.delete(midi);
+      }
     }
     if (
-      silent &&
       this.lastNewOnsetMs !== null &&
-      result.capturedAtMs - this.lastNewOnsetMs >= this.options.wrongAttemptSilenceMs &&
-      (this.rejected || !complete)
+      (
+        (
+          this.rejected &&
+          (
+            result.capturedAtMs - this.lastNewOnsetMs >=
+              this.options.wrongAttemptResetMs ||
+            (
+              this.attemptStartMs !== null &&
+              result.capturedAtMs - this.attemptStartMs >=
+                this.options.collectionWindowMs
+            )
+          )
+        ) ||
+        (
+          silent &&
+          !complete &&
+          result.capturedAtMs - this.lastNewOnsetMs >=
+            this.options.wrongAttemptResetMs
+        )
+      )
     ) {
       this.clearAttempt();
     }

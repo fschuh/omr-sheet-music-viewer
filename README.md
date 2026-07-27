@@ -51,23 +51,31 @@ platforms use a 400 ms delay and 75 ms interval.
 
 Listen mode is opt-in during note-by-note playback. Use the microphone button or
 the default `L` shortcut to request the system-default microphone and start the
-local spectral analyzer. A Web Audio FFT and harmonic sieve detect polyphonic MIDI
-pitches while per-note positive spectral flux distinguishes fresh attacks from
-sustained tails. Audio is analyzed in memory and is never saved or transmitted.
-An exact fresh note or chord advances the playhead; confident extra notes prevent advancement.
+local `online_amt` recognizer. An AudioWorklet captures 512-sample mono chunks at
+16 kHz and a dedicated worker runs the stateful model through ONNX Runtime Web's
+single-threaded WASM backend. The 72 MB model is loaded only when listen mode is
+started. Audio is analyzed in memory and is never saved or transmitted. An exact
+fresh note or chord advances the playhead; confident extra notes prevent advancement.
+The original Web Audio FFT and harmonic-sieve implementation remains in the
+source tree and in the benchmark page for future experiments, but it is not the
+application default.
 Normal playhead sounds are suppressed while listening without changing the saved
 speaker preference. The audition button or default `P` shortcut explicitly plays
 the current chord, including while muted; matching pauses through the sample decay.
 
-The adapted PitchPlease algorithm, MIT license provenance, and latest deterministic
-benchmark result are recorded in `webapp/src/vendor/pitchplease/`. To run the instrumented browser
-benchmark, start the web development server and open
-`http://localhost:5173/?listen-benchmark=1`. It renders isolated notes and
-one-to-six-note chords from the bundled piano samples, reports analysis and
-onset-to-advance latency, and keeps the acceptance gate fixed at p95 below 400 ms,
-95% correct advancement, and zero wrong-note false advances. The same page records
-manual acoustic- and digital-piano trials; a target desktop run is still required
-before treating the gate as passed.
+The adapted PitchPlease spectral implementation and its historical benchmark
+remain in `webapp/src/vendor/pitchplease/`. The `online_amt` export procedure,
+runtime parity checks, WASM configuration matrix, and latest listening benchmark
+are recorded in `tools/online_amt/`. To run the instrumented browser benchmark,
+start the web development server and open
+`http://localhost:5173/?listen-benchmark=1`. It defaults to `online_amt`, while
+the spectral implementation has its own comparison button. The benchmark renders
+isolated notes and one-to-six-note chords from the bundled piano samples, reports
+analysis and onset-to-advance latency, and keeps the acceptance gate fixed at p95
+below 400 ms, 95% correct advancement, and zero distinguishable wrong-note false
+advances. The same page records manual acoustic- and digital-piano trials; those
+real-input trials are still required before changing the preliminary
+`online_amt` matcher profile.
 
 ## Development
 

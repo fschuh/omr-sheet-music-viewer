@@ -18,7 +18,8 @@ import {
   type PlaybackState,
 } from "./playback";
 import { pianoSampler, pitchToMidi } from "./piano";
-import { BrowserSpectralRecognizer } from "./spectralRecognizer";
+import { BrowserOnlineAmtRecognizer } from "./onlineAmtRecognizer";
+import { onlineAmtChordMatcherOptions } from "./onlineAmtOutput";
 import { ExactChordMatcher } from "./chordMatcher";
 import {
   stoppedRecognizerLifecycle,
@@ -395,7 +396,7 @@ export function App() {
     );
   }
   const recognizerRef = useRef<NoteRecognizer | null>(null);
-  const chordMatcherRef = useRef(new ExactChordMatcher());
+  const chordMatcherRef = useRef(new ExactChordMatcher(onlineAmtChordMatcherOptions));
   const playheadGenerationRef = useRef(0);
   const listenOperationRef = useRef(0);
   const auditionOperationRef = useRef(0);
@@ -696,7 +697,7 @@ export function App() {
       targetPitchConfidences: target.map((midi) => ({ midi, confidence: 0 })),
       processingTimeMs: null,
     });
-    const recognizer = new BrowserSpectralRecognizer();
+    const recognizer = new BrowserOnlineAmtRecognizer();
     recognizer.setTarget(target);
     recognizerRef.current = recognizer;
     try {

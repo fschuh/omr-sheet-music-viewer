@@ -35,6 +35,7 @@ _build/
 *.onnx
 *.pt
 *.onnx.data
+!webapp/public/models/online_amt_streaming.onnx
 
 # Byprodcuts of a training run
 /seg_unet.keras

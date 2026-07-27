@@ -89,7 +89,7 @@ test("low-confidence active evidence cannot complete a chord", () => {
   assert.deepEqual(matcher.consume(result(1, 1_135, [], [60])).detectedTargetPitches, [60]);
 });
 
-test("rejects confident extra pitches and resets the wrong attempt after silence", () => {
+test("rejects confident extra pitches and resets the wrong attempt after the retry interval", () => {
   const matcher = new ExactChordMatcher();
   matcher.setTarget([60, 64], 1, 0);
   matcher.consume(result(1, 1_000, [onset(60, 1_000), onset(64, 1_000), onset(67, 1_000)]));
@@ -100,6 +100,60 @@ test("rejects confident extra pitches and resets the wrong attempt after silence
 
   matcher.consume(result(1, 1_500, [onset(60, 1_500), onset(64, 1_500)]));
   assert.equal(matcher.consume(result(1, 1_581, [], [60, 64])).matched, true);
+});
+
+test("sustained pitches do not keep a rejected onset alive", () => {
+  const matcher = new ExactChordMatcher();
+  matcher.setTarget([60, 64], 1, 0);
+  matcher.consume(result(
+    1,
+    1_000,
+    [onset(60, 1_000), onset(64, 1_000), onset(67, 1_000)],
+  ));
+
+  const sustained: RecognizerResult = {
+    ...result(1, 1_200),
+    activePitches: [
+      { midi: 60, confidence: 0.9 },
+      { midi: 64, confidence: 0.9 },
+      { midi: 67, confidence: 0.9 },
+    ],
+  };
+  const cleared = matcher.consume(sustained);
+  assert.deepEqual(cleared.detectedTargetPitches, []);
+  assert.deepEqual(cleared.extraPitches, []);
+
+  matcher.consume(result(1, 1_500, [onset(60, 1_500), onset(64, 1_500)]));
+  assert.equal(matcher.consume(result(1, 1_581, [], [60, 64])).matched, true);
+});
+
+test("a later correct onset starts clean without an intervening silence frame", () => {
+  const matcher = new ExactChordMatcher();
+  matcher.setTarget([60, 64], 1, 0);
+  matcher.consume(result(
+    1,
+    1_000,
+    [onset(60, 1_000), onset(64, 1_000), onset(67, 1_000)],
+  ));
+
+  matcher.consume({
+    ...result(1, 1_250, [onset(60, 1_250), onset(64, 1_250)]),
+    activePitches: [
+      { midi: 60, confidence: 0.9 },
+      { midi: 64, confidence: 0.9 },
+      { midi: 67, confidence: 0.9 },
+    ],
+  });
+  const settled = matcher.consume({
+    ...result(1, 1_331, [], [60, 64]),
+    activePitches: [
+      { midi: 60, confidence: 0.9 },
+      { midi: 64, confidence: 0.9 },
+      { midi: 67, confidence: 0.9 },
+    ],
+  });
+  assert.equal(settled.matched, true);
+  assert.deepEqual(settled.extraPitches, []);
 });
 
 test("ignores low-confidence noise and cannot anchor on an upper-harmonic tie", () => {
@@ -128,7 +182,7 @@ test("uses note confidence to reject onset-like harmonic tails", () => {
   assert.deepEqual(update.extraPitches, []);
 });
 
-test("anchors on targets, reports distinguishable extras, and prefers targets in harmonic ties", () => {
+test("anchors on targets, scopes distinguishable extras to one onset, and prefers harmonic targets", () => {
   const transient = new ExactChordMatcher();
   transient.setTarget([60], 1, 0);
   transient.consume(result(1, 900, [onset(72, 900)]));
@@ -143,11 +197,17 @@ test("anchors on targets, reports distinguishable extras, and prefers targets in
   assert.equal(update.matched, true);
   assert.deepEqual(update.extraPitches, []);
 
-  const earlierNonHarmonicExtra = new ExactChordMatcher();
-  earlierNonHarmonicExtra.setTarget([60], 3, 0);
-  earlierNonHarmonicExtra.consume(result(3, 2_900, [onset(67, 2_900)]));
-  earlierNonHarmonicExtra.consume(result(3, 3_000, [onset(60, 3_000)]));
-  assert.equal(earlierNonHarmonicExtra.consume(result(3, 3_081, [], [60, 67])).matched, false);
+  const sameOnsetExtra = new ExactChordMatcher();
+  sameOnsetExtra.setTarget([60], 3, 0);
+  sameOnsetExtra.consume(result(3, 2_980, [onset(67, 2_980)]));
+  sameOnsetExtra.consume(result(3, 3_000, [onset(60, 3_000)]));
+  assert.equal(sameOnsetExtra.consume(result(3, 3_081, [], [60, 67])).matched, false);
+
+  const previousOnsetExtra = new ExactChordMatcher();
+  previousOnsetExtra.setTarget([60], 4, 0);
+  previousOnsetExtra.consume(result(4, 3_900, [onset(67, 3_900)]));
+  previousOnsetExtra.consume(result(4, 4_000, [onset(60, 4_000)]));
+  assert.equal(previousOnsetExtra.consume(result(4, 4_081, [], [60, 67])).matched, true);
 });
 
 test("times out rolled notes beyond the collection window", () => {

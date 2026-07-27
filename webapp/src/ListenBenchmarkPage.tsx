@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   runBundledListenBenchmark,
+  runBundledOnlineAmtBenchmark,
   summarizeListenBenchmark,
   type ListenBenchmarkSummary,
   type ListenBenchmarkTrial,
@@ -13,6 +14,7 @@ export function ListenBenchmarkPage() {
   const [progress, setProgress] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [automated, setAutomated] = useState<ListenBenchmarkSummary | null>(null);
+  const [automatedEngine, setAutomatedEngine] = useState<"online_amt" | "spectral">("online_amt");
   const [manual, setManual] = useState<ListenBenchmarkTrial[]>([]);
   const [manualSource, setManualSource] = useState<"acoustic" | "digital">("acoustic");
   const [manualCorrect, setManualCorrect] = useState(true);
@@ -26,19 +28,29 @@ export function ListenBenchmarkPage() {
       !automaticBenchmarkStarted
     ) {
       automaticBenchmarkStarted = true;
-      void run();
+      void run("online_amt");
     }
   }, []);
 
-  async function run() {
+  async function run(engine: "online_amt" | "spectral") {
     setRunning(true);
     setError(null);
+    setAutomatedEngine(engine);
+    document.body.dataset.status = "running";
     try {
-      setAutomated(await runBundledListenBenchmark((complete, total) => {
+      const benchmark = engine === "online_amt"
+        ? runBundledOnlineAmtBenchmark
+        : runBundledListenBenchmark;
+      const result = await benchmark((complete, total) => {
         setProgress(`${complete} / ${total} fixtures`);
-      }));
+      });
+      setAutomated(result);
+      (window as typeof window & { listenBenchmarkResult?: ListenBenchmarkSummary })
+        .listenBenchmarkResult = result;
+      document.body.dataset.status = "complete";
     } catch (benchmarkError) {
       setError(benchmarkError instanceof Error ? benchmarkError.message : String(benchmarkError));
+      document.body.dataset.status = "error";
     } finally {
       setRunning(false);
     }
@@ -91,14 +103,18 @@ export function ListenBenchmarkPage() {
     <main className="benchmark-page">
       <h1>Listen-mode benchmark</h1>
       <p>
-        This page runs the local spectral recognizer against isolated notes and one-to-six-note chords
-        rendered from the bundled piano samples. Acceptance is fixed at p95 latency under
+        This page runs either local recognizer against isolated notes and one-to-six-note chords
+        rendered from the bundled piano samples. The application default is online_amt; the
+        spectral implementation remains available here for comparison. Acceptance is fixed at p95 latency under
         400 ms, at least 95% correct advancement overall and for the Course Clear score,
         and zero distinguishable wrong-note false advances. Exact upper-harmonic ties are
         reported separately because the spectrum alone cannot identify their source note.
       </p>
-      <button type="button" disabled={running} onClick={() => void run()}>
-        {running ? "Running…" : "Run bundled-sample benchmark"}
+      <button type="button" disabled={running} onClick={() => void run("online_amt")}>
+        {running && automatedEngine === "online_amt" ? "Running…" : "Run online_amt benchmark"}
+      </button>
+      <button type="button" disabled={running} onClick={() => void run("spectral")}>
+        {running && automatedEngine === "spectral" ? "Running…" : "Run spectral benchmark"}
       </button>
       {progress ? <span className="benchmark-progress">{progress}</span> : null}
       {error ? <div className="error">{error}</div> : null}

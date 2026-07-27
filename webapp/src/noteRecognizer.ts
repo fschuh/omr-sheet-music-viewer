@@ -16,9 +16,9 @@ export interface RecognizerLifecycle {
 
 export interface RecognizedOnset {
   midi: number;
-  /** Normalized positive spectral-flux confidence in the range 0–1. */
+  /** Recognizer-specific onset confidence normalized to the range 0–1. */
   confidence: number;
-  /** Normalized harmonic-sieve confidence at the onset. */
+  /** Recognizer-specific confidence that the pitch itself is present. */
   noteConfidence: number;
   /** Monotonic capture-clock time, not wall-clock time. */
   onsetTimeMs: number;

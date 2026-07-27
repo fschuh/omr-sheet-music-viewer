@@ -17,10 +17,37 @@ const ONNX_WASM_URL = new URL(
   "../node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm",
   import.meta.url,
 ).href;
+const FINGERING_TIMEOUT_MS = 30_000;
 
 env.wasm.wasmPaths = { wasm: ONNX_WASM_URL };
+// Fingering performs one very small inference per score note. Pthread setup and
+// synchronization cost more than they save here, and some desktop webviews can
+// stall while starting ONNX Runtime's shared worker pool.
+env.wasm.numThreads = 1;
+env.wasm.proxy = false;
+env.wasm.initTimeout = 15_000;
 
 let modelPromise: Promise<Models> | null = null;
+
+async function withTimeout<T>(
+  operation: Promise<T>,
+  description: string,
+): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error(`${description} timed out after 30 seconds`)),
+          FINGERING_TIMEOUT_MS,
+        );
+      }),
+    ]);
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
+  }
+}
 
 async function loadModels(): Promise<Models> {
   const sessionOptions: InferenceSession.SessionOptions = {
@@ -46,7 +73,11 @@ export async function predictPianoFingerings(
   notes: IndexedFingeringNote[],
 ): Promise<IndexedFingeringNote[]> {
   if (notes.length === 0) return [];
-  const result = await predictFingerings(notes, await models());
+  const loadedModels = await withTimeout(models(), "Piano fingering model loading");
+  const result = await withTimeout(
+    predictFingerings(notes, loadedModels),
+    "Piano fingering prediction",
+  );
   // The package copies every input note with object spread, so our stable source index is retained.
   return result as IndexedFingeringNote[];
 }
