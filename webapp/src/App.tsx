@@ -21,6 +21,7 @@ import { pianoSampler, pitchToMidi } from "./piano";
 import { BrowserOnlineAmtRecognizer } from "./onlineAmtRecognizer";
 import { onlineAmtChordMatcherOptions } from "./onlineAmtOutput";
 import { ExactChordMatcher } from "./chordMatcher";
+import { KeyboardRecognitionTracker } from "./keyboardRecognition";
 import {
   stoppedRecognizerLifecycle,
   type ListenModeFeedback,
@@ -397,6 +398,7 @@ export function App() {
   }
   const recognizerRef = useRef<NoteRecognizer | null>(null);
   const chordMatcherRef = useRef(new ExactChordMatcher(onlineAmtChordMatcherOptions));
+  const keyboardRecognitionRef = useRef(new KeyboardRecognitionTracker());
   const playheadGenerationRef = useRef(0);
   const listenOperationRef = useRef(0);
   const auditionOperationRef = useRef(0);
@@ -406,6 +408,8 @@ export function App() {
     detectedTargetPitches: [],
     extraPitches: [],
     targetPitchConfidences: [],
+    recognizedActivePitches: [],
+    attackPitches: [],
     processingTimeMs: null,
   });
   const commitPlaybackState = useCallback(
@@ -642,6 +646,7 @@ export function App() {
     auditionOperationRef.current += 1;
     recognizerRef.current?.stop();
     recognizerRef.current = null;
+    keyboardRecognitionRef.current.reset();
     const generation = ++playheadGenerationRef.current;
     chordMatcherRef.current.setTarget([], generation, performance.now());
     const current = playbackStateRef.current;
@@ -656,6 +661,8 @@ export function App() {
       detectedTargetPitches: [],
       extraPitches: [],
       targetPitchConfidences: [],
+      recognizedActivePitches: [],
+      attackPitches: [],
       processingTimeMs: null,
     }));
   }, [commitPlaybackState]);
@@ -667,6 +674,7 @@ export function App() {
     const activeConfidence = new Map(
       result.targetPitchEvidence.map(({ midi, confidence }) => [midi, confidence]),
     );
+    const keyboardRecognition = keyboardRecognitionRef.current.consume(result);
     setListenFeedback((feedback) => ({
       ...feedback,
       targetPitches: update.targetPitches,
@@ -676,6 +684,8 @@ export function App() {
         midi,
         confidence: activeConfidence.get(midi) ?? 0,
       })),
+      recognizedActivePitches: keyboardRecognition.activePitches,
+      attackPitches: keyboardRecognition.attacks,
       processingTimeMs: result.processingTimeMs,
     }));
     if (update.matched) handlePlaybackCommandRef.current("forwardNote");
@@ -685,6 +695,7 @@ export function App() {
     if (!playbackStateRef.current.active || recognizerRef.current) return;
     const operation = ++listenOperationRef.current;
     const generation = ++playheadGenerationRef.current;
+    keyboardRecognitionRef.current.reset();
     // Mute before microphone/model initialization so navigation during startup
     // cannot play samples into the recognizer when it becomes ready.
     commitPlaybackState(
@@ -701,6 +712,8 @@ export function App() {
       detectedTargetPitches: [],
       extraPitches: [],
       targetPitchConfidences: target.map((midi) => ({ midi, confidence: 0 })),
+      recognizedActivePitches: [],
+      attackPitches: [],
       processingTimeMs: null,
     });
     const recognizer = new BrowserOnlineAmtRecognizer();
@@ -756,6 +769,12 @@ export function App() {
       const generation = ++playheadGenerationRef.current;
       recognizer.pause(generation);
       chordMatcherRef.current.reset(generation, performance.now());
+      keyboardRecognitionRef.current.reset();
+      setListenFeedback((feedback) => ({
+        ...feedback,
+        recognizedActivePitches: [],
+        attackPitches: [],
+      }));
     }
     try {
       await pianoSampler.audition(moment.pitches);
@@ -789,6 +808,8 @@ export function App() {
           detectedTargetPitches: [],
           extraPitches: [],
           targetPitchConfidences: target.map((midi) => ({ midi, confidence: 0 })),
+          recognizedActivePitches: [],
+          attackPitches: [],
           processingTimeMs: null,
         }));
       }
@@ -981,9 +1002,12 @@ export function App() {
       detectedTargetPitches: [],
       extraPitches: [],
       targetPitchConfidences: [],
+      recognizedActivePitches: [],
+      attackPitches: [],
       processingTimeMs: null,
     });
     setPlaybackAudioError(null);
+    keyboardRecognitionRef.current.reset();
     pianoSampler.stop();
   }, [document?.jobId]);
 
@@ -1788,6 +1812,12 @@ export function App() {
                 notes={playbackMode === "realtime"
                   ? realtimeDisplayNotes
                   : playbackMoment?.keyboardNotes ?? []}
+                recognizedPitches={playbackState.listenModeEnabled
+                  ? listenFeedback.recognizedActivePitches.map(({ midi }) => midi)
+                  : []}
+                attackPitches={playbackState.listenModeEnabled
+                  ? listenFeedback.attackPitches
+                  : []}
               />
             ) : null}
           </>

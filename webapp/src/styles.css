@@ -280,7 +280,11 @@ button:disabled {
 
 .piano-key {
   position: relative;
-  transition: background 100ms ease, box-shadow 100ms ease, border-color 100ms ease;
+  transition:
+    background 100ms ease,
+    box-shadow 100ms ease,
+    border-color 100ms ease,
+    transform 80ms ease;
 }
 
 .piano-key-white {
@@ -315,6 +319,78 @@ button:disabled {
   border-color: #75ddca;
   box-shadow: 0 0 13px rgb(63 229 199 / 78%), inset 0 0 0 1px rgb(255 255 255 / 32%);
   z-index: 3;
+}
+
+.piano-key-white.user-correct {
+  background: linear-gradient(180deg, #e2ffda 0%, #6ee385 58%, #209a48 100%);
+  border-color: #0b6d2d;
+  box-shadow:
+    inset 0 3px 0 rgb(255 255 255 / 54%),
+    inset 0 0 0 2px rgb(236 255 231 / 72%),
+    0 0 16px rgb(102 235 128 / 82%);
+  transform: translateY(3px);
+  z-index: 2;
+}
+
+.piano-key-black.user-correct {
+  background: linear-gradient(180deg, #9bffad 0%, #2fc45c 64%, #0d7330 100%);
+  border-color: #c9ffd2;
+  box-shadow:
+    inset 0 2px 0 rgb(255 255 255 / 48%),
+    0 0 15px rgb(104 245 132 / 88%);
+  transform: translateY(3px);
+  z-index: 4;
+}
+
+.piano-key-white.user-wrong {
+  background: linear-gradient(180deg, #ffd5d0 0%, #ef6e62 58%, #b92d2d 100%);
+  border-color: #8c1d22;
+  box-shadow:
+    inset 0 3px 0 rgb(255 255 255 / 48%),
+    inset 0 0 0 2px rgb(255 224 220 / 68%),
+    0 0 16px rgb(245 80 73 / 78%);
+  transform: translateY(3px);
+  z-index: 2;
+}
+
+.piano-key-black.user-wrong {
+  background: linear-gradient(180deg, #ff9b91 0%, #db403d 64%, #831b25 100%);
+  border-color: #ffd1ca;
+  box-shadow:
+    inset 0 2px 0 rgb(255 255 255 / 42%),
+    0 0 15px rgb(255 77 72 / 88%);
+  transform: translateY(3px);
+  z-index: 4;
+}
+
+.piano-key-attack {
+  animation: piano-key-attack 280ms ease-out both;
+  border: 2px solid rgb(255 255 255 / 96%);
+  border-radius: inherit;
+  inset: 1px;
+  pointer-events: none;
+  position: absolute;
+  z-index: 3;
+}
+
+.piano-key-black .piano-key-attack {
+  inset: 1px;
+}
+
+@keyframes piano-key-attack {
+  from {
+    box-shadow:
+      inset 0 0 0 4px rgb(255 255 255 / 74%),
+      0 0 18px 5px rgb(255 255 255 / 88%);
+    opacity: 1;
+  }
+
+  to {
+    box-shadow:
+      inset 0 0 0 0 rgb(255 255 255 / 0%),
+      0 0 3px 0 rgb(255 255 255 / 0%);
+    opacity: 0;
+  }
 }
 
 .piano-key-label {

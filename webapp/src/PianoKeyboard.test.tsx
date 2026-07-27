@@ -1,7 +1,32 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
+import {
+  KeyboardRecognitionTracker,
+  KEYBOARD_STALE_SUSTAIN_MS,
+} from "./keyboardRecognition";
+import type { RecognizerResult } from "./noteRecognizer";
 import { formatKeyboardPitch, PIANO_KEYS, PianoKeyboard } from "./PianoKeyboard";
+
+function recognizerResult(
+  capturedAtMs: number,
+  activePitches: number[],
+  noteEvents: NonNullable<RecognizerResult["noteEvents"]>,
+): RecognizerResult {
+  return {
+    generation: 1,
+    onsets: [],
+    recognizedActivePitches: activePitches.map((midi) => ({
+      midi,
+      confidence: 0.99,
+    })),
+    targetPitchEvidence: [],
+    noteStates: [],
+    noteEvents,
+    processingTimeMs: 10,
+    capturedAtMs,
+  };
+}
 
 test("builds the complete 88-key piano range", () => {
   assert.equal(PIANO_KEYS.length, 88);
@@ -40,4 +65,148 @@ test("highlights every distinct in-range playhead pitch and labels its key", () 
 test("formats stored accidental spellings like the staff note labels", () => {
   assert.equal(formatKeyboardPitch("f#4"), "F♯4");
   assert.equal(formatKeyboardPitch("A3b"), "A♭3");
+});
+
+test("distinguishes correct partial-chord notes from wrong pressed notes", () => {
+  const markup = renderToStaticMarkup(
+    <PianoKeyboard
+      notes={[
+        { pitch: "C4" },
+        { pitch: "E4" },
+        { pitch: "G4" },
+      ]}
+      recognizedPitches={[60, 61, 64]}
+      attackPitches={[
+        { midi: 60, attackTimeMs: 125 },
+        { midi: 61, attackTimeMs: 130 },
+      ]}
+    />,
+  );
+
+  assert.match(
+    markup,
+    /class="piano-key piano-key-white active user-active user-correct" data-piano-key="C4" data-midi="60" data-active="true" data-recognized="true" data-result="correct" data-attack="125"/,
+  );
+  assert.match(
+    markup,
+    /class="piano-key piano-key-black user-active user-wrong"[^>]*data-piano-key="C♯4" data-midi="61" data-recognized="true" data-result="wrong" data-attack="130"/,
+  );
+  assert.match(
+    markup,
+    /class="piano-key piano-key-white active" data-piano-key="G4" data-midi="67" data-active="true"/,
+  );
+  assert.equal(markup.match(/class="piano-key-attack"/g)?.length, 2);
+});
+
+test("uses the attack timestamp as a fresh animation identity for repeated notes", () => {
+  const firstAttack = renderToStaticMarkup(
+    <PianoKeyboard
+      notes={[{ pitch: "C4" }]}
+      recognizedPitches={[60]}
+      attackPitches={[{ midi: 60, attackTimeMs: 125 }]}
+    />,
+  );
+  const repeatedAttack = renderToStaticMarkup(
+    <PianoKeyboard
+      notes={[{ pitch: "C4" }]}
+      recognizedPitches={[60]}
+      attackPitches={[{ midi: 60, attackTimeMs: 250 }]}
+    />,
+  );
+
+  assert.match(firstAttack, /data-attack-time-ms="125"/);
+  assert.match(repeatedAttack, /data-attack-time-ms="250"/);
+});
+
+test("removes the pressed state and attack feedback after an offset", () => {
+  const markup = renderToStaticMarkup(
+    <PianoKeyboard
+      notes={[{ pitch: "C4" }]}
+      recognizedPitches={[]}
+      attackPitches={[]}
+    />,
+  );
+
+  assert.doesNotMatch(markup, /user-correct|user-wrong|data-recognized|piano-key-attack/);
+  assert.match(
+    markup,
+    /class="piano-key piano-key-white active" data-piano-key="C4" data-midi="60" data-active="true"/,
+  );
+});
+
+test("suppresses a latched online-AMT sustain until release or a fresh attack", () => {
+  const tracker = new KeyboardRecognitionTracker();
+  const onset = tracker.consume(recognizerResult(100, [60], [{
+    midi: 60,
+    type: "onset",
+    confidence: 0.99,
+    eventTimeMs: 100,
+  }]));
+  assert.deepEqual(onset.activePitches.map(({ midi }) => midi), [60]);
+  assert.deepEqual(onset.attacks, [{ midi: 60, attackTimeMs: 100 }]);
+
+  const stale = tracker.consume(recognizerResult(
+    100 + KEYBOARD_STALE_SUSTAIN_MS,
+    [60],
+    [],
+  ));
+  assert.deepEqual(stale.activePitches, []);
+  assert.deepEqual(stale.attacks, []);
+
+  const stillSuppressed = tracker.consume(recognizerResult(
+    200 + KEYBOARD_STALE_SUSTAIN_MS,
+    [60],
+    [],
+  ));
+  assert.deepEqual(stillSuppressed.activePitches, []);
+
+  const repeated = tracker.consume(recognizerResult(
+    300 + KEYBOARD_STALE_SUSTAIN_MS,
+    [60],
+    [{
+      midi: 60,
+      type: "reOnset",
+      confidence: 0.99,
+      eventTimeMs: 300 + KEYBOARD_STALE_SUSTAIN_MS,
+    }],
+  ));
+  assert.deepEqual(repeated.activePitches.map(({ midi }) => midi), [60]);
+  assert.deepEqual(repeated.attacks, [{
+    midi: 60,
+    attackTimeMs: 300 + KEYBOARD_STALE_SUSTAIN_MS,
+  }]);
+
+  const released = tracker.consume(recognizerResult(
+    332 + KEYBOARD_STALE_SUSTAIN_MS,
+    [],
+    [{
+      midi: 60,
+      type: "offset",
+      confidence: 0.99,
+      eventTimeMs: 332 + KEYBOARD_STALE_SUSTAIN_MS,
+    }],
+  ));
+  assert.deepEqual(released.activePitches, []);
+  assert.deepEqual(released.attacks, []);
+});
+
+test("does not time-limit the spectral detector's refreshed active snapshots", () => {
+  const tracker = new KeyboardRecognitionTracker();
+  const result: RecognizerResult = {
+    generation: 1,
+    onsets: [{
+      midi: 60,
+      confidence: 0.8,
+      noteConfidence: 0.8,
+      onsetTimeMs: 100,
+    }],
+    recognizedActivePitches: [{ midi: 60, confidence: 0.8 }],
+    targetPitchEvidence: [],
+    processingTimeMs: 10,
+    capturedAtMs: 100 + KEYBOARD_STALE_SUSTAIN_MS,
+  };
+
+  const snapshot = tracker.consume(result);
+  assert.deepEqual(snapshot.activePitches, [{ midi: 60, confidence: 0.8 }]);
+  assert.deepEqual(snapshot.attacks, [{ midi: 60, attackTimeMs: 100 }]);
 });

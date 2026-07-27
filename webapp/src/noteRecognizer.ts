@@ -93,6 +93,8 @@ export interface ListenModeFeedback {
   detectedTargetPitches: number[];
   extraPitches: number[];
   targetPitchConfidences: Array<{ midi: number; confidence: number }>;
+  recognizedActivePitches: RecognizedPitchEvidence[];
+  attackPitches: Array<{ midi: number; attackTimeMs: number }>;
   processingTimeMs: number | null;
 }
 

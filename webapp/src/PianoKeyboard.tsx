@@ -17,12 +17,19 @@ interface PianoKey {
 
 interface PianoKeyboardProps {
   notes: readonly PianoKeyboardNote[];
+  recognizedPitches?: readonly number[];
+  attackPitches?: readonly PianoKeyboardAttack[];
 }
 
 export interface PianoKeyboardNote {
   pitch: string;
   finger?: number;
   left?: boolean;
+}
+
+export interface PianoKeyboardAttack {
+  midi: number;
+  attackTimeMs: number;
 }
 
 interface PianoKeyLabels {
@@ -61,7 +68,11 @@ export function formatKeyboardPitch(pitch: string): string {
   return `${match[1].toUpperCase()}${accidental}${octave}`;
 }
 
-export function PianoKeyboard({ notes }: PianoKeyboardProps) {
+export function PianoKeyboard({
+  notes,
+  recognizedPitches = [],
+  attackPitches = [],
+}: PianoKeyboardProps) {
   const activeLabels = useMemo(() => {
     const labels = new Map<number, PianoKeyLabels>();
     for (const note of notes) {
@@ -78,6 +89,22 @@ export function PianoKeyboard({ notes }: PianoKeyboardProps) {
     }
     return labels;
   }, [notes]);
+  const recognizedPitchSet = useMemo(
+    () => new Set(
+      recognizedPitches.filter(
+        (midi) => midi >= FIRST_PIANO_MIDI && midi <= LAST_PIANO_MIDI,
+      ),
+    ),
+    [recognizedPitches],
+  );
+  const attackByPitch = useMemo(
+    () => new Map(
+      attackPitches
+        .filter(({ midi }) => midi >= FIRST_PIANO_MIDI && midi <= LAST_PIANO_MIDI)
+        .map((attack) => [attack.midi, attack]),
+    ),
+    [attackPitches],
+  );
   const activePitchNames = Array.from(activeLabels.values()).flatMap((labels) => labels.names);
   const accessibleNotes = Array.from(activeLabels.values()).flatMap((labels) =>
     labels.names.map((name) => {
@@ -90,6 +117,29 @@ export function PianoKeyboard({ notes }: PianoKeyboardProps) {
       return `${name}${fingering}`;
     }),
   );
+
+  function keyClassName(baseClassName: string, midi: number, expected: boolean): string {
+    const recognized = recognizedPitchSet.has(midi);
+    return [
+      "piano-key",
+      baseClassName,
+      expected ? "active" : "",
+      recognized ? "user-active" : "",
+      recognized && expected ? "user-correct" : "",
+      recognized && !expected ? "user-wrong" : "",
+    ].filter(Boolean).join(" ");
+  }
+
+  function attackFeedback(midi: number) {
+    const attack = attackByPitch.get(midi);
+    return attack ? (
+      <span
+        key={attack.attackTimeMs}
+        className="piano-key-attack"
+        data-attack-time-ms={attack.attackTimeMs}
+      />
+    ) : null;
+  }
 
   function keyLabel(labels: PianoKeyLabels) {
     return (
@@ -129,14 +179,20 @@ export function PianoKeyboard({ notes }: PianoKeyboardProps) {
         <div className="piano-white-keys">
           {PIANO_KEYS.filter((key) => !key.black).map((key) => {
             const labels = activeLabels.get(key.midi);
+            const recognized = recognizedPitchSet.has(key.midi);
+            const attack = attackByPitch.get(key.midi);
             return (
               <div
                 key={key.midi}
-                className={`piano-key piano-key-white${labels ? " active" : ""}`}
+                className={keyClassName("piano-key-white", key.midi, labels !== undefined)}
                 data-piano-key={key.name}
                 data-midi={key.midi}
                 data-active={labels ? "true" : undefined}
+                data-recognized={recognized ? "true" : undefined}
+                data-result={recognized ? (labels ? "correct" : "wrong") : undefined}
+                data-attack={attack ? attack.attackTimeMs : undefined}
               >
+                {attackFeedback(key.midi)}
                 {labels ? keyLabel(labels) : null}
               </div>
             );
@@ -145,17 +201,23 @@ export function PianoKeyboard({ notes }: PianoKeyboardProps) {
         <div className="piano-black-keys">
           {PIANO_KEYS.filter((key) => key.black).map((key) => {
             const labels = activeLabels.get(key.midi);
+            const recognized = recognizedPitchSet.has(key.midi);
+            const attack = attackByPitch.get(key.midi);
             const width = (BLACK_KEY_WIDTH_IN_WHITE_KEYS / WHITE_KEY_COUNT) * 100;
             const left = ((key.whiteIndex - BLACK_KEY_WIDTH_IN_WHITE_KEYS / 2) / WHITE_KEY_COUNT) * 100;
             return (
               <div
                 key={key.midi}
-                className={`piano-key piano-key-black${labels ? " active" : ""}`}
+                className={keyClassName("piano-key-black", key.midi, labels !== undefined)}
                 style={{ left: `${left}%`, width: `${width}%` }}
                 data-piano-key={key.name}
                 data-midi={key.midi}
                 data-active={labels ? "true" : undefined}
+                data-recognized={recognized ? "true" : undefined}
+                data-result={recognized ? (labels ? "correct" : "wrong") : undefined}
+                data-attack={attack ? attack.attackTimeMs : undefined}
               >
+                {attackFeedback(key.midi)}
                 {labels ? keyLabel(labels) : null}
               </div>
             );

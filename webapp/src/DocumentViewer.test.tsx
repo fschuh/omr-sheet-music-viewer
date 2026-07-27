@@ -87,6 +87,8 @@ const listenFeedback = {
   detectedTargetPitches: [],
   extraPitches: [],
   targetPitchConfidences: [],
+  recognizedActivePitches: [],
+  attackPitches: [],
   processingTimeMs: null,
 };
 
@@ -212,6 +214,11 @@ test("shows listen lifecycle, target detections, extras, and analysis time", () 
       { midi: 60, confidence: 0.82 },
       { midi: 64, confidence: 0.34 },
     ],
+    recognizedActivePitches: [
+      { midi: 60, confidence: 0.82 },
+      { midi: 67, confidence: 0.77 },
+    ],
+    attackPitches: [{ midi: 67, attackTimeMs: 100 }],
     processingTimeMs: 123.4,
   });
   assert.match(markup, /Microphone ready · Analyzer ready · Target C4 E4/);
