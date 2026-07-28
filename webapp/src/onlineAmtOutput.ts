@@ -36,6 +36,8 @@ export const onlineAmtChordMatcherOptions: Partial<ChordMatcherOptions> = {
   targetNoteThreshold: 0.5,
   activeTargetThreshold: 0.35,
   noteThreshold: 0.97,
+  settleMs: 32,
+  refractoryMode: "noteEvents",
 };
 
 function normalizedGroupScore(
@@ -69,8 +71,12 @@ function transitionEvent(
   const previousActive = ACTIVE_STATES.has(previousState);
   const active = ACTIVE_STATES.has(state);
   if (previousActive && !active) return "offset";
-  if (ATTACK_STATES.has(previousState) || !ATTACK_STATES.has(state)) return null;
-  return state === 4 ? "reOnset" : "onset";
+  // A re-onset is a new physical attack even when it immediately follows the
+  // initial onset state. Only identical consecutive attack states are tails of
+  // the same decoder event.
+  if (state === 4 && previousState !== 4) return "reOnset";
+  if (state === 3 && !ATTACK_STATES.has(previousState)) return "onset";
+  return null;
 }
 
 /**

@@ -98,6 +98,56 @@ test("emits each online_amt state transition once and distinguishes re-onsets", 
   assert.deepEqual(decoder.decode(scores, states, true, 292).noteEvents, []);
 });
 
+test("emits a fast onset-to-re-onset transition without requiring sustain or release", () => {
+  const decoder = new OnlineAmtOutputDecoder();
+  const scores = new Float32Array(88 * 5);
+  const states = new Uint8Array(88);
+  scores.set([0.02, 0.02, 0.06, 0.65, 0.25], 39 * 5);
+
+  states[39] = 3;
+  assert.deepEqual(
+    decoder.decode(scores, states, true, 100).noteEvents.map(({ type }) => type),
+    ["onset"],
+  );
+  states[39] = 4;
+  assert.deepEqual(
+    decoder.decode(scores, states, true, 132).noteEvents.map(({ type }) => type),
+    ["reOnset"],
+  );
+  assert.deepEqual(decoder.decode(scores, states, true, 164).noteEvents, []);
+
+  states[39] = 3;
+  assert.deepEqual(decoder.decode(scores, states, true, 196).noteEvents, []);
+});
+
+test("matcher advances consecutive repeated notes from onset-to-re-onset", () => {
+  const decoder = new OnlineAmtOutputDecoder();
+  const matcher = new ExactChordMatcher(onlineAmtChordMatcherOptions);
+  const scores = new Float32Array(88 * 5);
+  const states = new Uint8Array(88);
+  const consume = (generation: number, capturedAtMs: number) => matcher.consume({
+    generation,
+    ...decoder.decode(scores, states, true, capturedAtMs, [60]),
+    processingTimeMs: 10,
+    capturedAtMs,
+  });
+
+  matcher.setTarget([60], 1, 0);
+  scores.set([0.01, 0.01, 0.01, 0.7, 0.27], 39 * 5);
+  states[39] = 3;
+  consume(1, 100);
+  assert.equal(consume(1, 132).matched, true);
+
+  matcher.setTarget([60], 2, 132);
+  scores.set([0.01, 0.01, 0.01, 0.2, 0.77], 39 * 5);
+  states[39] = 4;
+  assert.equal(consume(2, 164).matched, false);
+
+  scores.set([0.02, 0.02, 0.9, 0.03, 0.03], 39 * 5);
+  states[39] = 2;
+  assert.equal(consume(2, 196).matched, true);
+});
+
 test("resets transition history alongside the streaming model", () => {
   const decoder = new OnlineAmtOutputDecoder();
   const scores = new Float32Array(88 * 5);
@@ -157,6 +207,81 @@ test("online_amt matcher profile ignores a weak extra while matching a confident
   });
   assert.equal(settled.matched, true);
   assert.deepEqual(settled.extraPitches, []);
+});
+
+test("online_amt matcher profile settles after one 32 ms audio frame", () => {
+  assert.equal(onlineAmtChordMatcherOptions.refractoryMode, "noteEvents");
+  assert.equal(onlineAmtChordMatcherOptions.settleMs, 32);
+
+  const matcher = new ExactChordMatcher(onlineAmtChordMatcherOptions);
+  matcher.setTarget([60], 1, 0);
+  matcher.consume({
+    generation: 1,
+    onsets: [
+      { midi: 60, confidence: 0.8, noteConfidence: 0.8, onsetTimeMs: 100 },
+    ],
+    recognizedActivePitches: [{ midi: 60, confidence: 0.8 }],
+    targetPitchEvidence: [{ midi: 60, confidence: 0.8 }],
+    noteEvents: [
+      { midi: 60, type: "onset", confidence: 0.8, eventTimeMs: 100 },
+    ],
+    processingTimeMs: 10,
+    capturedAtMs: 100,
+  });
+  assert.equal(matcher.consume({
+    generation: 1,
+    onsets: [],
+    recognizedActivePitches: [{ midi: 60, confidence: 0.8 }],
+    targetPitchEvidence: [{ midi: 60, confidence: 0.8 }],
+    noteEvents: [],
+    processingTimeMs: 10,
+    capturedAtMs: 131,
+  }).matched, false);
+  assert.equal(matcher.consume({
+    generation: 1,
+    onsets: [],
+    recognizedActivePitches: [{ midi: 60, confidence: 0.8 }],
+    targetPitchEvidence: [{ midi: 60, confidence: 0.8 }],
+    noteEvents: [],
+    processingTimeMs: 10,
+    capturedAtMs: 132,
+  }).matched, true);
+});
+
+test("online_amt matcher still catches an extra note in the settle frame", () => {
+  const matcher = new ExactChordMatcher(onlineAmtChordMatcherOptions);
+  matcher.setTarget([60], 1, 0);
+  matcher.consume({
+    generation: 1,
+    onsets: [
+      { midi: 60, confidence: 0.8, noteConfidence: 0.8, onsetTimeMs: 100 },
+    ],
+    recognizedActivePitches: [{ midi: 60, confidence: 0.8 }],
+    targetPitchEvidence: [{ midi: 60, confidence: 0.8 }],
+    noteEvents: [
+      { midi: 60, type: "onset", confidence: 0.8, eventTimeMs: 100 },
+    ],
+    processingTimeMs: 10,
+    capturedAtMs: 100,
+  });
+  const update = matcher.consume({
+    generation: 1,
+    onsets: [
+      { midi: 61, confidence: 0.99, noteConfidence: 0.99, onsetTimeMs: 132 },
+    ],
+    recognizedActivePitches: [
+      { midi: 60, confidence: 0.8 },
+      { midi: 61, confidence: 0.99 },
+    ],
+    targetPitchEvidence: [{ midi: 60, confidence: 0.8 }],
+    noteEvents: [
+      { midi: 61, type: "onset", confidence: 0.99, eventTimeMs: 132 },
+    ],
+    processingTimeMs: 10,
+    capturedAtMs: 132,
+  });
+  assert.equal(update.matched, false);
+  assert.deepEqual(update.extraPitches, [61]);
 });
 
 test("sub-threshold target evidence cannot start a matching attempt", () => {

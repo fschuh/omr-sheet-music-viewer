@@ -11,6 +11,7 @@ export interface ChordMatcherOptions {
   duplicateOnsetMs: number;
   wrongAttemptResetMs: number;
   refractoryMs: number;
+  refractoryMode: "time" | "noteEvents";
 }
 
 export const defaultChordMatcherOptions: ChordMatcherOptions = {
@@ -24,6 +25,7 @@ export const defaultChordMatcherOptions: ChordMatcherOptions = {
   duplicateOnsetMs: 120,
   wrongAttemptResetMs: 180,
   refractoryMs: 180,
+  refractoryMode: "time",
 };
 
 export interface ChordMatchUpdate {
@@ -59,6 +61,12 @@ export class ExactChordMatcher {
   private attemptStartMs: number | null = null;
   private lastNewOnsetMs: number | null = null;
   private refractoryUntilMs = 0;
+  private latestActivePitches = new Set<number>();
+  private carryOverPitches = new Set<number>();
+  private eventAttackWindows = new Map<number, {
+    startedAtMs: number;
+    expiresAtMs: number;
+  }>();
   private rejected = false;
   private matched = false;
 
@@ -71,6 +79,10 @@ export class ExactChordMatcher {
     this.target = new Set(targetPitches.filter((pitch) => Number.isInteger(pitch)));
     this.clearAttempt();
     this.lastOnsetByPitch.clear();
+    this.eventAttackWindows.clear();
+    this.carryOverPitches = this.options.refractoryMode === "noteEvents"
+      ? new Set(this.latestActivePitches)
+      : new Set();
     this.refractoryUntilMs = nowMs + this.options.refractoryMs;
     this.matched = false;
   }
@@ -79,6 +91,9 @@ export class ExactChordMatcher {
     this.generation = generation;
     this.clearAttempt();
     this.lastOnsetByPitch.clear();
+    this.latestActivePitches.clear();
+    this.carryOverPitches.clear();
+    this.eventAttackWindows.clear();
     this.refractoryUntilMs = refractory ? nowMs + this.options.refractoryMs : nowMs;
     this.matched = false;
   }
@@ -110,11 +125,58 @@ export class ExactChordMatcher {
     };
   }
 
+  private eligibleOnsets(result: RecognizerResult): {
+    onsets: RecognizedOnset[];
+    eventBased: boolean;
+  } {
+    const eventBased = (
+      this.options.refractoryMode === "noteEvents" &&
+      result.noteEvents !== undefined
+    );
+    if (!eventBased) return { onsets: result.onsets, eventBased: false };
+
+    for (const event of result.noteEvents ?? []) {
+      if (event.type === "offset") {
+        this.carryOverPitches.delete(event.midi);
+        this.eventAttackWindows.delete(event.midi);
+        continue;
+      }
+      this.carryOverPitches.delete(event.midi);
+      this.eventAttackWindows.set(event.midi, {
+        startedAtMs: event.eventTimeMs,
+        expiresAtMs: event.eventTimeMs + this.options.duplicateOnsetMs,
+      });
+    }
+
+    for (const [midi, window] of this.eventAttackWindows) {
+      if (result.capturedAtMs > window.expiresAtMs) {
+        this.eventAttackWindows.delete(midi);
+      }
+    }
+
+    return {
+      eventBased: true,
+      onsets: result.onsets.filter((onset) => {
+        const window = this.eventAttackWindows.get(onset.midi);
+        return (
+          window !== undefined &&
+          !this.carryOverPitches.has(onset.midi) &&
+          onset.onsetTimeMs >= window.startedAtMs &&
+          onset.onsetTimeMs <= window.expiresAtMs
+        );
+      }),
+    };
+  }
+
   consume(result: RecognizerResult): ChordMatchUpdate {
     if (result.generation !== this.generation) return this.update(false, true);
+    this.latestActivePitches = new Set(
+      result.recognizedActivePitches.map(({ midi }) => midi),
+    );
+    const eligible = this.eligibleOnsets(result);
     if (this.matched || this.target.size === 0) return this.update();
 
-    const confident = result.onsets
+    const confident = eligible.onsets
       .filter((onset) => (
         onset.confidence >= this.options.onsetThreshold &&
         onset.noteConfidence >= (
@@ -122,7 +184,7 @@ export class ExactChordMatcher {
             ? this.options.targetNoteThreshold
             : this.options.noteThreshold
         ) &&
-        onset.onsetTimeMs >= this.refractoryUntilMs
+        (eligible.eventBased || onset.onsetTimeMs >= this.refractoryUntilMs)
       ))
       // A played upper note and the mathematically coincident partial of a
       // lower target are indistinguishable without an instrument profile.
@@ -189,13 +251,14 @@ export class ExactChordMatcher {
     // still require a genuinely fresh attack.
     if (
       this.attemptStartMs !== null &&
-      result.capturedAtMs >= this.refractoryUntilMs &&
+      (eligible.eventBased || result.capturedAtMs >= this.refractoryUntilMs) &&
       result.capturedAtMs - this.attemptStartMs <= this.options.collectionWindowMs
     ) {
       for (const active of result.targetPitchEvidence) {
         const lowestTarget = this.target.size > 0 ? Math.min(...this.target) : Infinity;
         if (
           !this.target.has(active.midi) ||
+          (eligible.eventBased && this.carryOverPitches.has(active.midi)) ||
           (this.target.size >= 3 && active.midi === lowestTarget) ||
           active.confidence < this.options.activeTargetThreshold ||
           this.accumulated.has(active.midi)

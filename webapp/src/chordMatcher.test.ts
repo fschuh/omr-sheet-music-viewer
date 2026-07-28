@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { ExactChordMatcher } from "./chordMatcher";
-import type { RecognizedOnset, RecognizerResult } from "./noteRecognizer";
+import type {
+  RecognizedNoteEventType,
+  RecognizedOnset,
+  RecognizerResult,
+} from "./noteRecognizer";
 
 function onset(midi: number, onsetTimeMs: number, confidence = 0.9): RecognizedOnset {
   return { midi, onsetTimeMs, confidence, noteConfidence: 0.8 };
@@ -21,6 +25,31 @@ function result(
     recognizedActivePitches: activePitches.map((midi) => ({ midi, confidence: 0.8 })),
     targetPitchEvidence: targetEvidencePitches.map((midi) => ({ midi, confidence: 0.8 })),
     processingTimeMs: 42,
+  };
+}
+
+function eventResult(
+  generation: number,
+  capturedAtMs: number,
+  onsets: RecognizedOnset[] = [],
+  events: Array<{ midi: number; type: RecognizedNoteEventType }> = [],
+  activePitches: number[] = onsets.map((value) => value.midi),
+  targetEvidencePitches: number[] = activePitches,
+): RecognizerResult {
+  return {
+    ...result(
+      generation,
+      capturedAtMs,
+      onsets,
+      activePitches,
+      targetEvidencePitches,
+    ),
+    noteEvents: events.map(({ midi, type }) => ({
+      midi,
+      type,
+      confidence: 0.9,
+      eventTimeMs: capturedAtMs,
+    })),
   };
 }
 
@@ -235,6 +264,122 @@ test("requires fresh onsets for repeated identical target chords", () => {
   assert.equal(matcher.consume(result(2, 1_450, [onset(60, 1_000), onset(64, 1_000)])).matched, false);
   matcher.consume(result(2, 1_600, [onset(60, 1_600), onset(64, 1_600)]));
   assert.equal(matcher.consume(result(2, 1_681, [], [60, 64])).matched, true);
+});
+
+test("note-event refractory accepts a different next note immediately", () => {
+  const matcher = new ExactChordMatcher({
+    refractoryMode: "noteEvents",
+    settleMs: 32,
+  });
+  matcher.setTarget([60], 1, 0);
+  matcher.consume(eventResult(
+    1,
+    100,
+    [onset(60, 100)],
+    [{ midi: 60, type: "onset" }],
+  ));
+  assert.equal(matcher.consume(eventResult(1, 132, [], [], [60])).matched, true);
+
+  matcher.setTarget([62], 2, 132);
+  matcher.consume(eventResult(
+    2,
+    150,
+    [onset(62, 150)],
+    [{ midi: 62, type: "onset" }],
+    [60, 62],
+  ));
+  assert.equal(matcher.consume(eventResult(2, 181, [], [], [60, 62])).matched, false);
+  assert.equal(matcher.consume(eventResult(2, 182, [], [], [60, 62])).matched, true);
+});
+
+test("note-event refractory cannot reuse a held attack after advancing", () => {
+  const matcher = new ExactChordMatcher({
+    refractoryMode: "noteEvents",
+    settleMs: 32,
+  });
+  matcher.setTarget([60], 1, 0);
+  matcher.consume(eventResult(
+    1,
+    100,
+    [onset(60, 100)],
+    [{ midi: 60, type: "onset" }],
+  ));
+  assert.equal(matcher.consume(eventResult(1, 132, [], [], [60])).matched, true);
+
+  matcher.setTarget([60], 2, 132);
+  const held = matcher.consume(eventResult(
+    2,
+    160,
+    [onset(60, 160)],
+    [],
+    [60],
+  ));
+  assert.equal(held.matched, false);
+  assert.deepEqual(held.detectedTargetPitches, []);
+  assert.equal(matcher.consume(eventResult(
+    2,
+    320,
+    [onset(60, 320)],
+    [],
+    [60],
+  )).matched, false);
+
+  matcher.consume(eventResult(
+    2,
+    340,
+    [],
+    [{ midi: 60, type: "offset" }],
+    [],
+  ));
+  matcher.consume(eventResult(
+    2,
+    350,
+    [onset(60, 350)],
+    [{ midi: 60, type: "onset" }],
+    [60],
+  ));
+  assert.equal(matcher.consume(eventResult(2, 382, [], [], [60])).matched, true);
+});
+
+test("note-event refractory accepts a re-onset without waiting for an offset", () => {
+  const matcher = new ExactChordMatcher({
+    refractoryMode: "noteEvents",
+    settleMs: 32,
+  });
+  matcher.setTarget([60], 1, 0);
+  matcher.consume(eventResult(
+    1,
+    100,
+    [onset(60, 100)],
+    [{ midi: 60, type: "onset" }],
+  ));
+  assert.equal(matcher.consume(eventResult(1, 132, [], [], [60])).matched, true);
+
+  matcher.setTarget([60], 2, 132);
+  matcher.consume(eventResult(
+    2,
+    150,
+    [onset(60, 150)],
+    [{ midi: 60, type: "reOnset" }],
+    [60],
+  ));
+  assert.equal(matcher.consume(eventResult(2, 182, [], [], [60])).matched, true);
+});
+
+test("time-based recognizers retain the refractory interval", () => {
+  const matcher = new ExactChordMatcher();
+  matcher.setTarget([60], 1, 1_000);
+  assert.equal(
+    matcher.consume(result(1, 1_100, [onset(60, 1_100)])).matched,
+    false,
+  );
+  assert.deepEqual(
+    matcher.consume(result(1, 1_181, [], [60])).detectedTargetPitches,
+    [],
+  );
+
+  matcher.consume(result(1, 1_200, [onset(60, 1_200)]));
+  assert.equal(matcher.consume(result(1, 1_281, [], [60])).matched, true);
 });
 
 test("ignores stale analysis after manual navigation and mode generations", () => {
