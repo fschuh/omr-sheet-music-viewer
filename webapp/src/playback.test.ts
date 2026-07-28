@@ -6,6 +6,7 @@ import {
   initialPlaybackState,
   playbackPitchForNote,
   playbackGroupIdsForPage,
+  playbackGroupIdsByPageForAnchors,
   runPlaybackCommand,
   seekPlaybackToGroup,
   type PlaybackCommand,
@@ -90,6 +91,120 @@ test("groups a chord and aligned notes in different clefs into one playhead mome
   assert.equal(timeline.length, 1);
   assert.deepEqual(timeline[0].visualGroupIds, ["chord", "lower", "upper"]);
   assert.deepEqual(timeline[0].pitches, ["C4"]);
+});
+
+test("groups a displaced chord second before aligning notes across clefs", () => {
+  const lowerOffset = group("lower-offset", 0, 1, 2313.59, 592);
+  const upperLow = group("upper-low", 0, 0, 2338.16, 395);
+  const upperHigh = group("upper-high", 0, 0, 2338.83, 330);
+  const lowerMiddle = group("lower-middle", 0, 1, 2338.83, 587);
+  const lowerLow = group("lower-low", 0, 1, 2339.16, 614);
+  lowerOffset.stem_component_ids = ["lower-stem"];
+  lowerMiddle.stem_component_ids = ["lower-stem"];
+  lowerLow.stem_component_ids = ["lower-stem"];
+  upperLow.stem_component_ids = ["upper-stem"];
+  upperHigh.stem_component_ids = ["upper-stem"];
+
+  const scorePage = page(
+    0,
+    [lowerOffset, upperLow, upperHigh, lowerMiddle, lowerLow],
+    [4, 4, 4, 4, 4],
+  );
+  const pitches = ["Cb4", "Bb4", "Bb5", "Db4", "Ab3"];
+  scorePage.visualSidecar?.notes.forEach((note, index) => {
+    note.pitch = pitches[index];
+  });
+  const timeline = buildPlaybackTimeline([scorePage]);
+
+  assert.equal(timeline.length, 1);
+  assert.deepEqual(timeline[0].visualGroupIds, [
+    "lower-low",
+    "lower-middle",
+    "lower-offset",
+    "upper-high",
+    "upper-low",
+  ]);
+  assert.deepEqual([...timeline[0].pitches].sort(), [...pitches].sort());
+  assert.deepEqual(
+    timeline[0].keyboardNotes.map((note) => note.pitch).sort(),
+    [...pitches].sort(),
+  );
+});
+
+test("recovers unmatched cross-clef pitches from the anchored MusicXML event", () => {
+  const upperHigh = group("upper-high", 0, 0, 477.7, 1111);
+  const upperLow = group("upper-low", 0, 0, 477.5, 1176);
+  const lowerHigh = group("lower-high", 0, 1, 477.1, 1298);
+  const lowerLow = group("lower-low", 0, 1, 477.5, 1344);
+  upperHigh.stem_component_ids = ["upper-stem"];
+  upperLow.stem_component_ids = ["upper-stem"];
+  lowerHigh.stem_component_ids = ["lower-stem"];
+  lowerLow.stem_component_ids = ["lower-stem"];
+  lowerHigh.musicxml_ids = [];
+  lowerLow.musicxml_ids = [];
+
+  const scorePage = page(
+    0,
+    [upperHigh, upperLow, lowerHigh, lowerLow],
+    [5, 5, 5, 5],
+  );
+  const sidecar = scorePage.visualSidecar!;
+  sidecar.notes[0].pitch = "Cb6";
+  sidecar.notes[1].pitch = "Cb5";
+  sidecar.notes[2].pitch = "Gb4";
+  sidecar.notes[2].staff = 2;
+  sidecar.notes[2].voice = 5;
+  sidecar.notes[2].visual_group_id = null;
+  sidecar.notes[3].pitch = "Bb3";
+  sidecar.notes[3].staff = 2;
+  sidecar.notes[3].voice = 5;
+  sidecar.notes[3].visual_group_id = null;
+  sidecar.unmatched_musicxml_notes = ["note-lower-high", "note-lower-low"];
+  sidecar.unmatched_visual_notes = ["lower-high", "lower-low"];
+  scorePage.musicXml = `<?xml version="1.0"?>
+    <score-partwise version="4.0">
+      <part-list><score-part id="P1"><part-name>Piano</part-name></score-part></part-list>
+      <part id="P1">
+        <measure number="5">
+          <attributes><divisions>4</divisions></attributes>
+          <note id="note-upper-high">
+            <pitch><step>C</step><alter>-1</alter><octave>6</octave></pitch>
+            <duration>1</duration><voice>1</voice><staff>1</staff>
+          </note>
+          <note id="note-upper-low">
+            <chord/><pitch><step>C</step><alter>-1</alter><octave>5</octave></pitch>
+            <duration>1</duration><voice>1</voice><staff>1</staff>
+          </note>
+          <backup><duration>1</duration></backup>
+          <note id="note-lower-high">
+            <pitch><step>G</step><alter>-1</alter><octave>4</octave></pitch>
+            <duration>2</duration><voice>5</voice><staff>2</staff>
+          </note>
+          <note id="note-lower-low">
+            <chord/><pitch><step>B</step><alter>-1</alter><octave>3</octave></pitch>
+            <duration>2</duration><voice>5</voice><staff>2</staff>
+          </note>
+        </measure>
+      </part>
+    </score-partwise>`;
+
+  const timeline = buildPlaybackTimeline([scorePage]);
+
+  assert.equal(timeline.length, 1);
+  assert.deepEqual(timeline[0].pitches, ["C♭6", "C♭5", "G♭4", "B♭3"]);
+  assert.deepEqual(
+    timeline[0].keyboardNotes.map((note) => note.pitch),
+    ["C♭6", "C♭5", "G♭4", "B♭3"],
+  );
+  assert.deepEqual(
+    playbackGroupIdsByPageForAnchors(timeline, [
+      { pageIndex: 0, visualGroupId: "upper-high" },
+      { pageIndex: 0, visualGroupId: "upper-low" },
+    ]),
+    {
+      0: ["lower-high", "lower-low", "upper-high", "upper-low"],
+    },
+  );
 });
 
 test("keeps vertically aligned notes on different systems as separate moments", () => {

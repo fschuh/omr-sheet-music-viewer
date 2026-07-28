@@ -1,6 +1,7 @@
 import type { DocumentPage, VisualGroup, VisualGroupRef, VisualSidecarNote } from "./types";
 import type { PredictedFingering } from "./fingering";
 import { musicXmlPitchNames } from "./noteLabels";
+import { parseRealtimeMusicXml, type RealtimeScoreNote } from "./realtime";
 
 export const playbackCommandNames = [
   "togglePlayback",
@@ -45,6 +46,27 @@ export function playbackGroupIdsForPage(
   return moment?.pageIndex === pageIndex ? moment.visualGroupIds : NO_PLAYBACK_GROUPS;
 }
 
+export function playbackGroupIdsByPageForAnchors(
+  timeline: PlaybackMoment[],
+  anchors: readonly VisualGroupRef[],
+): Record<number, string[]> {
+  const result: Record<number, string[]> = {};
+  for (const anchor of anchors) {
+    const moment = timeline.find(
+      (candidate) =>
+        candidate.pageIndex === anchor.pageIndex &&
+        candidate.visualGroupIds.includes(anchor.visualGroupId),
+    );
+    const ids = moment?.visualGroupIds ?? [anchor.visualGroupId];
+    const pageIds = result[anchor.pageIndex] ?? [];
+    for (const id of ids) {
+      if (!pageIds.includes(id)) pageIds.push(id);
+    }
+    result[anchor.pageIndex] = pageIds;
+  }
+  return result;
+}
+
 export interface PlaybackState {
   active: boolean;
   currentMomentId: string | null;
@@ -75,6 +97,11 @@ interface MomentCluster {
   groups: TimelineGroup[];
   x: number;
   measure: number | null;
+}
+
+interface PlaybackPitchNote {
+  musicXmlId: string;
+  pitch: string;
 }
 
 export function playbackPitchForNote(
@@ -143,15 +170,53 @@ function sharesStem(first: TimelineGroup, cluster: MomentCluster): boolean {
   );
 }
 
-function belongsToCluster(entry: TimelineGroup, cluster: MomentCluster): boolean {
-  if (!measuresCompatible(entry, cluster)) return false;
-  if (sharesStem(entry, cluster)) return true;
+function updateCluster(cluster: MomentCluster): void {
+  cluster.x = cluster.groups.reduce((total, value) => total + value.x, 0) /
+    cluster.groups.length;
+  cluster.measure = mostCommonMeasure(cluster.groups);
+}
+
+function clustersByStem(entries: TimelineGroup[]): MomentCluster[] {
+  // Coalesce chord members before sorting by their visual x-position. A displaced
+  // second can otherwise be separated from its stemmates by an aligned note on
+  // the other stave.
+  const clusters: MomentCluster[] = [];
+  for (const entry of entries) {
+    const matches = clusters
+      .map((cluster, index) =>
+        measuresCompatible(entry, cluster) && sharesStem(entry, cluster) ? index : -1
+      )
+      .filter((index) => index >= 0);
+    if (matches.length === 0) {
+      clusters.push({ groups: [entry], x: entry.x, measure: mostCommonMeasure([entry]) });
+      continue;
+    }
+
+    const target = clusters[matches[0]];
+    target.groups.push(entry);
+    for (const index of matches.slice(1).reverse()) {
+      target.groups.push(...clusters[index].groups);
+      clusters.splice(index, 1);
+    }
+    updateCluster(target);
+  }
+  return clusters;
+}
+
+function clustersAlign(first: MomentCluster, second: MomentCluster): boolean {
+  if (
+    first.measure !== null &&
+    second.measure !== null &&
+    first.measure !== second.measure
+  ) {
+    return false;
+  }
   const typicalWidth = Math.min(
-    entry.width,
-    ...cluster.groups.map((candidate) => candidate.width),
+    ...first.groups.map((candidate) => candidate.width),
+    ...second.groups.map((candidate) => candidate.width),
   );
   const tolerance = Math.min(24, Math.max(6, typicalWidth * 0.8));
-  return Math.abs(entry.x - cluster.x) <= tolerance;
+  return Math.abs(first.x - second.x) <= tolerance;
 }
 
 function clustersForStaff(
@@ -173,17 +238,62 @@ function clustersForStaff(
     })
     .sort((first, second) => first.x - second.x || first.group.center[1] - second.group.center[1]);
   const clusters: MomentCluster[] = [];
-  for (const entry of entries) {
+  const stemClusters = clustersByStem(entries)
+    .sort((first, second) => first.x - second.x);
+  for (const entry of stemClusters) {
     const previous = clusters.at(-1);
-    if (previous && belongsToCluster(entry, previous)) {
-      previous.groups.push(entry);
-      previous.x = previous.groups.reduce((total, value) => total + value.x, 0) / previous.groups.length;
-      previous.measure = mostCommonMeasure(previous.groups);
+    if (previous && clustersAlign(entry, previous)) {
+      previous.groups.push(...entry.groups);
+      updateCluster(previous);
     } else {
-      clusters.push({ groups: [entry], x: entry.x, measure: mostCommonMeasure([entry]) });
+      clusters.push(entry);
     }
   }
   return clusters;
+}
+
+function scoreEventNotesById(musicXml?: string): Map<string, readonly RealtimeScoreNote[]> {
+  const result = new Map<string, readonly RealtimeScoreNote[]>();
+  if (!musicXml) return result;
+  try {
+    const score = parseRealtimeMusicXml(musicXml);
+    for (const measure of score.measures) {
+      for (const event of measure.events) {
+        for (const note of event.notes) result.set(note.musicXmlId, event.notes);
+      }
+    }
+  } catch {
+    // Note-by-note playback can still use the visual sidecar when score parsing fails.
+  }
+  return result;
+}
+
+function playbackNotesForCluster(
+  cluster: MomentCluster,
+  pitchNames: ReadonlyMap<string, string>,
+  scoreEvents: ReadonlyMap<string, readonly RealtimeScoreNote[]>,
+): PlaybackPitchNote[] {
+  const result: PlaybackPitchNote[] = [];
+  const seenIds = new Set<string>();
+  const add = (musicXmlId: string, pitch: string | null) => {
+    if (pitch === null || seenIds.has(musicXmlId)) return;
+    seenIds.add(musicXmlId);
+    result.push({ musicXmlId, pitch });
+  };
+
+  for (const entry of cluster.groups) {
+    for (const note of entry.notes) {
+      for (const eventNote of scoreEvents.get(note.musicxml_id) ?? []) {
+        add(eventNote.musicXmlId, eventNote.pitch);
+      }
+    }
+  }
+  for (const entry of cluster.groups) {
+    for (const note of entry.notes) {
+      add(note.musicxml_id, playbackPitchForNote(note, pitchNames));
+    }
+  }
+  return result;
 }
 
 export function buildPlaybackTimeline(
@@ -200,6 +310,7 @@ export function buildPlaybackTimeline(
     const sidecar = page.visualSidecar;
     if (!sidecar) continue;
     const pitchNames = musicXmlPitchNames(page.musicXml);
+    const scoreEvents = scoreEventNotesById(page.musicXml);
     const staffIndexes = Array.from(
       new Set(sidecar.visual_groups.map((group) => group.staff_index)),
     ).sort((first, second) => first - second);
@@ -207,31 +318,21 @@ export function buildPlaybackTimeline(
       const staffGroups = sidecar.visual_groups.filter((group) => group.staff_index === staffIndex);
       const clusters = clustersForStaff(staffGroups, sidecar.notes, pitchNames);
       clusters.forEach((cluster, clusterIndex) => {
+        const momentNotes = playbackNotesForCluster(cluster, pitchNames, scoreEvents);
         const visualGroupIds = cluster.groups
           .map((entry) => entry.group.visual_group_id)
           .sort((first, second) => first.localeCompare(second));
-        const pitches = Array.from(new Set(
-          cluster.groups.flatMap((entry) =>
-            entry.notes.flatMap((note) => {
-              const pitch = playbackPitchForNote(note, pitchNames);
-              return pitch === null ? [] : [pitch];
-            }),
-          ),
-        ));
+        const pitches = Array.from(new Set(momentNotes.map((note) => note.pitch)));
         const keyboardNotes: PlaybackKeyboardNote[] = [];
         const seenKeyboardNotes = new Set<string>();
-        for (const entry of cluster.groups) {
-          for (const note of entry.notes) {
-            const pitch = playbackPitchForNote(note, pitchNames);
-            if (pitch === null) continue;
-            const predicted = predictedFingerings[
-              `page-${musicPageNumber}-${note.musicxml_id}`
-            ];
-            const key = `${pitch}:${predicted?.left ?? ""}:${predicted?.finger ?? ""}`;
-            if (seenKeyboardNotes.has(key)) continue;
-            seenKeyboardNotes.add(key);
-            keyboardNotes.push({ pitch, ...predicted });
-          }
+        for (const note of momentNotes) {
+          const predicted = predictedFingerings[
+            `page-${musicPageNumber}-${note.musicXmlId}`
+          ];
+          const key = `${note.pitch}:${predicted?.left ?? ""}:${predicted?.finger ?? ""}`;
+          if (seenKeyboardNotes.has(key)) continue;
+          seenKeyboardNotes.add(key);
+          keyboardNotes.push({ pitch: note.pitch, ...predicted });
         }
         const centerY =
           cluster.groups.reduce((total, entry) => total + entry.group.center[1], 0) /

@@ -12,6 +12,7 @@ import {
   effectivePlaybackNoteSounds,
   initialPlaybackState,
   playbackCommandNames,
+  playbackGroupIdsByPageForAnchors,
   runPlaybackCommand as applyPlaybackCommand,
   seekPlaybackToGroup,
   type PlaybackCommand,
@@ -320,15 +321,16 @@ export function App() {
     });
   }, [document?.predictedFingerings, realtimeFrame]);
   const realtimeGroupIdsByPage = useMemo(() => {
-    const result: Record<number, string[]> = {};
-    for (const note of realtimeFrame?.activeNotes ?? []) {
-      if (!note.visual) continue;
-      const ids = result[note.visual.pageIndex] ?? [];
-      if (!ids.includes(note.visual.visualGroupId)) ids.push(note.visual.visualGroupId);
-      result[note.visual.pageIndex] = ids;
-    }
-    return result;
-  }, [realtimeFrame]);
+    const anchors = (realtimeFrame?.activeNotes ?? []).flatMap((note) =>
+      note.visual
+        ? [{
+            pageIndex: note.visual.pageIndex,
+            visualGroupId: note.visual.visualGroupId,
+          }]
+        : [],
+    );
+    return playbackGroupIdsByPageForAnchors(playbackTimeline, anchors);
+  }, [playbackTimeline, realtimeFrame]);
   const realtimeMoment = useMemo(() => {
     if (!realtimeFrame || !realtimeRouteRef.current) return null;
     const route = realtimeRouteRef.current;
