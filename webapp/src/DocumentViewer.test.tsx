@@ -124,6 +124,17 @@ test("renders compact playback controls disabled outside playback mode", () => {
   assert.doesNotMatch(markup, /data-playback-selected="true"/);
 });
 
+test("renders viewport actions as compact labelled icons", () => {
+  const markup = render(false);
+  assert.match(markup, /aria-label="Fit width"/);
+  assert.match(markup, /aria-label="Fit page"/);
+  assert.match(markup, /aria-label="Reset zoom to 100%"/);
+  assert.equal(markup.match(/class="toolbar-icon"/g)?.length, 3);
+  assert.doesNotMatch(markup, />Fit width<\/button>/);
+  assert.doesNotMatch(markup, />Fit page<\/button>/);
+  assert.doesNotMatch(markup, />Reset<\/button>/);
+});
+
 test("renders all groups and note names in the active cross-clef moment", () => {
   const markup = render(true);
   assert.equal(markup.match(/data-playback-selected="true"/g)?.length, 2);

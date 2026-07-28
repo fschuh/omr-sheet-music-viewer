@@ -26,6 +26,33 @@ const MIN_VISIBLE_DOCUMENT_PX = 96;
 const DEFAULT_VIEWPORT_TRANSFORM: ViewportTransform = { scale: 1, x: 24, y: 24 };
 const NO_REALTIME_GROUPS: readonly string[] = [];
 
+function FitWidthIcon() {
+  return (
+    <svg className="toolbar-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <rect x="3.5" y="5" width="17" height="14" rx="1.5" />
+      <path d="M7 12h10M7 12l2.5-2.5M7 12l2.5 2.5M17 12l-2.5-2.5M17 12l-2.5 2.5" />
+    </svg>
+  );
+}
+
+function FitPageIcon() {
+  return (
+    <svg className="toolbar-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <rect x="8" y="5" width="8" height="14" rx="1" />
+      <path d="M8 3.5H3.5V8M16 3.5h4.5V8M8 20.5H3.5V16M16 20.5h4.5V16" />
+    </svg>
+  );
+}
+
+function ResetZoomIcon() {
+  return (
+    <svg className="toolbar-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M4.5 9 7 7v10M16.5 9 19 7v10" />
+      <path d="M12 10h.01M12 14h.01" className="toolbar-icon-dots" />
+    </svg>
+  );
+}
+
 export function validTempoPercentage(value: string): number | null {
   if (value.trim() === "") return null;
   const percentage = Number(value);
@@ -985,9 +1012,33 @@ export function DocumentViewer({
   return (
     <div className="viewer">
       <div className="viewer-toolbar">
-        <button type="button" onClick={fitWidth}>Fit width</button>
-        <button type="button" onClick={fitPage}>Fit page</button>
-        <button type="button" onClick={() => commitTransform(DEFAULT_VIEWPORT_TRANSFORM)}>Reset</button>
+        <button
+          type="button"
+          className="viewport-action"
+          aria-label="Fit width"
+          title="Fit width"
+          onClick={fitWidth}
+        >
+          <FitWidthIcon />
+        </button>
+        <button
+          type="button"
+          className="viewport-action"
+          aria-label="Fit page"
+          title="Fit page"
+          onClick={fitPage}
+        >
+          <FitPageIcon />
+        </button>
+        <button
+          type="button"
+          className="viewport-action"
+          aria-label="Reset zoom to 100%"
+          title="Reset zoom to 100%"
+          onClick={() => commitTransform(DEFAULT_VIEWPORT_TRANSFORM)}
+        >
+          <ResetZoomIcon />
+        </button>
         <button
           type="button"
           aria-label="Zoom out"

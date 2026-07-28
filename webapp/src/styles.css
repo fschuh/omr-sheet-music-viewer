@@ -539,6 +539,20 @@ button:disabled {
   width: 36px;
 }
 
+.viewer-toolbar .toolbar-icon {
+  fill: none;
+  height: 22px;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+  width: 22px;
+}
+
+.viewer-toolbar .toolbar-icon-dots {
+  stroke-width: 2.6;
+}
+
 .viewer-toolbar span {
   color: #625b53;
   font-size: 0.8rem;
