@@ -237,6 +237,23 @@ test("canonical chord selection uses chord_id instead of legacy geometry", () =>
   );
 });
 
+test("fallback chord selection also uses chord_id", () => {
+  const groups = [group(0, 100, 100), group(1, 180, 160)];
+  groups[0].chord_id = "chord-1";
+  groups[1].chord_id = "chord-1";
+  const data = sidecar(groups, ["C5", "E4"]);
+
+  assert.deepEqual(
+    selectedGroupIds(
+      data,
+      { pageIndex: 0, visualGroupId: groups[0].visual_group_id },
+      0,
+      false,
+    ),
+    new Set(groups.map((value) => value.visual_group_id)),
+  );
+});
+
 test("diagnostic and unlinked groups are excluded from selection and labels", () => {
   const linked = group(0, 100, 100);
   const diagnostic = group(1, 180, 100);

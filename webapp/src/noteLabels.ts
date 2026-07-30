@@ -58,8 +58,7 @@ export function selectedGroupIds(
   }
   if (!isLinkedVisualGroup(group)) return new Set();
   const result = new Set([group.visual_group_id]);
-  if (group.visual_status === "canonical") {
-    if (group.chord_id === null) return result;
+  if (group.chord_id !== null) {
     for (const candidate of eligibleGroups) {
       if (candidate.chord_id === group.chord_id) {
         result.add(candidate.visual_group_id);
@@ -67,6 +66,7 @@ export function selectedGroupIds(
     }
     return result;
   }
+  if (group.visual_status === "canonical") return result;
   const stemComponents = new Set(group.stem_component_ids ?? []);
   const notesByGroup = linkedNotes(sidecar);
   for (const candidate of eligibleGroups) {
