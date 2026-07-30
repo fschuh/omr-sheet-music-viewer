@@ -199,6 +199,7 @@ test("hides diagnostic groups while retaining raw contour diagnostics", () => {
 });
 
 test("debug mode renders and selects diagnostic visual groups", () => {
+  const linkedOverlapGroup = group("linked-overlap", 1, 300, 520);
   const diagnosticGroup = {
     ...group("diagnostic", 1, 300, 520),
     musicxml_ids: [],
@@ -209,18 +210,31 @@ test("debug mode renders and selects diagnostic visual groups", () => {
   };
   const diagnosticSidecar: VisualSidecar = {
     ...sidecar,
-    visual_groups: [diagnosticGroup],
-    notes: [],
+    visual_groups: [diagnosticGroup, linkedOverlapGroup],
+    notes: [
+      {
+        ...sidecar.notes[0],
+        musicxml_id: linkedOverlapGroup.musicxml_ids[0],
+        visual_group_id: linkedOverlapGroup.visual_group_id,
+      },
+    ],
     unmatched_visual_notes: [diagnosticGroup.visual_group_id],
+  };
+  const overlapHitTestSidecar: VisualSidecar = {
+    ...diagnosticSidecar,
+    visual_groups: [linkedOverlapGroup, diagnosticGroup],
   };
   const diagnosticPage: DocumentPage = {
     ...page,
     visualSidecar: diagnosticSidecar,
   };
 
-  assert.equal(hitTest(diagnosticSidecar, diagnosticGroup.center), null);
   assert.equal(
-    hitTest(diagnosticSidecar, diagnosticGroup.center, true)?.visual_group_id,
+    hitTest(overlapHitTestSidecar, diagnosticGroup.center)?.visual_group_id,
+    linkedOverlapGroup.visual_group_id,
+  );
+  assert.equal(
+    hitTest(overlapHitTestSidecar, diagnosticGroup.center, true)?.visual_group_id,
     diagnosticGroup.visual_group_id,
   );
 
@@ -247,7 +261,12 @@ test("debug mode renders and selects diagnostic visual groups", () => {
   );
 
   assert.match(markup, /data-visual-group-id="diagnostic"/);
+  assert.match(markup, /data-diagnostic-highlight="halo"/);
   assert.match(markup, /class="visual-group selected"[^>]*data-visual-status="diagnostic"/);
+  assert.ok(
+    markup.indexOf('data-visual-group-id="linked-overlap"') <
+      markup.indexOf('data-visual-group-id="diagnostic"'),
+  );
   assert.doesNotMatch(markup, /data-playback-selected="true"/);
 });
 

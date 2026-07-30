@@ -189,9 +189,19 @@ export function hitTest(
     : eligibleGroups.filter((group) => pointInBBox(point, group));
   return (
     candidates.sort(
-      (first, second) =>
-        Math.hypot(point[0] - first.center[0], point[1] - first.center[1]) -
-        Math.hypot(point[0] - second.center[0], point[1] - second.center[1]),
+      (first, second) => {
+        if (
+          includeDiagnosticGroups &&
+          first.visual_status !== second.visual_status
+        ) {
+          if (first.visual_status === "diagnostic") return -1;
+          if (second.visual_status === "diagnostic") return 1;
+        }
+        return (
+          Math.hypot(point[0] - first.center[0], point[1] - first.center[1]) -
+          Math.hypot(point[0] - second.center[0], point[1] - second.center[1])
+        );
+      },
     )[0] ?? null
   );
 }
@@ -289,6 +299,9 @@ const VisualGroupLayer = memo(function VisualGroupLayer({
       className={`visual-group${selected ? " selected" : ""}${playback ? " playback-selected" : ""}`}
       data-visual-group-id={group.visual_group_id}
       data-visual-status={group.visual_status}
+      data-diagnostic-highlight={
+        group.visual_status === "diagnostic" ? "halo" : undefined
+      }
       data-playback-selected={playback ? "true" : undefined}
     >
       {fittedNoteheads && !showOriginalNoteheadContours
@@ -401,6 +414,11 @@ const PageOverlay = memo(function PageOverlay({
   const visualGroupLayers = useMemo(() =>
     page.visualSidecar?.visual_groups
       .filter((group) => isSelectableVisualGroup(group, showDiagnosticVisualGroups))
+      .sort(
+        (first, second) =>
+          Number(first.visual_status === "diagnostic") -
+          Number(second.visual_status === "diagnostic"),
+      )
       .map((group) => (
         <VisualGroupLayer
           key={group.visual_group_id}

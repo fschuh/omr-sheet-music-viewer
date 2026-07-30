@@ -861,16 +861,33 @@ button:disabled {
   stroke-width: 0.4;
 }
 
-.visual-group[data-visual-status="diagnostic"] :where(polygon, ellipse) {
-  fill: rgb(126 34 206 / 24%);
-  stroke: #7e22ce;
-  stroke-width: 1.4;
+.visual-group[data-diagnostic-highlight="halo"] {
+  filter:
+    drop-shadow(0 0 1px rgb(107 33 168 / 72%))
+    drop-shadow(0 0 3px rgb(233 213 255 / 92%))
+    drop-shadow(0 0 6px rgb(192 132 252 / 62%));
 }
 
-.visual-group[data-visual-status="diagnostic"].selected :where(polygon, ellipse) {
-  fill: rgb(126 34 206 / 78%);
-  stroke: #581c87;
-  stroke-width: 0.9;
+.visual-group[data-diagnostic-highlight="halo"] :where(polygon, ellipse) {
+  fill: rgb(216 180 254 / 5%);
+  paint-order: fill stroke;
+  stroke: #b96bef;
+  stroke-linejoin: round;
+  stroke-width: 2.25;
+  vector-effect: non-scaling-stroke;
+}
+
+.visual-group[data-diagnostic-highlight="halo"].selected {
+  filter:
+    drop-shadow(0 0 1px rgb(88 28 135 / 82%))
+    drop-shadow(0 0 3px rgb(243 232 255 / 100%))
+    drop-shadow(0 0 7px rgb(192 132 252 / 74%));
+}
+
+.visual-group[data-diagnostic-highlight="halo"].selected :where(polygon, ellipse) {
+  fill: rgb(216 180 254 / 11%);
+  stroke: #a855f7;
+  stroke-width: 2.75;
 }
 
 .visual-group.playback-selected polygon,
