@@ -22,6 +22,7 @@
         "title": "OMR Sheet Music Viewer",
         "width": 1400,
         "height": 900,
+        "maximized": true,
         "minWidth": 900,
         "minHeight": 600,
         "zoomHotkeysEnabled": true
