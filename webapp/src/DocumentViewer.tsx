@@ -14,7 +14,7 @@ import type {
   VisualPoint,
   VisualSidecar,
 } from "./types";
-import { isLinkedVisualGroup } from "./types";
+import { isLinkedVisualGroup, isSelectableVisualGroup } from "./types";
 
 const MIN_SCALE = 0.08;
 const MAX_SCALE = 6;
@@ -83,6 +83,7 @@ interface DocumentViewerProps {
   showDetectedNoteheadContours: boolean;
   showRefinedNoteheadContours: boolean;
   showRawStemContours: boolean;
+  showDiagnosticVisualGroups?: boolean;
   playbackActive: boolean;
   playbackNoteSoundsEnabled: boolean;
   playbackAvailable: boolean;
@@ -174,8 +175,14 @@ function pointInNotehead(point: VisualPoint, group: VisualGroup, padding = 3): b
   });
 }
 
-function hitTest(sidecar: VisualSidecar, point: VisualPoint): VisualGroup | null {
-  const eligibleGroups = sidecar.visual_groups.filter(isLinkedVisualGroup);
+export function hitTest(
+  sidecar: VisualSidecar,
+  point: VisualPoint,
+  includeDiagnosticGroups = false,
+): VisualGroup | null {
+  const eligibleGroups = sidecar.visual_groups.filter((group) =>
+    isSelectableVisualGroup(group, includeDiagnosticGroups),
+  );
   const noteheads = eligibleGroups.filter((group) => pointInNotehead(point, group));
   const candidates = noteheads.length
     ? noteheads
@@ -250,6 +257,7 @@ interface PageOverlayProps {
   showDetectedNoteheadContours: boolean;
   showRefinedNoteheadContours: boolean;
   showRawStemContours: boolean;
+  showDiagnosticVisualGroups: boolean;
   playbackActive: boolean;
   playbackGroupIds: readonly string[];
   realtimePlayhead?: RealtimePlayhead | null;
@@ -280,6 +288,7 @@ const VisualGroupLayer = memo(function VisualGroupLayer({
     <g
       className={`visual-group${selected ? " selected" : ""}${playback ? " playback-selected" : ""}`}
       data-visual-group-id={group.visual_group_id}
+      data-visual-status={group.visual_status}
       data-playback-selected={playback ? "true" : undefined}
     >
       {fittedNoteheads && !showOriginalNoteheadContours
@@ -338,6 +347,7 @@ const PageOverlay = memo(function PageOverlay({
   showDetectedNoteheadContours,
   showRefinedNoteheadContours,
   showRawStemContours,
+  showDiagnosticVisualGroups,
   playbackActive,
   playbackGroupIds,
   realtimePlayhead,
@@ -347,10 +357,24 @@ const PageOverlay = memo(function PageOverlay({
     () => {
       if (playbackActive) return new Set(playbackGroupIds);
       return page.visualSidecar
-        ? selectedGroupIds(page.visualSidecar, selected, page.index, highlightAll)
+        ? selectedGroupIds(
+            page.visualSidecar,
+            selected,
+            page.index,
+            highlightAll,
+            showDiagnosticVisualGroups,
+          )
         : new Set<string>();
     },
-    [highlightAll, page.index, page.visualSidecar, playbackActive, playbackGroupIds, selected],
+    [
+      highlightAll,
+      page.index,
+      page.visualSidecar,
+      playbackActive,
+      playbackGroupIds,
+      selected,
+      showDiagnosticVisualGroups,
+    ],
   );
   const noteLabels = useMemo(
     () =>
@@ -375,18 +399,20 @@ const PageOverlay = memo(function PageOverlay({
   );
   const visualSelectionKey = playbackActive ? "" : [...selectedIds].sort().join("\u0000");
   const visualGroupLayers = useMemo(() =>
-    page.visualSidecar?.visual_groups.filter(isLinkedVisualGroup).map((group) => (
-      <VisualGroupLayer
-        key={group.visual_group_id}
-        group={group}
-        selected={!playbackActive && selectedIds.has(group.visual_group_id)}
-        playback={false}
-        showOriginalNoteheadContours={showOriginalNoteheadContours}
-        showDetectedNoteheadContours={showDetectedNoteheadContours}
-        showRefinedNoteheadContours={showRefinedNoteheadContours}
-        showRawStemContours={showRawStemContours}
-      />
-    )) ?? [], [
+    page.visualSidecar?.visual_groups
+      .filter((group) => isSelectableVisualGroup(group, showDiagnosticVisualGroups))
+      .map((group) => (
+        <VisualGroupLayer
+          key={group.visual_group_id}
+          group={group}
+          selected={!playbackActive && selectedIds.has(group.visual_group_id)}
+          playback={false}
+          showOriginalNoteheadContours={showOriginalNoteheadContours}
+          showDetectedNoteheadContours={showDetectedNoteheadContours}
+          showRefinedNoteheadContours={showRefinedNoteheadContours}
+          showRawStemContours={showRawStemContours}
+        />
+      )) ?? [], [
       page.visualSidecar,
       playbackActive,
       showDetectedNoteheadContours,
@@ -394,6 +420,7 @@ const PageOverlay = memo(function PageOverlay({
       showRawStemContours,
       showRefinedNoteheadContours,
       visualSelectionKey,
+      showDiagnosticVisualGroups,
     ]);
   const playbackGroupLayers = useMemo(() => {
     if (!playbackActive) return [];
@@ -505,6 +532,7 @@ export function DocumentViewer({
   showDetectedNoteheadContours,
   showRefinedNoteheadContours,
   showRawStemContours,
+  showDiagnosticVisualGroups = false,
   playbackActive,
   playbackNoteSoundsEnabled,
   playbackAvailable,
@@ -911,7 +939,11 @@ export function DocumentViewer({
         ((clientX - rect.left) / rect.width) * page.width,
         ((clientY - rect.top) / rect.height) * page.height,
       ];
-      const group = hitTest(page.visualSidecar, point);
+      const group = hitTest(
+        page.visualSidecar,
+        point,
+        showDiagnosticVisualGroups,
+      );
       onSelectGroup(
         group ? { pageIndex: page.index, visualGroupId: group.visual_group_id } : null,
       );
@@ -1294,6 +1326,7 @@ export function DocumentViewer({
                 showDetectedNoteheadContours={showDetectedNoteheadContours}
                 showRefinedNoteheadContours={showRefinedNoteheadContours}
                 showRawStemContours={showRawStemContours}
+                showDiagnosticVisualGroups={showDiagnosticVisualGroups}
               />
               {page.status !== "complete" ? (
                 <div className="page-placeholder">

@@ -6,6 +6,7 @@ import {
   committedTempoPercentage,
   constrainViewportTransform,
   DocumentViewer,
+  hitTest,
   shouldScrollPlaybackHorizontally,
   validTempoPercentage,
 } from "./DocumentViewer";
@@ -195,6 +196,59 @@ test("hides diagnostic groups while retaining raw contour diagnostics", () => {
   assert.match(markup, /class="raw-stem-contour"/);
   assert.doesNotMatch(markup, /data-visual-group-id="diagnostic"/);
   assert.doesNotMatch(markup, />C4<\/text>/);
+});
+
+test("debug mode renders and selects diagnostic visual groups", () => {
+  const diagnosticGroup = {
+    ...group("diagnostic", 1, 300, 520),
+    musicxml_ids: [],
+    visual_status: "diagnostic" as const,
+    moment_id: null,
+    chord_id: null,
+    repair_actions: ["unmatched_candidate"],
+  };
+  const diagnosticSidecar: VisualSidecar = {
+    ...sidecar,
+    visual_groups: [diagnosticGroup],
+    notes: [],
+    unmatched_visual_notes: [diagnosticGroup.visual_group_id],
+  };
+  const diagnosticPage: DocumentPage = {
+    ...page,
+    visualSidecar: diagnosticSidecar,
+  };
+
+  assert.equal(hitTest(diagnosticSidecar, diagnosticGroup.center), null);
+  assert.equal(
+    hitTest(diagnosticSidecar, diagnosticGroup.center, true)?.visual_group_id,
+    diagnosticGroup.visual_group_id,
+  );
+
+  const markup = renderToStaticMarkup(
+    <DocumentViewer
+      documentKey="diagnostic-debug-fixture"
+      pages={[diagnosticPage]}
+      selectedGroup={{ pageIndex: 0, visualGroupId: diagnosticGroup.visual_group_id }}
+      highlightAllNotes={false}
+      showOriginalNoteheadContours={false}
+      showDetectedNoteheadContours={false}
+      showRefinedNoteheadContours={false}
+      showRawStemContours={false}
+      showDiagnosticVisualGroups
+      playbackActive={false}
+      playbackNoteSoundsEnabled
+      playbackAvailable={false}
+      playbackMoment={null}
+      listenFeedback={listenFeedback}
+      onPlaybackCommand={() => undefined}
+      onSelectGroup={() => undefined}
+      onRetryPage={() => undefined}
+    />,
+  );
+
+  assert.match(markup, /data-visual-group-id="diagnostic"/);
+  assert.match(markup, /class="visual-group selected"[^>]*data-visual-status="diagnostic"/);
+  assert.doesNotMatch(markup, /data-playback-selected="true"/);
 });
 
 test("renders realtime selector, transport states, tempo, and vertical playhead", () => {

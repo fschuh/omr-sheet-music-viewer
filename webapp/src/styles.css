@@ -861,6 +861,18 @@ button:disabled {
   stroke-width: 0.4;
 }
 
+.visual-group[data-visual-status="diagnostic"] :where(polygon, ellipse) {
+  fill: rgb(126 34 206 / 24%);
+  stroke: #7e22ce;
+  stroke-width: 1.4;
+}
+
+.visual-group[data-visual-status="diagnostic"].selected :where(polygon, ellipse) {
+  fill: rgb(126 34 206 / 78%);
+  stroke: #581c87;
+  stroke-width: 0.9;
+}
+
 .visual-group.playback-selected polygon,
 .visual-group.playback-selected ellipse {
   fill: rgb(19 169 141 / 90%);

@@ -43,6 +43,7 @@ export function selectedGroupIds(
   selected: VisualGroupRef | null,
   pageIndex: number,
   highlightAll: boolean,
+  includeDiagnosticGroups = false,
 ): Set<string> {
   const eligibleGroups = sidecar.visual_groups.filter(isLinkedVisualGroup);
   if (highlightAll) return new Set(eligibleGroups.map((group) => group.visual_group_id));
@@ -52,6 +53,9 @@ export function selectedGroupIds(
   );
   if (!group) return new Set();
 
+  if (includeDiagnosticGroups && group.visual_status === "diagnostic") {
+    return new Set([group.visual_group_id]);
+  }
   if (!isLinkedVisualGroup(group)) return new Set();
   const result = new Set([group.visual_group_id]);
   if (group.visual_status === "canonical") {

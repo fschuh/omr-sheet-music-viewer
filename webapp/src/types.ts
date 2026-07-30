@@ -68,6 +68,16 @@ export function isLinkedVisualGroup(group: VisualGroup): boolean {
   return group.visual_status !== "diagnostic" && group.musicxml_ids.length > 0;
 }
 
+export function isSelectableVisualGroup(
+  group: VisualGroup,
+  includeDiagnosticGroups = false,
+): boolean {
+  return (
+    isLinkedVisualGroup(group) ||
+    (includeDiagnosticGroups && group.visual_status === "diagnostic")
+  );
+}
+
 export interface ViewportTransform {
   scale: number;
   x: number;

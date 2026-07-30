@@ -82,7 +82,7 @@ import type {
   VisualGroupRef,
   VisualSidecarNote,
 } from "./types";
-import { isLinkedVisualGroup } from "./types";
+import { isLinkedVisualGroup, isSelectableVisualGroup } from "./types";
 
 interface WorkerLogEntry {
   id: number;
@@ -241,6 +241,7 @@ export function App() {
   const [showDetectedNoteheadContours, setShowDetectedNoteheadContours] = useState(false);
   const [showRefinedNoteheadContours, setShowRefinedNoteheadContours] = useState(false);
   const [showRawStemContours, setShowRawStemContours] = useState(false);
+  const [showDiagnosticVisualGroups, setShowDiagnosticVisualGroups] = useState(false);
   const [workerInfo, setWorkerInfo] = useState<string | null>(null);
   const [workerLogs, setWorkerLogs] = useState<WorkerLogEntry[]>([]);
   const [workerLogPath, setWorkerLogPath] = useState<string | null>(null);
@@ -1423,7 +1424,10 @@ export function App() {
     ? selectedPage?.visualSidecar?.visual_groups.find(
         (group) =>
           group.visual_group_id === selectedGroup.visualGroupId &&
-          isLinkedVisualGroup(group),
+          isSelectableVisualGroup(
+            group,
+            debugPanelEnabled && showDiagnosticVisualGroups,
+          ),
       )
     : undefined;
   const selectedNotes = selectedVisualGroup
@@ -1734,6 +1738,9 @@ export function App() {
               showDetectedNoteheadContours={showDetectedNoteheadContours}
               showRefinedNoteheadContours={showRefinedNoteheadContours}
               showRawStemContours={showRawStemContours}
+              showDiagnosticVisualGroups={
+                debugPanelEnabled && showDiagnosticVisualGroups
+              }
               playbackActive={playbackActive}
               playbackNoteSoundsEnabled={
                 playbackMode === "note-by-note"
@@ -1812,6 +1819,23 @@ export function App() {
                 <input type="checkbox" checked={showRawStemContours} onChange={(event) => setShowRawStemContours(event.target.checked)} />
                 Raw stem contours
               </label>
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={showDiagnosticVisualGroups}
+                  onChange={(event) => {
+                    const enabled = event.target.checked;
+                    setShowDiagnosticVisualGroups(enabled);
+                    if (
+                      !enabled &&
+                      selectedVisualGroup?.visual_status === "diagnostic"
+                    ) {
+                      setSelectedGroup(null);
+                    }
+                  }}
+                />
+                Diagnostic visual groups
+              </label>
               <h2>Selection</h2>
               {selectedVisualGroup && selectedGroup ? (
                 <>
@@ -1821,6 +1845,12 @@ export function App() {
                     <dt>MusicXML IDs</dt><dd>{selectedVisualGroup.musicxml_ids.join(", ") || "None"}</dd>
                     <dt>Notes</dt><dd>{noteSummary(selectedNotes)}</dd>
                     <dt>Staff position</dt><dd>{selectedVisualGroup.staff_position}</dd>
+                    <dt>Visual status</dt><dd>{selectedVisualGroup.visual_status}</dd>
+                    <dt>Provenance</dt><dd>{selectedVisualGroup.provenance}</dd>
+                    <dt>Moment ID</dt><dd>{selectedVisualGroup.moment_id ?? "None"}</dd>
+                    <dt>Chord ID</dt><dd>{selectedVisualGroup.chord_id ?? "None"}</dd>
+                    <dt>Repair actions</dt>
+                    <dd>{selectedVisualGroup.repair_actions.join(", ") || "None"}</dd>
                     <dt>Confidence</dt><dd>{selectedNotes.length ? Math.max(...selectedNotes.map((note) => note.match_confidence)).toFixed(3) : "—"}</dd>
                   </dl>
                   <button type="button" onClick={() => setSelectedGroup(null)}>Clear</button>

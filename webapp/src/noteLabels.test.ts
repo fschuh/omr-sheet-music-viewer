@@ -249,6 +249,16 @@ test("diagnostic and unlinked groups are excluded from selection and labels", ()
     selectedGroupIds(data, null, 0, true),
     new Set([linked.visual_group_id]),
   );
+  assert.deepEqual(
+    selectedGroupIds(
+      data,
+      { pageIndex: 0, visualGroupId: diagnostic.visual_group_id },
+      0,
+      false,
+      true,
+    ),
+    new Set([diagnostic.visual_group_id]),
+  );
   assert.equal(
     layoutNoteLabels(
       data,
