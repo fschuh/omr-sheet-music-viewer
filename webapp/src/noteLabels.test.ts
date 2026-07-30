@@ -29,12 +29,17 @@ function group(
     stem_component_ids: stemComponentIds,
     is_hollow_notehead: isHollowNotehead,
     musicxml_ids: [`note-${index}`],
+    visual_status: "fallback",
+    provenance: "segmentation",
+    moment_id: null,
+    chord_id: null,
+    repair_actions: [],
   };
 }
 
 function sidecar(groups: VisualGroup[], pitches: string[]): VisualSidecar {
   return {
-    version: 1,
+    version: 2,
     source_image_size: [2550, 3301],
     visual_groups: groups,
     notes: groups.map((value, index) => ({
@@ -47,6 +52,7 @@ function sidecar(groups: VisualGroup[], pitches: string[]): VisualSidecar {
       duration: "note_4",
       match_confidence: 1,
       visual_group_id: value.visual_group_id,
+      alignment_method: "attention",
     })),
     unmatched_musicxml_notes: [],
     unmatched_visual_notes: [],
@@ -205,5 +211,51 @@ test("keeps shared-stem chord members selected when noteheads are offset", () =>
       false,
     ),
     new Set(groups.map((value) => value.visual_group_id)),
+  );
+});
+
+test("canonical chord selection uses chord_id instead of legacy geometry", () => {
+  const groups = [group(0, 100, 100), group(1, 180, 160), group(2, 100, 220)];
+  for (const candidate of groups) {
+    candidate.visual_status = "canonical";
+    candidate.moment_id = "moment-1";
+  }
+  groups[0].chord_id = "chord-1";
+  groups[1].chord_id = "chord-1";
+  groups[0].stem_component_ids = ["legacy-stem"];
+  groups[2].stem_component_ids = ["legacy-stem"];
+  const data = sidecar(groups, ["C5", "E4", "C3"]);
+
+  assert.deepEqual(
+    selectedGroupIds(
+      data,
+      { pageIndex: 0, visualGroupId: groups[0].visual_group_id },
+      0,
+      false,
+    ),
+    new Set([groups[0].visual_group_id, groups[1].visual_group_id]),
+  );
+});
+
+test("diagnostic and unlinked groups are excluded from selection and labels", () => {
+  const linked = group(0, 100, 100);
+  const diagnostic = group(1, 180, 100);
+  diagnostic.visual_status = "diagnostic";
+  const unlinked = group(2, 260, 100);
+  unlinked.musicxml_ids = [];
+  const data = sidecar([linked, diagnostic, unlinked], ["C4", "D4", "E4"]);
+
+  assert.deepEqual(
+    selectedGroupIds(data, null, 0, true),
+    new Set([linked.visual_group_id]),
+  );
+  assert.equal(
+    layoutNoteLabels(
+      data,
+      new Set([diagnostic.visual_group_id]),
+      1000,
+      1400,
+    ).length,
+    0,
   );
 });

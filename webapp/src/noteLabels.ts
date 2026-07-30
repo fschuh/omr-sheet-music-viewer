@@ -6,6 +6,7 @@ import type {
   VisualSidecar,
   VisualSidecarNote,
 } from "./types";
+import { isLinkedVisualGroup } from "./types";
 
 const MIN_FONT_SIZE = 34;
 const MAX_FONT_SIZE = 50;
@@ -43,17 +44,28 @@ export function selectedGroupIds(
   pageIndex: number,
   highlightAll: boolean,
 ): Set<string> {
-  if (highlightAll) return new Set(sidecar.visual_groups.map((group) => group.visual_group_id));
+  const eligibleGroups = sidecar.visual_groups.filter(isLinkedVisualGroup);
+  if (highlightAll) return new Set(eligibleGroups.map((group) => group.visual_group_id));
   if (!selected || selected.pageIndex !== pageIndex) return new Set();
   const group = sidecar.visual_groups.find(
     (candidate) => candidate.visual_group_id === selected.visualGroupId,
   );
   if (!group) return new Set();
 
+  if (!isLinkedVisualGroup(group)) return new Set();
   const result = new Set([group.visual_group_id]);
+  if (group.visual_status === "canonical") {
+    if (group.chord_id === null) return result;
+    for (const candidate of eligibleGroups) {
+      if (candidate.chord_id === group.chord_id) {
+        result.add(candidate.visual_group_id);
+      }
+    }
+    return result;
+  }
   const stemComponents = new Set(group.stem_component_ids ?? []);
   const notesByGroup = linkedNotes(sidecar);
-  for (const candidate of sidecar.visual_groups) {
+  for (const candidate of eligibleGroups) {
     if (
       candidate.staff_index !== group.staff_index ||
       candidate.stave_index !== group.stave_index
@@ -452,7 +464,8 @@ const sidecarLayoutCache = new WeakMap<VisualSidecar, SidecarLayoutData>();
 function sidecarLayoutData(sidecar: VisualSidecar): SidecarLayoutData {
   const cached = sidecarLayoutCache.get(sidecar);
   if (cached) return cached;
-  const groups = new Map(sidecar.visual_groups.map((group) => [group.visual_group_id, group]));
+  const eligibleGroups = sidecar.visual_groups.filter(isLinkedVisualGroup);
+  const groups = new Map(eligibleGroups.map((group) => [group.visual_group_id, group]));
   const notes = new Map<string, VisualSidecarNote[]>();
   for (const note of sidecar.notes) {
     if (!note.visual_group_id) continue;
@@ -463,7 +476,7 @@ function sidecarLayoutData(sidecar: VisualSidecar): SidecarLayoutData {
   const bounds = new Map<string, Bounds>();
   const noteheadHeights: number[] = [];
   const obstacles: Bounds[] = [];
-  for (const group of sidecar.visual_groups) {
+  for (const group of eligibleGroups) {
     const groupBounds = noteheadBounds(group);
     bounds.set(group.visual_group_id, groupBounds);
     noteheadHeights.push(groupBounds.height);

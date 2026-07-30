@@ -6,6 +6,7 @@ import type {
   VisualGroup,
   VisualGroupRef,
 } from "./types";
+import { isLinkedVisualGroup } from "./types";
 
 export type PlaybackMode = "note-by-note" | "realtime";
 export type PlaybackStatus = "inactive" | "note-by-note" | "playing" | "paused";
@@ -693,9 +694,12 @@ export function buildRealtimeVisualMap(pages: DocumentPage[]): Map<string, Visua
     if (page.musicXml || page.visualSidecar || page.artifacts?.musicXmlPath) musicPageNumber += 1;
     const sidecar = page.visualSidecar;
     if (!sidecar) continue;
-    const groups = new Map(sidecar.visual_groups.map((group) => [group.visual_group_id, group]));
+    const eligibleGroups = sidecar.visual_groups.filter(isLinkedVisualGroup);
+    const groups = new Map(
+      eligibleGroups.map((group) => [group.visual_group_id, group]),
+    );
     const systems = new Map<number, { right: number; top: number; bottom: number }>();
-    for (const group of sidecar.visual_groups) {
+    for (const group of eligibleGroups) {
       const bounds = bbox(group);
       const system = systems.get(group.staff_index);
       if (system) {

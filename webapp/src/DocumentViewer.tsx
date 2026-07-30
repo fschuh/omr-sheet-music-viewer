@@ -14,6 +14,7 @@ import type {
   VisualPoint,
   VisualSidecar,
 } from "./types";
+import { isLinkedVisualGroup } from "./types";
 
 const MIN_SCALE = 0.08;
 const MAX_SCALE = 6;
@@ -174,10 +175,11 @@ function pointInNotehead(point: VisualPoint, group: VisualGroup, padding = 3): b
 }
 
 function hitTest(sidecar: VisualSidecar, point: VisualPoint): VisualGroup | null {
-  const noteheads = sidecar.visual_groups.filter((group) => pointInNotehead(point, group));
+  const eligibleGroups = sidecar.visual_groups.filter(isLinkedVisualGroup);
+  const noteheads = eligibleGroups.filter((group) => pointInNotehead(point, group));
   const candidates = noteheads.length
     ? noteheads
-    : sidecar.visual_groups.filter((group) => pointInBBox(point, group));
+    : eligibleGroups.filter((group) => pointInBBox(point, group));
   return (
     candidates.sort(
       (first, second) =>
@@ -365,13 +367,15 @@ const PageOverlay = memo(function PageOverlay({
   );
   const visualGroupsById = useMemo(
     () => new Map(
-      page.visualSidecar?.visual_groups.map((group) => [group.visual_group_id, group]) ?? [],
+      page.visualSidecar?.visual_groups
+        .filter(isLinkedVisualGroup)
+        .map((group) => [group.visual_group_id, group]) ?? [],
     ),
     [page.visualSidecar],
   );
   const visualSelectionKey = playbackActive ? "" : [...selectedIds].sort().join("\u0000");
   const visualGroupLayers = useMemo(() =>
-    page.visualSidecar?.visual_groups.map((group) => (
+    page.visualSidecar?.visual_groups.filter(isLinkedVisualGroup).map((group) => (
       <VisualGroupLayer
         key={group.visual_group_id}
         group={group}
@@ -939,7 +943,9 @@ export function DocumentViewer({
     if (!stage || !page || !sidecar || !rect) return;
 
     const staffGroups = sidecar.visual_groups.filter(
-      (group) => group.staff_index === playbackMoment.staffIndex,
+      (group) =>
+        group.staff_index === playbackMoment.staffIndex &&
+        isLinkedVisualGroup(group),
     );
     const momentIds = new Set(playbackMoment.visualGroupIds);
     const momentGroups = staffGroups.filter((group) => momentIds.has(group.visual_group_id));

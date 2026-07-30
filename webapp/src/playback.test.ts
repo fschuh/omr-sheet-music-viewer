@@ -26,12 +26,17 @@ function group(id: string, staffIndex: number, staveIndex: number, x: number, y:
     notehead_contours: [],
     stem_contours: [],
     musicxml_ids: [`note-${id}`],
+    visual_status: "fallback",
+    provenance: "segmentation",
+    moment_id: null,
+    chord_id: null,
+    repair_actions: [],
   };
 }
 
 function page(index: number, groups: VisualGroup[], measures: number[]): DocumentPage {
   const sidecar: VisualSidecar = {
-    version: 1,
+    version: 2,
     source_image_size: [1000, 1400],
     visual_groups: groups,
     notes: groups.map((value, groupIndex) => ({
@@ -44,6 +49,7 @@ function page(index: number, groups: VisualGroup[], measures: number[]): Documen
       duration: "note_4",
       match_confidence: 1,
       visual_group_id: value.visual_group_id,
+      alignment_method: "attention",
     })),
     unmatched_musicxml_notes: [],
     unmatched_visual_notes: [],
@@ -75,6 +81,7 @@ test("prefers the resolved MusicXML accidental over a natural-only sidecar pitch
     duration: "note_4",
     match_confidence: 1,
     visual_group_id: "flat",
+    alignment_method: "attention",
   };
 
   assert.equal(playbackPitchForNote(note, new Map([["note-flat", "A♭3"]])), "A♭3");
@@ -202,7 +209,7 @@ test("recovers unmatched cross-clef pitches from the anchored MusicXML event", (
       { pageIndex: 0, visualGroupId: "upper-low" },
     ]),
     {
-      0: ["lower-high", "lower-low", "upper-high", "upper-low"],
+      0: ["upper-high", "upper-low"],
     },
   );
 });
@@ -215,6 +222,57 @@ test("keeps vertically aligned notes on different systems as separate moments", 
   assert.equal(timeline.length, 2);
   assert.equal(timeline[0].visualGroupIds[0], "system-1");
   assert.equal(timeline[1].visualGroupIds[0], "system-2");
+});
+
+test("canonical playback groups cross-staff notes by moment_id", () => {
+  const upper = group("upper", 0, 0, 100, 250);
+  const lower = group("lower", 0, 1, 220, 430);
+  const following = group("following", 0, 0, 320, 250);
+  for (const candidate of [upper, lower, following]) {
+    candidate.visual_status = "canonical";
+  }
+  upper.moment_id = "moment-1";
+  lower.moment_id = "moment-1";
+  following.moment_id = "moment-2";
+
+  const timeline = buildPlaybackTimeline([
+    page(0, [upper, lower, following], [1, 1, 1]),
+  ]);
+
+  assert.equal(timeline.length, 2);
+  assert.equal(timeline[0].id, "page-0-moment-1");
+  assert.deepEqual(timeline[0].visualGroupIds, ["lower", "upper"]);
+  assert.deepEqual(timeline[1].visualGroupIds, ["following"]);
+});
+
+test("incomplete canonical staff metadata retains legacy clustering", () => {
+  const canonical = group("canonical", 0, 0, 200, 250);
+  canonical.visual_status = "canonical";
+  canonical.moment_id = "moment-1";
+  const fallback = group("fallback", 0, 1, 204, 430);
+
+  const timeline = buildPlaybackTimeline([
+    page(0, [canonical, fallback], [1, 1]),
+  ]);
+
+  assert.equal(timeline.length, 1);
+  assert.deepEqual(timeline[0].visualGroupIds, ["canonical", "fallback"]);
+  assert.notEqual(timeline[0].id, "page-0-moment-1");
+});
+
+test("diagnostic and unlinked groups are absent from playback", () => {
+  const linked = group("linked", 0, 0, 200, 250);
+  const diagnostic = group("diagnostic", 0, 0, 202, 280);
+  diagnostic.visual_status = "diagnostic";
+  const unlinked = group("unlinked", 0, 0, 204, 310);
+  unlinked.musicxml_ids = [];
+
+  const timeline = buildPlaybackTimeline([
+    page(0, [linked, diagnostic, unlinked], [1, 1, 1]),
+  ]);
+
+  assert.equal(timeline.length, 1);
+  assert.deepEqual(timeline[0].visualGroupIds, ["linked"]);
 });
 
 test("attaches page-scoped predicted fingerings to keyboard notes after skipped pages", () => {

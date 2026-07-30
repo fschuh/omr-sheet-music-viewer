@@ -1,4 +1,5 @@
 import type { DocumentPage, VisualGroup, VisualGroupRef, VisualSidecarNote } from "./types";
+import { isLinkedVisualGroup } from "./types";
 import type { PredictedFingering } from "./fingering";
 import { musicXmlPitchNames } from "./noteLabels";
 import { parseRealtimeMusicXml, type RealtimeScoreNote } from "./realtime";
@@ -97,6 +98,7 @@ interface MomentCluster {
   groups: TimelineGroup[];
   x: number;
   measure: number | null;
+  canonicalMomentId?: string;
 }
 
 interface PlaybackPitchNote {
@@ -252,6 +254,41 @@ function clustersForStaff(
   return clusters;
 }
 
+function canonicalClustersForStaff(
+  groups: VisualGroup[],
+  notes: VisualSidecarNote[],
+  pitchNames: ReadonlyMap<string, string>,
+): MomentCluster[] {
+  const linkedNotes = notesByVisualGroup(notes, pitchNames);
+  const byMoment = new Map<string, TimelineGroup[]>();
+  for (const group of groups) {
+    if (group.moment_id === null) continue;
+    const geometry = horizontalGeometry(group);
+    const groupNotes = linkedNotes.get(group.visual_group_id) ?? [];
+    const entry: TimelineGroup = {
+      group,
+      ...geometry,
+      measures: new Set(groupNotes.map((note) => note.measure)),
+      notes: groupNotes,
+    };
+    const entries = byMoment.get(group.moment_id) ?? [];
+    entries.push(entry);
+    byMoment.set(group.moment_id, entries);
+  }
+  return [...byMoment.entries()]
+    .map(([momentId, entries]) => ({
+      groups: entries,
+      x: entries.reduce((total, entry) => total + entry.x, 0) / entries.length,
+      measure: mostCommonMeasure(entries),
+      canonicalMomentId: momentId,
+    }))
+    .sort(
+      (first, second) =>
+        first.x - second.x ||
+        (first.canonicalMomentId ?? "").localeCompare(second.canonicalMomentId ?? ""),
+    );
+}
+
 function scoreEventNotesById(musicXml?: string): Map<string, readonly RealtimeScoreNote[]> {
   const result = new Map<string, readonly RealtimeScoreNote[]>();
   if (!musicXml) return result;
@@ -311,14 +348,26 @@ export function buildPlaybackTimeline(
     if (!sidecar) continue;
     const pitchNames = musicXmlPitchNames(page.musicXml);
     const scoreEvents = scoreEventNotesById(page.musicXml);
+    const eligibleGroups = sidecar.visual_groups.filter(isLinkedVisualGroup);
     const staffIndexes = Array.from(
-      new Set(sidecar.visual_groups.map((group) => group.staff_index)),
+      new Set(eligibleGroups.map((group) => group.staff_index)),
     ).sort((first, second) => first - second);
     for (const staffIndex of staffIndexes) {
-      const staffGroups = sidecar.visual_groups.filter((group) => group.staff_index === staffIndex);
-      const clusters = clustersForStaff(staffGroups, sidecar.notes, pitchNames);
+      const staffGroups = eligibleGroups.filter((group) => group.staff_index === staffIndex);
+      const hasCompleteCanonicalMoments =
+        staffGroups.length > 0 &&
+        staffGroups.every(
+          (group) => group.visual_status === "canonical" && group.moment_id !== null,
+        );
+      const clusters = hasCompleteCanonicalMoments
+        ? canonicalClustersForStaff(staffGroups, sidecar.notes, pitchNames)
+        : clustersForStaff(staffGroups, sidecar.notes, pitchNames);
       clusters.forEach((cluster, clusterIndex) => {
-        const momentNotes = playbackNotesForCluster(cluster, pitchNames, scoreEvents);
+        const momentNotes = playbackNotesForCluster(
+          cluster,
+          pitchNames,
+          hasCompleteCanonicalMoments ? new Map() : scoreEvents,
+        );
         const visualGroupIds = cluster.groups
           .map((entry) => entry.group.visual_group_id)
           .sort((first, second) => first.localeCompare(second));
@@ -339,7 +388,9 @@ export function buildPlaybackTimeline(
           cluster.groups.length;
         const unknownBarKey = `page-${page.index}-staff-${staffIndex}-unknown`;
         result.push({
-          id: `page-${page.index}-staff-${staffIndex}-moment-${clusterIndex}-${visualGroupIds.join("+")}`,
+          id: cluster.canonicalMomentId
+            ? `page-${page.index}-${cluster.canonicalMomentId}`
+            : `page-${page.index}-staff-${staffIndex}-moment-${clusterIndex}-${visualGroupIds.join("+")}`,
           pageIndex: page.index,
           staffIndex,
           measure: cluster.measure,

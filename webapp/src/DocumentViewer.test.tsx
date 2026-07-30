@@ -41,12 +41,17 @@ function group(id: string, staveIndex: number, x: number, y: number): VisualGrou
     notehead_contours: [],
     stem_contours: [],
     musicxml_ids: [`note-${id}`],
+    visual_status: "canonical",
+    provenance: "segmentation",
+    moment_id: "moment-1",
+    chord_id: null,
+    repair_actions: [],
   };
 }
 
 const groups = [group("treble", 0, 300, 350), group("bass", 1, 302, 520)];
 const sidecar: VisualSidecar = {
-  version: 1,
+  version: 2,
   source_image_size: [1000, 1400],
   visual_groups: groups,
   notes: groups.map((value, index) => ({
@@ -59,6 +64,7 @@ const sidecar: VisualSidecar = {
     duration: "note_4",
     match_confidence: 1,
     visual_group_id: value.visual_group_id,
+    alignment_method: "structural",
   })),
   unmatched_musicxml_notes: [],
   unmatched_visual_notes: [],
@@ -142,6 +148,53 @@ test("renders all groups and note names in the active cross-clef moment", () => 
   assert.match(markup, />C4<\/text>/);
   assert.match(markup, />E3<\/text>/);
   assert.match(markup, /aria-pressed="true"/);
+});
+
+test("hides diagnostic groups while retaining raw contour diagnostics", () => {
+  const diagnosticGroup = {
+    ...group("diagnostic", 0, 300, 350),
+    visual_status: "diagnostic" as const,
+  };
+  const diagnosticPage: DocumentPage = {
+    ...page,
+    visualSidecar: {
+      ...sidecar,
+      visual_groups: [diagnosticGroup],
+      notes: [{
+        ...sidecar.notes[0],
+        visual_group_id: diagnosticGroup.visual_group_id,
+      }],
+      raw_stem_contours: [{
+        debug_id: 1,
+        contour: [[290, 300], [290, 400]],
+        bbox: [[289, 300], [291, 400]],
+      }],
+    },
+  };
+  const markup = renderToStaticMarkup(
+    <DocumentViewer
+      documentKey="diagnostic-fixture"
+      pages={[diagnosticPage]}
+      selectedGroup={null}
+      highlightAllNotes
+      showOriginalNoteheadContours={false}
+      showDetectedNoteheadContours={false}
+      showRefinedNoteheadContours={false}
+      showRawStemContours
+      playbackActive={false}
+      playbackNoteSoundsEnabled
+      playbackAvailable={false}
+      playbackMoment={null}
+      listenFeedback={listenFeedback}
+      onPlaybackCommand={() => undefined}
+      onSelectGroup={() => undefined}
+      onRetryPage={() => undefined}
+    />,
+  );
+
+  assert.match(markup, /class="raw-stem-contour"/);
+  assert.doesNotMatch(markup, /data-visual-group-id="diagnostic"/);
+  assert.doesNotMatch(markup, />C4<\/text>/);
 });
 
 test("renders realtime selector, transport states, tempo, and vertical playhead", () => {

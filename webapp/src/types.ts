@@ -18,6 +18,7 @@ export interface VisualSidecarNote {
   duration: string;
   match_confidence: number;
   visual_group_id: string | null;
+  alignment_method: "structural" | "stem_repair" | "sequence_repair" | "attention" | "none";
 }
 
 export interface VisualGroup {
@@ -36,6 +37,15 @@ export interface VisualGroup {
   stem_component_ids?: string[];
   is_hollow_notehead?: boolean;
   musicxml_ids: string[];
+  visual_status: "canonical" | "fallback" | "diagnostic";
+  provenance:
+    | "segmentation"
+    | "recovered_candidate"
+    | "merged_fragments"
+    | "transformer_recovered";
+  moment_id: string | null;
+  chord_id: string | null;
+  repair_actions: string[];
 }
 
 export interface RawStemContour {
@@ -45,13 +55,17 @@ export interface RawStemContour {
 }
 
 export interface VisualSidecar {
-  version: number;
+  version: 2;
   source_image_size: [number, number];
   raw_stem_contours?: RawStemContour[];
   notes: VisualSidecarNote[];
   visual_groups: VisualGroup[];
   unmatched_musicxml_notes: string[];
   unmatched_visual_notes: string[];
+}
+
+export function isLinkedVisualGroup(group: VisualGroup): boolean {
+  return group.visual_status !== "diagnostic" && group.musicxml_ids.length > 0;
 }
 
 export interface ViewportTransform {

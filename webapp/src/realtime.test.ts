@@ -223,7 +223,7 @@ test("uses persistent key signatures and ornament accidentals for trills", () =>
 test("maps merged page-scoped MusicXML IDs back to page sidecars", () => {
   const pages: DocumentPage[] = [0, 1].map((index) => {
     const sidecar: VisualSidecar = {
-      version: 1,
+      version: 2,
       source_image_size: [1000, 1400],
       notes: [{
         musicxml_id: `n${index + 1}`,
@@ -235,6 +235,7 @@ test("maps merged page-scoped MusicXML IDs back to page sidecars", () => {
         duration: "note_4",
         match_confidence: 1,
         visual_group_id: `g${index + 1}`,
+        alignment_method: "structural",
       }],
       visual_groups: [{
         visual_group_id: `g${index + 1}`,
@@ -246,6 +247,11 @@ test("maps merged page-scoped MusicXML IDs back to page sidecars", () => {
         notehead_contours: [],
         stem_contours: [],
         musicxml_ids: [`n${index + 1}`],
+        visual_status: "canonical",
+        provenance: "segmentation",
+        moment_id: `moment-${index + 1}`,
+        chord_id: null,
+        repair_actions: [],
       }],
       unmatched_musicxml_notes: [],
       unmatched_visual_notes: [],

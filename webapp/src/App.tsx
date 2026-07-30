@@ -82,6 +82,7 @@ import type {
   VisualGroupRef,
   VisualSidecarNote,
 } from "./types";
+import { isLinkedVisualGroup } from "./types";
 
 interface WorkerLogEntry {
   id: number;
@@ -1420,7 +1421,9 @@ export function App() {
     : undefined;
   const selectedVisualGroup = selectedGroup
     ? selectedPage?.visualSidecar?.visual_groups.find(
-        (group) => group.visual_group_id === selectedGroup.visualGroupId,
+        (group) =>
+          group.visual_group_id === selectedGroup.visualGroupId &&
+          isLinkedVisualGroup(group),
       )
     : undefined;
   const selectedNotes = selectedVisualGroup
@@ -1435,11 +1438,29 @@ export function App() {
     const failedPages = document?.pages.filter((page) => page.status === "failed").length ?? 0;
     const visualGroups =
       document?.pages.reduce(
-        (total, page) => total + (page.visualSidecar?.visual_groups.length ?? 0),
+        (total, page) =>
+          total +
+          (page.visualSidecar?.visual_groups.filter(isLinkedVisualGroup).length ?? 0),
         0,
       ) ?? 0;
     const linkedNotes =
-      document?.pages.reduce((total, page) => total + (page.visualSidecar?.notes.length ?? 0), 0) ?? 0;
+      document?.pages.reduce((total, page) => {
+        const sidecar = page.visualSidecar;
+        if (!sidecar) return total;
+        const eligibleIds = new Set(
+          sidecar.visual_groups
+            .filter(isLinkedVisualGroup)
+            .map((group) => group.visual_group_id),
+        );
+        return (
+          total +
+          sidecar.notes.filter(
+            (note) =>
+              note.visual_group_id !== null &&
+              eligibleIds.has(note.visual_group_id),
+          ).length
+        );
+      }, 0) ?? 0;
     const unmatchedMusicXml =
       document?.pages.reduce(
         (total, page) => total + (page.visualSidecar?.unmatched_musicxml_notes.length ?? 0),

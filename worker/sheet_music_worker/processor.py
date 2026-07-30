@@ -24,7 +24,22 @@ OMR_TARGET_WIDTH = 1920
 OMR_RESAMPLING_FILTER = Image.Resampling.HAMMING
 OMR_RESAMPLING = OMR_RESAMPLING_FILTER.name
 MANIFEST_SCHEMA_VERSION = 1
-VISUAL_SIDECAR_CACHE_REVISION = 24
+VISUAL_SIDECAR_CACHE_REVISION = 26
+
+VISUAL_STATUSES = {"canonical", "fallback", "diagnostic"}
+VISUAL_PROVENANCES = {
+    "segmentation",
+    "recovered_candidate",
+    "merged_fragments",
+    "transformer_recovered",
+}
+ALIGNMENT_METHODS = {
+    "structural",
+    "stem_repair",
+    "sequence_repair",
+    "attention",
+    "none",
+}
 
 EventEmitter = Callable[[dict[str, Any]], None]
 
@@ -54,10 +69,36 @@ def read_visual_sidecar(path: Path) -> dict[str, Any]:
     sidecar = json.loads(path.read_text(encoding="utf-8"))
     if (
         not isinstance(sidecar, dict)
+        or sidecar.get("version") != 2
         or not isinstance(sidecar.get("visual_groups"), list)
         or not isinstance(sidecar.get("notes"), list)
     ):
         raise ValueError("HOMR visual sidecar has an invalid structure")
+    for group in sidecar["visual_groups"]:
+        if (
+            not isinstance(group, dict)
+            or group.get("visual_status") not in VISUAL_STATUSES
+            or group.get("provenance") not in VISUAL_PROVENANCES
+            or not (
+                group.get("moment_id") is None
+                or isinstance(group.get("moment_id"), str)
+            )
+            or not (
+                group.get("chord_id") is None
+                or isinstance(group.get("chord_id"), str)
+            )
+            or not isinstance(group.get("repair_actions"), list)
+            or not all(
+                isinstance(action, str) for action in group["repair_actions"]
+            )
+        ):
+            raise ValueError("HOMR visual sidecar has an invalid v2 visual group")
+    if any(
+        not isinstance(note, dict)
+        or note.get("alignment_method") not in ALIGNMENT_METHODS
+        for note in sidecar["notes"]
+    ):
+        raise ValueError("HOMR visual sidecar has an invalid v2 note record")
     return sidecar
 
 

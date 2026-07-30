@@ -48,8 +48,15 @@ class FakeHomrEngine:
         visual_sidecar.write_text(
             json.dumps(
                 {
+                    "version": 2,
                     "visual_groups": [],
-                    "notes": [{"musicxml_id": "homr-note-1", "pitch": None}],
+                    "notes": [
+                        {
+                            "musicxml_id": "homr-note-1",
+                            "pitch": None,
+                            "alignment_method": "none",
+                        }
+                    ],
                 }
             ),
             encoding="utf-8",
@@ -76,7 +83,8 @@ class EmptySidecarEngine(FakeHomrEngine):
     def process_image(self, image_path: Path) -> tuple[Path, Path]:
         music_xml, visual_sidecar = super().process_image(image_path)
         visual_sidecar.write_text(
-            json.dumps({"visual_groups": [], "notes": []}), encoding="utf-8"
+            json.dumps({"version": 2, "visual_groups": [], "notes": []}),
+            encoding="utf-8",
         )
         return music_xml, visual_sidecar
 
@@ -96,7 +104,16 @@ def test_validate_artifacts_accepts_readable_outputs(tmp_path: Path) -> None:
     (pages / "0001.musicxml").write_text("<score-partwise />", encoding="utf-8")
     (pages / "0001.homr.visual.json").write_text(
         json.dumps(
-            {"visual_groups": [], "notes": [{"musicxml_id": "homr-note-1"}]}
+            {
+                "version": 2,
+                "visual_groups": [],
+                "notes": [
+                    {
+                        "musicxml_id": "homr-note-1",
+                        "alignment_method": "none",
+                    }
+                ],
+            }
         ),
         encoding="utf-8",
     )
@@ -114,7 +131,8 @@ def test_validate_artifacts_rejects_a_page_without_notes(tmp_path: Path) -> None
     (pages / "0001.png").write_bytes(b"png")
     (pages / "0001.musicxml").write_text("<score-partwise />", encoding="utf-8")
     (pages / "0001.homr.visual.json").write_text(
-        json.dumps({"visual_groups": [], "notes": []}), encoding="utf-8"
+        json.dumps({"version": 2, "visual_groups": [], "notes": []}),
+        encoding="utf-8",
     )
     page = {
         "image": "pages/0001.png",
@@ -138,8 +156,32 @@ def test_validate_artifacts_rejects_bad_sidecar(tmp_path: Path) -> None:
     assert not validate_artifacts(page, tmp_path)
 
 
+def test_validate_artifacts_rejects_v1_sidecar(tmp_path: Path) -> None:
+    pages = tmp_path / "pages"
+    pages.mkdir()
+    (pages / "0001.png").write_bytes(b"png")
+    (pages / "0001.musicxml").write_text("<score-partwise />", encoding="utf-8")
+    (pages / "0001.homr.visual.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "visual_groups": [],
+                "notes": [{"musicxml_id": "homr-note-1"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    page = {
+        "image": "pages/0001.png",
+        "musicXml": "pages/0001.musicxml",
+        "visualSidecar": "pages/0001.homr.visual.json",
+    }
+    assert not validate_artifacts(page, tmp_path)
+
+
 def test_scale_visual_sidecar_moves_geometry_to_the_display_raster() -> None:
     sidecar = {
+        "version": 2,
         "source_image_size": [100, 200],
         "preprocessing": {
             "autocrop_box": [5, 10, 90, 180],
@@ -154,6 +196,11 @@ def test_scale_visual_sidecar_moves_geometry_to_the_display_raster() -> None:
         ],
         "visual_groups": [
             {
+                "visual_status": "diagnostic",
+                "provenance": "segmentation",
+                "moment_id": None,
+                "chord_id": None,
+                "repair_actions": ["unmatched_candidate"],
                 "center": [10, 20],
                 "bbox": [5, 10, 15, 30],
                 "notehead_ellipses": [
@@ -188,6 +235,8 @@ def test_scale_visual_sidecar_moves_geometry_to_the_display_raster() -> None:
         {"center": [20.0, 30.0], "rx": 7.0, "ry": 3.5, "angle": -20}
     ]
     assert group["stem_contours"] == [[[20.0, 30.0], [22.0, 45.0]]]
+    assert group["visual_status"] == "diagnostic"
+    assert group["repair_actions"] == ["unmatched_candidate"]
 
 
 def test_pdf_processing_rasterizes_then_reuses_cache(tmp_path: Path) -> None:
