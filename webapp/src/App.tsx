@@ -250,10 +250,6 @@ export function App() {
   const [error, setError] = useState<string | null>(
     nativeAvailable ? null : "PDF processing is available in the Tauri desktop app. Run npm run tauri dev.",
   );
-  const playbackTimeline = useMemo(
-    () => buildPlaybackTimeline(document?.pages ?? [], document?.predictedFingerings),
-    [document?.pages, document?.predictedFingerings],
-  );
   const realtimeModel = useMemo(() => {
     if (!document?.documentMusicXml) return { score: null, error: null };
     try {
@@ -265,6 +261,14 @@ export function App() {
       };
     }
   }, [document?.documentMusicXml]);
+  const playbackTimeline = useMemo(
+    () => buildPlaybackTimeline(
+      document?.pages ?? [],
+      document?.predictedFingerings,
+      realtimeModel.score,
+    ),
+    [document?.pages, document?.predictedFingerings, realtimeModel.score],
+  );
   const realtimeVisualMap = useMemo(
     () => buildRealtimeVisualMap(document?.pages ?? []),
     [document?.pages],

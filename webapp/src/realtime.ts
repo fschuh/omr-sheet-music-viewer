@@ -45,6 +45,10 @@ export interface RealtimeScoreNote {
   trill: RealtimeTrill | null;
 }
 
+export function scoreNoteStartsAttack(note: RealtimeScoreNote): boolean {
+  return !note.grace && !note.tieStop;
+}
+
 export interface RealtimeTempoChange {
   onset: number;
   bpm: number;
