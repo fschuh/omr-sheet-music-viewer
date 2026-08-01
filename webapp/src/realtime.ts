@@ -37,6 +37,7 @@ export interface RealtimeScoreNote {
   pitch: string;
   onset: number;
   duration: number;
+  grace: boolean;
   tieStart: boolean;
   tieStop: boolean;
   tremolo: RealtimeTremolo | null;
@@ -527,6 +528,7 @@ function parsePartMeasure(
             pitch: formatPitchName(step, octave, alter),
             onset,
             duration,
+            grace: first(child, "grace") !== null,
             tieStart: tieTypes.has("start"),
             tieStop: tieTypes.has("stop"),
             tremolo: parseTremolo(child),

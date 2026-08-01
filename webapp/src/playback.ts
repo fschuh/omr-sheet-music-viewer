@@ -113,13 +113,23 @@ export function playbackPitchForNote(
   return pitchNames.get(note.musicxml_id) ?? note.pitch;
 }
 
+function isGraceNote(note: VisualSidecarNote): boolean {
+  return note.duration.startsWith("note_") && note.duration.includes("G");
+}
+
 function notesByVisualGroup(
   notes: VisualSidecarNote[],
   pitchNames: ReadonlyMap<string, string>,
 ): Map<string, VisualSidecarNote[]> {
   const result = new Map<string, VisualSidecarNote[]>();
   for (const note of notes) {
-    if (!note.visual_group_id || playbackPitchForNote(note, pitchNames) === null) continue;
+    if (
+      isGraceNote(note) ||
+      !note.visual_group_id ||
+      playbackPitchForNote(note, pitchNames) === null
+    ) {
+      continue;
+    }
     const linked = result.get(note.visual_group_id) ?? [];
     linked.push(note);
     result.set(note.visual_group_id, linked);
@@ -296,7 +306,8 @@ function scoreEventNotesById(musicXml?: string): Map<string, readonly RealtimeSc
     const score = parseRealtimeMusicXml(musicXml);
     for (const measure of score.measures) {
       for (const event of measure.events) {
-        for (const note of event.notes) result.set(note.musicXmlId, event.notes);
+        const playableNotes = event.notes.filter((note) => !note.grace);
+        for (const note of playableNotes) result.set(note.musicXmlId, playableNotes);
       }
     }
   } catch {
@@ -348,7 +359,14 @@ export function buildPlaybackTimeline(
     if (!sidecar) continue;
     const pitchNames = musicXmlPitchNames(page.musicXml);
     const scoreEvents = scoreEventNotesById(page.musicXml);
-    const eligibleGroups = sidecar.visual_groups.filter(isLinkedVisualGroup);
+    const graceNoteIds = new Set(
+      sidecar.notes.filter(isGraceNote).map((note) => note.musicxml_id),
+    );
+    const eligibleGroups = sidecar.visual_groups.filter(
+      (group) =>
+        isLinkedVisualGroup(group) &&
+        group.musicxml_ids.some((musicXmlId) => !graceNoteIds.has(musicXmlId)),
+    );
     const staffIndexes = Array.from(
       new Set(eligibleGroups.map((group) => group.staff_index)),
     ).sort((first, second) => first - second);

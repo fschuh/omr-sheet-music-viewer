@@ -214,6 +214,40 @@ test("recovers unmatched cross-clef pitches from the anchored MusicXML event", (
   );
 });
 
+test("note-by-note playback ignores grace notes sharing the main note's onset", () => {
+  const grace = group("grace", 0, 0, 200, 250);
+  const main = group("main", 0, 0, 200, 250);
+  const scorePage = page(0, [grace, main], [1, 1]);
+  const sidecar = scorePage.visualSidecar!;
+  sidecar.notes[0].pitch = "D5";
+  sidecar.notes[0].duration = "note_8G";
+  sidecar.notes[1].pitch = "C5";
+  scorePage.musicXml = `<?xml version="1.0"?>
+    <score-partwise version="4.0">
+      <part-list><score-part id="P1"><part-name>Piano</part-name></score-part></part-list>
+      <part id="P1">
+        <measure number="1">
+          <attributes><divisions>4</divisions></attributes>
+          <note id="note-grace">
+            <grace/><pitch><step>D</step><octave>5</octave></pitch>
+            <voice>1</voice><staff>1</staff>
+          </note>
+          <note id="note-main">
+            <pitch><step>C</step><octave>5</octave></pitch>
+            <duration>4</duration><voice>1</voice><staff>1</staff>
+          </note>
+        </measure>
+      </part>
+    </score-partwise>`;
+
+  const timeline = buildPlaybackTimeline([scorePage]);
+
+  assert.equal(timeline.length, 1);
+  assert.deepEqual(timeline[0].visualGroupIds, ["main"]);
+  assert.deepEqual(timeline[0].pitches, ["C5"]);
+  assert.deepEqual(timeline[0].keyboardNotes, [{ pitch: "C5" }]);
+});
+
 test("keeps vertically aligned notes on different systems as separate moments", () => {
   const timeline = buildPlaybackTimeline([
     page(0, [group("system-1", 0, 0, 200, 250), group("system-2", 1, 0, 200, 750)], [1, 3]),
