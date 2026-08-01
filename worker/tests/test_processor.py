@@ -5,8 +5,10 @@ from pathlib import Path
 
 from PIL import Image
 
+from sheet_music_worker import processor as processor_module
 from sheet_music_worker.homr_engine import NoMusicDetectedError
 from sheet_music_worker.processor import (
+    DOWNSAMPLE_OMR_INPUT,
     OMR_RESAMPLING,
     OMR_TARGET_WIDTH,
     RASTER_DPI,
@@ -95,6 +97,10 @@ def test_sha256_file_is_content_based(tmp_path: Path) -> None:
     first.write_bytes(b"same PDF bytes")
     second.write_bytes(b"same PDF bytes")
     assert sha256_file(first) == sha256_file(second)
+
+
+def test_omr_downsampling_is_disabled_by_default() -> None:
+    assert DOWNSAMPLE_OMR_INPUT is False
 
 
 def test_validate_artifacts_accepts_readable_outputs(tmp_path: Path) -> None:
@@ -261,7 +267,6 @@ def test_pdf_processing_rasterizes_then_reuses_cache(tmp_path: Path) -> None:
     )
     assert len(engine.calls) == 2
     assert all(path.name.endswith(".omr.png") for path in engine.calls)
-    assert [width for width, _height in engine.image_sizes] == [OMR_TARGET_WIDTH] * 2
     assert sum(event.get("type") == "page_completed" for event in first_events) == 2
     cache_directory = tmp_path / "cache" / "pdf-cache" / sha256_file(pdf_path)
     merged_music_xml = cache_directory / "Super Mario Bros - Underwater Theme.musicxml"
@@ -277,11 +282,15 @@ def test_pdf_processing_rasterizes_then_reuses_cache(tmp_path: Path) -> None:
     assert manifest["rasterizer"]["dpi"] == RASTER_DPI
     assert manifest["omrInput"] == {
         "source": "displayRaster",
-        "targetWidth": OMR_TARGET_WIDTH,
-        "resampling": OMR_RESAMPLING,
+        "downsample": DOWNSAMPLE_OMR_INPUT,
+        "targetWidth": None,
+        "resampling": None,
     }
     assert not list((cache_directory / "pages").glob("*.omr*"))
     assert manifest["pages"][0]["width"] != OMR_TARGET_WIDTH
+    assert engine.image_sizes == [
+        (page["width"], page["height"]) for page in manifest["pages"]
+    ]
     first_page_manifest = manifest["pages"][0]
     first_sidecar = json.loads(
         (cache_directory / first_page_manifest["visualSidecar"]).read_text(
@@ -350,6 +359,35 @@ def test_pdf_processing_invalidates_an_older_sidecar_cache_revision(tmp_path: Pa
     assert completed[0]["cached"] is False
 
 
+def test_pdf_processing_can_downsample_the_omr_input(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(processor_module, "DOWNSAMPLE_OMR_INPUT", True)
+    pdf_path = tmp_path / "score.pdf"
+    Image.new("RGB", (120, 80), "white").save(pdf_path, "PDF", resolution=300)
+    engine = FakeHomrEngine()
+    cache_root = tmp_path / "cache"
+
+    PdfProcessor(lambda _event: None, engine).process_pdf(  # type: ignore[arg-type]
+        job_id="downsampled",
+        pdf_path=pdf_path,
+        cache_root=cache_root,
+        cancel=threading.Event(),
+    )
+
+    assert len(engine.image_sizes) == 1
+    assert engine.image_sizes[0][0] == OMR_TARGET_WIDTH
+    manifest_path = cache_root / "pdf-cache" / sha256_file(pdf_path) / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["omrInput"] == {
+        "source": "displayRaster",
+        "downsample": True,
+        "targetWidth": OMR_TARGET_WIDTH,
+        "resampling": OMR_RESAMPLING,
+    }
+
+
 def test_pdf_processing_invalidates_an_older_omr_raster_configuration(
     tmp_path: Path,
 ) -> None:
@@ -368,7 +406,12 @@ def test_pdf_processing_invalidates_an_older_omr_raster_configuration(
 
     manifest_path = cache_root / "pdf-cache" / sha256_file(pdf_path) / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    manifest["omrInput"]["resampling"] = "BICUBIC"
+    manifest["omrInput"] = {
+        "source": "displayRaster",
+        "downsample": True,
+        "targetWidth": OMR_TARGET_WIDTH,
+        "resampling": "HAMMING",
+    }
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
     completed_events: list[dict[str, object]] = []

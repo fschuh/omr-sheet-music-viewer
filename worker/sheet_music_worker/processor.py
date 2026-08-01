@@ -20,11 +20,14 @@ from sheet_music_worker.logging import worker_log
 from sheet_music_worker.musicxml_merge import merge_musicxml_pages
 
 RASTER_DPI = 300
+# Set this to True to pre-resize PDF rasters before handing them to HOMR.
+DOWNSAMPLE_OMR_INPUT = False
 OMR_TARGET_WIDTH = 1920
+# Used only when DOWNSAMPLE_OMR_INPUT is enabled.
 OMR_RESAMPLING_FILTER = Image.Resampling.HAMMING
 OMR_RESAMPLING = OMR_RESAMPLING_FILTER.name
 MANIFEST_SCHEMA_VERSION = 1
-VISUAL_SIDECAR_CACHE_REVISION = 32
+VISUAL_SIDECAR_CACHE_REVISION = 35
 
 VISUAL_STATUSES = {"canonical", "fallback", "diagnostic"}
 VISUAL_PROVENANCES = {
@@ -275,9 +278,14 @@ class PdfProcessor:
         document = pdfium.PdfDocument(str(pdf_path))
         try:
             page_count = len(document)
+            omr_input_description = (
+                f"{OMR_TARGET_WIDTH}px/{OMR_RESAMPLING}"
+                if DOWNSAMPLE_OMR_INPUT
+                else "the original display raster"
+            )
             worker_log(
                 f"Opened {pdf_path.name}: {page_count} page(s), rendering display images at "
-                f"{RASTER_DPI} DPI and HOMR inputs at {OMR_TARGET_WIDTH}px/{OMR_RESAMPLING}"
+                f"{RASTER_DPI} DPI and passing HOMR {omr_input_description}"
             )
             manifest = self._load_manifest(manifest_path, identity, page_count)
             reusable = sum(
@@ -488,8 +496,9 @@ class PdfProcessor:
             },
             "omrInput": {
                 "source": "displayRaster",
-                "targetWidth": OMR_TARGET_WIDTH,
-                "resampling": OMR_RESAMPLING,
+                "downsample": DOWNSAMPLE_OMR_INPUT,
+                "targetWidth": OMR_TARGET_WIDTH if DOWNSAMPLE_OMR_INPUT else None,
+                "resampling": OMR_RESAMPLING if DOWNSAMPLE_OMR_INPUT else None,
             },
         }
         if path.is_file():
@@ -525,17 +534,24 @@ class PdfProcessor:
             )
             try:
                 image = bitmap.to_pil().convert("RGB")
-                image.save(temporary, format="PNG")
-                width, height = image.size
-                omr_width = OMR_TARGET_WIDTH
-                omr_height = round(height * omr_width / width)
-                omr_image = image.resize(
-                    (omr_width, omr_height), resample=OMR_RESAMPLING_FILTER
-                )
                 try:
-                    omr_image.save(omr_temporary, format="PNG")
+                    image.save(temporary, format="PNG")
+                    width, height = image.size
+                    if DOWNSAMPLE_OMR_INPUT:
+                        omr_width = OMR_TARGET_WIDTH
+                        omr_height = round(height * omr_width / width)
+                        omr_image = image.resize(
+                            (omr_width, omr_height), resample=OMR_RESAMPLING_FILTER
+                        )
+                        try:
+                            omr_image.save(omr_temporary, format="PNG")
+                        finally:
+                            omr_image.close()
+                    else:
+                        omr_width, omr_height = width, height
+                        image.save(omr_temporary, format="PNG")
                 finally:
-                    omr_image.close()
+                    image.close()
             finally:
                 bitmap.close()
         finally:
