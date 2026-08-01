@@ -40,6 +40,7 @@ export interface RealtimeScoreNote {
   grace: boolean;
   tieStart: boolean;
   tieStop: boolean;
+  inferredTieGroup: string | null;
   tremolo: RealtimeTremolo | null;
   trill: RealtimeTrill | null;
 }
@@ -429,13 +430,19 @@ interface PartMeasureData {
   number: string;
   pageNumber: number;
   duration: number;
-  notes: RealtimeScoreNote[];
+  notes: ParsedScoreNote[];
   tempos: RealtimeTempoChange[];
   forwardRepeat: boolean;
   backwardRepeat: RepeatMark | null;
   endingStarts: ReadonlySet<number> | null;
   endingStops: boolean;
   sounds: NavigationSound[];
+}
+
+interface ParsedScoreNote extends RealtimeScoreNote {
+  voiceEventIndex: number;
+  slurStarts: string[];
+  slurStops: string[];
 }
 
 function endingNumbers(value: string | null): ReadonlySet<number> {
@@ -463,6 +470,77 @@ function scoreEvents(notes: RealtimeScoreNote[]): RealtimeScoreEvent[] {
     }));
 }
 
+function slurKey(note: ParsedScoreNote, number: string): string {
+  return `${note.staff}:${number}`;
+}
+
+function voiceEventKey(note: ParsedScoreNote): string {
+  return `${note.staff}:${note.voice}:${note.voiceEventIndex}`;
+}
+
+function inferSamePitchSlurTies(measures: PartMeasureData[]): void {
+  const activeSlurs = new Map<string, ParsedScoreNote>();
+  const notesByVoiceEvent = new Map<string, ParsedScoreNote[]>();
+  const absoluteOnsets = new Map<ParsedScoreNote, number>();
+  let measureStart = 0;
+  for (const measure of measures) {
+    for (const note of measure.notes) {
+      const key = voiceEventKey(note);
+      const eventNotes = notesByVoiceEvent.get(key) ?? [];
+      eventNotes.push(note);
+      notesByVoiceEvent.set(key, eventNotes);
+      absoluteOnsets.set(note, measureStart + note.onset);
+    }
+    measureStart += measure.duration;
+  }
+  for (const measure of measures) {
+    for (const note of measure.notes) {
+      for (const number of note.slurStops) {
+        const key = slurKey(note, number);
+        const start = activeSlurs.get(key);
+        const startOnset = start ? absoluteOnsets.get(start) : undefined;
+        const stopOnset = absoluteOnsets.get(note);
+        const adjacentInVoice =
+          start?.voice === note.voice &&
+          note.voiceEventIndex === start.voiceEventIndex + 1;
+        const rhythmicallyContiguous =
+          startOnset !== undefined &&
+          stopOnset !== undefined &&
+          Math.abs(stopOnset - (startOnset + (start?.duration ?? 0))) <= 1e-6;
+        if (
+          start &&
+          !start.grace &&
+          !note.grace &&
+          start.pitch === note.pitch &&
+          (adjacentInVoice || rhythmicallyContiguous)
+        ) {
+          const startNotes = notesByVoiceEvent.get(voiceEventKey(start)) ?? [start];
+          const stopNotes = notesByVoiceEvent.get(voiceEventKey(note)) ?? [note];
+          const inferredTieGroup = `slur:${start.partId}:${start.staff}:${number}`;
+          const unusedStops = new Map<string, ParsedScoreNote[]>();
+          for (const stopNote of stopNotes) {
+            const matching = unusedStops.get(stopNote.pitch) ?? [];
+            matching.push(stopNote);
+            unusedStops.set(stopNote.pitch, matching);
+          }
+          for (const startNote of startNotes) {
+            const matching = unusedStops.get(startNote.pitch)?.shift();
+            if (!matching || startNote.grace || matching.grace) continue;
+            startNote.tieStart = true;
+            startNote.inferredTieGroup = inferredTieGroup;
+            matching.tieStop = true;
+            matching.inferredTieGroup = inferredTieGroup;
+          }
+        }
+        activeSlurs.delete(key);
+      }
+      for (const number of note.slurStarts) {
+        activeSlurs.set(slurKey(note, number), note);
+      }
+    }
+  }
+}
+
 function parsePartMeasure(
   measure: Element,
   partId: string,
@@ -471,6 +549,7 @@ function parsePartMeasure(
   pageAtStart: number,
   fifthsAtStart: number,
   includeNavigation: boolean,
+  voiceEventIndexes: Map<string, number>,
 ): { data: PartMeasureData; divisions: number; pageNumber: number; fifths: number } {
   let divisions = divisionsAtStart;
   let pageNumber = pageAtStart;
@@ -478,7 +557,7 @@ function parsePartMeasure(
   let cursor = 0;
   let furthest = 0;
   let chordOnset = 0;
-  const notes: RealtimeScoreNote[] = [];
+  const notes: ParsedScoreNote[] = [];
   const tempos: RealtimeTempoChange[] = [];
   const sounds: NavigationSound[] = [];
   let soundIndex = 0;
@@ -511,6 +590,14 @@ function parsePartMeasure(
       const isChord = first(child, "chord") !== null;
       const onset = isChord ? chordOnset : cursor;
       if (!isChord) chordOnset = onset;
+      const voice = text(child, "voice") ?? "1";
+      const staff = Math.max(1, finiteNumber(text(child, "staff"), 1));
+      const voiceKey = `${staff}:${voice}`;
+      const nextVoiceEventIndex = voiceEventIndexes.get(voiceKey) ?? 0;
+      const voiceEventIndex = isChord
+        ? Math.max(0, nextVoiceEventIndex - 1)
+        : nextVoiceEventIndex;
+      if (!isChord) voiceEventIndexes.set(voiceKey, nextVoiceEventIndex + 1);
       const pitchElement = first(child, "pitch");
       if (pitchElement) {
         const step = text(pitchElement, "step");
@@ -520,17 +607,26 @@ function parsePartMeasure(
           const octaveNumber = Math.trunc(finiteNumber(octave, 4));
           const tieTypes = new Set(elements(child, "tie").map((tie) => tie.getAttribute("type")));
           for (const tied of descendants(child, "tied")) tieTypes.add(tied.getAttribute("type"));
+          const slurs = descendants(child, "slur");
           notes.push({
             musicXmlId: child.getAttribute("id") ?? `${partId}-m${measureIndex}-n${notes.length}`,
             partId,
-            voice: text(child, "voice") ?? "1",
-            staff: Math.max(1, finiteNumber(text(child, "staff"), 1)),
+            voice,
+            staff,
             pitch: formatPitchName(step, octave, alter),
             onset,
             duration,
             grace: first(child, "grace") !== null,
             tieStart: tieTypes.has("start"),
             tieStop: tieTypes.has("stop"),
+            inferredTieGroup: null,
+            voiceEventIndex,
+            slurStarts: slurs
+              .filter((slur) => slur.getAttribute("type") === "start")
+              .map((slur) => slur.getAttribute("number") ?? "1"),
+            slurStops: slurs
+              .filter((slur) => slur.getAttribute("type") === "stop")
+              .map((slur) => slur.getAttribute("number") ?? "1"),
             tremolo: parseTremolo(child),
             trill: parseTrill(child, step, octaveNumber, alter, fifths),
           });
@@ -625,6 +721,7 @@ export function parseRealtimeMusicXml(musicXml: string): RealtimeScore {
     let divisions = 1;
     let pageNumber = 1;
     let fifths = 0;
+    const voiceEventIndexes = new Map<string, number>();
     const parsed: PartMeasureData[] = [];
     elements(part, "measure").forEach((measure, measureIndex) => {
       const result = parsePartMeasure(
@@ -635,12 +732,14 @@ export function parseRealtimeMusicXml(musicXml: string): RealtimeScore {
         pageNumber,
         fifths,
         true,
+        voiceEventIndexes,
       );
       divisions = result.divisions;
       pageNumber = result.pageNumber;
       fifths = result.fifths;
       parsed.push(result.data);
     });
+    inferSamePitchSlurTies(parsed);
     partMeasures.push(parsed);
   });
 
@@ -1109,7 +1208,8 @@ export function expandPerformanceRoute(
   const sustainedNotes: RouteScoreNote[] = [];
   const activeTies = new Map<string, RouteScoreNote>();
   for (const note of rawNotes.sort((left, right) => left.onset - right.onset || left.release - right.release)) {
-    const tieKey = `${note.partId}:${note.staff}:${note.voice}:${note.pitch}`;
+    const tieOwner = note.inferredTieGroup ?? `voice:${note.voice}`;
+    const tieKey = `${note.partId}:${note.staff}:${tieOwner}:${note.pitch}`;
     const tied = note.tieStop ? activeTies.get(tieKey) : undefined;
     if (tied) {
       tied.release = Math.max(tied.release, note.release);

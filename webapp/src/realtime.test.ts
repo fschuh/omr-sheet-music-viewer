@@ -62,6 +62,103 @@ test("parses polyphonic cursors, chords, pages, tempo, and ties from partwise Mu
   assert.deepEqual(route.tempoSegments.map((tempo) => tempo.bpm), [90, 120]);
 });
 
+test("sustains contiguous same-pitch slur endpoints as a realtime tie", () => {
+  const parsed = parseRealtimeMusicXml(score(`
+    <measure number="1">
+      <attributes><divisions>4</divisions></attributes>
+      ${quarter("slur-start", "C", 4, '<notations><slur type="start" number="1"/></notations>')}
+    </measure>
+    <measure number="2">
+      ${quarter("slur-stop", "C", 4, '<notations><slur type="stop" number="1"/></notations>')}
+    </measure>
+  `));
+
+  const route = expandPerformanceRoute(parsed);
+
+  assert.equal(route.notes.length, 1);
+  assert.equal(route.notes[0].musicXmlId, "slur-start");
+  assert.equal(route.notes[0].release, 2);
+});
+
+test("sustains adjacent treble slur endpoints despite an interleaved bass voice", () => {
+  const parsed = parseRealtimeMusicXml(score(`
+    <measure number="1">
+      <attributes><divisions>4</divisions><staves>2</staves></attributes>
+      ${quarter("treble-start", "E", 5, '<notations><slur type="start" number="1"/></notations><staff>1</staff>')}
+      ${quarter("interleaved-bass", "E", 2, '<voice>5</voice><staff>2</staff>')}
+      ${quarter("treble-stop", "E", 5, '<notations><slur type="stop" number="1"/></notations><staff>1</staff>')}
+    </measure>
+  `));
+
+  const route = expandPerformanceRoute(parsed);
+
+  assert.equal(route.notes.some((note) => note.musicXmlId === "treble-stop"), false);
+  assert.equal(route.notes.find((note) => note.musicXmlId === "treble-start")?.release, 3);
+});
+
+test("extends an inferred slur tie to every repeated chord tone", () => {
+  const parsed = parseRealtimeMusicXml(score(`
+    <measure number="1">
+      <attributes><divisions>4</divisions></attributes>
+      ${quarter("start-c", "C", 5, '<notations><slur type="start" number="1"/></notations>')}
+      <note id="start-e"><chord/><pitch><step>E</step><octave>5</octave></pitch><duration>4</duration><voice>1</voice></note>
+      <note id="start-g"><chord/><pitch><step>G</step><octave>5</octave></pitch><duration>4</duration><voice>1</voice></note>
+      ${quarter("stop-c", "C", 5, '<notations><slur type="stop" number="1"/></notations>')}
+      <note id="stop-e"><chord/><pitch><step>E</step><octave>5</octave></pitch><duration>4</duration><voice>1</voice></note>
+      <note id="stop-g"><chord/><pitch><step>G</step><octave>5</octave></pitch><duration>4</duration><voice>1</voice></note>
+    </measure>
+  `));
+
+  const route = expandPerformanceRoute(parsed);
+
+  assert.deepEqual(
+    route.notes.map((note) => note.musicXmlId),
+    ["start-c", "start-e", "start-g"],
+  );
+  assert.deepEqual(route.notes.map((note) => note.release), [2, 2, 2]);
+});
+
+test("sustains a repeated chord when HOMR changes voice at the slur stop", () => {
+  const parsed = parseRealtimeMusicXml(score(`
+    <measure number="1">
+      <attributes><divisions>4</divisions><staves>2</staves></attributes>
+      <note id="start-c6"><pitch><step>C</step><octave>6</octave></pitch><duration>1</duration><voice>2</voice><staff>1</staff><notations><slur type="start" number="1"/></notations></note>
+      <note id="start-c5"><chord/><pitch><step>C</step><octave>5</octave></pitch><duration>1</duration><voice>2</voice><staff>1</staff></note>
+      <backup><duration>1</duration></backup>
+      <note id="bass"><pitch><step>G</step><octave>3</octave></pitch><duration>1</duration><voice>5</voice><staff>2</staff></note>
+      <note id="stop-c6"><pitch><step>C</step><octave>6</octave></pitch><duration>2</duration><voice>1</voice><staff>1</staff><notations><slur type="stop" number="1"/></notations></note>
+      <note id="stop-c5"><chord/><pitch><step>C</step><octave>5</octave></pitch><duration>2</duration><voice>1</voice><staff>1</staff></note>
+    </measure>
+  `));
+
+  const route = expandPerformanceRoute(parsed);
+
+  assert.equal(route.notes.some((note) => note.musicXmlId === "stop-c6"), false);
+  assert.equal(route.notes.some((note) => note.musicXmlId === "stop-c5"), false);
+  assert.equal(route.notes.find((note) => note.musicXmlId === "start-c6")?.release, 0.75);
+  assert.equal(route.notes.find((note) => note.musicXmlId === "start-c5")?.release, 0.75);
+});
+
+test("preserves genuine slurs with a different or intervening pitch", () => {
+  const parsed = parseRealtimeMusicXml(score(`
+    <measure number="1">
+      <attributes><divisions>4</divisions></attributes>
+      ${quarter("phrase-c-start", "C", 4, '<notations><slur type="start" number="1"/></notations>')}
+      ${quarter("phrase-d", "D")}
+      ${quarter("phrase-c-stop", "C", 4, '<notations><slur type="stop" number="1"/></notations>')}
+      ${quarter("different-e", "E", 4, '<notations><slur type="start" number="1"/></notations>')}
+      ${quarter("different-f", "F", 4, '<notations><slur type="stop" number="1"/></notations>')}
+    </measure>
+  `));
+
+  const route = expandPerformanceRoute(parsed);
+
+  assert.deepEqual(
+    route.notes.map((note) => note.musicXmlId),
+    ["phrase-c-start", "phrase-d", "phrase-c-stop", "different-e", "different-f"],
+  );
+});
+
 test("expands measured chord tremolos and unmeasured rolls into repeated attacks", () => {
   const parsed = parseRealtimeMusicXml(score(`
     <measure number="1">
