@@ -66,7 +66,11 @@ export function selectedGroupIds(
     }
     return result;
   }
-  if (group.visual_status === "canonical") return result;
+  // A linked moment with no chord_id is authoritative even when its visual
+  // assignment needed fallback alignment. Stem components are only a legacy
+  // fallback for groups whose musical moment is unknown; a connected beam can
+  // otherwise make consecutive notes look like one physical chord.
+  if (group.visual_status === "canonical" || group.moment_id !== null) return result;
   const stemComponents = new Set(group.stem_component_ids ?? []);
   const notesByGroup = linkedNotes(sidecar);
   for (const candidate of eligibleGroups) {

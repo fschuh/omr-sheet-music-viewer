@@ -254,7 +254,7 @@ function clustersForStaff(
   return clusters;
 }
 
-function canonicalClustersForStaff(
+function clustersByMomentIdForStaff(
   groups: VisualGroup[],
   notes: VisualSidecarNote[],
   pitchNames: ReadonlyMap<string, string>,
@@ -354,13 +354,14 @@ export function buildPlaybackTimeline(
     ).sort((first, second) => first - second);
     for (const staffIndex of staffIndexes) {
       const staffGroups = eligibleGroups.filter((group) => group.staff_index === staffIndex);
-      const hasCompleteCanonicalMoments =
+      const hasCompleteMomentIds =
         staffGroups.length > 0 &&
-        staffGroups.every(
-          (group) => group.visual_status === "canonical" && group.moment_id !== null,
-        );
-      const clusters = hasCompleteCanonicalMoments
-        ? canonicalClustersForStaff(staffGroups, sidecar.notes, pitchNames)
+        staffGroups.every((group) => group.moment_id !== null);
+      const hasCompleteCanonicalMoments =
+        hasCompleteMomentIds &&
+        staffGroups.every((group) => group.visual_status === "canonical");
+      const clusters = hasCompleteMomentIds
+        ? clustersByMomentIdForStaff(staffGroups, sidecar.notes, pitchNames)
         : clustersForStaff(staffGroups, sidecar.notes, pitchNames);
       clusters.forEach((cluster, clusterIndex) => {
         const momentNotes = playbackNotesForCluster(

@@ -245,6 +245,27 @@ test("canonical playback groups cross-staff notes by moment_id", () => {
   assert.deepEqual(timeline[1].visualGroupIds, ["following"]);
 });
 
+test("fallback playback keeps consecutive beamed moment_ids separate", () => {
+  const upper = group("upper", 0, 0, 500, 250);
+  const lowerFirst = group("lower-first", 0, 1, 510, 430);
+  const lowerSecond = group("lower-second", 0, 1, 544, 415);
+  upper.moment_id = "moment-1";
+  lowerFirst.moment_id = "moment-1";
+  lowerSecond.moment_id = "moment-2";
+  lowerFirst.stem_component_ids = ["connected-beam"];
+  lowerSecond.stem_component_ids = ["connected-beam"];
+
+  const timeline = buildPlaybackTimeline([
+    page(0, [upper, lowerFirst, lowerSecond], [16, 16, 16]),
+  ]);
+
+  assert.equal(timeline.length, 2);
+  assert.equal(timeline[0].id, "page-0-moment-1");
+  assert.deepEqual(timeline[0].visualGroupIds, ["lower-first", "upper"]);
+  assert.equal(timeline[1].id, "page-0-moment-2");
+  assert.deepEqual(timeline[1].visualGroupIds, ["lower-second"]);
+});
+
 test("incomplete canonical staff metadata retains legacy clustering", () => {
   const canonical = group("canonical", 0, 0, 200, 250);
   canonical.visual_status = "canonical";

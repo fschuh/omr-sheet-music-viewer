@@ -254,6 +254,26 @@ test("fallback chord selection also uses chord_id", () => {
   );
 });
 
+test("fallback selection keeps consecutive beamed moments separate", () => {
+  const groups = [
+    group(0, 500, 500, ["connected-beam"]),
+    group(1, 534, 485, ["connected-beam"]),
+  ];
+  groups[0].moment_id = "moment-1";
+  groups[1].moment_id = "moment-2";
+  const data = sidecar(groups, ["B3", "D4"]);
+
+  assert.deepEqual(
+    selectedGroupIds(
+      data,
+      { pageIndex: 0, visualGroupId: groups[0].visual_group_id },
+      0,
+      false,
+    ),
+    new Set([groups[0].visual_group_id]),
+  );
+});
+
 test("diagnostic and unlinked groups are excluded from selection and labels", () => {
   const linked = group(0, 100, 100);
   const diagnostic = group(1, 180, 100);
