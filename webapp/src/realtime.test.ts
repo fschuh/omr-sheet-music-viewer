@@ -118,6 +118,28 @@ test("extends an inferred slur tie to every repeated chord tone", () => {
   assert.deepEqual(route.notes.map((note) => note.release), [2, 2, 2]);
 });
 
+test("sustains a matching slurred chord tone while attacking a changed tone", () => {
+  const parsed = parseRealtimeMusicXml(score(`
+    <measure number="1">
+      <attributes><divisions>4</divisions></attributes>
+      ${quarter("start-g", "G", 5, '<notations><slur type="start" number="1"/></notations>')}
+      <note id="start-c-sharp"><chord/><pitch><step>C</step><alter>1</alter><octave>5</octave></pitch><duration>4</duration><voice>1</voice></note>
+      ${quarter("stop-g", "G", 5, '<notations><slur type="stop" number="1"/></notations>')}
+      <note id="stop-d"><chord/><pitch><step>D</step><octave>5</octave></pitch><duration>4</duration><voice>1</voice></note>
+    </measure>
+  `));
+
+  const route = expandPerformanceRoute(parsed);
+
+  assert.deepEqual(
+    route.notes.map((note) => note.musicXmlId),
+    ["start-c-sharp", "start-g", "stop-d"],
+  );
+  assert.equal(route.notes.find((note) => note.musicXmlId === "start-g")?.release, 2);
+  assert.equal(route.notes.find((note) => note.musicXmlId === "start-c-sharp")?.release, 1);
+  assert.equal(route.notes.find((note) => note.musicXmlId === "stop-d")?.onset, 1);
+});
+
 test("sustains a repeated chord when HOMR changes voice at the slur stop", () => {
   const parsed = parseRealtimeMusicXml(score(`
     <measure number="1">

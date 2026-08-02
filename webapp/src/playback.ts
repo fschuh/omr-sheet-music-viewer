@@ -109,6 +109,7 @@ interface MomentCluster {
 interface PlaybackPitchNote {
   musicXmlId: string;
   pitch: string;
+  startsAttack: boolean;
 }
 
 export function playbackPitchForNote(
@@ -311,6 +312,7 @@ function clustersByMomentIdForStaff(
 interface NoteByNoteScoreData {
   eventsByNoteId: Map<string, readonly RealtimeScoreNote[]>;
   suppressedNoteIds: Set<string>;
+  startsAttackByNoteId: Map<string, boolean>;
 }
 
 function noteForPage(
@@ -331,7 +333,10 @@ function noteByNoteScoreData(
 ): NoteByNoteScoreData {
   const eventsByNoteId = new Map<string, readonly RealtimeScoreNote[]>();
   const suppressedNoteIds = new Set<string>();
-  if (!documentScore && !musicXml) return { eventsByNoteId, suppressedNoteIds };
+  const startsAttackByNoteId = new Map<string, boolean>();
+  if (!documentScore && !musicXml) {
+    return { eventsByNoteId, suppressedNoteIds, startsAttackByNoteId };
+  }
   try {
     const score = documentScore ?? parseRealtimeMusicXml(musicXml!);
     for (const measure of score.measures) {
@@ -344,32 +349,42 @@ function noteByNoteScoreData(
           ))
           .filter((note): note is RealtimeScoreNote => note !== null && !note.grace);
         if (eventNotes.some(scoreNoteStartsAttack)) {
-          // Note-by-note playback releases the preceding audition before moving
-          // forward. Keep sustained tones in a partial-tie event so that its full
-          // displayed harmony is sounded again; an all-tied event remains skipped.
-          for (const note of eventNotes) eventsByNoteId.set(note.musicXmlId, eventNotes);
+          // Keep every tone in a partial-tie event for chord highlighting, while
+          // remembering which tones are fresh attacks for audio and listen mode.
+          for (const note of eventNotes) {
+            eventsByNoteId.set(note.musicXmlId, eventNotes);
+            startsAttackByNoteId.set(note.musicXmlId, scoreNoteStartsAttack(note));
+          }
         } else {
-          for (const note of eventNotes) suppressedNoteIds.add(note.musicXmlId);
+          for (const note of eventNotes) {
+            suppressedNoteIds.add(note.musicXmlId);
+            startsAttackByNoteId.set(note.musicXmlId, false);
+          }
         }
       }
     }
   } catch {
     // Note-by-note playback can still use the visual sidecar when score parsing fails.
   }
-  return { eventsByNoteId, suppressedNoteIds };
+  return { eventsByNoteId, suppressedNoteIds, startsAttackByNoteId };
 }
 
 function playbackNotesForCluster(
   cluster: MomentCluster,
   pitchNames: ReadonlyMap<string, string>,
   scoreEvents: ReadonlyMap<string, readonly RealtimeScoreNote[]>,
+  startsAttackByNoteId: ReadonlyMap<string, boolean>,
 ): PlaybackPitchNote[] {
   const result: PlaybackPitchNote[] = [];
   const seenIds = new Set<string>();
   const add = (musicXmlId: string, pitch: string | null) => {
     if (pitch === null || seenIds.has(musicXmlId)) return;
     seenIds.add(musicXmlId);
-    result.push({ musicXmlId, pitch });
+    result.push({
+      musicXmlId,
+      pitch,
+      startsAttack: startsAttackByNoteId.get(musicXmlId) ?? true,
+    });
   };
 
   for (const entry of cluster.groups) {
@@ -436,11 +451,18 @@ export function buildPlaybackTimeline(
           cluster,
           pitchNames,
           hasCompleteCanonicalMoments ? new Map() : scoreData.eventsByNoteId,
+          scoreData.startsAttackByNoteId,
         );
         const visualGroupIds = cluster.groups
           .map((entry) => entry.group.visual_group_id)
           .sort((first, second) => first.localeCompare(second));
-        const pitches = Array.from(new Set(momentNotes.map((note) => note.pitch)));
+        const pitches = Array.from(
+          new Set(
+            momentNotes
+              .filter((note) => note.startsAttack)
+              .map((note) => note.pitch),
+          ),
+        );
         const keyboardNotes: PlaybackKeyboardNote[] = [];
         const seenKeyboardNotes = new Set<string>();
         for (const note of momentNotes) {

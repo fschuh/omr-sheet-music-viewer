@@ -286,7 +286,7 @@ test("note-by-note playback skips inferred cross-voice chord tie continuations",
   assert.deepEqual(timeline[0].pitches, ["C6", "C5"]);
 });
 
-test("note-by-note playback retains a tied tone beside a fresh chord attack", () => {
+test("note-by-note playback displays but does not replay a tied tone beside a fresh attack", () => {
   const startG = group("start-g", 0, 0, 100, 230);
   const startCSharp = group("start-c-sharp", 0, 0, 100, 270);
   const stopG = group("stop-g", 0, 0, 200, 230);
@@ -320,7 +320,7 @@ test("note-by-note playback retains a tied tone beside a fresh chord attack", ()
 
   assert.equal(timeline.length, 2);
   assert.deepEqual(timeline[1].visualGroupIds, ["stop-d", "stop-g"]);
-  assert.deepEqual(timeline[1].pitches, ["G5", "D5"]);
+  assert.deepEqual(timeline[1].pitches, ["D5"]);
   assert.deepEqual(timeline[1].keyboardNotes, [{ pitch: "G5" }, { pitch: "D5" }]);
 });
 
