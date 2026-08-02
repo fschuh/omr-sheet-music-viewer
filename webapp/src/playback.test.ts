@@ -286,6 +286,44 @@ test("note-by-note playback skips inferred cross-voice chord tie continuations",
   assert.deepEqual(timeline[0].pitches, ["C6", "C5"]);
 });
 
+test("note-by-note playback retains a tied tone beside a fresh chord attack", () => {
+  const startG = group("start-g", 0, 0, 100, 230);
+  const startCSharp = group("start-c-sharp", 0, 0, 100, 270);
+  const stopG = group("stop-g", 0, 0, 200, 230);
+  const stopD = group("stop-d", 0, 0, 200, 270);
+  const scorePage = page(0, [startG, startCSharp, stopG, stopD], [1, 1, 1, 1]);
+  const sidecar = scorePage.visualSidecar!;
+  [startG, startCSharp].forEach((candidate) => {
+    candidate.visual_status = "canonical";
+    candidate.moment_id = "moment-1";
+  });
+  [stopG, stopD].forEach((candidate) => {
+    candidate.visual_status = "canonical";
+    candidate.moment_id = "moment-2";
+  });
+  ["G5", "C#5", "G5", "D5"].forEach((pitch, index) => {
+    sidecar.notes[index].pitch = pitch;
+  });
+  scorePage.musicXml = `<?xml version="1.0"?>
+    <score-partwise version="4.0">
+      <part-list><score-part id="P1"><part-name>Piano</part-name></score-part></part-list>
+      <part id="P1"><measure number="1">
+        <attributes><divisions>4</divisions></attributes>
+        <note id="note-start-g"><pitch><step>G</step><octave>5</octave></pitch><duration>2</duration><voice>1</voice><staff>1</staff><notations><slur type="start" number="1"/></notations></note>
+        <note id="note-start-c-sharp"><chord/><pitch><step>C</step><alter>1</alter><octave>5</octave></pitch><duration>2</duration><voice>1</voice><staff>1</staff></note>
+        <note id="note-stop-g"><pitch><step>G</step><octave>5</octave></pitch><duration>2</duration><voice>1</voice><staff>1</staff><notations><slur type="stop" number="1"/></notations></note>
+        <note id="note-stop-d"><chord/><pitch><step>D</step><octave>5</octave></pitch><duration>2</duration><voice>1</voice><staff>1</staff></note>
+      </measure></part>
+    </score-partwise>`;
+
+  const timeline = buildPlaybackTimeline([scorePage]);
+
+  assert.equal(timeline.length, 2);
+  assert.deepEqual(timeline[1].visualGroupIds, ["stop-d", "stop-g"]);
+  assert.deepEqual(timeline[1].pitches, ["G5", "D5"]);
+  assert.deepEqual(timeline[1].keyboardNotes, [{ pitch: "G5" }, { pitch: "D5" }]);
+});
+
 test("note-by-note playback reuses document tie inference across pages", () => {
   const firstPage = page(0, [group("start", 0, 0, 100, 250)], [1]);
   const secondPage = page(1, [group("stop", 0, 0, 100, 250)], [1]);

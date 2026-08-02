@@ -335,19 +335,22 @@ function noteByNoteScoreData(
   try {
     const score = documentScore ?? parseRealtimeMusicXml(musicXml!);
     for (const measure of score.measures) {
-      for (const scoreNote of measure.notes) {
-        const note = noteForPage(scoreNote, musicPageNumber, documentScore !== null && documentScore !== undefined);
-        if (note && !scoreNoteStartsAttack(note)) suppressedNoteIds.add(note.musicXmlId);
-      }
       for (const event of measure.events) {
-        const playableNotes = event.notes
+        const eventNotes = event.notes
           .map((note) => noteForPage(
             note,
             musicPageNumber,
             documentScore !== null && documentScore !== undefined,
           ))
-          .filter((note): note is RealtimeScoreNote => note !== null && scoreNoteStartsAttack(note));
-        for (const note of playableNotes) eventsByNoteId.set(note.musicXmlId, playableNotes);
+          .filter((note): note is RealtimeScoreNote => note !== null && !note.grace);
+        if (eventNotes.some(scoreNoteStartsAttack)) {
+          // Note-by-note playback releases the preceding audition before moving
+          // forward. Keep sustained tones in a partial-tie event so that its full
+          // displayed harmony is sounded again; an all-tied event remains skipped.
+          for (const note of eventNotes) eventsByNoteId.set(note.musicXmlId, eventNotes);
+        } else {
+          for (const note of eventNotes) suppressedNoteIds.add(note.musicXmlId);
+        }
       }
     }
   } catch {
