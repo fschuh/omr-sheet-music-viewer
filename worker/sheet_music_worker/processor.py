@@ -27,7 +27,7 @@ OMR_TARGET_WIDTH = 1920
 OMR_RESAMPLING_FILTER = Image.Resampling.HAMMING
 OMR_RESAMPLING = OMR_RESAMPLING_FILTER.name
 MANIFEST_SCHEMA_VERSION = 1
-VISUAL_SIDECAR_CACHE_REVISION = 40
+VISUAL_SIDECAR_CACHE_REVISION = 41
 
 VISUAL_STATUSES = {"canonical", "fallback", "diagnostic"}
 VISUAL_PROVENANCES = {
@@ -45,6 +45,41 @@ ALIGNMENT_METHODS = {
 }
 
 EventEmitter = Callable[[dict[str, Any]], None]
+
+
+def _is_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _is_integer(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _is_point(value: Any) -> bool:
+    return (
+        isinstance(value, list)
+        and len(value) == 2
+        and all(_is_number(coordinate) for coordinate in value)
+    )
+
+
+def _is_contours(value: Any) -> bool:
+    return isinstance(value, list) and all(
+        isinstance(contour, list) and all(_is_point(point) for point in contour)
+        for contour in value
+    )
+
+
+def _is_notehead_ellipse(value: Any) -> bool:
+    return (
+        isinstance(value, dict)
+        and _is_point(value.get("center"))
+        and _is_number(value.get("rx"))
+        and value["rx"] > 0
+        and _is_number(value.get("ry"))
+        and value["ry"] > 0
+        and _is_number(value.get("angle"))
+    )
 
 
 def package_version(package: str) -> str:
@@ -72,16 +107,46 @@ def read_visual_sidecar(path: Path) -> dict[str, Any]:
     sidecar = json.loads(path.read_text(encoding="utf-8"))
     if (
         not isinstance(sidecar, dict)
-        or sidecar.get("version") != 2
+        or sidecar.get("version") != 3
         or not isinstance(sidecar.get("visual_groups"), list)
         or not isinstance(sidecar.get("notes"), list)
+        or not isinstance(sidecar.get("source_image_size"), list)
+        or len(sidecar["source_image_size"]) != 2
+        or not all(
+            _is_number(value) and value > 0
+            for value in sidecar["source_image_size"]
+        )
     ):
-        raise ValueError("HOMR visual sidecar has an invalid structure")
+        raise ValueError("HOMR visual sidecar v3 is required")
+
+    groups_by_id: dict[str, dict[str, Any]] = {}
+    groups_by_musicxml_id: dict[str, str] = {}
     for group in sidecar["visual_groups"]:
         if (
             not isinstance(group, dict)
+            or not isinstance(group.get("visual_group_id"), str)
+            or not group["visual_group_id"]
+            or not _is_integer(group.get("staff_group_index"))
+            or group["staff_group_index"] < 0
+            or not _is_integer(group.get("staff_index"))
+            or group["staff_index"] < 0
+            or not _is_integer(group.get("staff_position"))
+            or not _is_point(group.get("center"))
+            or not isinstance(group.get("bbox"), list)
+            or len(group["bbox"]) not in (0, 4)
+            or not all(_is_number(value) for value in group["bbox"])
+            or not isinstance(group.get("notehead_ellipses"), list)
+            or not all(
+                _is_notehead_ellipse(ellipse) for ellipse in group["notehead_ellipses"]
+            )
+            or not _is_contours(group.get("notehead_contours"))
+            or not _is_contours(group.get("stem_contours"))
             or group.get("visual_status") not in VISUAL_STATUSES
             or group.get("provenance") not in VISUAL_PROVENANCES
+            or not (
+                group.get("musicxml_id") is None
+                or isinstance(group.get("musicxml_id"), str)
+            )
             or not (
                 group.get("moment_id") is None
                 or isinstance(group.get("moment_id"), str)
@@ -95,13 +160,73 @@ def read_visual_sidecar(path: Path) -> dict[str, Any]:
                 isinstance(action, str) for action in group["repair_actions"]
             )
         ):
-            raise ValueError("HOMR visual sidecar has an invalid v2 visual group")
-    if any(
-        not isinstance(note, dict)
-        or note.get("alignment_method") not in ALIGNMENT_METHODS
-        for note in sidecar["notes"]
-    ):
-        raise ValueError("HOMR visual sidecar has an invalid v2 note record")
+            raise ValueError("HOMR visual sidecar has an invalid v3 visual group")
+        visual_group_id = group["visual_group_id"]
+        if visual_group_id in groups_by_id:
+            raise ValueError("HOMR visual sidecar has duplicate visual group IDs")
+        groups_by_id[visual_group_id] = group
+        musicxml_id = group.get("musicxml_id")
+        if group["visual_status"] == "diagnostic":
+            if musicxml_id is not None:
+                raise ValueError("Diagnostic visual groups must be unlinked")
+        elif (
+            not isinstance(musicxml_id, str)
+            or not musicxml_id
+            or not isinstance(group.get("moment_id"), str)
+            or not group["moment_id"]
+            or len(group["bbox"]) != 4
+            or not (group["notehead_ellipses"] or group["notehead_contours"])
+        ):
+            raise ValueError("Linked visual groups require one MusicXML ID and moment ID")
+        elif musicxml_id in groups_by_musicxml_id:
+            raise ValueError("MusicXML notes must link to exactly one visual group")
+        else:
+            groups_by_musicxml_id[musicxml_id] = visual_group_id
+
+    notes_by_id: dict[str, dict[str, Any]] = {}
+    linked_visual_group_ids: set[str] = set()
+    for note in sidecar["notes"]:
+        if (
+            not isinstance(note, dict)
+            or not isinstance(note.get("musicxml_id"), str)
+            or not note["musicxml_id"]
+            or not _is_integer(note.get("part"))
+            or not _is_integer(note.get("measure"))
+            or not _is_integer(note.get("musicxml_staff_number"))
+            or note["musicxml_staff_number"] < 1
+            or not _is_integer(note.get("voice"))
+            or not (
+                note.get("pitch") is None or isinstance(note.get("pitch"), str)
+            )
+            or not isinstance(note.get("duration"), str)
+            or not _is_number(note.get("match_confidence"))
+            or not (
+                note.get("visual_group_id") is None
+                or isinstance(note.get("visual_group_id"), str)
+            )
+            or note.get("alignment_method") not in ALIGNMENT_METHODS
+        ):
+            raise ValueError("HOMR visual sidecar has an invalid v3 note record")
+        musicxml_id = note["musicxml_id"]
+        if musicxml_id in notes_by_id:
+            raise ValueError("HOMR visual sidecar has duplicate MusicXML note IDs")
+        notes_by_id[musicxml_id] = note
+        visual_group_id = note.get("visual_group_id")
+        if visual_group_id is None:
+            continue
+        if visual_group_id in linked_visual_group_ids:
+            raise ValueError("Visual groups must link to exactly one MusicXML note")
+        linked_visual_group_ids.add(visual_group_id)
+        group = groups_by_id.get(visual_group_id)
+        if group is None or group.get("musicxml_id") != musicxml_id:
+            raise ValueError("Visual sidecar inverse links disagree")
+        if group["staff_index"] != note["musicxml_staff_number"] - 1:
+            raise ValueError("Visual sidecar physical staff links disagree")
+
+    for musicxml_id, visual_group_id in groups_by_musicxml_id.items():
+        note = notes_by_id.get(musicxml_id)
+        if note is None or note.get("visual_group_id") != visual_group_id:
+            raise ValueError("Visual sidecar inverse links disagree")
     return sidecar
 
 

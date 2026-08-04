@@ -13,13 +13,13 @@ function group(
   x: number,
   y: number,
   stemComponentIds: string[] = [],
-  staveIndex = 0,
+  physicalStaffIndex = 0,
   isHollowNotehead = false,
 ): VisualGroup {
   return {
     visual_group_id: `group-${index}`,
-    staff_index: 0,
-    stave_index: staveIndex,
+    staff_group_index: 0,
+    staff_index: physicalStaffIndex,
     staff_position: index,
     center: [x, y],
     bbox: [x - 10, y - 8, x + 10, y + 8],
@@ -28,10 +28,10 @@ function group(
     stem_contours: [],
     stem_component_ids: stemComponentIds,
     is_hollow_notehead: isHollowNotehead,
-    musicxml_ids: [`note-${index}`],
+    musicxml_id: `note-${index}`,
     visual_status: "fallback",
     provenance: "segmentation",
-    moment_id: null,
+    moment_id: `moment-${index}`,
     chord_id: null,
     repair_actions: [],
   };
@@ -39,14 +39,14 @@ function group(
 
 function sidecar(groups: VisualGroup[], pitches: string[]): VisualSidecar {
   return {
-    version: 2,
+    version: 3,
     source_image_size: [2550, 3301],
     visual_groups: groups,
     notes: groups.map((value, index) => ({
       musicxml_id: `note-${index}`,
       part: 1,
       measure: 1,
-      staff: 1,
+      musicxml_staff_number: 1,
       voice: 1,
       pitch: pitches[index],
       duration: "note_4",
@@ -54,8 +54,6 @@ function sidecar(groups: VisualGroup[], pitches: string[]): VisualSidecar {
       visual_group_id: value.visual_group_id,
       alignment_method: "attention",
     })),
-    unmatched_musicxml_notes: [],
-    unmatched_visual_notes: [],
   };
 }
 
@@ -118,7 +116,7 @@ test("does not infer a chord from vertically aligned noteheads without a shared 
   );
 });
 
-test("selects an aligned chord of stemless whole notes", () => {
+test("does not infer a chord from aligned stemless whole notes", () => {
   // Page 1, measure 9 bass clef: F3 and A3 form a whole-note chord.
   const groups = [
     group(0, 970.697, 2034.109, [], 1, true),
@@ -127,7 +125,7 @@ test("selects an aligned chord of stemless whole notes", () => {
   const data = sidecar(groups, ["F3", "A3"]);
   for (const note of data.notes) {
     note.measure = 9;
-    note.staff = 2;
+    note.musicxml_staff_number = 2;
     note.voice = 5;
     note.duration = "note_1";
   }
@@ -139,7 +137,7 @@ test("selects an aligned chord of stemless whole notes", () => {
       0,
       false,
     ),
-    new Set(groups.map((value) => value.visual_group_id)),
+    new Set([groups[0].visual_group_id]),
   );
 });
 
@@ -199,7 +197,7 @@ test("does not select an aligned note on another stave in the same system", () =
   );
 });
 
-test("keeps shared-stem chord members selected when noteheads are offset", () => {
+test("does not infer a chord from shared stem geometry", () => {
   const groups = [group(0, 500, 480, ["stem-1"]), group(1, 512, 500, ["stem-1"])];
   const data = sidecar(groups, ["F5", "E5"]);
 
@@ -210,7 +208,7 @@ test("keeps shared-stem chord members selected when noteheads are offset", () =>
       0,
       false,
     ),
-    new Set(groups.map((value) => value.visual_group_id)),
+    new Set([groups[0].visual_group_id]),
   );
 });
 
@@ -278,9 +276,15 @@ test("diagnostic and unlinked groups are excluded from selection and labels", ()
   const linked = group(0, 100, 100);
   const diagnostic = group(1, 180, 100);
   diagnostic.visual_status = "diagnostic";
+  diagnostic.musicxml_id = null;
+  diagnostic.moment_id = null;
   const unlinked = group(2, 260, 100);
-  unlinked.musicxml_ids = [];
+  unlinked.musicxml_id = null;
+  unlinked.visual_status = "diagnostic";
+  unlinked.moment_id = null;
   const data = sidecar([linked, diagnostic, unlinked], ["C4", "D4", "E4"]);
+  data.notes[1].visual_group_id = null;
+  data.notes[2].visual_group_id = null;
 
   assert.deepEqual(
     selectedGroupIds(data, null, 0, true),

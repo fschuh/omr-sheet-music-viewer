@@ -97,7 +97,7 @@ export interface RealtimeScore {
 
 export interface VisualNoteTarget extends VisualGroupRef {
   musicXmlId: string;
-  staffIndex: number;
+  staffGroupIndex: number;
   x: number;
   y: number;
   systemRight: number;
@@ -170,7 +170,7 @@ export type StructuralSeekCommand =
 
 export interface RealtimePlayhead {
   pageIndex: number;
-  staffIndex: number;
+  staffGroupIndex: number;
   x: number;
   y1: number;
   y2: number;
@@ -806,13 +806,13 @@ export function buildRealtimeVisualMap(pages: DocumentPage[]): Map<string, Visua
     const systems = new Map<number, { right: number; top: number; bottom: number }>();
     for (const group of eligibleGroups) {
       const bounds = bbox(group);
-      const system = systems.get(group.staff_index);
+      const system = systems.get(group.staff_group_index);
       if (system) {
         system.right = Math.max(system.right, bounds[2] + 12);
         system.top = Math.min(system.top, bounds[1] - 18);
         system.bottom = Math.max(system.bottom, bounds[3] + 18);
       } else {
-        systems.set(group.staff_index, {
+        systems.set(group.staff_group_index, {
           right: bounds[2] + 12,
           top: bounds[1] - 18,
           bottom: bounds[3] + 18,
@@ -823,12 +823,12 @@ export function buildRealtimeVisualMap(pages: DocumentPage[]): Map<string, Visua
       if (!note.visual_group_id) continue;
       const group = groups.get(note.visual_group_id);
       if (!group) continue;
-      const system = systems.get(group.staff_index)!;
+      const system = systems.get(group.staff_group_index)!;
       const target: VisualNoteTarget = {
         musicXmlId: `page-${musicPageNumber}-${note.musicxml_id}`,
         pageIndex: page.index,
         visualGroupId: group.visual_group_id,
-        staffIndex: group.staff_index,
+        staffGroupIndex: group.staff_group_index,
         x: group.center[0],
         y: group.center[1],
         systemRight: system.right,
@@ -1502,7 +1502,7 @@ export function realtimePlayheadAt(
   let destinationOffset = occurrenceEndAt(route, current.onset) ?? current.release;
   if (
     next?.visual?.pageIndex === visual.pageIndex &&
-    next.visual.staffIndex === visual.staffIndex
+    next.visual.staffGroupIndex === visual.staffGroupIndex
   ) {
     destinationX = next.visual.x;
     destinationOffset = next.onset;
@@ -1514,7 +1514,7 @@ export function realtimePlayheadAt(
     : Math.min(1, Math.max(0, (offset - current.onset) / (destinationOffset - current.onset)));
   return {
     pageIndex: visual.pageIndex,
-    staffIndex: visual.staffIndex,
+    staffGroupIndex: visual.staffGroupIndex,
     x: visual.x + (destinationX - visual.x) * progress,
     y1: visual.systemTop,
     y2: visual.systemBottom,

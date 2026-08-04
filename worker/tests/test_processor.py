@@ -14,6 +14,7 @@ from sheet_music_worker.processor import (
     RASTER_DPI,
     VISUAL_SIDECAR_CACHE_REVISION,
     PdfProcessor,
+    read_visual_sidecar,
     scale_visual_sidecar,
     sha256_file,
     validate_artifacts,
@@ -50,12 +51,20 @@ class FakeHomrEngine:
         visual_sidecar.write_text(
             json.dumps(
                 {
-                    "version": 2,
+                    "version": 3,
+                    "source_image_size": list(self.image_sizes[-1]),
                     "visual_groups": [],
                     "notes": [
                         {
                             "musicxml_id": "homr-note-1",
+                            "part": 1,
+                            "measure": 1,
+                            "musicxml_staff_number": 1,
+                            "voice": 1,
                             "pitch": None,
+                            "duration": "rest_1",
+                            "match_confidence": 0,
+                            "visual_group_id": None,
                             "alignment_method": "none",
                         }
                     ],
@@ -85,7 +94,14 @@ class EmptySidecarEngine(FakeHomrEngine):
     def process_image(self, image_path: Path) -> tuple[Path, Path]:
         music_xml, visual_sidecar = super().process_image(image_path)
         visual_sidecar.write_text(
-            json.dumps({"version": 2, "visual_groups": [], "notes": []}),
+            json.dumps(
+                {
+                    "version": 3,
+                    "source_image_size": list(self.image_sizes[-1]),
+                    "visual_groups": [],
+                    "notes": [],
+                }
+            ),
             encoding="utf-8",
         )
         return music_xml, visual_sidecar
@@ -111,12 +127,46 @@ def test_validate_artifacts_accepts_readable_outputs(tmp_path: Path) -> None:
     (pages / "0001.homr.visual.json").write_text(
         json.dumps(
             {
-                "version": 2,
-                "visual_groups": [],
+                "version": 3,
+                "source_image_size": [100, 100],
+                "visual_groups": [
+                    {
+                        "visual_group_id": "vnote-1",
+                        "staff_group_index": 0,
+                        "staff_index": 0,
+                        "staff_position": 1,
+                        "center": [20, 30],
+                        "bbox": [15, 25, 25, 35],
+                        "notehead_ellipses": [
+                            {"center": [20, 30], "rx": 5, "ry": 4, "angle": 0}
+                        ],
+                        "notehead_contours": [[[15, 30], [20, 25], [25, 30], [20, 35]]],
+                        "detected_notehead_contours": [],
+                        "refined_notehead_contours": [],
+                        "detected_stem_contours": [],
+                        "stem_contours": [],
+                        "stem_component_ids": [],
+                        "is_hollow_notehead": False,
+                        "musicxml_id": "homr-note-1",
+                        "visual_status": "canonical",
+                        "provenance": "segmentation",
+                        "moment_id": "moment-1-1",
+                        "chord_id": None,
+                        "repair_actions": [],
+                    }
+                ],
                 "notes": [
                     {
                         "musicxml_id": "homr-note-1",
-                        "alignment_method": "none",
+                        "part": 1,
+                        "measure": 1,
+                        "musicxml_staff_number": 1,
+                        "voice": 1,
+                        "pitch": "C4",
+                        "duration": "note_4",
+                        "match_confidence": 0,
+                        "visual_group_id": "vnote-1",
+                        "alignment_method": "structural",
                     }
                 ],
             }
@@ -137,7 +187,14 @@ def test_validate_artifacts_rejects_a_page_without_notes(tmp_path: Path) -> None
     (pages / "0001.png").write_bytes(b"png")
     (pages / "0001.musicxml").write_text("<score-partwise />", encoding="utf-8")
     (pages / "0001.homr.visual.json").write_text(
-        json.dumps({"version": 2, "visual_groups": [], "notes": []}),
+        json.dumps(
+            {
+                "version": 3,
+                "source_image_size": [100, 100],
+                "visual_groups": [],
+                "notes": [],
+            }
+        ),
         encoding="utf-8",
     )
     page = {
@@ -162,7 +219,7 @@ def test_validate_artifacts_rejects_bad_sidecar(tmp_path: Path) -> None:
     assert not validate_artifacts(page, tmp_path)
 
 
-def test_validate_artifacts_rejects_v1_sidecar(tmp_path: Path) -> None:
+def test_validate_artifacts_rejects_v2_sidecar(tmp_path: Path) -> None:
     pages = tmp_path / "pages"
     pages.mkdir()
     (pages / "0001.png").write_bytes(b"png")
@@ -170,7 +227,7 @@ def test_validate_artifacts_rejects_v1_sidecar(tmp_path: Path) -> None:
     (pages / "0001.homr.visual.json").write_text(
         json.dumps(
             {
-                "version": 1,
+                "version": 2,
                 "visual_groups": [],
                 "notes": [{"musicxml_id": "homr-note-1"}],
             }
@@ -185,9 +242,64 @@ def test_validate_artifacts_rejects_v1_sidecar(tmp_path: Path) -> None:
     assert not validate_artifacts(page, tmp_path)
 
 
+def test_read_visual_sidecar_rejects_disagreeing_v3_inverse_links(tmp_path: Path) -> None:
+    path = tmp_path / "score.homr.visual.json"
+    path.write_text(
+        json.dumps(
+            {
+                "version": 3,
+                "source_image_size": [100, 100],
+                "notes": [
+                    {
+                        "musicxml_id": "homr-note-1",
+                        "part": 1,
+                        "measure": 1,
+                        "musicxml_staff_number": 1,
+                        "voice": 1,
+                        "pitch": "C4",
+                        "duration": "note_4",
+                        "match_confidence": 1,
+                        "visual_group_id": "vnote-1",
+                        "alignment_method": "structural",
+                    }
+                ],
+                "visual_groups": [
+                    {
+                        "visual_group_id": "vnote-1",
+                        "staff_group_index": 0,
+                        "staff_index": 0,
+                        "staff_position": 1,
+                        "center": [20, 30],
+                        "bbox": [15, 25, 25, 35],
+                        "notehead_ellipses": [
+                            {"center": [20, 30], "rx": 5, "ry": 4, "angle": 0}
+                        ],
+                        "notehead_contours": [],
+                        "stem_contours": [],
+                        "musicxml_id": "different-note",
+                        "visual_status": "canonical",
+                        "provenance": "segmentation",
+                        "moment_id": "moment-1",
+                        "chord_id": None,
+                        "repair_actions": [],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    try:
+        read_visual_sidecar(path)
+    except ValueError as error:
+        assert "inverse links" in str(error)
+    else:
+        raise AssertionError("Expected invalid v3 links to be rejected")
+
+
 def test_scale_visual_sidecar_moves_geometry_to_the_display_raster() -> None:
     sidecar = {
-        "version": 2,
+        "version": 3,
         "source_image_size": [100, 200],
         "preprocessing": {
             "autocrop_box": [5, 10, 90, 180],
@@ -202,6 +314,11 @@ def test_scale_visual_sidecar_moves_geometry_to_the_display_raster() -> None:
         ],
         "visual_groups": [
             {
+                "visual_group_id": "diagnostic-1",
+                "staff_group_index": 0,
+                "staff_index": 0,
+                "staff_position": 1,
+                "musicxml_id": None,
                 "visual_status": "diagnostic",
                 "provenance": "segmentation",
                 "moment_id": None,
@@ -219,8 +336,6 @@ def test_scale_visual_sidecar_moves_geometry_to_the_display_raster() -> None:
                 "stem_contours": [[[10, 20], [11, 30]]],
             }
         ],
-        "unmatched_musicxml_notes": [],
-        "unmatched_visual_notes": [],
     }
 
     result = scale_visual_sidecar(

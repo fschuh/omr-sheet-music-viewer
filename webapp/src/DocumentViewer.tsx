@@ -397,10 +397,9 @@ const PageOverlay = memo(function PageOverlay({
             selectedIds,
             page.width,
             page.height,
-            page.musicXml,
           )
         : [],
-    [page.height, page.musicXml, page.visualSidecar, page.width, selectedIds],
+    [page.height, page.visualSidecar, page.width, selectedIds],
   );
   const visualGroupsById = useMemo(
     () => new Map(
@@ -994,7 +993,7 @@ export function DocumentViewer({
 
     const staffGroups = sidecar.visual_groups.filter(
       (group) =>
-        group.staff_index === playbackMoment.staffIndex &&
+        group.staff_group_index === playbackMoment.staffGroupIndex &&
         isLinkedVisualGroup(group),
     );
     const momentIds = new Set(playbackMoment.visualGroupIds);
@@ -1012,7 +1011,6 @@ export function DocumentViewer({
       momentIds,
       page.width,
       page.height,
-      page.musicXml,
     );
     const verticalPadding = Math.max(18, page.height * 0.018);
     const horizontalPadding = Math.max(18, page.width * 0.02);

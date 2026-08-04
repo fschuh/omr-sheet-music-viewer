@@ -30,18 +30,18 @@ test("tempo input accepts partial edits and validates only complete percentages"
   assert.equal(committedTempoPercentage("invalid"), null);
 });
 
-function group(id: string, staveIndex: number, x: number, y: number): VisualGroup {
+function group(id: string, physicalStaffIndex: number, x: number, y: number): VisualGroup {
   return {
     visual_group_id: id,
-    staff_index: 0,
-    stave_index: staveIndex,
+    staff_group_index: 0,
+    staff_index: physicalStaffIndex,
     staff_position: 0,
     center: [x, y],
     bbox: [x - 10, y - 8, x + 10, y + 8],
     notehead_ellipses: [{ center: [x, y], rx: 10, ry: 8, angle: 0 }],
     notehead_contours: [],
     stem_contours: [],
-    musicxml_ids: [`note-${id}`],
+    musicxml_id: `note-${id}`,
     visual_status: "canonical",
     provenance: "segmentation",
     moment_id: "moment-1",
@@ -52,14 +52,14 @@ function group(id: string, staveIndex: number, x: number, y: number): VisualGrou
 
 const groups = [group("treble", 0, 300, 350), group("bass", 1, 302, 520)];
 const sidecar: VisualSidecar = {
-  version: 2,
+  version: 3,
   source_image_size: [1000, 1400],
   visual_groups: groups,
   notes: groups.map((value, index) => ({
     musicxml_id: `note-${value.visual_group_id}`,
     part: 1,
     measure: 1,
-    staff: index + 1,
+    musicxml_staff_number: index + 1,
     voice: 1,
     pitch: index === 0 ? "C4" : "E3",
     duration: "note_4",
@@ -67,8 +67,6 @@ const sidecar: VisualSidecar = {
     visual_group_id: value.visual_group_id,
     alignment_method: "structural",
   })),
-  unmatched_musicxml_notes: [],
-  unmatched_visual_notes: [],
 };
 const page: DocumentPage = {
   index: 0,
@@ -80,7 +78,7 @@ const page: DocumentPage = {
 const moment: PlaybackMoment = {
   id: "moment-1",
   pageIndex: 0,
-  staffIndex: 0,
+  staffGroupIndex: 0,
   measure: 1,
   barKey: "page-0-measure-1",
   visualGroupIds: groups.map((value) => value.visual_group_id),
@@ -154,17 +152,16 @@ test("renders all groups and note names in the active cross-clef moment", () => 
 test("hides diagnostic groups while retaining raw contour diagnostics", () => {
   const diagnosticGroup = {
     ...group("diagnostic", 0, 300, 350),
+    musicxml_id: null,
     visual_status: "diagnostic" as const,
+    moment_id: null,
   };
   const diagnosticPage: DocumentPage = {
     ...page,
     visualSidecar: {
       ...sidecar,
       visual_groups: [diagnosticGroup],
-      notes: [{
-        ...sidecar.notes[0],
-        visual_group_id: diagnosticGroup.visual_group_id,
-      }],
+      notes: [],
       raw_stem_contours: [{
         debug_id: 1,
         contour: [[290, 300], [290, 400]],
@@ -202,7 +199,7 @@ test("debug mode renders and selects diagnostic visual groups", () => {
   const linkedOverlapGroup = group("linked-overlap", 1, 300, 520);
   const diagnosticGroup = {
     ...group("diagnostic", 1, 300, 520),
-    musicxml_ids: [],
+    musicxml_id: null,
     visual_status: "diagnostic" as const,
     moment_id: null,
     chord_id: null,
@@ -214,11 +211,10 @@ test("debug mode renders and selects diagnostic visual groups", () => {
     notes: [
       {
         ...sidecar.notes[0],
-        musicxml_id: linkedOverlapGroup.musicxml_ids[0],
+        musicxml_id: linkedOverlapGroup.musicxml_id!,
         visual_group_id: linkedOverlapGroup.visual_group_id,
       },
     ],
-    unmatched_visual_notes: [diagnosticGroup.visual_group_id],
   };
   const overlapHitTestSidecar: VisualSidecar = {
     ...diagnosticSidecar,
@@ -288,7 +284,7 @@ test("renders realtime selector, transport states, tempo, and vertical playhead"
       playbackMode="realtime"
       playbackStatus="playing"
       realtimeAvailable
-      realtimePlayhead={{ pageIndex: 0, staffIndex: 0, x: 360, y1: 300, y2: 570 }}
+      realtimePlayhead={{ pageIndex: 0, staffGroupIndex: 0, x: 360, y1: 300, y2: 570 }}
       tempoBpm={135.4}
       tempoMultiplier={1.25}
       listenFeedback={listenFeedback}

@@ -342,13 +342,13 @@ test("uses persistent key signatures and ornament accidentals for trills", () =>
 test("maps merged page-scoped MusicXML IDs back to page sidecars", () => {
   const pages: DocumentPage[] = [0, 1].map((index) => {
     const sidecar: VisualSidecar = {
-      version: 2,
+      version: 3,
       source_image_size: [1000, 1400],
       notes: [{
         musicxml_id: `n${index + 1}`,
         part: 1,
         measure: index + 1,
-        staff: 1,
+        musicxml_staff_number: 1,
         voice: 1,
         pitch: "C4",
         duration: "note_4",
@@ -358,22 +358,20 @@ test("maps merged page-scoped MusicXML IDs back to page sidecars", () => {
       }],
       visual_groups: [{
         visual_group_id: `g${index + 1}`,
+        staff_group_index: 0,
         staff_index: 0,
-        stave_index: 0,
         staff_position: 0,
         center: [100 + index * 20, 300],
         bbox: [90, 290, 110, 310],
         notehead_contours: [],
         stem_contours: [],
-        musicxml_ids: [`n${index + 1}`],
+        musicxml_id: `n${index + 1}`,
         visual_status: "canonical",
         provenance: "segmentation",
         moment_id: `moment-${index + 1}`,
         chord_id: null,
         repair_actions: [],
       }],
-      unmatched_musicxml_notes: [],
-      unmatched_visual_notes: [],
     };
     return {
       index,

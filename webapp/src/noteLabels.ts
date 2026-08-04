@@ -64,83 +64,8 @@ export function selectedGroupIds(
         result.add(candidate.visual_group_id);
       }
     }
-    return result;
-  }
-  // A linked moment with no chord_id is authoritative even when its visual
-  // assignment needed fallback alignment. Stem components are only a legacy
-  // fallback for groups whose musical moment is unknown; a connected beam can
-  // otherwise make consecutive notes look like one physical chord.
-  if (group.visual_status === "canonical" || group.moment_id !== null) return result;
-  const stemComponents = new Set(group.stem_component_ids ?? []);
-  const notesByGroup = linkedNotes(sidecar);
-  for (const candidate of eligibleGroups) {
-    if (
-      candidate.staff_index !== group.staff_index ||
-      candidate.stave_index !== group.stave_index
-    ) {
-      continue;
-    }
-    if (
-      (candidate.stem_component_ids ?? []).some((component) => stemComponents.has(component)) ||
-      stemlessWholeNotesFormChord(group, candidate, notesByGroup)
-    ) {
-      result.add(candidate.visual_group_id);
-    }
   }
   return result;
-}
-
-function stemlessWholeNotesFormChord(
-  first: VisualGroup,
-  second: VisualGroup,
-  notesByGroup: ReadonlyMap<string, VisualSidecarNote[]>,
-): boolean {
-  if (
-    first.visual_group_id === second.visual_group_id ||
-    !first.is_hollow_notehead ||
-    !second.is_hollow_notehead ||
-    (first.stem_component_ids?.length ?? 0) > 0 ||
-    (second.stem_component_ids?.length ?? 0) > 0 ||
-    !visuallyAlignedNoteheads(first, second)
-  ) {
-    return false;
-  }
-
-  const firstNotes = notesByGroup.get(first.visual_group_id) ?? [];
-  const secondNotes = notesByGroup.get(second.visual_group_id) ?? [];
-  return firstNotes.some((firstNote) =>
-    secondNotes.some(
-      (secondNote) =>
-        firstNote.pitch !== null &&
-        secondNote.pitch !== null &&
-        firstNote.duration === "note_1" &&
-        secondNote.duration === "note_1" &&
-        firstNote.measure === secondNote.measure &&
-        firstNote.staff === secondNote.staff &&
-        firstNote.voice === secondNote.voice,
-    ),
-  );
-}
-
-function visuallyAlignedNoteheads(first: VisualGroup, second: VisualGroup): boolean {
-  const firstNoteheads = first.notehead_ellipses ?? [];
-  const secondNoteheads = second.notehead_ellipses ?? [];
-  if (firstNoteheads.length === 0 || secondNoteheads.length === 0) return false;
-
-  return firstNoteheads.some((firstNotehead) =>
-    secondNoteheads.some((secondNotehead) => {
-      const horizontalTolerance = clamp(
-        Math.min(firstNotehead.rx, secondNotehead.rx) * 0.35,
-        2,
-        6,
-      );
-      return (
-        Math.abs(firstNotehead.center[0] - secondNotehead.center[0]) <= horizontalTolerance &&
-        Math.abs(firstNotehead.center[1] - secondNotehead.center[1]) >
-          Math.min(firstNotehead.ry, secondNotehead.ry) * 0.5
-      );
-    }),
-  );
 }
 
 function clamp(value: number, minimum: number, maximum: number): number {
@@ -208,20 +133,6 @@ export function noteheadBounds(group: VisualGroup): Bounds {
   return { x: group.center[0] - 5, y: group.center[1] - 5, width: 10, height: 10 };
 }
 
-function childText(element: Element, localName: string): string | null {
-  for (const child of Array.from(element.children)) {
-    if (child.localName === localName) return child.textContent?.trim() || null;
-  }
-  return null;
-}
-
-function firstChild(element: Element, localName: string): Element | null {
-  for (const child of Array.from(element.children)) {
-    if (child.localName === localName) return child;
-  }
-  return null;
-}
-
 function accidentalSymbols(alter: number): string {
   if (alter === 0) return "";
   if (Number.isInteger(alter)) {
@@ -239,34 +150,6 @@ function formatStoredPitch(pitch: string): string {
   if (!match) return pitch;
   const accidental = match[2].replaceAll("#", "♯").replaceAll("b", "♭");
   return `${match[1].toUpperCase()}${accidental}${match[3]}`;
-}
-
-const musicXmlPitchCache = new Map<string, Map<string, string>>();
-
-export function musicXmlPitchNames(musicXml?: string): Map<string, string> {
-  const result = new Map<string, string>();
-  if (!musicXml || typeof DOMParser === "undefined") return result;
-  const cached = musicXmlPitchCache.get(musicXml);
-  if (cached) return cached;
-  const document = new DOMParser().parseFromString(musicXml, "application/xml");
-  if (document.querySelector("parsererror")) return result;
-  for (const element of Array.from(document.getElementsByTagName("*"))) {
-    if (element.localName !== "note") continue;
-    const id = element.getAttribute("id");
-    const pitch = firstChild(element, "pitch");
-    if (!id || !pitch) continue;
-    const step = childText(pitch, "step");
-    const octave = childText(pitch, "octave");
-    const parsedAlter = Number(childText(pitch, "alter") ?? 0);
-    if (!step || octave === null || !Number.isFinite(parsedAlter)) continue;
-    result.set(id, formatPitchName(step, octave, parsedAlter));
-  }
-  if (musicXmlPitchCache.size >= 64) {
-    const oldest = musicXmlPitchCache.keys().next().value;
-    if (oldest !== undefined) musicXmlPitchCache.delete(oldest);
-  }
-  musicXmlPitchCache.set(musicXml, result);
-  return result;
 }
 
 function labelDimensions(text: string, fontSize: number): { width: number; height: number } {
@@ -461,7 +344,7 @@ function gridLayout(
 
 interface SidecarLayoutData {
   groups: Map<string, VisualGroup>;
-  notes: Map<string, VisualSidecarNote[]>;
+  notes: Map<string, VisualSidecarNote>;
   bounds: Map<string, Bounds>;
   noteheadHeights: number[];
   obstacles: Bounds[];
@@ -474,12 +357,10 @@ function sidecarLayoutData(sidecar: VisualSidecar): SidecarLayoutData {
   if (cached) return cached;
   const eligibleGroups = sidecar.visual_groups.filter(isLinkedVisualGroup);
   const groups = new Map(eligibleGroups.map((group) => [group.visual_group_id, group]));
-  const notes = new Map<string, VisualSidecarNote[]>();
+  const notes = new Map<string, VisualSidecarNote>();
   for (const note of sidecar.notes) {
     if (!note.visual_group_id) continue;
-    const linked = notes.get(note.visual_group_id) ?? [];
-    linked.push(note);
-    notes.set(note.visual_group_id, linked);
+    notes.set(note.visual_group_id, note);
   }
   const bounds = new Map<string, Bounds>();
   const noteheadHeights: number[] = [];
@@ -495,18 +376,8 @@ function sidecarLayoutData(sidecar: VisualSidecar): SidecarLayoutData {
   return result;
 }
 
-function linkedNotes(sidecar: VisualSidecar): Map<string, VisualSidecarNote[]> {
-  return sidecarLayoutData(sidecar).notes;
-}
-
-function labelRequests(
-  sidecar: VisualSidecar,
-  selectedIds: Set<string>,
-  musicXml?: string,
-): NoteLabelRequest[] {
-  const pitchNames = musicXmlPitchNames(musicXml);
+function labelRequests(sidecar: VisualSidecar, selectedIds: Set<string>): NoteLabelRequest[] {
   const layoutData = sidecarLayoutData(sidecar);
-  const notesByGroup = linkedNotes(sidecar);
   const requests: NoteLabelRequest[] = [];
   const seenMusicXmlIds = new Set<string>();
 
@@ -515,30 +386,16 @@ function labelRequests(
     if (!group) continue;
     const bounds = layoutData.bounds.get(visualGroupId) ?? noteheadBounds(group);
     const anchor: VisualPoint = [bounds.x + bounds.width / 2, bounds.y + bounds.height / 2];
-    const notes = notesByGroup.get(group.visual_group_id) ?? [];
-    for (const note of notes) {
-      if (!note.pitch || seenMusicXmlIds.has(note.musicxml_id)) continue;
-      seenMusicXmlIds.add(note.musicxml_id);
-      requests.push({
-        musicXmlId: note.musicxml_id,
-        visualGroupId: group.visual_group_id,
-        text: pitchNames.get(note.musicxml_id) ?? formatStoredPitch(note.pitch),
-        anchorBounds: bounds,
-        anchor,
-      });
-    }
-    for (const musicXmlId of group.musicxml_ids) {
-      const text = pitchNames.get(musicXmlId);
-      if (!text || seenMusicXmlIds.has(musicXmlId)) continue;
-      seenMusicXmlIds.add(musicXmlId);
-      requests.push({
-        musicXmlId,
-        visualGroupId: group.visual_group_id,
-        text,
-        anchorBounds: bounds,
-        anchor,
-      });
-    }
+    const note = layoutData.notes.get(group.visual_group_id);
+    if (!note?.pitch || seenMusicXmlIds.has(note.musicxml_id)) continue;
+    seenMusicXmlIds.add(note.musicxml_id);
+    requests.push({
+      musicXmlId: note.musicxml_id,
+      visualGroupId: group.visual_group_id,
+      text: formatStoredPitch(note.pitch),
+      anchorBounds: bounds,
+      anchor,
+    });
   }
 
   return requests.sort(
@@ -554,9 +411,8 @@ export function layoutNoteLabels(
   selectedIds: Set<string>,
   pageWidth: number,
   pageHeight: number,
-  musicXml?: string,
 ): NoteLabelLayout[] {
-  const requests = labelRequests(sidecar, selectedIds, musicXml);
+  const requests = labelRequests(sidecar, selectedIds);
   if (requests.length === 0) return [];
   const layoutData = sidecarLayoutData(sidecar);
   const fontSize = clamp(

@@ -6,7 +6,6 @@ import {
   initialPlaybackState,
   playbackPitchForNote,
   playbackGroupIdsForPage,
-  playbackGroupIdsByPageForAnchors,
   runPlaybackCommand,
   seekPlaybackToGroup,
   type PlaybackCommand,
@@ -15,21 +14,27 @@ import {
 import { parseRealtimeMusicXml } from "./realtime";
 import type { DocumentPage, VisualGroup, VisualSidecar, VisualSidecarNote } from "./types";
 
-function group(id: string, staffIndex: number, staveIndex: number, x: number, y: number): VisualGroup {
+function group(
+  id: string,
+  staffGroupIndex: number,
+  physicalStaffIndex: number,
+  x: number,
+  y: number,
+): VisualGroup {
   return {
     visual_group_id: id,
-    staff_index: staffIndex,
-    stave_index: staveIndex,
+    staff_group_index: staffGroupIndex,
+    staff_index: physicalStaffIndex,
     staff_position: 0,
     center: [x, y],
     bbox: [x - 10, y - 8, x + 10, y + 8],
     notehead_ellipses: [{ center: [x, y], rx: 10, ry: 8, angle: 0 }],
     notehead_contours: [],
     stem_contours: [],
-    musicxml_ids: [`note-${id}`],
+    musicxml_id: `note-${id}`,
     visual_status: "fallback",
     provenance: "segmentation",
-    moment_id: null,
+    moment_id: `moment-${id}`,
     chord_id: null,
     repair_actions: [],
   };
@@ -37,14 +42,14 @@ function group(id: string, staffIndex: number, staveIndex: number, x: number, y:
 
 function page(index: number, groups: VisualGroup[], measures: number[]): DocumentPage {
   const sidecar: VisualSidecar = {
-    version: 2,
+    version: 3,
     source_image_size: [1000, 1400],
     visual_groups: groups,
     notes: groups.map((value, groupIndex) => ({
       musicxml_id: `note-${value.visual_group_id}`,
       part: 1,
       measure: measures[groupIndex],
-      staff: value.stave_index + 1,
+      musicxml_staff_number: value.staff_index + 1,
       voice: 1,
       pitch: "C4",
       duration: "note_4",
@@ -52,8 +57,6 @@ function page(index: number, groups: VisualGroup[], measures: number[]): Documen
       visual_group_id: value.visual_group_id,
       alignment_method: "attention",
     })),
-    unmatched_musicxml_notes: [],
-    unmatched_visual_notes: [],
   };
   return { index, status: "complete", width: 1000, height: 1400, visualSidecar: sidecar };
 }
@@ -71,12 +74,12 @@ function run(
   return runPlaybackCommand(timeline, state, command);
 }
 
-test("prefers the resolved MusicXML accidental over a natural-only sidecar pitch", () => {
+test("uses the authoritative sidecar pitch without a MusicXML override", () => {
   const note: VisualSidecarNote = {
     musicxml_id: "note-flat",
     part: 1,
     measure: 1,
-    staff: 1,
+    musicxml_staff_number: 1,
     voice: 1,
     pitch: "A3",
     duration: "note_4",
@@ -85,7 +88,7 @@ test("prefers the resolved MusicXML accidental over a natural-only sidecar pitch
     alignment_method: "attention",
   };
 
-  assert.equal(playbackPitchForNote(note, new Map([["note-flat", "A♭3"]])), "A♭3");
+  assert.equal(playbackPitchForNote(note), "A3");
 });
 
 test("groups a chord and aligned notes in different clefs into one playhead moment", () => {
@@ -94,6 +97,7 @@ test("groups a chord and aligned notes in different clefs into one playhead mome
   chord.stem_component_ids = ["stem-1"];
   upper.stem_component_ids = ["stem-1"];
   const lower = group("lower", 0, 1, 204, 420);
+  for (const candidate of [upper, chord, lower]) candidate.moment_id = "moment-chord";
   const timeline = buildPlaybackTimeline([page(0, [upper, chord, lower], [1, 1, 1])]);
 
   assert.equal(timeline.length, 1);
@@ -112,6 +116,9 @@ test("groups a displaced chord second before aligning notes across clefs", () =>
   lowerLow.stem_component_ids = ["lower-stem"];
   upperLow.stem_component_ids = ["upper-stem"];
   upperHigh.stem_component_ids = ["upper-stem"];
+  for (const candidate of [lowerOffset, upperLow, upperHigh, lowerMiddle, lowerLow]) {
+    candidate.moment_id = "moment-displaced-chord";
+  }
 
   const scorePage = page(
     0,
@@ -139,17 +146,18 @@ test("groups a displaced chord second before aligning notes across clefs", () =>
   );
 });
 
-test("recovers unmatched cross-clef pitches from the anchored MusicXML event", () => {
+test("does not manufacture playback notes for diagnostic visual candidates", () => {
   const upperHigh = group("upper-high", 0, 0, 477.7, 1111);
   const upperLow = group("upper-low", 0, 0, 477.5, 1176);
   const lowerHigh = group("lower-high", 0, 1, 477.1, 1298);
   const lowerLow = group("lower-low", 0, 1, 477.5, 1344);
-  upperHigh.stem_component_ids = ["upper-stem"];
-  upperLow.stem_component_ids = ["upper-stem"];
-  lowerHigh.stem_component_ids = ["lower-stem"];
-  lowerLow.stem_component_ids = ["lower-stem"];
-  lowerHigh.musicxml_ids = [];
-  lowerLow.musicxml_ids = [];
+  upperHigh.moment_id = "moment-linked";
+  upperLow.moment_id = "moment-linked";
+  for (const candidate of [lowerHigh, lowerLow]) {
+    candidate.musicxml_id = null;
+    candidate.visual_status = "diagnostic";
+    candidate.moment_id = null;
+  }
 
   const scorePage = page(
     0,
@@ -160,59 +168,15 @@ test("recovers unmatched cross-clef pitches from the anchored MusicXML event", (
   sidecar.notes[0].pitch = "Cb6";
   sidecar.notes[1].pitch = "Cb5";
   sidecar.notes[2].pitch = "Gb4";
-  sidecar.notes[2].staff = 2;
-  sidecar.notes[2].voice = 5;
   sidecar.notes[2].visual_group_id = null;
   sidecar.notes[3].pitch = "Bb3";
-  sidecar.notes[3].staff = 2;
-  sidecar.notes[3].voice = 5;
   sidecar.notes[3].visual_group_id = null;
-  sidecar.unmatched_musicxml_notes = ["note-lower-high", "note-lower-low"];
-  sidecar.unmatched_visual_notes = ["lower-high", "lower-low"];
-  scorePage.musicXml = `<?xml version="1.0"?>
-    <score-partwise version="4.0">
-      <part-list><score-part id="P1"><part-name>Piano</part-name></score-part></part-list>
-      <part id="P1">
-        <measure number="5">
-          <attributes><divisions>4</divisions></attributes>
-          <note id="note-upper-high">
-            <pitch><step>C</step><alter>-1</alter><octave>6</octave></pitch>
-            <duration>1</duration><voice>1</voice><staff>1</staff>
-          </note>
-          <note id="note-upper-low">
-            <chord/><pitch><step>C</step><alter>-1</alter><octave>5</octave></pitch>
-            <duration>1</duration><voice>1</voice><staff>1</staff>
-          </note>
-          <backup><duration>1</duration></backup>
-          <note id="note-lower-high">
-            <pitch><step>G</step><alter>-1</alter><octave>4</octave></pitch>
-            <duration>2</duration><voice>5</voice><staff>2</staff>
-          </note>
-          <note id="note-lower-low">
-            <chord/><pitch><step>B</step><alter>-1</alter><octave>3</octave></pitch>
-            <duration>2</duration><voice>5</voice><staff>2</staff>
-          </note>
-        </measure>
-      </part>
-    </score-partwise>`;
 
   const timeline = buildPlaybackTimeline([scorePage]);
 
   assert.equal(timeline.length, 1);
-  assert.deepEqual(timeline[0].pitches, ["C♭6", "C♭5", "G♭4", "B♭3"]);
-  assert.deepEqual(
-    timeline[0].keyboardNotes.map((note) => note.pitch),
-    ["C♭6", "C♭5", "G♭4", "B♭3"],
-  );
-  assert.deepEqual(
-    playbackGroupIdsByPageForAnchors(timeline, [
-      { pageIndex: 0, visualGroupId: "upper-high" },
-      { pageIndex: 0, visualGroupId: "upper-low" },
-    ]),
-    {
-      0: ["upper-high", "upper-low"],
-    },
-  );
+  assert.deepEqual(timeline[0].visualGroupIds, ["upper-high", "upper-low"]);
+  assert.deepEqual(timeline[0].pitches, ["Cb6", "Cb5"]);
 });
 
 test("note-by-note playback ignores grace notes sharing the main note's onset", () => {
@@ -400,11 +364,12 @@ test("fallback playback keeps consecutive beamed moment_ids separate", () => {
   assert.deepEqual(timeline[1].visualGroupIds, ["lower-second"]);
 });
 
-test("incomplete canonical staff metadata retains legacy clustering", () => {
+test("fallback groups use authoritative moment metadata", () => {
   const canonical = group("canonical", 0, 0, 200, 250);
   canonical.visual_status = "canonical";
   canonical.moment_id = "moment-1";
   const fallback = group("fallback", 0, 1, 204, 430);
+  fallback.moment_id = "moment-1";
 
   const timeline = buildPlaybackTimeline([
     page(0, [canonical, fallback], [1, 1]),
@@ -412,19 +377,24 @@ test("incomplete canonical staff metadata retains legacy clustering", () => {
 
   assert.equal(timeline.length, 1);
   assert.deepEqual(timeline[0].visualGroupIds, ["canonical", "fallback"]);
-  assert.notEqual(timeline[0].id, "page-0-moment-1");
+  assert.equal(timeline[0].id, "page-0-moment-1");
 });
 
 test("diagnostic and unlinked groups are absent from playback", () => {
   const linked = group("linked", 0, 0, 200, 250);
   const diagnostic = group("diagnostic", 0, 0, 202, 280);
   diagnostic.visual_status = "diagnostic";
+  diagnostic.musicxml_id = null;
+  diagnostic.moment_id = null;
   const unlinked = group("unlinked", 0, 0, 204, 310);
-  unlinked.musicxml_ids = [];
+  unlinked.musicxml_id = null;
+  unlinked.visual_status = "diagnostic";
+  unlinked.moment_id = null;
 
-  const timeline = buildPlaybackTimeline([
-    page(0, [linked, diagnostic, unlinked], [1, 1, 1]),
-  ]);
+  const scorePage = page(0, [linked, diagnostic, unlinked], [1, 1, 1]);
+  scorePage.visualSidecar!.notes[1].visual_group_id = null;
+  scorePage.visualSidecar!.notes[2].visual_group_id = null;
+  const timeline = buildPlaybackTimeline([scorePage]);
 
   assert.equal(timeline.length, 1);
   assert.deepEqual(timeline[0].visualGroupIds, ["linked"]);
@@ -463,6 +433,10 @@ test("seeks playback to a mouse-selected group and continues navigation there", 
   const lowerFirst = group("lower-first", 0, 1, 102, 400);
   const upperSecond = group("upper-second", 0, 0, 200, 200);
   const lowerSecond = group("lower-second", 0, 1, 202, 400);
+  upperFirst.moment_id = "moment-first";
+  lowerFirst.moment_id = "moment-first";
+  upperSecond.moment_id = "moment-second";
+  lowerSecond.moment_id = "moment-second";
   const { timeline, state: first } = activeAtFirst([
     page(0, [upperFirst, lowerFirst, upperSecond, lowerSecond], [1, 1, 1, 1]),
   ]);

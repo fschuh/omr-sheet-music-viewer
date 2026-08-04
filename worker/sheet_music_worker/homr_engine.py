@@ -73,13 +73,13 @@ class HomrEngine:
             raise RuntimeError("HOMR failed to initialize")
 
         try:
-            process_image(str(image_path), self._config, self._xml_arguments)
+            result = process_image(str(image_path), self._config, self._xml_arguments)
         except Exception as error:
             if str(error) in NO_MUSIC_ERROR_MESSAGES:
                 raise NoMusicDetectedError(str(error)) from error
             raise
-        music_xml = image_path.with_suffix(".musicxml")
-        visual_sidecar = image_path.with_suffix(".homr.visual.json")
-        if not music_xml.is_file() or not visual_sidecar.is_file():
+        music_xml = result.musicxml_path
+        visual_sidecar = result.visual_sidecar_path
+        if visual_sidecar is None or not music_xml.is_file() or not visual_sidecar.is_file():
             raise RuntimeError("HOMR completed without producing its expected artifacts")
         return music_xml, visual_sidecar

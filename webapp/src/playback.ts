@@ -1,7 +1,6 @@
 import type { DocumentPage, VisualGroup, VisualGroupRef, VisualSidecarNote } from "./types";
 import { isLinkedVisualGroup } from "./types";
 import type { PredictedFingering } from "./fingering";
-import { musicXmlPitchNames } from "./noteLabels";
 import {
   parseRealtimeMusicXml,
   scoreNoteStartsAttack,
@@ -28,7 +27,7 @@ export type PlaybackCommand = (typeof playbackCommandNames)[number];
 export interface PlaybackMoment {
   id: string;
   pageIndex: number;
-  staffIndex: number;
+  staffGroupIndex: number;
   measure: number | null;
   barKey: string;
   visualGroupIds: string[];
@@ -112,11 +111,8 @@ interface PlaybackPitchNote {
   startsAttack: boolean;
 }
 
-export function playbackPitchForNote(
-  note: VisualSidecarNote,
-  pitchNames: ReadonlyMap<string, string>,
-): string | null {
-  return pitchNames.get(note.musicxml_id) ?? note.pitch;
+export function playbackPitchForNote(note: VisualSidecarNote): string | null {
+  return note.pitch;
 }
 
 function isGraceNote(note: VisualSidecarNote): boolean {
@@ -125,7 +121,6 @@ function isGraceNote(note: VisualSidecarNote): boolean {
 
 function notesByVisualGroup(
   notes: VisualSidecarNote[],
-  pitchNames: ReadonlyMap<string, string>,
   suppressedNoteIds: ReadonlySet<string>,
 ): Map<string, VisualSidecarNote[]> {
   const result = new Map<string, VisualSidecarNote[]>();
@@ -134,7 +129,7 @@ function notesByVisualGroup(
       isGraceNote(note) ||
       suppressedNoteIds.has(note.musicxml_id) ||
       !note.visual_group_id ||
-      playbackPitchForNote(note, pitchNames) === null
+      playbackPitchForNote(note) === null
     ) {
       continue;
     }
@@ -177,109 +172,12 @@ function mostCommonMeasure(groups: TimelineGroup[]): number | null {
   return result;
 }
 
-function measuresCompatible(first: TimelineGroup, cluster: MomentCluster): boolean {
-  if (first.measures.size === 0 || cluster.measure === null) return true;
-  return first.measures.has(cluster.measure);
-}
-
-function sharesStem(first: TimelineGroup, cluster: MomentCluster): boolean {
-  const components = new Set(first.group.stem_component_ids ?? []);
-  if (components.size === 0) return false;
-  return cluster.groups.some((entry) =>
-    (entry.group.stem_component_ids ?? []).some((component) => components.has(component)),
-  );
-}
-
-function updateCluster(cluster: MomentCluster): void {
-  cluster.x = cluster.groups.reduce((total, value) => total + value.x, 0) /
-    cluster.groups.length;
-  cluster.measure = mostCommonMeasure(cluster.groups);
-}
-
-function clustersByStem(entries: TimelineGroup[]): MomentCluster[] {
-  // Coalesce chord members before sorting by their visual x-position. A displaced
-  // second can otherwise be separated from its stemmates by an aligned note on
-  // the other stave.
-  const clusters: MomentCluster[] = [];
-  for (const entry of entries) {
-    const matches = clusters
-      .map((cluster, index) =>
-        measuresCompatible(entry, cluster) && sharesStem(entry, cluster) ? index : -1
-      )
-      .filter((index) => index >= 0);
-    if (matches.length === 0) {
-      clusters.push({ groups: [entry], x: entry.x, measure: mostCommonMeasure([entry]) });
-      continue;
-    }
-
-    const target = clusters[matches[0]];
-    target.groups.push(entry);
-    for (const index of matches.slice(1).reverse()) {
-      target.groups.push(...clusters[index].groups);
-      clusters.splice(index, 1);
-    }
-    updateCluster(target);
-  }
-  return clusters;
-}
-
-function clustersAlign(first: MomentCluster, second: MomentCluster): boolean {
-  if (
-    first.measure !== null &&
-    second.measure !== null &&
-    first.measure !== second.measure
-  ) {
-    return false;
-  }
-  const typicalWidth = Math.min(
-    ...first.groups.map((candidate) => candidate.width),
-    ...second.groups.map((candidate) => candidate.width),
-  );
-  const tolerance = Math.min(24, Math.max(6, typicalWidth * 0.8));
-  return Math.abs(first.x - second.x) <= tolerance;
-}
-
-function clustersForStaff(
+function clustersByMomentIdForStaffGroup(
   groups: VisualGroup[],
   notes: VisualSidecarNote[],
-  pitchNames: ReadonlyMap<string, string>,
   suppressedNoteIds: ReadonlySet<string>,
 ): MomentCluster[] {
-  const linkedNotes = notesByVisualGroup(notes, pitchNames, suppressedNoteIds);
-  const entries = groups
-    .map((group): TimelineGroup => {
-      const geometry = horizontalGeometry(group);
-      const notes = linkedNotes.get(group.visual_group_id) ?? [];
-      return {
-        group,
-        ...geometry,
-        measures: new Set(notes.map((note) => note.measure)),
-        notes,
-      };
-    })
-    .sort((first, second) => first.x - second.x || first.group.center[1] - second.group.center[1]);
-  const clusters: MomentCluster[] = [];
-  const stemClusters = clustersByStem(entries)
-    .sort((first, second) => first.x - second.x);
-  for (const entry of stemClusters) {
-    const previous = clusters.at(-1);
-    if (previous && clustersAlign(entry, previous)) {
-      previous.groups.push(...entry.groups);
-      updateCluster(previous);
-    } else {
-      clusters.push(entry);
-    }
-  }
-  return clusters;
-}
-
-function clustersByMomentIdForStaff(
-  groups: VisualGroup[],
-  notes: VisualSidecarNote[],
-  pitchNames: ReadonlyMap<string, string>,
-  suppressedNoteIds: ReadonlySet<string>,
-): MomentCluster[] {
-  const linkedNotes = notesByVisualGroup(notes, pitchNames, suppressedNoteIds);
+  const linkedNotes = notesByVisualGroup(notes, suppressedNoteIds);
   const byMoment = new Map<string, TimelineGroup[]>();
   for (const group of groups) {
     if (group.moment_id === null) continue;
@@ -310,7 +208,6 @@ function clustersByMomentIdForStaff(
 }
 
 interface NoteByNoteScoreData {
-  eventsByNoteId: Map<string, readonly RealtimeScoreNote[]>;
   suppressedNoteIds: Set<string>;
   startsAttackByNoteId: Map<string, boolean>;
 }
@@ -331,11 +228,10 @@ function noteByNoteScoreData(
   musicPageNumber: number,
   documentScore?: RealtimeScore | null,
 ): NoteByNoteScoreData {
-  const eventsByNoteId = new Map<string, readonly RealtimeScoreNote[]>();
   const suppressedNoteIds = new Set<string>();
   const startsAttackByNoteId = new Map<string, boolean>();
   if (!documentScore && !musicXml) {
-    return { eventsByNoteId, suppressedNoteIds, startsAttackByNoteId };
+    return { suppressedNoteIds, startsAttackByNoteId };
   }
   try {
     const score = documentScore ?? parseRealtimeMusicXml(musicXml!);
@@ -349,10 +245,9 @@ function noteByNoteScoreData(
           ))
           .filter((note): note is RealtimeScoreNote => note !== null && !note.grace);
         if (eventNotes.some(scoreNoteStartsAttack)) {
-          // Keep every tone in a partial-tie event for chord highlighting, while
-          // remembering which tones are fresh attacks for audio and listen mode.
+          // Record attack status for every tone in a partial-tie event so the
+          // sidecar-defined chord can distinguish held and newly attacked notes.
           for (const note of eventNotes) {
-            eventsByNoteId.set(note.musicXmlId, eventNotes);
             startsAttackByNoteId.set(note.musicXmlId, scoreNoteStartsAttack(note));
           }
         } else {
@@ -366,13 +261,11 @@ function noteByNoteScoreData(
   } catch {
     // Note-by-note playback can still use the visual sidecar when score parsing fails.
   }
-  return { eventsByNoteId, suppressedNoteIds, startsAttackByNoteId };
+  return { suppressedNoteIds, startsAttackByNoteId };
 }
 
 function playbackNotesForCluster(
   cluster: MomentCluster,
-  pitchNames: ReadonlyMap<string, string>,
-  scoreEvents: ReadonlyMap<string, readonly RealtimeScoreNote[]>,
   startsAttackByNoteId: ReadonlyMap<string, boolean>,
 ): PlaybackPitchNote[] {
   const result: PlaybackPitchNote[] = [];
@@ -389,14 +282,7 @@ function playbackNotesForCluster(
 
   for (const entry of cluster.groups) {
     for (const note of entry.notes) {
-      for (const eventNote of scoreEvents.get(note.musicxml_id) ?? []) {
-        add(eventNote.musicXmlId, eventNote.pitch);
-      }
-    }
-  }
-  for (const entry of cluster.groups) {
-    for (const note of entry.notes) {
-      add(note.musicxml_id, playbackPitchForNote(note, pitchNames));
+      add(note.musicxml_id, playbackPitchForNote(note));
     }
   }
   return result;
@@ -416,7 +302,6 @@ export function buildPlaybackTimeline(
     if (hasRecognizedScore) musicPageNumber += 1;
     const sidecar = page.visualSidecar;
     if (!sidecar) continue;
-    const pitchNames = musicXmlPitchNames(page.musicXml);
     const scoreData = noteByNoteScoreData(page.musicXml, musicPageNumber, documentScore);
     const suppressedNoteIds = new Set(scoreData.suppressedNoteIds);
     for (const note of sidecar.notes) {
@@ -425,32 +310,24 @@ export function buildPlaybackTimeline(
     const eligibleGroups = sidecar.visual_groups.filter(
       (group) =>
         isLinkedVisualGroup(group) &&
-        group.musicxml_ids.some((musicXmlId) => !suppressedNoteIds.has(musicXmlId)),
+        group.musicxml_id !== null &&
+        !suppressedNoteIds.has(group.musicxml_id),
     );
-    const staffIndexes = Array.from(
-      new Set(eligibleGroups.map((group) => group.staff_index)),
+    const staffGroupIndexes = Array.from(
+      new Set(eligibleGroups.map((group) => group.staff_group_index)),
     ).sort((first, second) => first - second);
-    for (const staffIndex of staffIndexes) {
-      const staffGroups = eligibleGroups.filter((group) => group.staff_index === staffIndex);
-      const hasCompleteMomentIds =
-        staffGroups.length > 0 &&
-        staffGroups.every((group) => group.moment_id !== null);
-      const hasCompleteCanonicalMoments =
-        hasCompleteMomentIds &&
-        staffGroups.every((group) => group.visual_status === "canonical");
-      const clusters = hasCompleteMomentIds
-        ? clustersByMomentIdForStaff(
-            staffGroups,
-            sidecar.notes,
-            pitchNames,
-            suppressedNoteIds,
-          )
-        : clustersForStaff(staffGroups, sidecar.notes, pitchNames, suppressedNoteIds);
+    for (const staffGroupIndex of staffGroupIndexes) {
+      const staffGroups = eligibleGroups.filter(
+        (group) => group.staff_group_index === staffGroupIndex,
+      );
+      const clusters = clustersByMomentIdForStaffGroup(
+        staffGroups,
+        sidecar.notes,
+        suppressedNoteIds,
+      );
       clusters.forEach((cluster, clusterIndex) => {
         const momentNotes = playbackNotesForCluster(
           cluster,
-          pitchNames,
-          hasCompleteCanonicalMoments ? new Map() : scoreData.eventsByNoteId,
           scoreData.startsAttackByNoteId,
         );
         const visualGroupIds = cluster.groups
@@ -477,13 +354,13 @@ export function buildPlaybackTimeline(
         const centerY =
           cluster.groups.reduce((total, entry) => total + entry.group.center[1], 0) /
           cluster.groups.length;
-        const unknownBarKey = `page-${page.index}-staff-${staffIndex}-unknown`;
+        const unknownBarKey = `page-${page.index}-staff-group-${staffGroupIndex}-unknown`;
         result.push({
           id: cluster.canonicalMomentId
             ? `page-${page.index}-${cluster.canonicalMomentId}`
-            : `page-${page.index}-staff-${staffIndex}-moment-${clusterIndex}-${visualGroupIds.join("+")}`,
+            : `page-${page.index}-staff-group-${staffGroupIndex}-moment-${clusterIndex}-${visualGroupIds.join("+")}`,
           pageIndex: page.index,
-          staffIndex,
+          staffGroupIndex,
           measure: cluster.measure,
           barKey: cluster.measure === null ? unknownBarKey : `page-${page.index}-measure-${cluster.measure}`,
           visualGroupIds,

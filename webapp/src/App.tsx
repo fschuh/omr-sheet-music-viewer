@@ -348,7 +348,7 @@ export function App() {
     if (!anchor?.visual) return null;
     const sameSystem = visible.filter((note) =>
       note.visual?.pageIndex === anchor.visual?.pageIndex &&
-      note.visual?.staffIndex === anchor.visual?.staffIndex,
+      note.visual?.staffGroupIndex === anchor.visual?.staffGroupIndex,
     );
     const groupIds = Array.from(new Set(
       (sameSystem.length > 0 ? sameSystem : [anchor]).flatMap((note) =>
@@ -358,7 +358,7 @@ export function App() {
     return {
       id: `realtime-${anchor.id}`,
       pageIndex: anchor.visual.pageIndex,
-      staffIndex: anchor.visual.staffIndex,
+      staffGroupIndex: anchor.visual.staffGroupIndex,
       measure: null,
       barKey: `realtime-${anchor.visual.pageIndex}`,
       visualGroupIds: groupIds,
@@ -1469,14 +1469,20 @@ export function App() {
           ).length
         );
       }, 0) ?? 0;
-    const unmatchedMusicXml =
+    const unlinkedMusicXmlNotes =
       document?.pages.reduce(
-        (total, page) => total + (page.visualSidecar?.unmatched_musicxml_notes.length ?? 0),
+        (total, page) =>
+          total +
+          (page.visualSidecar?.notes.filter((note) => note.visual_group_id === null).length ?? 0),
         0,
       ) ?? 0;
-    const unmatchedVisual =
+    const diagnosticVisualGroups =
       document?.pages.reduce(
-        (total, page) => total + (page.visualSidecar?.unmatched_visual_notes.length ?? 0),
+        (total, page) =>
+          total +
+          (page.visualSidecar?.visual_groups.filter(
+            (group) => group.visual_status === "diagnostic",
+          ).length ?? 0),
         0,
       ) ?? 0;
     return {
@@ -1485,8 +1491,8 @@ export function App() {
       failedPages,
       visualGroups,
       linkedNotes,
-      unmatchedMusicXml,
-      unmatchedVisual,
+      unlinkedMusicXmlNotes,
+      diagnosticVisualGroups,
     };
   }, [document]);
 
@@ -1846,7 +1852,7 @@ export function App() {
                   <dl>
                     <dt>Page</dt><dd>{selectedGroup.pageIndex + 1}</dd>
                     <dt>Visual group</dt><dd>{selectedVisualGroup.visual_group_id}</dd>
-                    <dt>MusicXML IDs</dt><dd>{selectedVisualGroup.musicxml_ids.join(", ") || "None"}</dd>
+                    <dt>MusicXML ID</dt><dd>{selectedVisualGroup.musicxml_id ?? "None"}</dd>
                     <dt>Notes</dt><dd>{noteSummary(selectedNotes)}</dd>
                     <dt>Staff position</dt><dd>{selectedVisualGroup.staff_position}</dd>
                     <dt>Visual status</dt><dd>{selectedVisualGroup.visual_status}</dd>
@@ -1875,8 +1881,8 @@ export function App() {
                 <dt>Visual groups</dt><dd>{totals.visualGroups.toLocaleString()}</dd>
                 <dt>Linked notes</dt><dd>{totals.linkedNotes.toLocaleString()}</dd>
                 <dt>Predicted fingerings</dt><dd>{(document.predictedFingeringCount ?? 0).toLocaleString()}</dd>
-                <dt>Unmatched XML</dt><dd>{totals.unmatchedMusicXml.toLocaleString()}</dd>
-                <dt>Unmatched visual</dt><dd>{totals.unmatchedVisual.toLocaleString()}</dd>
+                <dt>Unlinked MusicXML notes</dt><dd>{totals.unlinkedMusicXmlNotes.toLocaleString()}</dd>
+                <dt>Diagnostic visual groups</dt><dd>{totals.diagnosticVisualGroups.toLocaleString()}</dd>
               </dl>
               {workerInfo ? <p className="worker-info">{workerInfo}</p> : null}
             </aside> : null}

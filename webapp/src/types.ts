@@ -12,7 +12,7 @@ export interface VisualSidecarNote {
   musicxml_id: string;
   part: number;
   measure: number;
-  staff: number;
+  musicxml_staff_number: number;
   voice: number;
   pitch: string | null;
   duration: string;
@@ -23,8 +23,8 @@ export interface VisualSidecarNote {
 
 export interface VisualGroup {
   visual_group_id: string;
+  staff_group_index: number;
   staff_index: number;
-  stave_index: number;
   staff_position: number;
   center: VisualPoint;
   bbox: VisualBBox | [];
@@ -36,7 +36,7 @@ export interface VisualGroup {
   stem_contours: VisualPoint[][];
   stem_component_ids?: string[];
   is_hollow_notehead?: boolean;
-  musicxml_ids: string[];
+  musicxml_id: string | null;
   visual_status: "canonical" | "fallback" | "diagnostic";
   provenance:
     | "segmentation"
@@ -55,17 +55,15 @@ export interface RawStemContour {
 }
 
 export interface VisualSidecar {
-  version: 2;
+  version: 3;
   source_image_size: [number, number];
   raw_stem_contours?: RawStemContour[];
   notes: VisualSidecarNote[];
   visual_groups: VisualGroup[];
-  unmatched_musicxml_notes: string[];
-  unmatched_visual_notes: string[];
 }
 
 export function isLinkedVisualGroup(group: VisualGroup): boolean {
-  return group.visual_status !== "diagnostic" && group.musicxml_ids.length > 0;
+  return group.visual_status !== "diagnostic" && group.musicxml_id !== null;
 }
 
 export function isSelectableVisualGroup(
