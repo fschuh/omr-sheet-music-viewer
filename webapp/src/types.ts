@@ -18,7 +18,13 @@ export interface VisualSidecarNote {
   duration: string;
   match_confidence: number;
   visual_group_id: string | null;
-  alignment_method: "structural" | "stem_repair" | "sequence_repair" | "attention" | "none";
+  alignment_method:
+    | "structural"
+    | "stem_repair"
+    | "sequence_repair"
+    | "cross_staff_repair"
+    | "attention"
+    | "none";
 }
 
 export interface VisualGroup {

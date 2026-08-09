@@ -107,6 +107,48 @@ class EmptySidecarEngine(FakeHomrEngine):
         return music_xml, visual_sidecar
 
 
+def cross_staff_repaired_sidecar() -> dict[str, object]:
+    return {
+        "version": 3,
+        "source_image_size": [100, 100],
+        "visual_groups": [
+            {
+                "visual_group_id": "vnote-1",
+                "staff_group_index": 0,
+                "staff_index": 0,
+                "staff_position": -5,
+                "center": [20, 30],
+                "bbox": [15, 25, 25, 35],
+                "notehead_ellipses": [
+                    {"center": [20, 30], "rx": 5, "ry": 4, "angle": 0}
+                ],
+                "notehead_contours": [],
+                "stem_contours": [],
+                "musicxml_id": "homr-note-1",
+                "visual_status": "fallback",
+                "provenance": "segmentation",
+                "moment_id": "moment-1-1",
+                "chord_id": None,
+                "repair_actions": ["cross_staff_link_repaired"],
+            }
+        ],
+        "notes": [
+            {
+                "musicxml_id": "homr-note-1",
+                "part": 1,
+                "measure": 1,
+                "musicxml_staff_number": 2,
+                "voice": 1,
+                "pitch": "F#3",
+                "duration": "note_8",
+                "match_confidence": 1,
+                "visual_group_id": "vnote-1",
+                "alignment_method": "cross_staff_repair",
+            }
+        ],
+    }
+
+
 def test_sha256_file_is_content_based(tmp_path: Path) -> None:
     first = tmp_path / "first.pdf"
     second = tmp_path / "second.pdf"
@@ -179,6 +221,34 @@ def test_validate_artifacts_accepts_readable_outputs(tmp_path: Path) -> None:
         "visualSidecar": "pages/0001.homr.visual.json",
     }
     assert validate_artifacts(page, tmp_path)
+
+
+def test_read_visual_sidecar_accepts_marked_cross_staff_repair(tmp_path: Path) -> None:
+    path = tmp_path / "score.homr.visual.json"
+    sidecar = cross_staff_repaired_sidecar()
+    path.write_text(json.dumps(sidecar), encoding="utf-8")
+
+    assert read_visual_sidecar(path) == sidecar
+
+
+def test_read_visual_sidecar_rejects_incomplete_cross_staff_repair(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "score.homr.visual.json"
+    sidecar = cross_staff_repaired_sidecar()
+    visual_groups = sidecar["visual_groups"]
+    assert isinstance(visual_groups, list)
+    group = visual_groups[0]
+    assert isinstance(group, dict)
+    group["repair_actions"] = []
+    path.write_text(json.dumps(sidecar), encoding="utf-8")
+
+    try:
+        read_visual_sidecar(path)
+    except ValueError as error:
+        assert "Cross-staff repair metadata" in str(error)
+    else:
+        raise AssertionError("Expected incomplete cross-staff metadata to be rejected")
 
 
 def test_validate_artifacts_rejects_a_page_without_notes(tmp_path: Path) -> None:

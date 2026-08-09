@@ -27,7 +27,7 @@ OMR_TARGET_WIDTH = 1920
 OMR_RESAMPLING_FILTER = Image.Resampling.HAMMING
 OMR_RESAMPLING = OMR_RESAMPLING_FILTER.name
 MANIFEST_SCHEMA_VERSION = 1
-VISUAL_SIDECAR_CACHE_REVISION = 41
+VISUAL_SIDECAR_CACHE_REVISION = 42
 
 VISUAL_STATUSES = {"canonical", "fallback", "diagnostic"}
 VISUAL_PROVENANCES = {
@@ -40,6 +40,7 @@ ALIGNMENT_METHODS = {
     "structural",
     "stem_repair",
     "sequence_repair",
+    "cross_staff_repair",
     "attention",
     "none",
 }
@@ -220,7 +221,21 @@ def read_visual_sidecar(path: Path) -> dict[str, Any]:
         group = groups_by_id.get(visual_group_id)
         if group is None or group.get("musicxml_id") != musicxml_id:
             raise ValueError("Visual sidecar inverse links disagree")
-        if group["staff_index"] != note["musicxml_staff_number"] - 1:
+        expected_staff_index = note["musicxml_staff_number"] - 1
+        has_cross_staff_action = "cross_staff_link_repaired" in group["repair_actions"]
+        has_cross_staff_alignment = note["alignment_method"] == "cross_staff_repair"
+        claims_cross_staff_repair = has_cross_staff_action or has_cross_staff_alignment
+        valid_cross_staff_repair = (
+            has_cross_staff_action
+            and has_cross_staff_alignment
+            and group["visual_status"] == "fallback"
+            and group["staff_index"] != expected_staff_index
+        )
+        if claims_cross_staff_repair and not valid_cross_staff_repair:
+            raise ValueError(
+                "Cross-staff repair metadata is incomplete or inconsistent"
+            )
+        if group["staff_index"] != expected_staff_index and not valid_cross_staff_repair:
             raise ValueError("Visual sidecar physical staff links disagree")
 
     for musicxml_id, visual_group_id in groups_by_musicxml_id.items():
