@@ -4,7 +4,8 @@ import "./styles.css";
 import { App } from "./App";
 
 const root = createRoot(document.getElementById("root") as HTMLElement);
-if (new URLSearchParams(window.location.search).has("listen-benchmark")) {
+const query = new URLSearchParams(window.location.search);
+if (query.has("listen-benchmark") || query.has("listen-sequence")) {
   void import("./ListenBenchmarkPage").then(({ ListenBenchmarkPage }) => {
     root.render(<StrictMode><ListenBenchmarkPage /></StrictMode>);
   });

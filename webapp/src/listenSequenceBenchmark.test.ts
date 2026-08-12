@@ -1,0 +1,364 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import type { DecodedOnlineAmtOutput } from "./onlineAmtOutput";
+import type { OnlineAmtStepResult } from "./onlineAmtSession";
+import {
+  LISTEN_SEQUENCE_INTERVALS_MS,
+  assignRecognitionEventsToAttacks,
+  captureListenSequenceTrace,
+  classifyListenSequenceFailure,
+  compareListenSequencePolicies,
+  materializeListenSequence,
+  renderScheduledSequenceAudio,
+  replayListenSequenceTrace,
+  summarizeListenSequenceBenchmark,
+  type ExpectedPitchDiagnostic,
+  type ListenRecognitionFrame,
+  type ListenRecognitionTrace,
+  type ListenSequenceDefinition,
+  type MaterializedListenSequence,
+  type SequenceInferenceSession,
+  type SequenceOutputDecoder,
+} from "./listenSequenceBenchmark";
+
+function regularDefinition(
+  targets: readonly (readonly number[])[],
+  id = "test-sequence",
+): ListenSequenceDefinition {
+  return {
+    id,
+    family: "test",
+    label: "Test sequence",
+    targets,
+    attacks: targets.map((pitches, index) => ({
+      at: index,
+      targetIndex: index,
+      notes: pitches,
+      expectedAdvance: true,
+    })),
+  };
+}
+
+function recognitionFrame(
+  relevantPitches: readonly number[],
+  capturedAtMs: number,
+  attacks: ReadonlyArray<{ midi: number; type?: "onset" | "reOnset" }> = [],
+  activePitches: readonly number[] = attacks.map(({ midi }) => midi),
+): ListenRecognitionFrame {
+  return {
+    capturedAtMs,
+    onsets: attacks.map(({ midi }) => ({
+      midi,
+      confidence: 0.95,
+      noteConfidence: 0.9,
+      onsetTimeMs: capturedAtMs,
+    })),
+    noteEvents: attacks.map(({ midi, type }) => ({
+      midi,
+      type: type ?? "onset",
+      confidence: 0.95,
+      eventTimeMs: capturedAtMs,
+    })),
+    activePitches: activePitches.map((midi) => ({ midi, confidence: 0.9 })),
+    confidenceEvidence: relevantPitches.map((midi) => ({
+      midi,
+      confidence: activePitches.includes(midi) ? 0.9 : 0,
+    })),
+    modelStates: relevantPitches.map((midi) => activePitches.includes(midi) ? 3 : 0),
+    signalActive: activePitches.length > 0,
+    inferenceDurationMs: 4,
+  };
+}
+
+function trace(
+  sequence: MaterializedListenSequence,
+  frames: ListenRecognitionFrame[],
+): ListenRecognitionTrace {
+  return {
+    sequenceId: sequence.definition.id,
+    intervalMs: sequence.intervalMs,
+    sampleRate: 16_000,
+    chunkSize: 512,
+    relevantPitches: sequence.relevantPitches,
+    frames,
+    maximumInferenceMs: Math.max(0, ...frames.map(({ inferenceDurationMs }) => inferenceDurationMs)),
+    maximumProcessingBacklogMs: 0,
+  };
+}
+
+function successfulSingleTargetRun(intervalMs: number) {
+  const sequence = materializeListenSequence(regularDefinition([[60]], `single-${intervalMs}`), intervalMs);
+  const onsetAt = Math.ceil(sequence.targets[0].scheduledAttackTimeMs / 32) * 32;
+  return replayListenSequenceTrace(sequence, trace(sequence, [
+    recognitionFrame(sequence.relevantPitches, onsetAt, [{ midi: 60 }]),
+    recognitionFrame(sequence.relevantPitches, onsetAt + 32, [], [60]),
+  ]));
+}
+
+function pitchDiagnostic(update: Partial<ExpectedPitchDiagnostic> = {}): ExpectedPitchDiagnostic {
+  return {
+    midi: 60,
+    rawOnsetProduced: false,
+    rawOnsetTimeMs: null,
+    onsetConfidence: 0,
+    noteConfidence: 0,
+    qualifyingOnset: false,
+    maximumActiveConfidence: 0,
+    ...update,
+  };
+}
+
+test("renders several scheduled attacks into one chunk-aligned continuous buffer", () => {
+  const sequence = materializeListenSequence(regularDefinition([[60], [62], [64]]), 100);
+  const samples = new Map([
+    [60, { sourceMidi: 60, sampleRate: 16_000, samples: Float32Array.of(1) }],
+    [62, { sourceMidi: 62, sampleRate: 16_000, samples: Float32Array.of(1) }],
+    [64, { sourceMidi: 64, sampleRate: 16_000, samples: Float32Array.of(1) }],
+  ]);
+  const audio = renderScheduledSequenceAudio(sequence, samples);
+  assert.equal(audio.length % 512, 0);
+  for (const attack of sequence.attacks) {
+    const frame = Math.round(attack.scheduledAtMs * 16_000 / 1_000);
+    assert.ok(audio[frame] > 0, `expected attack ${attack.index} in the shared buffer`);
+  }
+});
+
+test("resets inference and decoding once per sequence rather than once per event", async () => {
+  class FakeSession implements SequenceInferenceSession {
+    resetCount = 0;
+    runCount = 0;
+    reset() { this.resetCount += 1; }
+    async run(): Promise<OnlineAmtStepResult> {
+      this.runCount += 1;
+      return {
+        scores: new Float32Array(88 * 5),
+        states: new Uint8Array(88),
+        signalActive: false,
+        inferenceTimeMs: 2,
+      };
+    }
+  }
+  class FakeDecoder implements SequenceOutputDecoder {
+    resetCount = 0;
+    reset() { this.resetCount += 1; }
+    decode(): DecodedOnlineAmtOutput {
+      return {
+        onsets: [],
+        recognizedActivePitches: [],
+        targetPitchEvidence: [],
+        noteStates: [],
+        noteEvents: [],
+      };
+    }
+  }
+  const session = new FakeSession();
+  const decoder = new FakeDecoder();
+  await captureListenSequenceTrace({
+    sequenceId: "three-events",
+    intervalMs: 125,
+    audio: new Float32Array(512 * 4),
+    relevantPitches: [60, 62, 64],
+    session,
+    decoder,
+  });
+  assert.equal(session.resetCount, 1);
+  assert.equal(decoder.resetCount, 1);
+  assert.equal(session.runCount, 4);
+});
+
+test("replays targets in order and advances generation only after a match", () => {
+  const sequence = materializeListenSequence(regularDefinition([[60], [64], [67]]), 250);
+  const frames = [
+    recognitionFrame(sequence.relevantPitches, 224, [{ midi: 60 }]),
+    recognitionFrame(sequence.relevantPitches, 256, [], [60]),
+    recognitionFrame(sequence.relevantPitches, 480, [{ midi: 64 }]),
+    recognitionFrame(sequence.relevantPitches, 512, [], [64]),
+    recognitionFrame(sequence.relevantPitches, 736, [{ midi: 67 }]),
+    recognitionFrame(sequence.relevantPitches, 768, [], [67]),
+  ];
+  const result = replayListenSequenceTrace(sequence, trace(sequence, frames));
+  assert.equal(result.summary.complete, true);
+  assert.deepEqual(result.events.map(({ advancedAtMs }) => advancedAtMs), [256, 512, 768]);
+  assert.deepEqual(result.events.map(({ activeTargetIndexAtAttack }) => activeTargetIndexAtAttack), [0, 1, 2]);
+});
+
+test("assigns repeated recognized notes to distinct physical attacks", () => {
+  const sequence = materializeListenSequence(regularDefinition([[60], [60]]), 200);
+  const notes = sequence.attacks.flatMap(({ notes: attackNotes }) => attackNotes);
+  const assigned = assignRecognitionEventsToAttacks(notes, [
+    { midi: 60, timeMs: 224, confidence: 0.9, noteConfidence: 0.9, type: "onset" },
+    { midi: 60, timeMs: 448, confidence: 0.9, noteConfidence: 0.9, type: "reOnset" },
+  ]);
+  assert.equal(assigned.size, 2);
+  assert.equal(assigned.get(notes[0].id)?.timeMs, 224);
+  assert.equal(assigned.get(notes[1].id)?.timeMs, 448);
+});
+
+test("detects when the next physical attack precedes playhead advancement", () => {
+  const sequence = materializeListenSequence(regularDefinition([[60], [64]]), 125);
+  const frames = [
+    recognitionFrame(sequence.relevantPitches, 320, [{ midi: 60 }]),
+    recognitionFrame(sequence.relevantPitches, 352, [], [60]),
+  ];
+  const result = replayListenSequenceTrace(sequence, trace(sequence, frames));
+  assert.equal(result.events[0].advancedAtMs, 352);
+  assert.equal(result.events[0].nextAttackBeforeAdvance, true);
+  assert.equal(result.events[0].primaryFailure, "next-attack-before-advance");
+  assert.equal(result.events[1].activeTargetIndexAtAttack, 0);
+  assert.equal(result.summary.orderedPrefixCompleted, 0);
+});
+
+test("classifies model, threshold, bass, retrigger, timing, extra, and timeout failures", () => {
+  const common = {
+    advanced: false,
+    duplicate: false,
+    skipped: false,
+    falseAdvance: false,
+    nextAttackBeforeAdvance: false,
+    unexpectedPitches: [] as number[],
+    targetPitches: [60] as number[],
+    previousTargetPitches: [] as number[],
+    expectedPitches: [pitchDiagnostic()],
+  };
+  assert.ok(classifyListenSequenceFailure(common).reasons.includes("model-no-evidence"));
+  assert.ok(classifyListenSequenceFailure({
+    ...common,
+    expectedPitches: [pitchDiagnostic({ rawOnsetProduced: true, onsetConfidence: 0.4 })],
+  }).reasons.includes("onset-below-threshold"));
+  assert.ok(classifyListenSequenceFailure({
+    ...common,
+    targetPitches: [48, 60, 64],
+    expectedPitches: [
+      pitchDiagnostic({ midi: 48, maximumActiveConfidence: 0.8 }),
+      pitchDiagnostic({ midi: 60 }),
+      pitchDiagnostic({ midi: 64 }),
+    ],
+  }).reasons.includes("missing-required-bass-onset"));
+  assert.ok(classifyListenSequenceFailure({
+    ...common,
+    previousTargetPitches: [60],
+    expectedPitches: [pitchDiagnostic({ maximumActiveConfidence: 0.8 })],
+  }).reasons.includes("retrigger-not-detected"));
+  assert.ok(classifyListenSequenceFailure({
+    ...common,
+    nextAttackBeforeAdvance: true,
+  }).reasons.includes("next-attack-before-advance"));
+  assert.equal(classifyListenSequenceFailure({
+    ...common,
+    unexpectedPitches: [61],
+  }).primary, "rejected-extra-pitch");
+  assert.equal(classifyListenSequenceFailure({
+    ...common,
+    expectedPitches: [pitchDiagnostic({
+      rawOnsetProduced: true,
+      qualifyingOnset: true,
+      maximumActiveConfidence: 0.9,
+    })],
+  }).primary, "matcher-timeout");
+});
+
+test("detects a held physical attack that duplicates and skips a later score target", () => {
+  const sequence = materializeListenSequence(regularDefinition([[60], [60]]), 300);
+  const frames = [
+    recognitionFrame(sequence.relevantPitches, 224, [{ midi: 60 }]),
+    recognitionFrame(sequence.relevantPitches, 256, [], [60]),
+    recognitionFrame(sequence.relevantPitches, 288, [{ midi: 60, type: "reOnset" }]),
+    recognitionFrame(sequence.relevantPitches, 320, [], [60]),
+  ];
+  const result = replayListenSequenceTrace(sequence, trace(sequence, frames));
+  assert.equal(result.events[1].skipped, true);
+  assert.equal(result.events[1].duplicate, true);
+  assert.equal(result.events[1].primaryFailure, "duplicate-or-held-attack");
+  assert.equal(result.summary.skippedAdvanceCount, 1);
+  assert.equal(result.summary.duplicateAdvanceCount, 1);
+  assert.equal(result.summary.complete, false);
+});
+
+test("calculates independent summaries for every playing speed", () => {
+  const runs = LISTEN_SEQUENCE_INTERVALS_MS.map(successfulSingleTargetRun);
+  const summary = summarizeListenSequenceBenchmark(runs);
+  assert.deepEqual(
+    summary.speedSummaries.map(({ intervalMs }) => intervalMs),
+    [...LISTEN_SEQUENCE_INTERVALS_MS],
+  );
+  assert.ok(summary.speedSummaries.every(({ completePassageRate }) => completePassageRate === 1));
+  assert.ok(summary.speedSummaries.every(({ correctAdvanceRate }) => correctAdvanceRate === 1));
+});
+
+test("replays a bounded next-target onset buffer over the identical recognition trace", () => {
+  const sequence = materializeListenSequence(regularDefinition([[60], [64]]), 125);
+  const sharedTrace = trace(sequence, [
+    recognitionFrame(sequence.relevantPitches, 224, [{ midi: 60 }]),
+    recognitionFrame(sequence.relevantPitches, 352, [{ midi: 64 }]),
+    recognitionFrame(sequence.relevantPitches, 384, [], [64]),
+  ]);
+  const current = replayListenSequenceTrace(sequence, sharedTrace, "current-matcher");
+  const buffered = replayListenSequenceTrace(sequence, sharedTrace, "next-onset-buffer");
+  const comparison = compareListenSequencePolicies([current], [buffered]);
+  assert.equal(current.summary.complete, false);
+  assert.equal(buffered.summary.complete, true);
+  assert.deepEqual(buffered.events.map(({ advancedAtMs }) => advancedAtMs), [352, 384]);
+  assert.equal(buffered.trace, current.trace);
+  assert.equal(comparison.correctAdvanceImprovement, 1);
+  assert.equal(comparison.bufferedFalseAdvanceCount, 0);
+  assert.equal(comparison.bufferedSkippedAdvanceCount, 0);
+  assert.equal(comparison.bufferedDuplicateAdvanceCount, 0);
+  assert.equal(comparison.accepted, true);
+});
+
+test("buffers a repeated pitch only when a genuine re-onset event is present", () => {
+  const sequence = materializeListenSequence(regularDefinition([[60], [60]]), 125);
+  const withoutRetrigger = trace(sequence, [
+    recognitionFrame(sequence.relevantPitches, 224, [{ midi: 60 }]),
+    recognitionFrame(sequence.relevantPitches, 352, [], [60]),
+    recognitionFrame(sequence.relevantPitches, 384, [], [60]),
+  ]);
+  const withRetrigger = trace(sequence, [
+    recognitionFrame(sequence.relevantPitches, 224, [{ midi: 60 }]),
+    recognitionFrame(sequence.relevantPitches, 352, [{ midi: 60, type: "reOnset" }]),
+    recognitionFrame(sequence.relevantPitches, 384, [], [60]),
+  ]);
+  assert.equal(
+    replayListenSequenceTrace(sequence, withoutRetrigger, "next-onset-buffer").events[1].advanced,
+    false,
+  );
+  const buffered = replayListenSequenceTrace(sequence, withRetrigger, "next-onset-buffer");
+  assert.equal(buffered.events[1].advanced, true);
+  assert.equal(buffered.summary.duplicateAdvanceCount, 0);
+});
+
+test("wrong-note safety attacks cannot advance a later valid target", () => {
+  const definition: ListenSequenceDefinition = {
+    id: "wrong-note-recovery",
+    family: "safety",
+    label: "Wrong note recovery",
+    targets: [[60], [64]],
+    attacks: [
+      { at: 0, targetIndex: 0, notes: [61], expectedAdvance: false },
+      { at: 1, targetIndex: 0, notes: [60], expectedAdvance: true },
+      { at: 2, targetIndex: 1, notes: [64], expectedAdvance: true },
+    ],
+  };
+  const sequence = materializeListenSequence(definition, 250);
+  const frames = [
+    recognitionFrame(sequence.relevantPitches, 224, [{ midi: 61 }]),
+    recognitionFrame(sequence.relevantPitches, 480, [{ midi: 60 }]),
+    recognitionFrame(sequence.relevantPitches, 512, [], [60]),
+    recognitionFrame(sequence.relevantPitches, 736, [{ midi: 64 }]),
+    recognitionFrame(sequence.relevantPitches, 768, [], [64]),
+  ];
+  const result = replayListenSequenceTrace(sequence, trace(sequence, frames));
+  const buffered = replayListenSequenceTrace(
+    sequence,
+    trace(sequence, frames),
+    "next-onset-buffer",
+  );
+  assert.deepEqual(result.attacks[0].advancementTargetIndices, []);
+  assert.deepEqual(result.events.map(({ advancedAtMs }) => advancedAtMs), [512, 768]);
+  assert.equal(result.summary.falseAdvanceCount, 0);
+  assert.equal(result.summary.skippedAdvanceCount, 0);
+  assert.equal(result.summary.complete, true);
+  assert.equal(buffered.summary.falseAdvanceCount, 0);
+  assert.equal(buffered.summary.skippedAdvanceCount, 0);
+  assert.equal(buffered.summary.duplicateAdvanceCount, 0);
+});

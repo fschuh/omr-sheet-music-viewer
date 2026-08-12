@@ -7,6 +7,7 @@ const CHROME = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
 const BASE_URL = process.argv[2] ?? "http://127.0.0.1:5173/online-amt-benchmark.html";
 const CONFIGURATION_FILTER = process.argv[3];
 const LISTEN_ACCURACY_MODE = CONFIGURATION_FILTER === "listen-accuracy";
+const LISTEN_SEQUENCE_MODE = CONFIGURATION_FILTER === "listen-sequence";
 const FINGERING_SMOKE_MODE = CONFIGURATION_FILTER === "fingering-smoke";
 const CONFIGURATIONS = [
   { name: "threads-1-all", query: "threads=1&graph=all&arena=1&pattern=1&mode=sequential&frames=60" },
@@ -82,7 +83,11 @@ async function evaluate(client, expression) {
     returnByValue: true,
   });
   if (response.exceptionDetails) {
-    throw new Error(response.exceptionDetails.text ?? "Browser evaluation failed");
+    throw new Error(
+      response.exceptionDetails.exception?.description ??
+      response.exceptionDetails.text ??
+      "Browser evaluation failed",
+    );
   }
   return response.result?.value;
 }
@@ -113,9 +118,13 @@ async function runConfiguration(configuration, index) {
     client = cdpClient(webSocketUrl);
     await client.send("Runtime.enable");
     await client.send("Page.enable");
-    const separator = BASE_URL.includes("?") ? "&" : "?";
+    const pageUrl = (LISTEN_ACCURACY_MODE || LISTEN_SEQUENCE_MODE) &&
+        /online-amt-benchmark\.html(?:\?|$)/.test(BASE_URL)
+      ? BASE_URL.replace(/online-amt-benchmark\.html/, "index.html")
+      : BASE_URL;
+    const separator = pageUrl.includes("?") ? "&" : "?";
     await client.send("Page.navigate", {
-      url: `${BASE_URL}${separator}${configuration.query}`,
+      url: `${pageUrl}${separator}${configuration.query}`,
     });
     if (FINGERING_SMOKE_MODE) {
       const deadline = Date.now() + 30_000;
@@ -152,7 +161,7 @@ async function runConfiguration(configuration, index) {
         };
       })()`);
     }
-    const deadline = Date.now() + 120_000;
+    const deadline = Date.now() + (LISTEN_SEQUENCE_MODE ? 600_000 : 120_000);
     let status = "";
     while (Date.now() < deadline) {
       status = await evaluate(client, "document.body?.dataset.status ?? ''");
@@ -168,7 +177,74 @@ async function runConfiguration(configuration, index) {
     }
     return await evaluate(
       client,
-      LISTEN_ACCURACY_MODE
+      LISTEN_SEQUENCE_MODE
+        ? `(() => {
+            const result = window.listenSequenceBenchmarkResult;
+            return {
+              policy: result.policy,
+              baseline: result.baseline,
+              experimental: {
+                policy: result.experimental.policy,
+                bufferMs: result.experimental.bufferMs,
+                comparison: result.experimental.comparison,
+                perSpeed: result.experimental.speedSummaries,
+                incompleteSequences: result.experimental.runs
+                  .filter((run) => !run.summary.complete)
+                  .map((run) => ({
+                    sequenceId: run.sequenceId,
+                    family: run.family,
+                    intervalMs: run.intervalMs,
+                    eventRate: run.eventRate,
+                    firstStallPosition: run.summary.firstStallIndex,
+                    summary: run.summary,
+                    failures: run.events
+                      .filter((event) => event.failureReasons.length > 0)
+                      .map((event) => ({
+                        position: event.index,
+                        targetPitches: event.targetPitches,
+                        scheduledAttackTimeMs: event.scheduledAttackTimeMs,
+                        activeTargetIndexAtAttack: event.activeTargetIndexAtAttack,
+                        advancedAtMs: event.advancedAtMs,
+                        latencyMs: event.onsetToAdvanceMs,
+                        failureReasons: event.failureReasons,
+                        primaryFailure: event.primaryFailure,
+                        unexpectedPitches: event.unexpectedPitches,
+                        falseAdvance: event.falseAdvance,
+                        skipped: event.skipped,
+                        duplicate: event.duplicate,
+                      })),
+                  })),
+              },
+              perSpeed: result.speedSummaries,
+              incompleteSequences: result.runs
+                .filter((run) => !run.summary.complete)
+                .map((run) => ({
+                  sequenceId: run.sequenceId,
+                  family: run.family,
+                  intervalMs: run.intervalMs,
+                  eventRate: run.eventRate,
+                  firstStallPosition: run.summary.firstStallIndex,
+                  summary: run.summary,
+                  failures: run.events
+                    .filter((event) => event.failureReasons.length > 0)
+                    .map((event) => ({
+                      position: event.index,
+                      targetPitches: event.targetPitches,
+                      scheduledAttackTimeMs: event.scheduledAttackTimeMs,
+                      activeTargetIndexAtAttack: event.activeTargetIndexAtAttack,
+                      advancedAtMs: event.advancedAtMs,
+                      latencyMs: event.onsetToAdvanceMs,
+                      failureReasons: event.failureReasons,
+                      primaryFailure: event.primaryFailure,
+                      unexpectedPitches: event.unexpectedPitches,
+                      falseAdvance: event.falseAdvance,
+                      skipped: event.skipped,
+                      duplicate: event.duplicate,
+                    })),
+                })),
+            };
+          })()`
+        : LISTEN_ACCURACY_MODE
         ? `(() => {
             const result = window.listenBenchmarkResult;
             return {
@@ -231,6 +307,8 @@ const selectedConfigurations = FINGERING_SMOKE_MODE
       name: "fingering-smoke",
       query: `fingering-notes=${process.argv[4] ?? "500"}`,
     }]
+  : LISTEN_SEQUENCE_MODE
+  ? [{ name: "listen-sequence", query: "listen-sequence=auto" }]
   : LISTEN_ACCURACY_MODE
   ? [{ name: "listen-accuracy", query: "listen-benchmark=auto" }]
   : CONFIGURATION_FILTER
@@ -253,6 +331,23 @@ for (let index = 0; index < selectedConfigurations.length; index += 1) {
     console.error(
       `${configuration.name}: ${result.predictionCount} predictions in ` +
       `${result.elapsedMs.toFixed(2)}ms`,
+    );
+  } else if (LISTEN_SEQUENCE_MODE) {
+    const slowest = result.perSpeed[0];
+    const fastest = result.perSpeed.at(-1);
+    const comparison = result.experimental.comparison;
+    console.error(
+      `${configuration.name}: complete=${(slowest.completePassageRate * 100).toFixed(1)}%` +
+      `→${(fastest.completePassageRate * 100).toFixed(1)}% ` +
+      `incomplete=${result.incompleteSequences.length} ` +
+      `fast-p95=${fastest.p95OnsetToAdvanceMs ?? "n/a"}ms ` +
+      `buffer-correct=${comparison.correctAdvanceImprovement >= 0 ? "+" : ""}` +
+      `${comparison.correctAdvanceImprovement} ` +
+      `buffer-complete=${comparison.completePassageImprovement >= 0 ? "+" : ""}` +
+      `${comparison.completePassageImprovement} ` +
+      `buffer-safety=${comparison.bufferedFalseAdvanceCount}/` +
+      `${comparison.bufferedSkippedAdvanceCount}/${comparison.bufferedDuplicateAdvanceCount} ` +
+      `accepted=${comparison.accepted}`,
     );
   } else {
     console.error(

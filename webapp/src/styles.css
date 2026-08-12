@@ -789,6 +789,36 @@ button:disabled {
 
 .benchmark-progress { margin-left: 12px; }
 
+.sequence-benchmark {
+  border-top: 1px solid #d5d0c7;
+  margin-top: 32px;
+  padding-top: 12px;
+}
+
+.benchmark-table-wrap {
+  margin-top: 16px;
+  overflow-x: auto;
+}
+
+.benchmark-table {
+  border-collapse: collapse;
+  font-size: 0.86rem;
+  width: 100%;
+}
+
+.benchmark-table th,
+.benchmark-table td {
+  border-bottom: 1px solid #d5d0c7;
+  padding: 7px 9px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.benchmark-table th:first-child,
+.benchmark-table td:first-child,
+.benchmark-table th:nth-child(2),
+.benchmark-table td:nth-child(2) { text-align: left; }
+
 .benchmark-form {
   align-items: end;
   display: flex;
