@@ -51,6 +51,22 @@ Listening behavior:
   evidence for MIDI 65. Matcher calibration cannot recover a pitch absent from
   the model output without weakening exact-chord behavior.
 
+Trace-level Course Clear baseline (August 12, 2026):
+
+| Interval | Raw complete evidence | Threshold-qualified | Independent match | Ordered advance | Recognized but blocked |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 1000 ms | 20 / 27 (74.1%) | 19 / 27 (70.4%) | 24 / 27 (88.9%) | 12 / 27 (44.4%) | 12 |
+
+The first causal stall is zero-based event index 12: measure 2, moment 5,
+target `[51, 63, 72]`. MIDI 51 and 72 produced fresh, high-confidence onsets,
+but MIDI 63 produced only active-note evidence and no fresh onset. Independent
+replay therefore classified the event as `carry-over`; ordered playback never
+advanced before the following attack. Twelve later events matched independently
+but remained blocked behind this target. The raw and independent metrics were
+identical for the current and buffered policies, confirming that both policies
+replayed the same model trace. No model threshold or production matcher behavior
+was changed for this diagnostic baseline.
+
 These are deterministic digital fixtures rendered from the app's bundled piano
 samples. They demonstrate runtime equivalence and provide a regression gate;
 they are not a substitute for acoustic-piano, microphone, room-noise, and
@@ -75,4 +91,7 @@ node tools\online_amt\run_browser_benchmarks.mjs `
 
 node tools\online_amt\run_browser_benchmarks.mjs `
   http://127.0.0.1:5173/ listen-accuracy
+
+node tools\online_amt\run_browser_benchmarks.mjs `
+  http://127.0.0.1:5174/online-amt-benchmark.html listen-sequence
 ```

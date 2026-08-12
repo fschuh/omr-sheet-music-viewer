@@ -136,21 +136,36 @@ export interface ListenRecognitionTrace {
 export type ListenSequenceFailureReason =
   | "model-no-evidence"
   | "onset-below-threshold"
-  | "missing-required-bass-onset"
-  | "next-attack-before-advance"
-  | "rejected-extra-pitch"
   | "retrigger-not-detected"
+  | "carry-over"
+  | "missing-required-bass-onset"
+  | "rejected-extra-pitch"
   | "matcher-timeout"
-  | "duplicate-or-held-attack";
+  | "evidence-too-spread-out"
+  | "next-attack-before-advance"
+  | "blocked-by-prior-stall"
+  | "duplicate-or-held-attack"
+  | "skipped-target"
+  | "stale-generation";
+
+export type RequiredAttackType = "onset" | "reOnset";
 
 export interface ExpectedPitchDiagnostic {
   midi: number;
+  attackRequired: boolean;
+  requiredAttackType: RequiredAttackType | null;
+  rawAttackDetected: boolean;
   rawOnsetProduced: boolean;
   rawOnsetTimeMs: number | null;
+  maximumOnsetConfidence: number;
   onsetConfidence: number;
   noteConfidence: number;
   qualifyingOnset: boolean;
   maximumActiveConfidence: number;
+  firstRawEvidenceTimeMs: number | null;
+  firstThresholdQualifiedEvidenceTimeMs: number | null;
+  requiredRawEvidencePresent: boolean;
+  thresholdQualified: boolean;
 }
 
 export interface ListenSequenceEventDiagnostic {
@@ -159,11 +174,23 @@ export interface ListenSequenceEventDiagnostic {
   targetPitches: number[];
   playedPitches: number[];
   expectedPitches: ExpectedPitchDiagnostic[];
+  firstRawEvidenceTimeMs: number | null;
+  firstThresholdQualifiedEvidenceTimeMs: number | null;
   firstQualifyingPitchEvidenceTimeMs: number | null;
+  confidentUnexpectedPitches: number[];
+  allRequiredRawEvidencePresent: boolean;
+  thresholdQualified: boolean;
+  independentlyMatched: boolean;
+  independentMatchAtMs: number | null;
+  independentMatchLatencyMs: number | null;
+  orderedAdvanced: boolean;
+  orderedAdvancedAtMs: number | null;
+  orderedAdvanceLatencyMs: number | null;
   advanced: boolean;
   advancedAtMs: number | null;
   onsetToAdvanceMs: number | null;
   activeTargetIndexAtAttack: number | null;
+  blockedByPriorStall: boolean;
   unexpectedPitches: number[];
   nextAttackBeforeAdvance: boolean;
   missed: boolean;
@@ -171,6 +198,9 @@ export interface ListenSequenceEventDiagnostic {
   skipped: boolean;
   falseAdvance: boolean;
   timedOut: boolean;
+  rawFailureReasons: ListenSequenceFailureReason[];
+  independentFailureReasons: ListenSequenceFailureReason[];
+  orderedFailureReasons: ListenSequenceFailureReason[];
   failureReasons: ListenSequenceFailureReason[];
   primaryFailure: ListenSequenceFailureReason | null;
 }
@@ -187,6 +217,18 @@ export interface ListenSequenceAttackDiagnostic {
 
 export interface ListenSequenceRunSummary {
   complete: boolean;
+  rawCompleteEvidenceCount: number;
+  rawCompleteEvidenceRate: number;
+  thresholdQualifiedEventCount: number;
+  thresholdQualifiedEventRate: number;
+  independentMatchCount: number;
+  independentMatchRate: number;
+  orderedAdvanceCount: number;
+  orderedAdvanceRate: number;
+  recognizedButBlockedCount: number;
+  cascadeLossCount: number;
+  blockedEventPositions: number[];
+  firstCausalStallIndex: number | null;
   correctAdvanceCount: number;
   expectedEventCount: number;
   correctAdvanceRate: number;
@@ -198,6 +240,11 @@ export interface ListenSequenceRunSummary {
   falseAdvanceCount: number;
   p50OnsetToAdvanceMs: number | null;
   p95OnsetToAdvanceMs: number | null;
+  p50IndependentMatchLatencyMs: number | null;
+  p95IndependentMatchLatencyMs: number | null;
+  p50OrderedAdvanceLatencyMs: number | null;
+  p95OrderedAdvanceLatencyMs: number | null;
+  reasonCounts: Partial<Record<ListenSequenceFailureReason, number>>;
   maximumInferenceMs: number;
   maximumProcessingBacklogMs: number;
   nextAttackBeforeAdvanceCount: number;
@@ -232,6 +279,7 @@ export interface ListenSequencePolicyComparison {
   bufferedSkippedAdvanceCount: number;
   bufferedDuplicateAdvanceCount: number;
   isolatedBenchmarkUnchanged: true;
+  rawAndIndependentMetricsIdentical: boolean;
   accepted: boolean;
 }
 
@@ -250,6 +298,20 @@ export interface ListenSequenceAggregateSummary {
   family?: string;
   sequenceCount: number;
   completePassageRate: number;
+  rawCompleteEvidenceCount: number;
+  rawCompleteEvidenceRate: number;
+  thresholdQualifiedEventCount: number;
+  thresholdQualifiedEventRate: number;
+  independentMatchCount: number;
+  independentMatchRate: number;
+  orderedAdvanceCount: number;
+  orderedAdvanceRate: number;
+  recognizedButBlockedCount: number;
+  cascadeLossCount: number;
+  blockedEventPositions: Array<{
+    sequenceId: string;
+    positions: number[];
+  }>;
   correctAdvanceCount: number;
   expectedEventCount: number;
   correctAdvanceRate: number;
@@ -267,6 +329,10 @@ export interface ListenSequenceAggregateSummary {
   falseAdvanceCount: number;
   p50OnsetToAdvanceMs: number | null;
   p95OnsetToAdvanceMs: number | null;
+  p50IndependentMatchLatencyMs: number | null;
+  p95IndependentMatchLatencyMs: number | null;
+  p50OrderedAdvanceLatencyMs: number | null;
+  p95OrderedAdvanceLatencyMs: number | null;
   maximumInferenceMs: number;
   maximumProcessingBacklogMs: number;
   nextAttackBeforeAdvanceCount: number;
@@ -690,7 +756,7 @@ export async function captureListenSequenceTrace(options: {
   };
 }
 
-interface RecognizedAttackObservation {
+export interface RecognizedAttackObservation {
   midi: number;
   timeMs: number;
   confidence: number;
@@ -718,22 +784,74 @@ function recognizedAttacks(trace: ListenRecognitionTrace): RecognizedAttackObser
   return observations.sort((left, right) => left.timeMs - right.timeMs || left.midi - right.midi);
 }
 
+function scheduledAttackTypes(
+  scheduledNotes: readonly ScheduledSequenceNote[],
+): Map<string, RequiredAttackType> {
+  const ordered = [...scheduledNotes].sort((left, right) => (
+    left.attackTimeMs - right.attackTimeMs || left.midi - right.midi
+  ));
+  const previousAttackByPitch = new Map<number, number>();
+  const requirements = new Map<string, RequiredAttackType>();
+  for (const scheduled of ordered) {
+    const previousAttackIndex = previousAttackByPitch.get(scheduled.midi);
+    requirements.set(
+      scheduled.id,
+      previousAttackIndex !== undefined &&
+          previousAttackIndex === scheduled.attackIndex - 1
+        ? "reOnset"
+        : "onset",
+    );
+    previousAttackByPitch.set(scheduled.midi, scheduled.attackIndex);
+  }
+  return requirements;
+}
+
+function scheduledAttributionEnds(
+  scheduledNotes: readonly ScheduledSequenceNote[],
+): Map<number, number> {
+  const physicalAttacks = [...new Set(scheduledNotes.map(({ attackIndex }) => attackIndex))]
+    .sort((left, right) => left - right)
+    .map((attackIndex) => ({
+      attackIndex,
+      startMs: Math.min(
+        ...scheduledNotes
+          .filter((note) => note.attackIndex === attackIndex)
+          .map(({ attackTimeMs }) => attackTimeMs),
+      ),
+    }));
+  return new Map(physicalAttacks.map(({ attackIndex, startMs }, index) => [
+    attackIndex,
+    Math.min(
+      startMs + RECOGNITION_ASSIGNMENT_MS,
+      (physicalAttacks[index + 1]?.startMs ?? Infinity) - 0.001,
+    ),
+  ]));
+}
+
 /** Assigns each decoded attack to at most one physical scheduled attack. */
 export function assignRecognitionEventsToAttacks(
   scheduledNotes: readonly ScheduledSequenceNote[],
   observations: readonly RecognizedAttackObservation[],
 ): Map<string, RecognizedAttackObservation> {
   const assignments = new Map<string, RecognizedAttackObservation>();
+  const assignedObservations = new Set<RecognizedAttackObservation>();
+  const requirements = scheduledAttackTypes(scheduledNotes);
+  const attributionEnds = scheduledAttributionEnds(scheduledNotes);
   for (const observation of observations) {
+    if (assignedObservations.has(observation)) continue;
     const candidates = scheduledNotes
       .filter((scheduled) => (
         scheduled.midi === observation.midi &&
         !assignments.has(scheduled.id) &&
+        requirements.get(scheduled.id) === observation.type &&
         scheduled.attackTimeMs <= observation.timeMs + FRAME_MS &&
-        observation.timeMs - scheduled.attackTimeMs <= RECOGNITION_ASSIGNMENT_MS
+        observation.timeMs <= (attributionEnds.get(scheduled.attackIndex) ?? -Infinity)
       ))
       .sort((left, right) => right.attackTimeMs - left.attackTimeMs);
-    if (candidates[0]) assignments.set(candidates[0].id, observation);
+    if (candidates[0]) {
+      assignments.set(candidates[0].id, observation);
+      assignedObservations.add(observation);
+    }
   }
   return assignments;
 }
@@ -749,18 +867,256 @@ function evidenceInWindow(
   midi: number,
   startMs: number,
   endMs: number,
-): { maximum: number; firstQualifyingAtMs: number | null } {
+): {
+  maximum: number;
+  firstRawAtMs: number | null;
+  firstQualifyingAtMs: number | null;
+} {
   let maximum = 0;
+  let firstRawAtMs: number | null = null;
   let firstQualifyingAtMs: number | null = null;
   for (const frame of trace.frames) {
-    if (frame.capturedAtMs < startMs || frame.capturedAtMs > endMs) continue;
+    if (frame.capturedAtMs < startMs || frame.capturedAtMs >= endMs) continue;
     const confidence = frame.confidenceEvidence.find((pitch) => pitch.midi === midi)?.confidence ?? 0;
     maximum = Math.max(maximum, confidence);
+    if (confidence >= 0.05 && firstRawAtMs === null) {
+      firstRawAtMs = frame.capturedAtMs;
+    }
     if (confidence >= matcherOptions.activeTargetThreshold && firstQualifyingAtMs === null) {
       firstQualifyingAtMs = frame.capturedAtMs;
     }
   }
-  return { maximum, firstQualifyingAtMs };
+  return { maximum, firstRawAtMs, firstQualifyingAtMs };
+}
+
+function matcherResult(
+  frame: ListenRecognitionFrame,
+  generation: number,
+  targetPitches: readonly number[],
+): RecognizerResult {
+  return {
+    generation,
+    onsets: frame.onsets,
+    noteEvents: frame.noteEvents,
+    recognizedActivePitches: frame.activePitches,
+    targetPitchEvidence: frame.confidenceEvidence.filter(({ midi }) => (
+      targetPitches.includes(midi)
+    )),
+    processingTimeMs: frame.inferenceDurationMs,
+    capturedAtMs: frame.capturedAtMs,
+  };
+}
+
+export interface TraceEventRecognitionDiagnostic {
+  expectedPitches: ExpectedPitchDiagnostic[];
+  firstRawEvidenceTimeMs: number | null;
+  firstThresholdQualifiedEvidenceTimeMs: number | null;
+  confidentUnexpectedPitches: number[];
+  allRequiredRawEvidencePresent: boolean;
+  thresholdQualified: boolean;
+  independentlyMatched: boolean;
+  independentMatchAtMs: number | null;
+  independentMatchLatencyMs: number | null;
+  rawFailureReasons: ListenSequenceFailureReason[];
+  independentFailureReasons: ListenSequenceFailureReason[];
+  independentStaleGeneration: boolean;
+}
+
+/**
+ * Computes target-correct raw and matcher metrics from an existing trace.
+ * This function never renders audio and never invokes the inference session.
+ */
+export function evaluateTraceRecognitionLayers(
+  sequence: MaterializedListenSequence,
+  trace: ListenRecognitionTrace,
+): TraceEventRecognitionDiagnostic[] {
+  const observations = recognizedAttacks(trace);
+  const scheduledNotes = sequence.attacks.flatMap(({ notes }) => notes);
+  const assignments = assignRecognitionEventsToAttacks(scheduledNotes, observations);
+  const requirements = scheduledAttackTypes(scheduledNotes);
+
+  return sequence.targets.map((target, index) => {
+    const expectedAttack = sequence.attacks[target.attackIndex];
+    const nextPhysicalAttack = sequence.attacks
+      .filter(({ scheduledAtMs }) => scheduledAtMs > expectedAttack.scheduledAtMs)
+      .sort((left, right) => left.scheduledAtMs - right.scheduledAtMs)[0];
+    const windowStartMs = target.scheduledAttackTimeMs - FRAME_MS;
+    const windowEndMs = nextPhysicalAttack?.scheduledAtMs ??
+      ((trace.frames.at(-1)?.capturedAtMs ?? sequence.durationMs) + FRAME_MS);
+    const windowObservations = observations.filter((observation) => (
+      observation.timeMs >= windowStartMs && observation.timeMs < windowEndMs
+    ));
+    const expectedPitches = target.pitches.map((midi): ExpectedPitchDiagnostic => {
+      const scheduledNote = expectedAttack.notes.find((candidate) => candidate.midi === midi);
+      const assignment = scheduledNote ? assignments.get(scheduledNote.id) : undefined;
+      const requiredAttackType = scheduledNote
+        ? requirements.get(scheduledNote.id) ?? "onset"
+        : null;
+      const active = evidenceInWindow(trace, midi, windowStartMs, windowEndMs);
+      const rawPitchAttacks = windowObservations.filter((observation) => (
+        observation.midi === midi
+      ));
+      const maximumOnsetConfidence = Math.max(
+        assignment?.confidence ?? 0,
+        ...rawPitchAttacks.map(({ confidence }) => confidence),
+      );
+      const qualifyingOnset = assignment !== undefined &&
+        assignment.confidence >= matcherOptions.onsetThreshold &&
+        assignment.noteConfidence >= matcherOptions.targetNoteThreshold;
+      const firstAttackAtMs = rawPitchAttacks
+        .map(({ timeMs }) => timeMs)
+        .sort((left, right) => left - right)[0] ?? null;
+      const firstRawEvidenceTimeMs = [firstAttackAtMs, active.firstRawAtMs]
+        .filter((value): value is number => value !== null)
+        .sort((left, right) => left - right)[0] ?? null;
+      const firstThresholdQualifiedEvidenceTimeMs = [
+        qualifyingOnset ? assignment.timeMs : null,
+        active.firstQualifyingAtMs,
+      ]
+        .filter((value): value is number => value !== null)
+        .sort((left, right) => left - right)[0] ?? null;
+      const attackRequired = scheduledNote !== undefined;
+      return {
+        midi,
+        attackRequired,
+        requiredAttackType,
+        rawAttackDetected: assignment !== undefined,
+        rawOnsetProduced: assignment !== undefined,
+        rawOnsetTimeMs: assignment?.timeMs ?? null,
+        maximumOnsetConfidence,
+        onsetConfidence: assignment?.confidence ?? 0,
+        noteConfidence: assignment?.noteConfidence ?? 0,
+        qualifyingOnset,
+        maximumActiveConfidence: active.maximum,
+        firstRawEvidenceTimeMs,
+        firstThresholdQualifiedEvidenceTimeMs,
+        requiredRawEvidencePresent: attackRequired
+          ? assignment !== undefined
+          : active.firstRawAtMs !== null,
+        thresholdQualified: attackRequired
+          ? qualifyingOnset
+          : active.maximum >= matcherOptions.activeTargetThreshold,
+      };
+    });
+    const confidentUnexpectedPitches = sortedUnique(windowObservations
+      .filter((observation) => (
+        !target.pitches.includes(observation.midi) &&
+        observation.confidence >= matcherOptions.onsetThreshold &&
+        observation.noteConfidence >= matcherOptions.noteThreshold
+      ))
+      .map(({ midi }) => midi));
+
+    const matcher = new ExactChordMatcher(onlineAmtChordMatcherOptions);
+    matcher.reset(0, 0, false);
+    let previousFrame: ListenRecognitionFrame | null = null;
+    for (const frame of trace.frames) {
+      if (frame.capturedAtMs >= target.scheduledAttackTimeMs) break;
+      matcher.consume(matcherResult(frame, 0, []));
+      previousFrame = frame;
+    }
+    matcher.setTarget(target.pitches, 1, target.scheduledAttackTimeMs);
+    const carryOverPitches = new Set(
+      previousFrame?.activePitches
+        .filter(({ confidence }) => confidence >= matcherOptions.activeTargetThreshold)
+        .map(({ midi }) => midi) ?? [],
+    );
+    let independentMatchAtMs: number | null = null;
+    let independentStaleGeneration = false;
+    const independentExtras = new Set<number>();
+    for (const frame of trace.frames) {
+      if (frame.capturedAtMs < target.scheduledAttackTimeMs) continue;
+      if (frame.capturedAtMs >= windowEndMs) break;
+      const update = matcher.consume(matcherResult(frame, 1, target.pitches));
+      independentStaleGeneration ||= update.stale;
+      for (const midi of update.extraPitches) independentExtras.add(midi);
+      if (update.matched) {
+        independentMatchAtMs = frame.capturedAtMs;
+        break;
+      }
+    }
+    const independentlyMatched = independentMatchAtMs !== null;
+    const rawFailureReasons: ListenSequenceFailureReason[] = [];
+    for (const pitch of expectedPitches.filter(({ attackRequired }) => attackRequired)) {
+      if (pitch.requiredRawEvidencePresent && pitch.thresholdQualified) continue;
+      if (
+        pitch.requiredAttackType === "reOnset" &&
+        !pitch.rawAttackDetected &&
+        pitch.maximumActiveConfidence >= matcherOptions.activeTargetThreshold
+      ) {
+        rawFailureReasons.push("retrigger-not-detected");
+      } else if (
+        pitch.firstRawEvidenceTimeMs !== null ||
+        pitch.maximumOnsetConfidence > 0 ||
+        pitch.maximumActiveConfidence >= 0.05
+      ) {
+        rawFailureReasons.push("onset-below-threshold");
+      } else {
+        rawFailureReasons.push("model-no-evidence");
+      }
+    }
+    const independentFailureReasons: ListenSequenceFailureReason[] = [];
+    if (!independentlyMatched) {
+      const missingOnsets = expectedPitches.filter(({ qualifyingOnset }) => !qualifyingOnset);
+      if (missingOnsets.some(({ midi }) => carryOverPitches.has(midi))) {
+        independentFailureReasons.push("carry-over");
+      }
+      const bass = Math.min(...target.pitches);
+      if (
+        target.pitches.length >= 3 &&
+        missingOnsets.some((pitch) => (
+          pitch.midi === bass &&
+          pitch.maximumActiveConfidence >= matcherOptions.activeTargetThreshold
+        ))
+      ) {
+        independentFailureReasons.push("missing-required-bass-onset");
+      }
+      if (independentExtras.size > 0 || confidentUnexpectedPitches.length > 0) {
+        independentFailureReasons.push("rejected-extra-pitch");
+      }
+      const evidenceTimes = expectedPitches
+        .map(({ firstThresholdQualifiedEvidenceTimeMs }) => (
+          firstThresholdQualifiedEvidenceTimeMs
+        ))
+        .filter((value): value is number => value !== null)
+        .sort((left, right) => left - right);
+      if (
+        evidenceTimes.length >= 2 &&
+        evidenceTimes.at(-1)! - evidenceTimes[0] > matcherOptions.collectionWindowMs
+      ) {
+        independentFailureReasons.push("evidence-too-spread-out");
+      }
+      if (independentStaleGeneration) independentFailureReasons.push("stale-generation");
+      if (independentFailureReasons.length === 0) {
+        independentFailureReasons.push("matcher-timeout");
+      }
+    }
+    return {
+      expectedPitches,
+      firstRawEvidenceTimeMs: expectedPitches
+        .map(({ firstRawEvidenceTimeMs }) => firstRawEvidenceTimeMs)
+        .filter((value): value is number => value !== null)
+        .sort((left, right) => left - right)[0] ?? null,
+      firstThresholdQualifiedEvidenceTimeMs: expectedPitches
+        .map(({ firstThresholdQualifiedEvidenceTimeMs }) => (
+          firstThresholdQualifiedEvidenceTimeMs
+        ))
+        .filter((value): value is number => value !== null)
+        .sort((left, right) => left - right)[0] ?? null,
+      confidentUnexpectedPitches,
+      allRequiredRawEvidencePresent: expectedPitches.every((pitch) => (
+        pitch.requiredRawEvidencePresent
+      )),
+      thresholdQualified: expectedPitches.every((pitch) => pitch.thresholdQualified),
+      independentlyMatched,
+      independentMatchAtMs,
+      independentMatchLatencyMs: independentMatchAtMs === null
+        ? null
+        : independentMatchAtMs - target.scheduledAttackTimeMs,
+      rawFailureReasons: [...new Set(rawFailureReasons)].sort(),
+      independentFailureReasons: [...new Set(independentFailureReasons)].sort(),
+      independentStaleGeneration,
+    };
+  });
 }
 
 export interface SequenceFailureInput {
@@ -773,15 +1129,54 @@ export interface SequenceFailureInput {
   targetPitches: readonly number[];
   previousTargetPitches: readonly number[];
   expectedPitches: readonly ExpectedPitchDiagnostic[];
+  independentlyMatched?: boolean;
+  blockedByPriorStall?: boolean;
+  staleGeneration?: boolean;
+  rawFailureReasons?: readonly ListenSequenceFailureReason[];
+  independentFailureReasons?: readonly ListenSequenceFailureReason[];
+  orderedFailureReasons?: readonly ListenSequenceFailureReason[];
 }
 
 export function classifyListenSequenceFailure(
   input: SequenceFailureInput,
 ): { reasons: ListenSequenceFailureReason[]; primary: ListenSequenceFailureReason | null } {
+  if (
+    input.rawFailureReasons !== undefined ||
+    input.independentFailureReasons !== undefined ||
+    input.orderedFailureReasons !== undefined
+  ) {
+    const reasons = [...new Set([
+      ...(input.rawFailureReasons ?? []),
+      ...(input.independentFailureReasons ?? []),
+      ...(input.orderedFailureReasons ?? []),
+    ])].sort();
+    const priority: ListenSequenceFailureReason[] = [
+      "blocked-by-prior-stall",
+      "duplicate-or-held-attack",
+      "skipped-target",
+      "stale-generation",
+      "rejected-extra-pitch",
+      "carry-over",
+      "retrigger-not-detected",
+      "missing-required-bass-onset",
+      "evidence-too-spread-out",
+      "onset-below-threshold",
+      "model-no-evidence",
+      "next-attack-before-advance",
+      "matcher-timeout",
+    ];
+    return {
+      reasons,
+      primary: priority.find((reason) => reasons.includes(reason)) ?? null,
+    };
+  }
   const reasons: ListenSequenceFailureReason[] = [];
   if (input.duplicate || input.skipped || input.falseAdvance) {
     reasons.push("duplicate-or-held-attack");
   }
+  if (input.skipped) reasons.push("skipped-target");
+  if (input.blockedByPriorStall) reasons.push("blocked-by-prior-stall");
+  if (input.staleGeneration) reasons.push("stale-generation");
   if (input.nextAttackBeforeAdvance) reasons.push("next-attack-before-advance");
   if (!input.advanced) {
     if (input.unexpectedPitches.length > 0) reasons.push("rejected-extra-pitch");
@@ -820,10 +1215,15 @@ export function classifyListenSequenceFailure(
     }
   }
   const priority: ListenSequenceFailureReason[] = [
+    "blocked-by-prior-stall",
     "duplicate-or-held-attack",
+    "skipped-target",
+    "stale-generation",
     "rejected-extra-pitch",
+    "carry-over",
     "retrigger-not-detected",
     "missing-required-bass-onset",
+    "evidence-too-spread-out",
     "onset-below-threshold",
     "model-no-evidence",
     "next-attack-before-advance",
@@ -851,6 +1251,7 @@ export function replayListenSequenceTrace(
   }> = [];
   const attackTargetAtTime = new Map<number, number | null>();
   const extraPitchesByTarget = new Map<number, Set<number>>();
+  const staleGenerationTargets = new Set<number>();
   let observedTargetOnsets = new Set<number>();
   let maximumTargetEvidence = new Map<number, number>();
   let bufferedFrames: ListenRecognitionFrame[] = [];
@@ -992,6 +1393,7 @@ export function replayListenSequenceTrace(
       capturedAtMs: matcherFrame.capturedAtMs,
     };
     const update = matcher.consume(result);
+    if (update.stale) staleGenerationTargets.add(targetIndex);
     rememberExtras(targetIndex, update.extraPitches);
     if (!update.matched) continue;
     recordAdvancement(frame.capturedAtMs);
@@ -1018,6 +1420,7 @@ export function replayListenSequenceTrace(
         processingTimeMs: buffered.inferenceDurationMs,
         capturedAtMs: buffered.capturedAtMs,
       });
+      if (bufferedUpdate.stale) staleGenerationTargets.add(targetIndex);
       rememberExtras(targetIndex, bufferedUpdate.extraPitches);
       if (bufferedUpdate.matched) recordAdvancement(frame.capturedAtMs);
     }
@@ -1030,11 +1433,7 @@ export function replayListenSequenceTrace(
     nextAttackIndex += 1;
   }
 
-  const scheduledNotes = sequence.attacks.flatMap(({ notes }) => notes);
-  const recognitionAssignments = assignRecognitionEventsToAttacks(
-    scheduledNotes,
-    recognizedAttacks(trace),
-  );
+  const recognitionLayers = evaluateTraceRecognitionLayers(sequence, trace);
   const advancementSourceCounts = new Map<number, number>();
   const duplicateAdvancementTargets = new Set<number>();
   for (const advancement of advancements) {
@@ -1047,35 +1446,9 @@ export function replayListenSequenceTrace(
       (advancementSourceCounts.get(advancement.sourceAttackIndex) ?? 0) + 1,
     );
   }
-  const events = sequence.targets.map((target, index): ListenSequenceEventDiagnostic => {
-    const expectedAttack = sequence.attacks[target.attackIndex];
+  const preliminaryEvents = sequence.targets.map((target, index): ListenSequenceEventDiagnostic => {
+    const recognition = recognitionLayers[index];
     const nextTarget = sequence.targets[index + 1];
-    const evidenceEndMs = nextTarget
-      ? Math.max(target.scheduledAttackTimeMs + FRAME_MS, nextTarget.scheduledAttackTimeMs - 0.001)
-      : trace.frames.at(-1)?.capturedAtMs ?? sequence.durationMs;
-    const expectedPitches = target.pitches.map((midi): ExpectedPitchDiagnostic => {
-      const scheduledNote = expectedAttack.notes.find((candidate) => candidate.midi === midi);
-      const assignment = scheduledNote
-        ? recognitionAssignments.get(scheduledNote.id)
-        : undefined;
-      const evidence = evidenceInWindow(
-        trace,
-        midi,
-        target.scheduledAttackTimeMs - FRAME_MS,
-        evidenceEndMs,
-      );
-      return {
-        midi,
-        rawOnsetProduced: assignment !== undefined,
-        rawOnsetTimeMs: assignment?.timeMs ?? null,
-        onsetConfidence: assignment?.confidence ?? 0,
-        noteConfidence: assignment?.noteConfidence ?? 0,
-        qualifyingOnset: assignment !== undefined &&
-          assignment.confidence >= matcherOptions.onsetThreshold &&
-          assignment.noteConfidence >= matcherOptions.targetNoteThreshold,
-        maximumActiveConfidence: evidence.maximum,
-      };
-    });
     const advancement = advancements.find((candidate) => candidate.targetIndex === index);
     const sourceAttack = advancement?.sourceAttackIndex === null ||
         advancement?.sourceAttackIndex === undefined
@@ -1091,65 +1464,142 @@ export function replayListenSequenceTrace(
     const nextAttackBeforeAdvance = nextTarget !== undefined && (
       advancement === undefined || nextTarget.scheduledAttackTimeMs < advancement.atMs
     );
-    const firstQualifyingPitchEvidenceTimeMs = target.pitches
-      .map((midi) => evidenceInWindow(
-        trace,
-        midi,
-        target.scheduledAttackTimeMs - FRAME_MS,
-        evidenceEndMs,
-      ).firstQualifyingAtMs)
-      .filter((value): value is number => value !== null)
-      .sort((left, right) => left - right)[0] ?? null;
-    const unexpectedPitches = sortedUnique(extraPitchesByTarget.get(index) ?? []);
-    const failure = classifyListenSequenceFailure({
-      advanced: advancement !== undefined,
-      duplicate,
-      skipped,
-      falseAdvance,
-      nextAttackBeforeAdvance,
-      unexpectedPitches,
-      targetPitches: target.pitches,
-      previousTargetPitches: sequence.targets[index - 1]?.pitches ?? [],
-      expectedPitches,
-    });
+    const activeTargetIndexAtAttack = attackTargetAtTime.get(target.attackIndex) ?? null;
+    const orderedAdvanced = advancement !== undefined &&
+      sourceAttack?.index === target.attackIndex &&
+      !duplicate &&
+      !skipped &&
+      !falseAdvance;
+    const unexpectedPitches = sortedUnique([
+      ...recognition.confidentUnexpectedPitches,
+      ...(extraPitchesByTarget.get(index) ?? []),
+    ]);
+    const orderedFailureReasons: ListenSequenceFailureReason[] = [];
+    if (nextAttackBeforeAdvance) orderedFailureReasons.push("next-attack-before-advance");
+    if (duplicate) orderedFailureReasons.push("duplicate-or-held-attack");
+    if (skipped || (advancement !== undefined && sourceAttack?.index !== target.attackIndex)) {
+      orderedFailureReasons.push("skipped-target");
+    }
+    if (staleGenerationTargets.has(index)) orderedFailureReasons.push("stale-generation");
     return {
       index,
       scheduledAttackTimeMs: target.scheduledAttackTimeMs,
       targetPitches: target.pitches,
       playedPitches: target.playedPitches,
-      expectedPitches,
-      firstQualifyingPitchEvidenceTimeMs,
+      expectedPitches: recognition.expectedPitches,
+      firstRawEvidenceTimeMs: recognition.firstRawEvidenceTimeMs,
+      firstThresholdQualifiedEvidenceTimeMs:
+        recognition.firstThresholdQualifiedEvidenceTimeMs,
+      firstQualifyingPitchEvidenceTimeMs:
+        recognition.firstThresholdQualifiedEvidenceTimeMs,
+      confidentUnexpectedPitches: recognition.confidentUnexpectedPitches,
+      allRequiredRawEvidencePresent: recognition.allRequiredRawEvidencePresent,
+      thresholdQualified: recognition.thresholdQualified,
+      independentlyMatched: recognition.independentlyMatched,
+      independentMatchAtMs: recognition.independentMatchAtMs,
+      independentMatchLatencyMs: recognition.independentMatchLatencyMs,
+      orderedAdvanced,
+      orderedAdvancedAtMs: orderedAdvanced ? advancement.atMs : null,
+      orderedAdvanceLatencyMs: orderedAdvanced
+        ? advancement.atMs - target.scheduledAttackTimeMs
+        : null,
       advanced: advancement !== undefined,
       advancedAtMs: advancement?.atMs ?? null,
       onsetToAdvanceMs: advancement === undefined
         ? null
         : advancement.atMs - target.scheduledAttackTimeMs,
-      activeTargetIndexAtAttack: attackTargetAtTime.get(target.attackIndex) ?? null,
+      activeTargetIndexAtAttack,
+      blockedByPriorStall: false,
       unexpectedPitches,
       nextAttackBeforeAdvance,
       missed: advancement === undefined,
       duplicate,
       skipped,
       falseAdvance,
-      timedOut: advancement === undefined,
+      timedOut: !recognition.independentlyMatched,
+      rawFailureReasons: recognition.rawFailureReasons,
+      independentFailureReasons: recognition.independentFailureReasons,
+      orderedFailureReasons: [...new Set(orderedFailureReasons)].sort(),
+      failureReasons: [],
+      primaryFailure: null,
+    };
+  });
+  const firstStallIndex = preliminaryEvents.findIndex((event) => (
+    !event.orderedAdvanced ||
+    event.activeTargetIndexAtAttack !== event.index ||
+    event.nextAttackBeforeAdvance
+  ));
+  const events = preliminaryEvents.map((event): ListenSequenceEventDiagnostic => {
+    const blockedByPriorStall = firstStallIndex >= 0 &&
+      event.index > firstStallIndex &&
+      event.independentlyMatched &&
+      !event.orderedAdvanced;
+    const orderedFailureReasons = blockedByPriorStall
+      ? [...event.orderedFailureReasons, "blocked-by-prior-stall" as const]
+      : event.orderedFailureReasons;
+    const failure = classifyListenSequenceFailure({
+      advanced: event.orderedAdvanced,
+      duplicate: event.duplicate,
+      skipped: event.skipped,
+      falseAdvance: event.falseAdvance,
+      nextAttackBeforeAdvance: event.nextAttackBeforeAdvance,
+      unexpectedPitches: event.unexpectedPitches,
+      targetPitches: event.targetPitches,
+      previousTargetPitches: sequence.targets[event.index - 1]?.pitches ?? [],
+      expectedPitches: event.expectedPitches,
+      independentlyMatched: event.independentlyMatched,
+      blockedByPriorStall,
+      staleGeneration: orderedFailureReasons.includes("stale-generation"),
+      rawFailureReasons: event.rawFailureReasons,
+      independentFailureReasons: event.independentFailureReasons,
+      orderedFailureReasons,
+    });
+    return {
+      ...event,
+      blockedByPriorStall,
+      orderedFailureReasons: [...new Set(orderedFailureReasons)].sort(),
       failureReasons: failure.reasons,
       primaryFailure: failure.primary,
     };
   });
-  const correctEvents = events.filter((event) => (
-    event.advanced && !event.falseAdvance && !event.duplicate && !event.skipped
+  const correctEvents = events.filter(({ orderedAdvanced }) => orderedAdvanced);
+  const orderedLatencies = correctEvents.flatMap((event) => (
+    event.orderedAdvanceLatencyMs === null ? [] : [event.orderedAdvanceLatencyMs]
   ));
-  const firstStallIndex = events.findIndex((event) => (
-    !correctEvents.includes(event) ||
-    event.activeTargetIndexAtAttack !== event.index ||
-    event.nextAttackBeforeAdvance
+  const independentLatencies = events.flatMap((event) => (
+    event.independentMatchLatencyMs === null ? [] : [event.independentMatchLatencyMs]
   ));
-  const latencies = correctEvents.flatMap((event) => (
-    event.onsetToAdvanceMs === null ? [] : [event.onsetToAdvanceMs]
-  ));
+  const reasonCounts: Partial<Record<ListenSequenceFailureReason, number>> = {};
+  for (const event of events) {
+    for (const reason of event.failureReasons) {
+      reasonCounts[reason] = (reasonCounts[reason] ?? 0) + 1;
+    }
+  }
+  const rawCompleteEvidenceCount = events.filter((event) => (
+    event.allRequiredRawEvidencePresent
+  )).length;
+  const thresholdQualifiedEventCount = events.filter((event) => event.thresholdQualified).length;
+  const independentMatchCount = events.filter((event) => event.independentlyMatched).length;
+  const blockedEventPositions = events
+    .filter((event) => event.blockedByPriorStall)
+    .map(({ index }) => index);
   const summary: ListenSequenceRunSummary = {
     complete: correctEvents.length === events.length &&
       advancements.length === events.length,
+    rawCompleteEvidenceCount,
+    rawCompleteEvidenceRate: events.length === 0 ? 0 : rawCompleteEvidenceCount / events.length,
+    thresholdQualifiedEventCount,
+    thresholdQualifiedEventRate: events.length === 0
+      ? 0
+      : thresholdQualifiedEventCount / events.length,
+    independentMatchCount,
+    independentMatchRate: events.length === 0 ? 0 : independentMatchCount / events.length,
+    orderedAdvanceCount: correctEvents.length,
+    orderedAdvanceRate: events.length === 0 ? 0 : correctEvents.length / events.length,
+    recognizedButBlockedCount: blockedEventPositions.length,
+    cascadeLossCount: blockedEventPositions.length,
+    blockedEventPositions,
+    firstCausalStallIndex: firstStallIndex < 0 ? null : firstStallIndex,
     correctAdvanceCount: correctEvents.length,
     expectedEventCount: events.length,
     correctAdvanceRate: events.length === 0 ? 0 : correctEvents.length / events.length,
@@ -1159,8 +1609,13 @@ export function replayListenSequenceTrace(
     duplicateAdvanceCount: events.filter(({ duplicate }) => duplicate).length,
     skippedAdvanceCount: events.filter(({ skipped }) => skipped).length,
     falseAdvanceCount: events.filter(({ falseAdvance }) => falseAdvance).length,
-    p50OnsetToAdvanceMs: percentile(latencies, 0.5),
-    p95OnsetToAdvanceMs: percentile(latencies, 0.95),
+    p50OnsetToAdvanceMs: percentile(orderedLatencies, 0.5),
+    p95OnsetToAdvanceMs: percentile(orderedLatencies, 0.95),
+    p50IndependentMatchLatencyMs: percentile(independentLatencies, 0.5),
+    p95IndependentMatchLatencyMs: percentile(independentLatencies, 0.95),
+    p50OrderedAdvanceLatencyMs: percentile(orderedLatencies, 0.5),
+    p95OrderedAdvanceLatencyMs: percentile(orderedLatencies, 0.95),
+    reasonCounts,
     maximumInferenceMs: trace.maximumInferenceMs,
     maximumProcessingBacklogMs: trace.maximumProcessingBacklogMs,
     nextAttackBeforeAdvanceCount: events.filter(({ nextAttackBeforeAdvance }) => (
@@ -1204,6 +1659,22 @@ function aggregateRuns(
     (total, run) => total + run.summary.correctAdvanceCount,
     0,
   );
+  const rawCompleteEvidenceCount = runs.reduce(
+    (total, run) => total + run.summary.rawCompleteEvidenceCount,
+    0,
+  );
+  const thresholdQualifiedEventCount = runs.reduce(
+    (total, run) => total + run.summary.thresholdQualifiedEventCount,
+    0,
+  );
+  const independentMatchCount = runs.reduce(
+    (total, run) => total + run.summary.independentMatchCount,
+    0,
+  );
+  const orderedAdvanceCount = runs.reduce(
+    (total, run) => total + run.summary.orderedAdvanceCount,
+    0,
+  );
   const failureClassifications: Partial<Record<ListenSequenceFailureReason, number>> = {};
   for (const run of runs) {
     for (const event of run.events) {
@@ -1212,10 +1683,13 @@ function aggregateRuns(
       }
     }
   }
-  const latencies = runs.flatMap((run) => run.events.flatMap((event) => (
-    event.advanced && !event.falseAdvance && event.onsetToAdvanceMs !== null
-      ? [event.onsetToAdvanceMs]
+  const orderedLatencies = runs.flatMap((run) => run.events.flatMap((event) => (
+    event.orderedAdvanced && event.orderedAdvanceLatencyMs !== null
+      ? [event.orderedAdvanceLatencyMs]
       : []
+  )));
+  const independentLatencies = runs.flatMap((run) => run.events.flatMap((event) => (
+    event.independentMatchLatencyMs !== null ? [event.independentMatchLatencyMs] : []
   )));
   return {
     intervalMs,
@@ -1225,6 +1699,36 @@ function aggregateRuns(
     completePassageRate: runs.length === 0
       ? 0
       : runs.filter(({ summary }) => summary.complete).length / runs.length,
+    rawCompleteEvidenceCount,
+    rawCompleteEvidenceRate: expectedEventCount === 0
+      ? 0
+      : rawCompleteEvidenceCount / expectedEventCount,
+    thresholdQualifiedEventCount,
+    thresholdQualifiedEventRate: expectedEventCount === 0
+      ? 0
+      : thresholdQualifiedEventCount / expectedEventCount,
+    independentMatchCount,
+    independentMatchRate: expectedEventCount === 0
+      ? 0
+      : independentMatchCount / expectedEventCount,
+    orderedAdvanceCount,
+    orderedAdvanceRate: expectedEventCount === 0
+      ? 0
+      : orderedAdvanceCount / expectedEventCount,
+    recognizedButBlockedCount: runs.reduce(
+      (total, run) => total + run.summary.recognizedButBlockedCount,
+      0,
+    ),
+    cascadeLossCount: runs.reduce(
+      (total, run) => total + run.summary.cascadeLossCount,
+      0,
+    ),
+    blockedEventPositions: runs
+      .filter(({ summary }) => summary.blockedEventPositions.length > 0)
+      .map((run) => ({
+        sequenceId: run.sequenceId,
+        positions: run.summary.blockedEventPositions,
+      })),
     correctAdvanceCount,
     expectedEventCount,
     correctAdvanceRate: expectedEventCount === 0 ? 0 : correctAdvanceCount / expectedEventCount,
@@ -1256,8 +1760,12 @@ function aggregateRuns(
       (total, run) => total + run.summary.falseAdvanceCount,
       0,
     ),
-    p50OnsetToAdvanceMs: percentile(latencies, 0.5),
-    p95OnsetToAdvanceMs: percentile(latencies, 0.95),
+    p50OnsetToAdvanceMs: percentile(orderedLatencies, 0.5),
+    p95OnsetToAdvanceMs: percentile(orderedLatencies, 0.95),
+    p50IndependentMatchLatencyMs: percentile(independentLatencies, 0.5),
+    p95IndependentMatchLatencyMs: percentile(independentLatencies, 0.95),
+    p50OrderedAdvanceLatencyMs: percentile(orderedLatencies, 0.5),
+    p95OrderedAdvanceLatencyMs: percentile(orderedLatencies, 0.95),
     maximumInferenceMs: Math.max(0, ...runs.map(({ summary }) => summary.maximumInferenceMs)),
     maximumProcessingBacklogMs: Math.max(
       0,
@@ -1394,6 +1902,28 @@ export function compareListenSequencePolicies(
     currentOrderedPrefixCompleted;
   const completePassageImprovement = bufferedCompletePassageCount -
     currentCompletePassageCount;
+  const recognitionSignature = (run: ListenSequenceRunResult) => JSON.stringify(
+    run.events.map((event) => ({
+      raw: event.allRequiredRawEvidencePresent,
+      threshold: event.thresholdQualified,
+      independent: event.independentlyMatched,
+      independentAt: event.independentMatchAtMs,
+      expectedPitches: event.expectedPitches,
+      confidentUnexpectedPitches: event.confidentUnexpectedPitches,
+      rawReasons: event.rawFailureReasons,
+      independentReasons: event.independentFailureReasons,
+    })),
+  );
+  const bufferedByRun = new Map(bufferedRuns.map((run) => [
+    `${run.sequenceId}:${run.intervalMs}`,
+    run,
+  ]));
+  const rawAndIndependentMetricsIdentical = currentRuns.length === bufferedRuns.length &&
+    currentRuns.every((run) => {
+      const buffered = bufferedByRun.get(`${run.sequenceId}:${run.intervalMs}`);
+      return buffered !== undefined &&
+        recognitionSignature(run) === recognitionSignature(buffered);
+    });
   return {
     currentCorrectAdvanceCount,
     bufferedCorrectAdvanceCount,
@@ -1408,6 +1938,7 @@ export function compareListenSequencePolicies(
     bufferedSkippedAdvanceCount,
     bufferedDuplicateAdvanceCount,
     isolatedBenchmarkUnchanged: true,
+    rawAndIndependentMetricsIdentical,
     accepted: bufferedCorrectAdvanceCount > currentCorrectAdvanceCount &&
       completePassageImprovement >= 0 &&
       bufferedFalseAdvanceCount === 0 &&

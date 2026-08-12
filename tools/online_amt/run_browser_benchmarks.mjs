@@ -180,6 +180,74 @@ async function runConfiguration(configuration, index) {
       LISTEN_SEQUENCE_MODE
         ? `(() => {
             const result = window.listenSequenceBenchmarkResult;
+            const exportSummary = (summary) => ({
+              ...summary,
+              rawRecognitionPercentage: summary.rawCompleteEvidenceRate * 100,
+              thresholdQualifiedPercentage: summary.thresholdQualifiedEventRate * 100,
+              independentMatcherPercentage: summary.independentMatchRate * 100,
+              orderedAdvancementPercentage: summary.orderedAdvanceRate * 100,
+              reasonCodeCounts: summary.reasonCounts ?? summary.failureClassifications,
+              independentLatencyPercentiles: {
+                p50: summary.p50IndependentMatchLatencyMs,
+                p95: summary.p95IndependentMatchLatencyMs,
+              },
+              orderedLatencyPercentiles: {
+                p50: summary.p50OrderedAdvanceLatencyMs,
+                p95: summary.p95OrderedAdvanceLatencyMs,
+              },
+            });
+            const exportEvent = (event) => ({
+              position: event.index,
+              targetPitches: event.targetPitches,
+              playedPitches: event.playedPitches,
+              scheduledAttackTimeMs: event.scheduledAttackTimeMs,
+              allRequiredRawEvidencePresent: event.allRequiredRawEvidencePresent,
+              thresholdQualified: event.thresholdQualified,
+              independentlyMatched: event.independentlyMatched,
+              independentMatchAtMs: event.independentMatchAtMs,
+              independentMatchLatencyMs: event.independentMatchLatencyMs,
+              orderedAdvanced: event.orderedAdvanced,
+              orderedAdvancedAtMs: event.orderedAdvancedAtMs,
+              orderedAdvanceLatencyMs: event.orderedAdvanceLatencyMs,
+              activeTargetIndexAtAttack: event.activeTargetIndexAtAttack,
+              blockedByPriorStall: event.blockedByPriorStall,
+              firstRawEvidenceTimeMs: event.firstRawEvidenceTimeMs,
+              firstThresholdQualifiedEvidenceTimeMs:
+                event.firstThresholdQualifiedEvidenceTimeMs,
+              confidentUnexpectedPitches: event.confidentUnexpectedPitches,
+              expectedPitches: event.expectedPitches,
+              rawFailureReasons: event.rawFailureReasons,
+              independentFailureReasons: event.independentFailureReasons,
+              orderedFailureReasons: event.orderedFailureReasons,
+              failureReasons: event.failureReasons,
+              primaryFailure: event.primaryFailure,
+              unexpectedPitches: event.unexpectedPitches,
+              falseAdvance: event.falseAdvance,
+              skipped: event.skipped,
+              duplicate: event.duplicate,
+            });
+            const exportRun = (run) => {
+              const causalStall = run.summary.firstCausalStallIndex === null
+                ? null
+                : run.events[run.summary.firstCausalStallIndex] ?? null;
+              return {
+                policy: run.policy,
+                sequenceId: run.sequenceId,
+                family: run.family,
+                intervalMs: run.intervalMs,
+                eventRate: run.eventRate,
+                ...exportSummary(run.summary),
+                firstCausalStall: run.summary.firstCausalStallIndex,
+                causalStall: causalStall ? exportEvent(causalStall) : null,
+                blockedEventPositions: run.summary.blockedEventPositions,
+                blockedEvents: run.events
+                  .filter((event) => event.blockedByPriorStall)
+                  .map(exportEvent),
+                falseAdvanceCount: run.summary.falseAdvanceCount,
+                skippedAdvanceCount: run.summary.skippedAdvanceCount,
+                duplicateAdvanceCount: run.summary.duplicateAdvanceCount,
+              };
+            };
             return {
               policy: result.policy,
               baseline: result.baseline,
@@ -187,7 +255,8 @@ async function runConfiguration(configuration, index) {
                 policy: result.experimental.policy,
                 bufferMs: result.experimental.bufferMs,
                 comparison: result.experimental.comparison,
-                perSpeed: result.experimental.speedSummaries,
+                perSpeed: result.experimental.speedSummaries.map(exportSummary),
+                sequences: result.experimental.runs.map(exportRun),
                 incompleteSequences: result.experimental.runs
                   .filter((run) => !run.summary.complete)
                   .map((run) => ({
@@ -199,23 +268,11 @@ async function runConfiguration(configuration, index) {
                     summary: run.summary,
                     failures: run.events
                       .filter((event) => event.failureReasons.length > 0)
-                      .map((event) => ({
-                        position: event.index,
-                        targetPitches: event.targetPitches,
-                        scheduledAttackTimeMs: event.scheduledAttackTimeMs,
-                        activeTargetIndexAtAttack: event.activeTargetIndexAtAttack,
-                        advancedAtMs: event.advancedAtMs,
-                        latencyMs: event.onsetToAdvanceMs,
-                        failureReasons: event.failureReasons,
-                        primaryFailure: event.primaryFailure,
-                        unexpectedPitches: event.unexpectedPitches,
-                        falseAdvance: event.falseAdvance,
-                        skipped: event.skipped,
-                        duplicate: event.duplicate,
-                      })),
+                      .map(exportEvent),
                   })),
               },
-              perSpeed: result.speedSummaries,
+              perSpeed: result.speedSummaries.map(exportSummary),
+              sequences: result.runs.map(exportRun),
               incompleteSequences: result.runs
                 .filter((run) => !run.summary.complete)
                 .map((run) => ({
@@ -227,20 +284,7 @@ async function runConfiguration(configuration, index) {
                   summary: run.summary,
                   failures: run.events
                     .filter((event) => event.failureReasons.length > 0)
-                    .map((event) => ({
-                      position: event.index,
-                      targetPitches: event.targetPitches,
-                      scheduledAttackTimeMs: event.scheduledAttackTimeMs,
-                      activeTargetIndexAtAttack: event.activeTargetIndexAtAttack,
-                      advancedAtMs: event.advancedAtMs,
-                      latencyMs: event.onsetToAdvanceMs,
-                      failureReasons: event.failureReasons,
-                      primaryFailure: event.primaryFailure,
-                      unexpectedPitches: event.unexpectedPitches,
-                      falseAdvance: event.falseAdvance,
-                      skipped: event.skipped,
-                      duplicate: event.duplicate,
-                    })),
+                    .map(exportEvent),
                 })),
             };
           })()`

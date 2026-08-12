@@ -281,6 +281,11 @@ export function ListenBenchmarkPage() {
               {sequenceResult.experimental.comparison.completePassageImprovement >= 0 ? "+" : ""}
               {sequenceResult.experimental.comparison.completePassageImprovement}.
             </p>
+            <p>
+              Independent match evaluates each scheduled event against its intended target.
+              Ordered advance measures actual score progress and may be reduced by an earlier
+              stall.
+            </p>
             <div className="benchmark-table-wrap">
               <table className="benchmark-table">
                 <thead>
@@ -289,11 +294,15 @@ export function ListenBenchmarkPage() {
                     <th>Family</th>
                     <th>Interval</th>
                     <th>Rate</th>
-                    <th>Advance rate</th>
-                    <th>Advances</th>
-                    <th>Prefix</th>
-                    <th>p50 / p95</th>
-                    <th>Next-before-advance</th>
+                    <th>Raw evidence</th>
+                    <th>Threshold qualified</th>
+                    <th>Independent match</th>
+                    <th>Ordered advance</th>
+                    <th>Blocked after stall</th>
+                    <th>First causal stall</th>
+                    <th>Primary failure</th>
+                    <th>Independent p50 / p95</th>
+                    <th>Ordered p50 / p95</th>
                     <th>False / skip / duplicate</th>
                   </tr>
                 </thead>
@@ -315,11 +324,21 @@ export function ListenBenchmarkPage() {
                         ? summary.intervalMs
                         : summary.intervalMs.toFixed(1)} ms</td>
                       <td>{summary.eventRate.toFixed(1)}/s</td>
-                      <td>{(summary.correctAdvanceRate * 100).toFixed(1)}%</td>
-                      <td>{summary.correctAdvanceCount}/{summary.expectedEventCount}</td>
-                      <td>{summary.orderedPrefixCompleted}</td>
-                      <td>{summary.p50OnsetToAdvanceMs ?? "—"} / {summary.p95OnsetToAdvanceMs ?? "—"} ms</td>
-                      <td>{summary.nextAttackBeforeAdvanceCount}</td>
+                      <td>{(summary.rawCompleteEvidenceRate * 100).toFixed(1)}%</td>
+                      <td>{(summary.thresholdQualifiedEventRate * 100).toFixed(1)}%</td>
+                      <td>{(summary.independentMatchRate * 100).toFixed(1)}%</td>
+                      <td>{(summary.orderedAdvanceRate * 100).toFixed(1)}%</td>
+                      <td>{summary.recognizedButBlockedCount}</td>
+                      <td>{summary.firstStalls.length === 0
+                        ? "—"
+                        : summary.firstStalls
+                          .map((stall) => `${stall.sequenceId}:${stall.position}`)
+                          .join(", ")}</td>
+                      <td>{summary.firstStalls
+                        .map(({ primaryFailure }) => primaryFailure)
+                        .find((reason) => reason !== null) ?? "—"}</td>
+                      <td>{summary.p50IndependentMatchLatencyMs ?? "—"} / {summary.p95IndependentMatchLatencyMs ?? "—"} ms</td>
+                      <td>{summary.p50OrderedAdvanceLatencyMs ?? "—"} / {summary.p95OrderedAdvanceLatencyMs ?? "—"} ms</td>
                       <td>{summary.falseAdvanceCount} / {summary.skippedAdvanceCount} / {summary.duplicateAdvanceCount}</td>
                     </tr>
                   ))}
