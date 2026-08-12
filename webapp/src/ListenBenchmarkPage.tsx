@@ -220,7 +220,7 @@ export function ListenBenchmarkPage() {
                     <th>Family</th>
                     <th>Interval</th>
                     <th>Rate</th>
-                    <th>Complete</th>
+                    <th>Advance rate</th>
                     <th>Advances</th>
                     <th>Prefix</th>
                     <th>p50 / p95</th>
@@ -246,7 +246,7 @@ export function ListenBenchmarkPage() {
                         ? summary.intervalMs
                         : summary.intervalMs.toFixed(1)} ms</td>
                       <td>{summary.eventRate.toFixed(1)}/s</td>
-                      <td>{(summary.completePassageRate * 100).toFixed(0)}%</td>
+                      <td>{(summary.correctAdvanceRate * 100).toFixed(1)}%</td>
                       <td>{summary.correctAdvanceCount}/{summary.expectedEventCount}</td>
                       <td>{summary.orderedPrefixCompleted}</td>
                       <td>{summary.p50OnsetToAdvanceMs ?? "—"} / {summary.p95OnsetToAdvanceMs ?? "—"} ms</td>

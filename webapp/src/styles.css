@@ -783,6 +783,19 @@ button:disabled {
   width: 100%;
 }
 
+.benchmark-page,
+.benchmark-page * {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.benchmark-page button,
+.benchmark-page select,
+.benchmark-page option {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
 .benchmark-page pre {
   background: #22211f;
   border-radius: 8px;
