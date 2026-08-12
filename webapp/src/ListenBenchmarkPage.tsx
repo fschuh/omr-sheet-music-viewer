@@ -242,7 +242,9 @@ export function ListenBenchmarkPage() {
                     <tr key={`${policy}-${summary.family}-${summary.intervalMs}`}>
                       <td>{policy}</td>
                       <td>{summary.family}</td>
-                      <td>{summary.intervalMs} ms</td>
+                      <td>{Number.isInteger(summary.intervalMs)
+                        ? summary.intervalMs
+                        : summary.intervalMs.toFixed(1)} ms</td>
                       <td>{summary.eventRate.toFixed(1)}/s</td>
                       <td>{(summary.completePassageRate * 100).toFixed(0)}%</td>
                       <td>{summary.correctAdvanceCount}/{summary.expectedEventCount}</td>

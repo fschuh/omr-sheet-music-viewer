@@ -24,7 +24,14 @@ import type {
   RecognizerResult,
 } from "./noteRecognizer";
 
-export const LISTEN_SEQUENCE_INTERVALS_MS = [500, 250, 167, 125] as const;
+export const LISTEN_SEQUENCE_INTERVALS_MS = [
+  1_000,
+  500,
+  1_000 / 3,
+  250,
+  167,
+  125,
+] as const;
 export const LISTEN_SEQUENCE_PRE_ROLL_MS = 220;
 export const LISTEN_SEQUENCE_TAIL_MS = 900;
 export const LISTEN_SEQUENCE_ONSET_BUFFER_MS = 192;

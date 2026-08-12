@@ -774,9 +774,13 @@ button:disabled {
 .viewer-stage.is-pointer-panning { cursor: grabbing; }
 
 .benchmark-page {
+  height: 100%;
   margin: 0 auto;
   max-width: 960px;
+  overflow: auto;
   padding: 32px;
+  scrollbar-gutter: stable;
+  width: 100%;
 }
 
 .benchmark-page pre {
