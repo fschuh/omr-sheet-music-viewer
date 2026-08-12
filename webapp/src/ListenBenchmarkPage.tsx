@@ -159,6 +159,12 @@ export function ListenBenchmarkPage() {
       },
     })),
   }, null, 2);
+  const automatedCorrectAdvances = automated?.trials.filter((trial) => (
+    trial.expectedCorrect && trial.advanced
+  )).length ?? 0;
+  const automatedCourseClearAdvances = automated?.trials.filter((trial) => (
+    trial.fixtureGroup === "course-clear" && trial.expectedCorrect && trial.advanced
+  )).length ?? 0;
 
   return (
     <main className="benchmark-page">
@@ -182,7 +188,70 @@ export function ListenBenchmarkPage() {
         ? <span className="benchmark-progress">{progress}</span>
         : null}
       {error ? <div className="error">{error}</div> : null}
-      {automated ? <pre>{summaryText(automated)}</pre> : null}
+      {automated ? (
+        <>
+          <section className="benchmark-result-summary">
+            <h3>Isolated benchmark summary</h3>
+            <p className={automated.acceptance.passed
+              ? "benchmark-outcome benchmark-outcome-pass"
+              : "benchmark-outcome benchmark-outcome-fail"}>
+              <strong>{automated.acceptance.passed
+                ? "Passed all acceptance checks"
+                : "One or more acceptance checks failed"}</strong>
+            </p>
+            <div className="benchmark-table-wrap">
+              <table className="benchmark-table">
+                <thead>
+                  <tr>
+                    <th>Metric</th>
+                    <th>Result</th>
+                    <th>Requirement</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>Correct advancement</td>
+                    <td>{automatedCorrectAdvances}/{automated.correctTrialCount} ({(automated.successRate * 100).toFixed(1)}%)</td>
+                    <td>At least 95%</td>
+                    <td>{automated.acceptance.successRate ? "Pass" : "Fail"}</td>
+                  </tr>
+                  <tr>
+                    <td>Course Clear advancement</td>
+                    <td>{automatedCourseClearAdvances}/{automated.courseClear.correctTrialCount} ({automated.courseClear.successRate === null
+                      ? "not run"
+                      : `${(automated.courseClear.successRate * 100).toFixed(1)}%`})</td>
+                    <td>At least 95%</td>
+                    <td>{automated.acceptance.courseClearSuccessRate ? "Pass" : "Fail"}</td>
+                  </tr>
+                  <tr>
+                    <td>p95 onset-to-advance latency</td>
+                    <td>{automated.p95OnsetToAdvanceMs === null
+                      ? "No successful trials"
+                      : `${automated.p95OnsetToAdvanceMs.toFixed(0)} ms`}</td>
+                    <td>Under 400 ms</td>
+                    <td>{automated.acceptance.latency ? "Pass" : "Fail"}</td>
+                  </tr>
+                  <tr>
+                    <td>Distinguishable false advances</td>
+                    <td>{automated.falseAdvanceCount}</td>
+                    <td>Zero</td>
+                    <td>{automated.acceptance.falseAdvances ? "Pass" : "Fail"}</td>
+                  </tr>
+                  <tr>
+                    <td>Mathematically ambiguous advances</td>
+                    <td>{automated.ambiguousAdvanceCount}</td>
+                    <td>Reported separately</td>
+                    <td>Information</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+          <h3>Detailed isolated diagnostics</h3>
+          <pre>{summaryText(automated)}</pre>
+        </>
+      ) : null}
 
       <section className="sequence-benchmark">
         <h2>Continuous sequences</h2>

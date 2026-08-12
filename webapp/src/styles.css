@@ -806,6 +806,34 @@ button:disabled {
 
 .benchmark-progress { margin-left: 12px; }
 
+.benchmark-result-summary {
+  background: #f8f6f1;
+  border: 1px solid #d5d0c7;
+  border-radius: 8px;
+  margin-top: 20px;
+  padding: 16px;
+}
+
+.benchmark-result-summary h3 { margin-top: 0; }
+
+.benchmark-outcome {
+  border-left: 4px solid;
+  margin: 0;
+  padding: 8px 12px;
+}
+
+.benchmark-outcome-pass {
+  background: #edf7ef;
+  border-color: #39834a;
+  color: #245b31;
+}
+
+.benchmark-outcome-fail {
+  background: #fff0ed;
+  border-color: #b84635;
+  color: #812f23;
+}
+
 .sequence-benchmark {
   border-top: 1px solid #d5d0c7;
   margin-top: 32px;
