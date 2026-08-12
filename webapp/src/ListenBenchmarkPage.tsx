@@ -88,6 +88,7 @@ export function ListenBenchmarkPage() {
   }
 
   const summaryText = (summary: ListenBenchmarkSummary) => JSON.stringify({
+    renderer: summary.renderer,
     trials: summary.trials.length,
     correctTrials: summary.correctTrialCount,
     successRate: `${(summary.successRate * 100).toFixed(1)}%`,
@@ -111,6 +112,7 @@ export function ListenBenchmarkPage() {
       played: trial.playedPitches,
       advanced: trial.advanced,
       analysisMs: Math.round(trial.analysisMs),
+      audioDiagnostics: trial.audioDiagnostics,
       recognizedOnsets: trial.recognizedOnsets
         ?.filter((onset) => onset.confidence >= 0.4 || onset.noteConfidence >= 0.2)
         .map((onset) => ({
@@ -131,6 +133,7 @@ export function ListenBenchmarkPage() {
   }, null, 2);
 
   const sequenceDiagnostics = (result: ListenSequenceBenchmarkResult) => JSON.stringify({
+    renderer: result.renderer,
     baseline: result.baseline,
     current: {
       policy: result.policy,
@@ -152,6 +155,8 @@ export function ListenBenchmarkPage() {
       attacks: run.attacks,
       events: run.events,
       trace: {
+        renderer: run.trace.renderer,
+        audioDiagnostics: run.trace.audioDiagnostics,
         frameCount: run.trace.frames.length,
         relevantPitches: run.trace.relevantPitches,
         maximumInferenceMs: run.trace.maximumInferenceMs,
@@ -297,6 +302,7 @@ export function ListenBenchmarkPage() {
                     <th>Raw evidence</th>
                     <th>Threshold qualified</th>
                     <th>Independent match</th>
+                    <th>Succeeded / total</th>
                     <th>Ordered advance</th>
                     <th>Blocked after stall</th>
                     <th>First causal stall</th>
@@ -327,6 +333,7 @@ export function ListenBenchmarkPage() {
                       <td>{(summary.rawCompleteEvidenceRate * 100).toFixed(1)}%</td>
                       <td>{(summary.thresholdQualifiedEventRate * 100).toFixed(1)}%</td>
                       <td>{(summary.independentMatchRate * 100).toFixed(1)}%</td>
+                      <td>{summary.correctAdvanceCount} / {summary.expectedEventCount}</td>
                       <td>{(summary.orderedAdvanceRate * 100).toFixed(1)}%</td>
                       <td>{summary.recognizedButBlockedCount}</td>
                       <td>{summary.firstStalls.length === 0

@@ -2,16 +2,35 @@ import { ExactChordMatcher } from "./chordMatcher";
 import { ONLINE_AMT_CHUNK_SIZE } from "./onlineAmtProtocol";
 import { OnlineAmtSession } from "./onlineAmtSession";
 import {
-  OnlineAmtOutputDecoder,
   onlineAmtChordMatcherOptions,
 } from "./onlineAmtOutput";
-import { pianoSampleUrls } from "./piano";
 import { SpectralPitchDetector } from "./spectralPitchDetector";
 import type { RecognizedOnset, RecognizerResult } from "./noteRecognizer";
+import {
+  LISTEN_BENCHMARK_DEFAULT_HOLD_MS,
+  LISTEN_BENCHMARK_RELEASE_MS,
+  LISTEN_BENCHMARK_RENDERER,
+  type ListenBenchmarkAudioDiagnostics,
+  type ListenBenchmarkAudioRenderResult,
+  type ListenBenchmarkRendererConfiguration,
+  renderBenchmarkAudio,
+} from "./listenBenchmarkAudio";
+import {
+  COURSE_CLEAR_BENCHMARK_MOMENTS,
+  type ScoreBenchmarkMoment,
+} from "./listenBenchmarkFixtures";
+import {
+  captureListenSequenceTrace,
+  type ListenRecognitionTrace,
+  type SequenceInferenceSession,
+} from "./listenSequenceBenchmark";
+
+export { COURSE_CLEAR_BENCHMARK_MOMENTS, type ScoreBenchmarkMoment };
 
 const FFT_SIZE = 16_384;
 const PRE_ROLL_MS = 220;
 const MAX_AFTER_ONSET_MS = 900;
+export const ISOLATED_LISTEN_BENCHMARK_DURATION_MS = PRE_ROLL_MS + MAX_AFTER_ONSET_MS;
 
 export interface ListenBenchmarkTrial {
   source: "bundled" | "acoustic" | "digital";
@@ -25,6 +44,9 @@ export interface ListenBenchmarkTrial {
   advanced: boolean;
   onsetToAdvanceMs: number | null;
   analysisMs: number;
+  renderer?: ListenBenchmarkRendererConfiguration;
+  audioDiagnostics?: ListenBenchmarkAudioDiagnostics;
+  trace?: ListenRecognitionTrace;
   recognizedOnsets?: Array<{
     midi: number;
     confidence: number;
@@ -37,6 +59,7 @@ export interface ListenBenchmarkTrial {
 }
 
 export interface ListenBenchmarkSummary {
+  renderer: ListenBenchmarkRendererConfiguration;
   trials: ListenBenchmarkTrial[];
   correctTrialCount: number;
   successRate: number;
@@ -56,48 +79,6 @@ export interface ListenBenchmarkSummary {
     passed: boolean;
   };
 }
-
-export interface ScoreBenchmarkMoment {
-  measure: number;
-  moment: number;
-  pitches: readonly number[];
-}
-
-/**
- * Every pitched playback moment extracted from "Super Mario Bros - Course Clear"
- * in pdf-cache/13b74407b0870ee53fd027779fab7caf531663830cc6fa9528c733f8c59d99c0.
- * The fixture is kept in the repository so the benchmark does not depend on a
- * developer's cache directory.
- */
-export const COURSE_CLEAR_BENCHMARK_MOMENTS: readonly ScoreBenchmarkMoment[] = [
-  { measure: 1, moment: 1, pitches: [55] },
-  { measure: 1, moment: 2, pitches: [52, 60] },
-  { measure: 1, moment: 3, pitches: [55, 64] },
-  { measure: 1, moment: 4, pitches: [48, 60, 67] },
-  { measure: 1, moment: 5, pitches: [52, 64, 72] },
-  { measure: 1, moment: 6, pitches: [55, 67, 76] },
-  { measure: 1, moment: 7, pitches: [64, 72, 79] },
-  { measure: 1, moment: 8, pitches: [60, 67, 76] },
-  { measure: 2, moment: 1, pitches: [56] },
-  { measure: 2, moment: 2, pitches: [51, 60] },
-  { measure: 2, moment: 3, pitches: [56, 63] },
-  { measure: 2, moment: 4, pitches: [48, 60, 68] },
-  { measure: 2, moment: 5, pitches: [51, 63, 72] },
-  { measure: 2, moment: 6, pitches: [56, 68, 75] },
-  { measure: 2, moment: 7, pitches: [63, 72, 80] },
-  { measure: 2, moment: 8, pitches: [60, 68, 75] },
-  { measure: 3, moment: 1, pitches: [58] },
-  { measure: 3, moment: 2, pitches: [53, 62] },
-  { measure: 3, moment: 3, pitches: [58, 65] },
-  { measure: 3, moment: 4, pitches: [50, 62, 70] },
-  { measure: 3, moment: 5, pitches: [53, 65, 74] },
-  { measure: 3, moment: 6, pitches: [58, 70, 77] },
-  { measure: 3, moment: 7, pitches: [65, 74, 82] },
-  { measure: 3, moment: 8, pitches: [62, 74, 82] },
-  { measure: 3, moment: 9, pitches: [62, 74, 82] },
-  { measure: 3, moment: 10, pitches: [62, 74, 82] },
-  { measure: 4, moment: 1, pitches: [60, 76, 84] },
-];
 
 function percentile95(values: number[]): number | null {
   if (values.length === 0) return null;
@@ -140,6 +121,7 @@ export function summarizeListenBenchmark(trials: ListenBenchmarkTrial[]): Listen
   acceptance.passed = acceptance.latency && acceptance.successRate &&
     acceptance.courseClearSuccessRate && acceptance.falseAdvances;
   return {
+    renderer: { ...LISTEN_BENCHMARK_RENDERER },
     trials,
     correctTrialCount: correct.length,
     successRate,
@@ -151,13 +133,21 @@ export function summarizeListenBenchmark(trials: ListenBenchmarkTrial[]): Listen
   };
 }
 
-function nearestSample(midi: number): [number, string] {
-  const samples = Object.entries(pianoSampleUrls()).map(
-    ([pitch, url]): [number, string] => [Number(pitch), url],
-  );
-  return samples.reduce((nearest, candidate) => (
-    Math.abs(candidate[0] - midi) < Math.abs(nearest[0] - midi) ? candidate : nearest
-  ));
+/** Represents an isolated fixture as the canonical one-event sequence. */
+export function renderIsolatedListenBenchmarkAudio(
+  playedPitches: readonly number[],
+): Promise<ListenBenchmarkAudioRenderResult> {
+  return renderBenchmarkAudio({
+    attacks: [{
+      onsetMs: PRE_ROLL_MS,
+      notes: playedPitches,
+      holdMs: LISTEN_BENCHMARK_DEFAULT_HOLD_MS,
+      releaseMs: LISTEN_BENCHMARK_RELEASE_MS,
+    }],
+    durationMs: ISOLATED_LISTEN_BENCHMARK_DURATION_MS,
+    sampleRate: 16_000,
+    chunkSize: ONLINE_AMT_CHUNK_SIZE,
+  });
 }
 
 function samePitches(left: readonly number[], right: readonly number[]): boolean {
@@ -187,28 +177,14 @@ export function isMathematicallyAmbiguousCase(
 
 class SpectralBenchmarkClient {
   private readonly audioContext = new AudioContext({ latencyHint: "interactive" });
-  private readonly decoded = new Map<string, AudioBuffer>();
-
-  private async sample(url: string): Promise<AudioBuffer> {
-    const cached = this.decoded.get(url);
-    if (cached) return cached;
-    const response = await fetch(url);
-    if (!response.ok) throw new Error(`Could not load benchmark sample ${url}.`);
-    const decoded = await this.audioContext.decodeAudioData(await response.arrayBuffer());
-    this.decoded.set(url, decoded);
-    return decoded;
-  }
 
   async evaluate(
     generation: number,
     targetPitches: readonly number[],
     playedPitches: readonly number[],
-  ): Promise<Pick<ListenBenchmarkTrial, "advanced" | "onsetToAdvanceMs" | "analysisMs" | "recognizedOnsets">> {
+  ): Promise<BundledBenchmarkEvaluation> {
     await this.audioContext.resume();
-    const prepared = await Promise.all(playedPitches.map(async (midi) => {
-      const [sampleMidi, url] = nearestSample(midi);
-      return { midi, sampleMidi, buffer: await this.sample(url) };
-    }));
+    const rendered = await renderIsolatedListenBenchmarkAudio(playedPitches);
 
     const analyser = this.audioContext.createAnalyser();
     analyser.fftSize = FFT_SIZE;
@@ -225,22 +201,16 @@ class SpectralBenchmarkClient {
     detector.setTarget(targetPitches);
     const matcher = new ExactChordMatcher();
     const spectrum = new Float32Array(analyser.frequencyBinCount);
-    const sources: AudioBufferSourceNode[] = [];
-    const onsetContextTime = this.audioContext.currentTime + PRE_ROLL_MS / 1_000;
-    const scheduledAtMs = performance.now();
+    const source = this.audioContext.createBufferSource();
+    const buffer = this.audioContext.createBuffer(1, rendered.pcm.length, 16_000);
+    buffer.copyToChannel(new Float32Array(rendered.pcm), 0);
+    source.buffer = buffer;
+    source.connect(analyser);
+    const startsInMs = 10;
+    const scheduledAtMs = performance.now() + startsInMs;
     const onsetAtMs = scheduledAtMs + PRE_ROLL_MS;
     matcher.setTarget(targetPitches, generation, scheduledAtMs);
-
-    for (const { midi, sampleMidi, buffer } of prepared) {
-      const source = this.audioContext.createBufferSource();
-      source.buffer = buffer;
-      source.playbackRate.value = 2 ** ((midi - sampleMidi) / 12);
-      const gain = this.audioContext.createGain();
-      gain.gain.value = Math.min(0.8, 0.9 / Math.sqrt(playedPitches.length));
-      source.connect(gain).connect(analyser);
-      source.start(onsetContextTime);
-      sources.push(source);
-    }
+    source.start(this.audioContext.currentTime + startsInMs / 1_000);
 
     const recognized = new Map<number, RecognizedOnset & {
       fundamentalProminenceDb?: number;
@@ -257,6 +227,8 @@ class SpectralBenchmarkClient {
             advanced,
             onsetToAdvanceMs: advanced ? Math.max(0, capturedAtMs - onsetAtMs) : null,
             analysisMs: maximumAnalysisMs,
+            renderer: rendered.renderer,
+            audioDiagnostics: rendered.diagnostics,
             recognizedOnsets: Array.from(recognized.values())
               .sort((left, right) => left.midi - right.midi)
               .map(({
@@ -322,10 +294,8 @@ class SpectralBenchmarkClient {
         frame = requestAnimationFrame(analyze);
       });
     } finally {
-      for (const source of sources) {
-        try { source.stop(); } catch { /* The sample may already have ended. */ }
-        source.disconnect();
-      }
+      try { source.stop(); } catch { /* The buffer may already have ended. */ }
+      source.disconnect();
       analyser.disconnect();
       silence.disconnect();
     }
@@ -337,11 +307,6 @@ class SpectralBenchmarkClient {
 }
 
 class OnlineAmtBenchmarkClient {
-  private readonly audioContext = new AudioContext({
-    latencyHint: "interactive",
-    sampleRate: 16_000,
-  });
-  private readonly decoded = new Map<string, AudioBuffer>();
   private readonly session = OnlineAmtSession.create({
     modelUrl: new URL("models/online_amt_streaming.onnx", document.baseURI).href,
     numThreads: 1,
@@ -351,117 +316,96 @@ class OnlineAmtBenchmarkClient {
     executionMode: "sequential",
   });
 
-  private async sample(url: string): Promise<AudioBuffer> {
-    const cached = this.decoded.get(url);
-    if (cached) return cached;
-    const response = await fetch(url);
-    if (!response.ok) throw new Error(`Could not load benchmark sample ${url}.`);
-    const decoded = await this.audioContext.decodeAudioData(await response.arrayBuffer());
-    this.decoded.set(url, decoded);
-    return decoded;
-  }
-
-  private async render(playedPitches: readonly number[]): Promise<Float32Array> {
-    const prepared = await Promise.all(playedPitches.map(async (midi) => {
-      const [sampleMidi, url] = nearestSample(midi);
-      return { midi, sampleMidi, buffer: await this.sample(url) };
-    }));
-    const sampleRate = 16_000;
-    const durationMs = PRE_ROLL_MS + MAX_AFTER_ONSET_MS + 64;
-    const frameCount = Math.ceil(
-      (durationMs * sampleRate / 1_000) / ONLINE_AMT_CHUNK_SIZE,
-    ) * ONLINE_AMT_CHUNK_SIZE;
-    const offline = new OfflineAudioContext(1, frameCount, sampleRate);
-    for (const { midi, sampleMidi, buffer } of prepared) {
-      const source = offline.createBufferSource();
-      source.buffer = buffer;
-      source.playbackRate.value = 2 ** ((midi - sampleMidi) / 12);
-      const gain = offline.createGain();
-      gain.gain.value = Math.min(0.8, 0.9 / Math.sqrt(playedPitches.length));
-      source.connect(gain).connect(offline.destination);
-      source.start(PRE_ROLL_MS / 1_000);
-    }
-    const rendered = await offline.startRendering();
-    return new Float32Array(rendered.getChannelData(0));
-  }
-
   async evaluate(
     generation: number,
     targetPitches: readonly number[],
     playedPitches: readonly number[],
-  ): Promise<Pick<ListenBenchmarkTrial, "advanced" | "onsetToAdvanceMs" | "analysisMs" | "recognizedOnsets">> {
-    const [session, rendered] = await Promise.all([
-      this.session,
-      this.render(playedPitches),
-    ]);
-    session.reset();
-    const decoder = new OnlineAmtOutputDecoder();
-    const matcher = new ExactChordMatcher(onlineAmtChordMatcherOptions);
-    matcher.setTarget(targetPitches, generation, 0);
-    const recognized = new Map<number, {
-      midi: number;
-      confidence: number;
-      noteConfidence: number;
-      onsetAfterAttackMs: number;
-    }>();
-    let maximumAnalysisMs = 0;
-    for (
-      let sampleOffset = 0;
-      sampleOffset < rendered.length;
-      sampleOffset += ONLINE_AMT_CHUNK_SIZE
-    ) {
-      const output = await session.run(
-        rendered.slice(sampleOffset, sampleOffset + ONLINE_AMT_CHUNK_SIZE),
-      );
-      maximumAnalysisMs = Math.max(maximumAnalysisMs, output.inferenceTimeMs);
-      const capturedAtMs = (
-        sampleOffset + ONLINE_AMT_CHUNK_SIZE
-      ) * 1_000 / 16_000;
-      const decoded = decoder.decode(
-        output.scores,
-        output.states,
-        output.signalActive,
-        capturedAtMs,
-        targetPitches,
-      );
-      const { onsets } = decoded;
-      for (const onset of onsets) {
-        if (!recognized.has(onset.midi)) {
-          recognized.set(onset.midi, {
-            midi: onset.midi,
-            confidence: onset.confidence,
-            noteConfidence: onset.noteConfidence,
-            onsetAfterAttackMs: capturedAtMs - PRE_ROLL_MS,
-          });
-        }
-      }
-      const update = matcher.consume({
-        generation,
-        ...decoded,
-        processingTimeMs: output.inferenceTimeMs,
-        capturedAtMs,
-      });
-      if (update.matched) {
-        return {
-          advanced: true,
-          onsetToAdvanceMs: Math.max(0, capturedAtMs - PRE_ROLL_MS),
-          analysisMs: maximumAnalysisMs,
-          recognizedOnsets: Array.from(recognized.values()),
-        };
-      }
-    }
-    return {
-      advanced: false,
-      onsetToAdvanceMs: null,
-      analysisMs: maximumAnalysisMs,
-      recognizedOnsets: Array.from(recognized.values()),
-    };
+  ): Promise<BundledBenchmarkEvaluation> {
+    return captureIsolatedOnlineAmtBenchmark({
+      generation,
+      targetPitches,
+      playedPitches,
+      session: await this.session,
+    });
   }
 
   async dispose(): Promise<void> {
-    await this.audioContext.close();
     await (await this.session).dispose();
   }
+}
+
+type BundledBenchmarkEvaluation = Pick<
+  ListenBenchmarkTrial,
+  | "advanced"
+  | "onsetToAdvanceMs"
+  | "analysisMs"
+  | "recognizedOnsets"
+  | "renderer"
+  | "audioDiagnostics"
+  | "trace"
+>;
+
+export async function captureIsolatedOnlineAmtBenchmark(options: {
+  generation: number;
+  targetPitches: readonly number[];
+  playedPitches: readonly number[];
+  session: SequenceInferenceSession;
+}): Promise<BundledBenchmarkEvaluation> {
+  const rendered = await renderIsolatedListenBenchmarkAudio(options.playedPitches);
+  const relevantPitches = [...new Set([
+    ...options.targetPitches,
+    ...options.playedPitches,
+  ])].sort((left, right) => left - right);
+  const trace = await captureListenSequenceTrace({
+    sequenceId: "isolated-one-event",
+    intervalMs: 0,
+    audio: rendered.pcm,
+    relevantPitches,
+    session: options.session,
+    renderer: rendered.renderer,
+    audioDiagnostics: rendered.diagnostics,
+  });
+  const matcher = new ExactChordMatcher(onlineAmtChordMatcherOptions);
+  matcher.setTarget(options.targetPitches, options.generation, 0);
+  const recognized = new Map<number, {
+    midi: number;
+    confidence: number;
+    noteConfidence: number;
+    onsetAfterAttackMs: number;
+  }>();
+  let matchedAtMs: number | null = null;
+  for (const frame of trace.frames) {
+    for (const onset of frame.onsets) {
+      if (!recognized.has(onset.midi)) {
+        recognized.set(onset.midi, {
+          midi: onset.midi,
+          confidence: onset.confidence,
+          noteConfidence: onset.noteConfidence,
+          onsetAfterAttackMs: frame.capturedAtMs - PRE_ROLL_MS,
+        });
+      }
+    }
+    if (matchedAtMs === null && matcher.consume({
+      generation: options.generation,
+      onsets: frame.onsets,
+      noteEvents: frame.noteEvents,
+      recognizedActivePitches: frame.activePitches,
+      targetPitchEvidence: frame.confidenceEvidence,
+      capturedAtMs: frame.capturedAtMs,
+      processingTimeMs: frame.inferenceDurationMs,
+    }).matched) {
+      matchedAtMs = frame.capturedAtMs;
+    }
+  }
+  return {
+    advanced: matchedAtMs !== null,
+    onsetToAdvanceMs: matchedAtMs === null ? null : Math.max(0, matchedAtMs - PRE_ROLL_MS),
+    analysisMs: trace.maximumInferenceMs,
+    recognizedOnsets: Array.from(recognized.values()),
+    renderer: rendered.renderer,
+    audioDiagnostics: rendered.diagnostics,
+    trace,
+  };
 }
 
 interface BundledBenchmarkClient {
@@ -469,7 +413,7 @@ interface BundledBenchmarkClient {
     generation: number,
     targetPitches: readonly number[],
     playedPitches: readonly number[],
-  ): Promise<Pick<ListenBenchmarkTrial, "advanced" | "onsetToAdvanceMs" | "analysisMs" | "recognizedOnsets">>;
+  ): Promise<BundledBenchmarkEvaluation>;
   dispose(): Promise<void>;
 }
 

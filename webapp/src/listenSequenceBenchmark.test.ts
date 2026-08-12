@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { DecodedOnlineAmtOutput } from "./onlineAmtOutput";
 import type { OnlineAmtStepResult } from "./onlineAmtSession";
+import { LISTEN_BENCHMARK_RENDERER } from "./listenBenchmarkAudio";
 import {
   LISTEN_SEQUENCE_INTERVALS_MS,
   assignRecognitionEventsToAttacks,
@@ -10,7 +11,6 @@ import {
   compareListenSequencePolicies,
   evaluateTraceRecognitionLayers,
   materializeListenSequence,
-  renderScheduledSequenceAudio,
   replayListenSequenceTrace,
   summarizeListenSequenceBenchmark,
   type ExpectedPitchDiagnostic,
@@ -70,6 +70,7 @@ function recognitionFrame(
       midi,
       confidence: activePitches.includes(midi) ? 0.9 : 0,
     })),
+    modelScores: [],
     modelStates: relevantPitches.map((midi) => activePitches.includes(midi) ? 3 : 0),
     signalActive: activePitches.length > 0,
     inferenceDurationMs: 4,
@@ -86,6 +87,14 @@ function trace(
     sampleRate: 16_000,
     chunkSize: 512,
     relevantPitches: sequence.relevantPitches,
+    renderer: { ...LISTEN_BENCHMARK_RENDERER },
+    audioDiagnostics: {
+      frameCount: 512,
+      durationMs: 32,
+      peak: 0,
+      rms: 0,
+    },
+    pcm: new Float32Array(512),
     frames,
     maximumInferenceMs: Math.max(0, ...frames.map(({ inferenceDurationMs }) => inferenceDurationMs)),
     maximumProcessingBacklogMs: 0,
@@ -122,18 +131,11 @@ function pitchDiagnostic(update: Partial<ExpectedPitchDiagnostic> = {}): Expecte
   };
 }
 
-test("renders several scheduled attacks into one chunk-aligned continuous buffer", () => {
+test("materializes fixed articulation into a chunk-aligned continuous schedule", () => {
   const sequence = materializeListenSequence(regularDefinition([[60], [62], [64]]), 100);
-  const samples = new Map([
-    [60, { sourceMidi: 60, sampleRate: 16_000, samples: Float32Array.of(1) }],
-    [62, { sourceMidi: 62, sampleRate: 16_000, samples: Float32Array.of(1) }],
-    [64, { sourceMidi: 64, sampleRate: 16_000, samples: Float32Array.of(1) }],
-  ]);
-  const audio = renderScheduledSequenceAudio(sequence, samples);
-  assert.equal(audio.length % 512, 0);
+  assert.equal(sequence.frameCount % 512, 0);
   for (const attack of sequence.attacks) {
-    const frame = Math.round(attack.scheduledAtMs * 16_000 / 1_000);
-    assert.ok(audio[frame] > 0, `expected attack ${attack.index} in the shared buffer`);
+    assert.equal(attack.notes[0].releaseTimeMs - attack.notes[0].attackTimeMs, 420);
   }
 });
 

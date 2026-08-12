@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Listen benchmark parity</title>
+  </head>
+  <body data-status="running">
+    <main>
+      <h1>Listen benchmark parity</h1>
+      <p id="status">Running browser-level PCM and recognition parity checks…</p>
+      <pre id="result"></pre>
+    </main>
+    <script>
+      const reportEarlyFailure = (value) => {
+        const message = value instanceof Error
+          ? value.stack || value.message
+          : typeof value === "string" ? value : JSON.stringify(value);
+        document.querySelector("#status").textContent = "Parity checks failed to start.";
+        document.querySelector("#result").textContent = message;
+        document.body.dataset.status = "error";
+      };
+      window.addEventListener("error", (event) => reportEarlyFailure(event.error || event.message));
+      window.addEventListener("unhandledrejection", (event) => reportEarlyFailure(event.reason));
+    </script>
+    <script type="module" src="/src/listenBenchmarkParityRunner.ts"></script>
+  </body>
+</html>

@@ -40,24 +40,73 @@ Parity:
 - Browser WASM differed from native ONNX Runtime by at most `3.44e-5`, with zero
   decoded-state or signal-gate mismatches in every tested configuration.
 
-Listening behavior:
+## Listening benchmark history
 
-- 106 correct bundled-sample trials: 98.1% advanced.
-- 54 correct score-derived “Course Clear” trials: 96.3% advanced.
+Entries are kept newest first so renderer and recognition changes remain
+comparable over time.
+
+### Canonical renderer baseline — August 12, 2026
+
+- Renderer: `bundled-piano-web-audio-v1`, 16 kHz mono, 512-sample chunks,
+  420 ms default hold, 350 ms release, and no passage normalization.
+- 104 / 106 correct bundled-sample trials advanced (98.1%).
+- 52 / 54 correct score-derived “Course Clear” trials advanced (96.3%).
 - Zero distinguishable wrong-note false advances; four mathematically
   ambiguous harmonic cases advanced and are reported separately.
-- P95 rendered-onset-to-playhead-advance latency: 260 ms.
+- P95 rendered-onset-to-playhead-advance latency: 196 ms.
 - Both misses were repetitions of `[53, 65, 74]`, where the model emitted no
   evidence for MIDI 65. Matcher calibration cannot recover a pitch absent from
   the model output without weakening exact-chord behavior.
 
-Trace-level Course Clear baseline (August 12, 2026):
+Isolated/continuous rendering parity in Chrome (August 12, 2026):
 
-| Interval | Raw complete evidence | Threshold-qualified | Independent match | Ordered advance | Recognized but blocked |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| 1000 ms | 20 / 27 (74.1%) | 19 / 27 (70.4%) | 24 / 27 (88.9%) | 12 / 27 (44.4%) | 12 |
+- Isolated and one-event continuous PCM are sample-for-sample identical.
+- The online-AMT scores, states, signal-active state, decoded evidence/events,
+  matcher result, and advancement latency match frame-for-frame.
+- Adding a later loud event leaves every preceding sample unchanged.
+- Rolled, repeated, sustained, and chunk-alignment checks pass. Comparisons
+  between different-length OfflineAudioContext graphs allow at most `1e-6`;
+  observed differences were zero or one Float32 ULP.
 
-The first causal stall is zero-based event index 12: measure 2, moment 5,
+Trace-level 12-passage baseline (August 12, 2026):
+
+| Interval | Complete passages | Raw evidence | Independent match | Succeeded / total | Ordered advance | Blocked | Ordered p95 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1000 ms | 7 / 12 (58.3%) | 69 / 82 (84.1%) | 73 / 82 (89.0%) | 63 / 82 | 76.8% | 10 | 212 ms |
+| 500 ms | 8 / 12 (66.7%) | 63 / 82 (76.8%) | 74 / 82 (90.2%) | 70 / 82 | 85.4% | 4 | 204 ms |
+| 333⅓ ms | 6 / 12 (50.0%) | 57 / 82 (69.5%) | 72 / 82 (87.8%) | 40 / 82 | 48.8% | 32 | 220 ms |
+| 250 ms | 8 / 12 (66.7%) | 48 / 82 (58.5%) | 73 / 82 (89.0%) | 50 / 82 | 61.0% | 23 | 208 ms |
+| 167 ms | 6 / 12 (50.0%) | 37 / 82 (45.1%) | 11 / 82 (13.4%) | 42 / 82 | 51.2% | 5 | 214 ms |
+| 125 ms | 8 / 12 (66.7%) | 6 / 82 (7.3%) | 16 / 82 (19.5%) | 48 / 82 | 58.5% | 4 | 228 ms |
+
+The dominant failure is `next-attack-before-advance`; the sharpest completion
+drop is from 2 to 3 events/second. Raw and independent metrics are identical for
+the current and buffered policies because both replay the same captured traces.
+The buffered policy is not accepted: it produced five fewer correct advances,
+one fewer complete passage, and eight aggregate false advances. The deliberate
+wrong-note and extra-note safety families themselves had zero false, skipped,
+or duplicate advances under both policies at every speed.
+
+### Pre-canonical renderer baseline — August 12, 2026
+
+This is the previous committed baseline from `2da08d8`. It predates the shared
+canonical renderer and records only Course Clear at the 1000 ms interval for
+the continuous benchmark.
+
+- 104 / 106 correct bundled-sample trials advanced (98.1%).
+- 52 / 54 correct score-derived “Course Clear” trials advanced (96.3%).
+- Zero distinguishable wrong-note false advances; four mathematically
+  ambiguous harmonic cases advanced and were reported separately.
+- P95 rendered-onset-to-playhead-advance latency: 260 ms.
+- Both misses were repetitions of `[53, 65, 74]`, where the model emitted no
+  evidence for MIDI 65. Matcher calibration could not recover a pitch absent
+  from the model output without weakening exact-chord behavior.
+
+| Interval | Raw complete evidence | Threshold-qualified | Independent match | Succeeded / total | Ordered advance | Recognized but blocked |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1000 ms | 20 / 27 (74.1%) | 19 / 27 (70.4%) | 24 / 27 (88.9%) | 12 / 27 | 44.4% | 12 |
+
+The first causal stall was zero-based event index 12: measure 2, moment 5,
 target `[51, 63, 72]`. MIDI 51 and 72 produced fresh, high-confidence onsets,
 but MIDI 63 produced only active-note evidence and no fresh onset. Independent
 replay therefore classified the event as `carry-over`; ordered playback never
@@ -94,4 +143,10 @@ node tools\online_amt\run_browser_benchmarks.mjs `
 
 node tools\online_amt\run_browser_benchmarks.mjs `
   http://127.0.0.1:5174/online-amt-benchmark.html listen-sequence
+
+node tools\online_amt\run_browser_benchmarks.mjs `
+  http://127.0.0.1:5174/online-amt-benchmark.html listen-parity
+
+node tools\online_amt\run_browser_benchmarks.mjs `
+  http://127.0.0.1:5174/online-amt-benchmark.html listen-sequence-summary
 ```

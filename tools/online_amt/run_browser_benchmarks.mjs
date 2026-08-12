@@ -7,7 +7,10 @@ const CHROME = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
 const BASE_URL = process.argv[2] ?? "http://127.0.0.1:5173/online-amt-benchmark.html";
 const CONFIGURATION_FILTER = process.argv[3];
 const LISTEN_ACCURACY_MODE = CONFIGURATION_FILTER === "listen-accuracy";
-const LISTEN_SEQUENCE_MODE = CONFIGURATION_FILTER === "listen-sequence";
+const LISTEN_SEQUENCE_SUMMARY_MODE = CONFIGURATION_FILTER === "listen-sequence-summary";
+const LISTEN_SEQUENCE_MODE = CONFIGURATION_FILTER === "listen-sequence" ||
+  LISTEN_SEQUENCE_SUMMARY_MODE;
+const LISTEN_PARITY_MODE = CONFIGURATION_FILTER === "listen-parity";
 const FINGERING_SMOKE_MODE = CONFIGURATION_FILTER === "fingering-smoke";
 const CONFIGURATIONS = [
   { name: "threads-1-all", query: "threads=1&graph=all&arena=1&pattern=1&mode=sequential&frames=60" },
@@ -118,7 +121,9 @@ async function runConfiguration(configuration, index) {
     client = cdpClient(webSocketUrl);
     await client.send("Runtime.enable");
     await client.send("Page.enable");
-    const pageUrl = (LISTEN_ACCURACY_MODE || LISTEN_SEQUENCE_MODE) &&
+    const pageUrl = LISTEN_PARITY_MODE
+      ? BASE_URL.replace(/online-amt-benchmark\.html(?:\?.*)?$/, "listen-benchmark-parity.html")
+      : (LISTEN_ACCURACY_MODE || LISTEN_SEQUENCE_MODE) &&
         /online-amt-benchmark\.html(?:\?|$)/.test(BASE_URL)
       ? BASE_URL.replace(/online-amt-benchmark\.html/, "index.html")
       : BASE_URL;
@@ -161,7 +166,9 @@ async function runConfiguration(configuration, index) {
         };
       })()`);
     }
-    const deadline = Date.now() + (LISTEN_SEQUENCE_MODE ? 600_000 : 120_000);
+    const deadline = Date.now() + (
+      LISTEN_SEQUENCE_MODE ? 600_000 : LISTEN_PARITY_MODE ? 180_000 : 120_000
+    );
     let status = "";
     while (Date.now() < deadline) {
       status = await evaluate(client, "document.body?.dataset.status ?? ''");
@@ -171,7 +178,9 @@ async function runConfiguration(configuration, index) {
     if (status !== "complete") {
       const detail = await evaluate(
         client,
-        "document.querySelector('#result')?.textContent ?? document.body?.innerText",
+        "[document.querySelector('#status')?.textContent, " +
+          "document.querySelector('#result')?.textContent].filter(Boolean).join('\\n') " +
+          "|| document.body?.innerText",
       );
       throw new Error(`${configuration.name} failed: ${detail}`);
     }
@@ -250,6 +259,7 @@ async function runConfiguration(configuration, index) {
             };
             return {
               policy: result.policy,
+              renderer: result.renderer,
               baseline: result.baseline,
               experimental: {
                 policy: result.experimental.policy,
@@ -292,6 +302,7 @@ async function runConfiguration(configuration, index) {
         ? `(() => {
             const result = window.listenBenchmarkResult;
             return {
+              renderer: result.renderer,
               correctTrialCount: result.correctTrialCount,
               successRate: result.successRate,
               falseAdvanceCount: result.falseAdvanceCount,
@@ -315,6 +326,8 @@ async function runConfiguration(configuration, index) {
                 })),
             };
           })()`
+        : LISTEN_PARITY_MODE
+        ? "window.listenBenchmarkParityResult"
         : "window.onlineAmtBenchmarkResult",
     );
   } finally {
@@ -352,7 +365,12 @@ const selectedConfigurations = FINGERING_SMOKE_MODE
       query: `fingering-notes=${process.argv[4] ?? "500"}`,
     }]
   : LISTEN_SEQUENCE_MODE
-  ? [{ name: "listen-sequence", query: "listen-sequence=auto" }]
+  ? [{
+      name: LISTEN_SEQUENCE_SUMMARY_MODE ? "listen-sequence-summary" : "listen-sequence",
+      query: "listen-sequence=auto",
+    }]
+  : LISTEN_PARITY_MODE
+  ? [{ name: "listen-parity", query: "" }]
   : LISTEN_ACCURACY_MODE
   ? [{ name: "listen-accuracy", query: "listen-benchmark=auto" }]
   : CONFIGURATION_FILTER
@@ -365,7 +383,60 @@ const results = [];
 for (let index = 0; index < selectedConfigurations.length; index += 1) {
   const configuration = selectedConfigurations[index];
   const result = await runConfiguration(configuration, index);
-  results.push({ name: configuration.name, ...result });
+  const conciseSpeed = (summary) => ({
+    intervalMs: summary.intervalMs,
+    eventRate: summary.eventRate,
+    sequenceCount: summary.sequenceCount,
+    completePassageCount: Math.round(summary.completePassageRate * summary.sequenceCount),
+    completePassageRate: summary.completePassageRate,
+    rawCompleteEvidenceCount: summary.rawCompleteEvidenceCount,
+    rawCompleteEvidenceRate: summary.rawCompleteEvidenceRate,
+    independentMatchCount: summary.independentMatchCount,
+    independentMatchRate: summary.independentMatchRate,
+    orderedAdvanceCount: summary.orderedAdvanceCount,
+    orderedAdvanceRate: summary.orderedAdvanceRate,
+    correctAdvanceCount: summary.correctAdvanceCount,
+    expectedEventCount: summary.expectedEventCount,
+    recognizedButBlockedCount: summary.recognizedButBlockedCount,
+    firstStalls: summary.firstStalls,
+    failureClassifications: summary.failureClassifications,
+    falseAdvanceCount: summary.falseAdvanceCount,
+    skippedAdvanceCount: summary.skippedAdvanceCount,
+    duplicateAdvanceCount: summary.duplicateAdvanceCount,
+    p95IndependentMatchLatencyMs: summary.p95IndependentMatchLatencyMs,
+    p95OrderedAdvanceLatencyMs: summary.p95OrderedAdvanceLatencyMs,
+  });
+  const conciseSafety = (runs) => ({
+    falseAdvanceCount: runs.reduce((total, run) => total + run.falseAdvanceCount, 0),
+    skippedAdvanceCount: runs.reduce((total, run) => total + run.skippedAdvanceCount, 0),
+    duplicateAdvanceCount: runs.reduce((total, run) => total + run.duplicateAdvanceCount, 0),
+    runs: runs.map((run) => ({
+      sequenceId: run.sequenceId,
+      intervalMs: run.intervalMs,
+      correctAdvanceRate: run.correctAdvanceRate,
+      falseAdvanceCount: run.falseAdvanceCount,
+      skippedAdvanceCount: run.skippedAdvanceCount,
+      duplicateAdvanceCount: run.duplicateAdvanceCount,
+    })),
+  });
+  const exportedResult = LISTEN_SEQUENCE_SUMMARY_MODE
+    ? {
+        renderer: result.renderer,
+        baseline: result.baseline,
+        perSpeed: result.perSpeed.map(conciseSpeed),
+        experimental: {
+          comparison: result.experimental.comparison,
+          perSpeed: result.experimental.perSpeed.map(conciseSpeed),
+        },
+        safety: {
+          current: conciseSafety(result.sequences.filter(({ family }) => family === "safety")),
+          buffered: conciseSafety(
+            result.experimental.sequences.filter(({ family }) => family === "safety"),
+          ),
+        },
+      }
+    : result;
+  results.push({ name: configuration.name, ...exportedResult });
   if (result.wall) {
     console.error(
       `${configuration.name}: p50=${result.wall.p50Ms.toFixed(2)}ms ` +
@@ -376,6 +447,8 @@ for (let index = 0; index < selectedConfigurations.length; index += 1) {
       `${configuration.name}: ${result.predictionCount} predictions in ` +
       `${result.elapsedMs.toFixed(2)}ms`,
     );
+  } else if (LISTEN_PARITY_MODE) {
+    console.error(`${configuration.name}: ${result.checks.length} parity checks passed`);
   } else if (LISTEN_SEQUENCE_MODE) {
     const slowest = result.perSpeed[0];
     const fastest = result.perSpeed.at(-1);

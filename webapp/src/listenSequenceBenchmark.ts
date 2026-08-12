@@ -2,7 +2,7 @@ import {
   ExactChordMatcher,
   defaultChordMatcherOptions,
 } from "./chordMatcher";
-import { COURSE_CLEAR_BENCHMARK_MOMENTS } from "./listenBenchmark";
+import { COURSE_CLEAR_BENCHMARK_MOMENTS } from "./listenBenchmarkFixtures";
 import {
   ONLINE_AMT_CHUNK_SIZE,
   ONLINE_AMT_SAMPLE_RATE,
@@ -16,7 +16,17 @@ import {
   OnlineAmtSession,
   type OnlineAmtStepResult,
 } from "./onlineAmtSession";
-import { pianoSampleUrls } from "./piano";
+import {
+  LISTEN_BENCHMARK_DEFAULT_HOLD_MS,
+  LISTEN_BENCHMARK_RELEASE_MS,
+  LISTEN_BENCHMARK_RENDERER,
+  type ListenBenchmarkAudioAttack,
+  type ListenBenchmarkAudioDiagnostics,
+  type ListenBenchmarkAudioRenderResult,
+  type ListenBenchmarkRendererConfiguration,
+  measureBenchmarkPcm,
+  renderBenchmarkAudio,
+} from "./listenBenchmarkAudio";
 import type {
   RecognizedNoteEvent,
   RecognizedOnset,
@@ -35,8 +45,6 @@ export const LISTEN_SEQUENCE_INTERVALS_MS = [
 export const LISTEN_SEQUENCE_PRE_ROLL_MS = 220;
 export const LISTEN_SEQUENCE_TAIL_MS = 900;
 export const LISTEN_SEQUENCE_ONSET_BUFFER_MS = 192;
-const NOTE_RELEASE_MS = 350;
-const DEFAULT_NOTE_LENGTH_RATIO = 0.72;
 const RECOGNITION_ASSIGNMENT_MS = 450;
 const FRAME_MS = ONLINE_AMT_CHUNK_SIZE * 1_000 / ONLINE_AMT_SAMPLE_RATE;
 
@@ -105,18 +113,13 @@ export interface MaterializedListenSequence {
   frameCount: number;
 }
 
-export interface SequencePianoSample {
-  sourceMidi: number;
-  sampleRate: number;
-  samples: Float32Array;
-}
-
 export interface ListenRecognitionFrame {
   capturedAtMs: number;
   onsets: RecognizedOnset[];
   noteEvents: RecognizedNoteEvent[];
   activePitches: RecognizedPitchEvidence[];
   confidenceEvidence: RecognizedPitchEvidence[];
+  modelScores: number[];
   modelStates: number[];
   signalActive: boolean;
   inferenceDurationMs: number;
@@ -128,6 +131,9 @@ export interface ListenRecognitionTrace {
   sampleRate: number;
   chunkSize: number;
   relevantPitches: number[];
+  renderer: ListenBenchmarkRendererConfiguration;
+  audioDiagnostics: ListenBenchmarkAudioDiagnostics;
+  pcm: Float32Array;
   frames: ListenRecognitionFrame[];
   maximumInferenceMs: number;
   maximumProcessingBacklogMs: number;
@@ -257,6 +263,7 @@ export interface ListenSequenceRunResult {
   family: string;
   intervalMs: number;
   eventRate: number;
+  renderer: ListenBenchmarkRendererConfiguration;
   trace: ListenRecognitionTrace;
   events: ListenSequenceEventDiagnostic[];
   attacks: ListenSequenceAttackDiagnostic[];
@@ -286,6 +293,7 @@ export interface ListenSequencePolicyComparison {
 export interface ExperimentalListenSequenceResult {
   policy: "next-onset-buffer";
   bufferMs: number;
+  renderer: ListenBenchmarkRendererConfiguration;
   runs: ListenSequenceRunResult[];
   speedSummaries: ListenSequenceAggregateSummary[];
   familySpeedSummaries: ListenSequenceAggregateSummary[];
@@ -354,6 +362,7 @@ export interface ListenSequenceBaselineObservations {
 
 export interface ListenSequenceBenchmarkResult {
   policy: "current-matcher";
+  renderer: ListenBenchmarkRendererConfiguration;
   runs: ListenSequenceRunResult[];
   speedSummaries: ListenSequenceAggregateSummary[];
   familySpeedSummaries: ListenSequenceAggregateSummary[];
@@ -530,7 +539,6 @@ export function materializeListenSequence(
       throw new Error(`${definition.id} attack ${attackIndex} has no score target.`);
     }
     const scheduledAtMs = LISTEN_SEQUENCE_PRE_ROLL_MS + attack.at * intervalMs;
-    const lengthMs = Math.max(90, intervalMs * DEFAULT_NOTE_LENGTH_RATIO);
     const normalized = attack.notes.map(normalizedNote);
     const notes = normalized.map((playedNote, noteIndex): ScheduledSequenceNote => {
       const attackTimeMs = scheduledAtMs + (playedNote.offsetMs ?? 0);
@@ -540,7 +548,7 @@ export function materializeListenSequence(
         attackIndex,
         attackTimeMs,
         releaseTimeMs: attackTimeMs + (playedNote.durationIntervals === undefined
-          ? lengthMs
+          ? LISTEN_BENCHMARK_DEFAULT_HOLD_MS
           : playedNote.durationIntervals * intervalMs),
       };
     });
@@ -572,7 +580,13 @@ export function materializeListenSequence(
     LISTEN_SEQUENCE_PRE_ROLL_MS,
     ...attacks.flatMap((attack) => attack.notes.map((playedNote) => playedNote.attackTimeMs)),
   );
-  const durationMs = latestAttack + LISTEN_SEQUENCE_TAIL_MS;
+  const latestEnvelopeEnd = Math.max(
+    LISTEN_SEQUENCE_PRE_ROLL_MS,
+    ...attacks.flatMap((attack) => attack.notes.map(
+      (playedNote) => playedNote.releaseTimeMs + LISTEN_BENCHMARK_RELEASE_MS,
+    )),
+  );
+  const durationMs = Math.max(latestAttack + LISTEN_SEQUENCE_TAIL_MS, latestEnvelopeEnd);
   const frameCount = Math.ceil(
     durationMs * ONLINE_AMT_SAMPLE_RATE / 1_000 / ONLINE_AMT_CHUNK_SIZE,
   ) * ONLINE_AMT_CHUNK_SIZE;
@@ -591,96 +605,29 @@ export function materializeListenSequence(
   };
 }
 
-/** Mixes all scheduled attacks into one continuous 16 kHz PCM buffer. */
-export function renderScheduledSequenceAudio(
+export function benchmarkAudioAttacksForSequence(
   sequence: MaterializedListenSequence,
-  samplesByPitch: ReadonlyMap<number, SequencePianoSample>,
-): Float32Array {
-  const rendered = new Float32Array(sequence.frameCount);
-  for (const attack of sequence.attacks) {
-    const gain = Math.min(0.8, 0.9 / Math.sqrt(Math.max(1, attack.notes.length)));
-    for (const playedNote of attack.notes) {
-      const sample = samplesByPitch.get(playedNote.midi);
-      if (!sample) throw new Error(`No piano sample was prepared for MIDI ${playedNote.midi}.`);
-      const playbackRate = 2 ** ((playedNote.midi - sample.sourceMidi) / 12);
-      const startFrame = Math.round(
-        playedNote.attackTimeMs * ONLINE_AMT_SAMPLE_RATE / 1_000,
-      );
-      const releaseFrame = Math.round(
-        playedNote.releaseTimeMs * ONLINE_AMT_SAMPLE_RATE / 1_000,
-      );
-      const releaseEndFrame = releaseFrame + Math.round(
-        NOTE_RELEASE_MS * ONLINE_AMT_SAMPLE_RATE / 1_000,
-      );
-      const finalFrame = Math.min(rendered.length, releaseEndFrame);
-      for (let outputFrame = startFrame; outputFrame < finalFrame; outputFrame += 1) {
-        const elapsedFrames = outputFrame - startFrame;
-        const sourcePosition = elapsedFrames * sample.sampleRate * playbackRate /
-          ONLINE_AMT_SAMPLE_RATE;
-        const sourceIndex = Math.floor(sourcePosition);
-        if (sourceIndex >= sample.samples.length) break;
-        const fraction = sourcePosition - sourceIndex;
-        const sampleValue = sample.samples[sourceIndex] * (1 - fraction) +
-          (sample.samples[sourceIndex + 1] ?? sample.samples[sourceIndex]) * fraction;
-        const releaseGain = outputFrame < releaseFrame
-          ? 1
-          : Math.max(0, 1 - (outputFrame - releaseFrame) /
-            Math.max(1, releaseEndFrame - releaseFrame));
-        rendered[outputFrame] += sampleValue * gain * releaseGain;
-      }
-    }
-  }
-  let peak = 0;
-  for (const value of rendered) peak = Math.max(peak, Math.abs(value));
-  if (peak > 0.98) {
-    const scale = 0.98 / peak;
-    for (let index = 0; index < rendered.length; index += 1) rendered[index] *= scale;
-  }
-  return rendered;
+): ListenBenchmarkAudioAttack[] {
+  return sequence.attacks.map((attack) => ({
+    onsetMs: attack.scheduledAtMs,
+    notes: attack.notes.map((playedNote) => ({
+      midi: playedNote.midi,
+      offsetMs: playedNote.attackTimeMs - attack.scheduledAtMs,
+      holdMs: playedNote.releaseTimeMs - playedNote.attackTimeMs,
+    })),
+  }));
 }
 
-function nearestSample(midi: number): [number, string] {
-  const samples = Object.entries(pianoSampleUrls()).map(
-    ([pitch, url]): [number, string] => [Number(pitch), url],
-  );
-  return samples.reduce((nearest, candidate) => (
-    Math.abs(candidate[0] - midi) < Math.abs(nearest[0] - midi) ? candidate : nearest
-  ));
-}
-
-class BundledSequenceAudioRenderer {
-  private readonly audioContext = new AudioContext({ sampleRate: ONLINE_AMT_SAMPLE_RATE });
-  private readonly decoded = new Map<string, Promise<SequencePianoSample>>();
-
-  private sample(midi: number): Promise<SequencePianoSample> {
-    const [sourceMidi, url] = nearestSample(midi);
-    let pending = this.decoded.get(url);
-    if (!pending) {
-      pending = fetch(url).then(async (response) => {
-        if (!response.ok) throw new Error(`Could not load benchmark sample ${url}.`);
-        const decoded = await this.audioContext.decodeAudioData(await response.arrayBuffer());
-        return {
-          sourceMidi,
-          sampleRate: decoded.sampleRate,
-          samples: new Float32Array(decoded.getChannelData(0)),
-        };
-      });
-      this.decoded.set(url, pending);
-    }
-    return pending;
-  }
-
-  async render(sequence: MaterializedListenSequence): Promise<Float32Array> {
-    const samples = new Map<number, SequencePianoSample>();
-    await Promise.all(sequence.relevantPitches.map(async (midi) => {
-      samples.set(midi, await this.sample(midi));
-    }));
-    return renderScheduledSequenceAudio(sequence, samples);
-  }
-
-  async dispose(): Promise<void> {
-    await this.audioContext.close();
-  }
+/** Renders a materialized passage through the canonical bundled-piano Web Audio graph. */
+export function renderListenSequenceAudio(
+  sequence: MaterializedListenSequence,
+): Promise<ListenBenchmarkAudioRenderResult> {
+  return renderBenchmarkAudio({
+    attacks: benchmarkAudioAttacksForSequence(sequence),
+    durationMs: sequence.durationMs,
+    sampleRate: ONLINE_AMT_SAMPLE_RATE,
+    chunkSize: ONLINE_AMT_CHUNK_SIZE,
+  });
 }
 
 export async function captureListenSequenceTrace(options: {
@@ -690,6 +637,8 @@ export async function captureListenSequenceTrace(options: {
   relevantPitches: readonly number[];
   session: SequenceInferenceSession;
   decoder?: SequenceOutputDecoder;
+  renderer?: ListenBenchmarkRendererConfiguration;
+  audioDiagnostics?: ListenBenchmarkAudioDiagnostics;
 }): Promise<ListenRecognitionTrace> {
   if (options.audio.length % ONLINE_AMT_CHUNK_SIZE !== 0) {
     throw new Error("Continuous sequence audio must contain complete 512-sample chunks.");
@@ -739,6 +688,7 @@ export async function captureListenSequenceTrace(options: {
         midi,
         confidence: evidence.get(midi) ?? 0,
       })),
+      modelScores: Array.from(output.scores),
       modelStates: Array.from(output.states),
       signalActive: output.signalActive,
       inferenceDurationMs: output.inferenceTimeMs,
@@ -750,6 +700,9 @@ export async function captureListenSequenceTrace(options: {
     sampleRate: ONLINE_AMT_SAMPLE_RATE,
     chunkSize: ONLINE_AMT_CHUNK_SIZE,
     relevantPitches: [...options.relevantPitches],
+    renderer: { ...(options.renderer ?? LISTEN_BENCHMARK_RENDERER) },
+    audioDiagnostics: options.audioDiagnostics ?? measureBenchmarkPcm(options.audio),
+    pcm: new Float32Array(options.audio),
     frames,
     maximumInferenceMs,
     maximumProcessingBacklogMs,
@@ -1629,6 +1582,7 @@ export function replayListenSequenceTrace(
     family: sequence.definition.family,
     intervalMs: sequence.intervalMs,
     eventRate: sequence.eventRate,
+    renderer: { ...trace.renderer },
     trace,
     events,
     attacks: sequence.attacks.map((attack) => ({
@@ -1842,6 +1796,7 @@ export function summarizeListenSequenceBenchmark(
     0,
   );
   return {
+    renderer: { ...LISTEN_BENCHMARK_RENDERER },
     speedSummaries,
     familySpeedSummaries,
     baseline: {
@@ -1954,7 +1909,6 @@ export async function runBundledListenSequenceBenchmark(
   const cases = LISTEN_SEQUENCE_INTERVALS_MS.flatMap((intervalMs) => (
     definitions.map((definition) => ({ definition, intervalMs }))
   ));
-  const renderer = new BundledSequenceAudioRenderer();
   const pendingSession = OnlineAmtSession.create({
     modelUrl: new URL("models/online_amt_streaming.onnx", document.baseURI).href,
     numThreads: 1,
@@ -1971,13 +1925,15 @@ export async function runBundledListenSequenceBenchmark(
     for (let index = 0; index < cases.length; index += 1) {
       const { definition, intervalMs } = cases[index];
       const sequence = materializeListenSequence(definition, intervalMs);
-      const audio = await renderer.render(sequence);
+      const rendered = await renderListenSequenceAudio(sequence);
       const trace = await captureListenSequenceTrace({
         sequenceId: definition.id,
         intervalMs,
-        audio,
+        audio: rendered.pcm,
         relevantPitches: sequence.relevantPitches,
         session,
+        renderer: rendered.renderer,
+        audioDiagnostics: rendered.diagnostics,
       });
       runs.push(replayListenSequenceTrace(sequence, trace, "current-matcher"));
       experimentalRuns.push(replayListenSequenceTrace(sequence, trace, "next-onset-buffer"));
@@ -1992,6 +1948,7 @@ export async function runBundledListenSequenceBenchmark(
       experimental: {
         policy: "next-onset-buffer",
         bufferMs: LISTEN_SEQUENCE_ONSET_BUFFER_MS,
+        renderer: { ...LISTEN_BENCHMARK_RENDERER },
         runs: experimentalRuns,
         speedSummaries: experimentalSummary.speedSummaries,
         familySpeedSummaries: experimentalSummary.familySpeedSummaries,
@@ -1999,7 +1956,6 @@ export async function runBundledListenSequenceBenchmark(
       },
     };
   } finally {
-    await renderer.dispose();
     if (session) await session.dispose();
     else await pendingSession.then((created) => created.dispose()).catch(() => undefined);
   }

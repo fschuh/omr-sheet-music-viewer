@@ -26,6 +26,7 @@ export default defineConfig(({ mode }) => {
         input: {
           main: resolve(__dirname, "index.html"),
           onlineAmtBenchmark: resolve(__dirname, "online-amt-benchmark.html"),
+          listenBenchmarkParity: resolve(__dirname, "listen-benchmark-parity.html"),
         },
       },
     },
