@@ -95,6 +95,14 @@ test("requires a fresh bass onset for a three-note chord", () => {
   assert.equal(matcher.consume(result(1, 301, [], [55, 67, 76])).matched, true);
 });
 
+test("can disable only the fresh-bass requirement", () => {
+  const matcher = new ExactChordMatcher({ refractoryMs: 0, requireFreshBassOnset: false });
+  matcher.setTarget([55, 67, 76], 1, 0);
+  matcher.consume(result(1, 100, [onset(67, 100), onset(76, 100)]));
+  assert.equal(matcher.consume(result(1, 200, [], [55, 67, 76])).matched, false);
+  assert.equal(matcher.consume(result(1, 281, [], [55, 67, 76])).matched, true);
+});
+
 test("stable pitches cannot start an attempt without a fresh onset", () => {
   const matcher = new ExactChordMatcher();
   matcher.setTarget([48, 60, 67], 1, 0);

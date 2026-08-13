@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { basename, join, resolve, sep } from "node:path";
 
@@ -10,6 +11,7 @@ const LISTEN_ACCURACY_MODE = CONFIGURATION_FILTER === "listen-accuracy";
 const LISTEN_SEQUENCE_SUMMARY_MODE = CONFIGURATION_FILTER === "listen-sequence-summary";
 const LISTEN_SEQUENCE_MODE = CONFIGURATION_FILTER === "listen-sequence" ||
   LISTEN_SEQUENCE_SUMMARY_MODE;
+const LISTEN_THRESHOLD_SWEEP_MODE = CONFIGURATION_FILTER === "listen-threshold-sweep";
 const LISTEN_ARTICULATION_SUMMARY_MODE = CONFIGURATION_FILTER ===
   "listen-articulation-summary";
 const LISTEN_ARTICULATION_MODE = CONFIGURATION_FILTER === "listen-articulation" ||
@@ -35,6 +37,21 @@ const CONFIGURATIONS = [
 
 function delay(milliseconds) {
   return new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds));
+}
+
+async function availableLoopbackPort() {
+  const server = createServer();
+  await new Promise((resolveListen, rejectListen) => {
+    server.once("error", rejectListen);
+    server.listen(0, "127.0.0.1", resolveListen);
+  });
+  const address = server.address();
+  const port = typeof address === "object" && address !== null ? address.port : null;
+  await new Promise((resolveClose, rejectClose) => {
+    server.close((error) => error ? rejectClose(error) : resolveClose());
+  });
+  if (port === null) throw new Error("Could not allocate a Chrome DevTools port");
+  return port;
 }
 
 async function waitForDevTools(port, timeoutMs = 15_000) {
@@ -103,9 +120,9 @@ async function evaluate(client, expression) {
   return response.result?.value;
 }
 
-async function runConfiguration(configuration, index) {
+async function runConfiguration(configuration) {
   const profile = await mkdtemp(join(tmpdir(), "online-amt-chrome-"));
-  const port = 9330 + index;
+  const port = await availableLoopbackPort();
   const chrome = spawn(
     CHROME,
     [
@@ -117,6 +134,7 @@ async function runConfiguration(configuration, index) {
       "--no-crash-upload",
       "--no-first-run",
       "--no-default-browser-check",
+      "--remote-debugging-address=127.0.0.1",
       `--remote-debugging-port=${port}`,
       `--user-data-dir=${profile}`,
       "about:blank",
@@ -131,7 +149,7 @@ async function runConfiguration(configuration, index) {
     await client.send("Page.enable");
     const pageUrl = LISTEN_PARITY_MODE
       ? BASE_URL.replace(/online-amt-benchmark\.html(?:\?.*)?$/, "listen-benchmark-parity.html")
-      : (LISTEN_ACCURACY_MODE || LISTEN_SEQUENCE_MODE || LISTEN_ARTICULATION_MODE ||
+      : (LISTEN_ACCURACY_MODE || LISTEN_SEQUENCE_MODE || LISTEN_THRESHOLD_SWEEP_MODE || LISTEN_ARTICULATION_MODE ||
         LISTEN_INFERENCE_RESET_MODE) &&
         /online-amt-benchmark\.html(?:\?|$)/.test(BASE_URL)
       ? BASE_URL.replace(/online-amt-benchmark\.html/, "index.html")
@@ -176,7 +194,7 @@ async function runConfiguration(configuration, index) {
       })()`);
     }
     const deadline = Date.now() + (
-      (LISTEN_SEQUENCE_MODE || LISTEN_ARTICULATION_MODE)
+      (LISTEN_SEQUENCE_MODE || LISTEN_THRESHOLD_SWEEP_MODE || LISTEN_ARTICULATION_MODE)
         ? 600_000
         : LISTEN_PARITY_MODE ? 180_000 : 120_000
     );
@@ -302,6 +320,40 @@ async function runConfiguration(configuration, index) {
                     })(),
                   })),
               })),
+            };
+          })()`
+        : LISTEN_THRESHOLD_SWEEP_MODE
+        ? `(() => {
+            const result = window.listenThresholdSweepResult;
+            const exportCandidate = (candidate, detailed = false) => ({
+              profile: candidate.profile,
+              eligible: candidate.eligible,
+              rejectedBySafety: candidate.rejectedBySafety,
+              safety: candidate.safety,
+              independentMatchCount: candidate.independentMatchCount,
+              orderedAdvanceCount: candidate.orderedAdvanceCount,
+              orderedPrefixCompleted: candidate.orderedPrefixCompleted,
+              completePassageCount: candidate.completePassageCount,
+              p95OrderedAdvanceLatencyMs: candidate.p95OrderedAdvanceLatencyMs,
+              nonSafetyDeltasFromProduction: candidate.nonSafetyDeltasFromProduction,
+              ...(detailed ? {
+                speedSummaries: candidate.speedSummaries,
+                familySpeedSummaries: candidate.familySpeedSummaries,
+              } : {}),
+            });
+            return {
+              productionProfile: result.productionProfile,
+              gridSize: result.gridSize,
+              profilesEvaluated: result.profilesEvaluated,
+              profilesRejectedBySafety: result.profilesRejectedBySafety,
+              productionBaseline: exportCandidate(result.productionBaseline, true),
+              candidates: result.candidates.map(exportCandidate),
+              paretoFrontier: result.paretoFrontier.map((candidate) => (
+                exportCandidate(candidate, true)
+              )),
+              recommendation: exportCandidate(result.recommendation, true),
+              noSafeImprovement: result.noSafeImprovement,
+              replayParityVerified: result.replayParityVerified,
             };
           })()`
         : LISTEN_SEQUENCE_MODE
@@ -487,6 +539,11 @@ const selectedConfigurations = FINGERING_SMOKE_MODE
       name: LISTEN_SEQUENCE_SUMMARY_MODE ? "listen-sequence-summary" : "listen-sequence",
       query: "listen-sequence=auto",
     }]
+  : LISTEN_THRESHOLD_SWEEP_MODE
+  ? [{
+      name: "listen-threshold-sweep",
+      query: "listen-threshold-sweep=auto",
+    }]
   : LISTEN_INFERENCE_RESET_MODE
   ? [{
       name: LISTEN_INFERENCE_RESET_SUMMARY_MODE
@@ -514,7 +571,7 @@ if (selectedConfigurations.length === 0) {
 const results = [];
 for (let index = 0; index < selectedConfigurations.length; index += 1) {
   const configuration = selectedConfigurations[index];
-  const result = await runConfiguration(configuration, index);
+  const result = await runConfiguration(configuration);
   const conciseSpeed = (summary) => ({
     intervalMs: summary.intervalMs,
     eventRate: summary.eventRate,
@@ -580,6 +637,39 @@ for (let index = 0; index < selectedConfigurations.length; index += 1) {
           deltaFromNormal: profile.deltaFromNormal,
         })),
       }
+    : LISTEN_THRESHOLD_SWEEP_MODE
+    ? (() => {
+        const exportCandidate = (candidate, detailed = false) => ({
+          profile: candidate.profile,
+          eligible: candidate.eligible,
+          rejectedBySafety: candidate.rejectedBySafety,
+          safety: candidate.safety,
+          independentMatchCount: candidate.independentMatchCount,
+          orderedAdvanceCount: candidate.orderedAdvanceCount,
+          orderedPrefixCompleted: candidate.orderedPrefixCompleted,
+          completePassageCount: candidate.completePassageCount,
+          p95OrderedAdvanceLatencyMs: candidate.p95OrderedAdvanceLatencyMs,
+          nonSafetyDeltasFromProduction: candidate.nonSafetyDeltasFromProduction,
+          ...(detailed ? {
+            speedSummaries: candidate.speedSummaries,
+            familySpeedSummaries: candidate.familySpeedSummaries,
+          } : {}),
+        });
+        return {
+          productionProfile: result.productionProfile,
+          gridSize: result.gridSize,
+          profilesEvaluated: result.profilesEvaluated,
+          profilesRejectedBySafety: result.profilesRejectedBySafety,
+          productionBaseline: exportCandidate(result.productionBaseline, true),
+          candidates: result.candidates.map(exportCandidate),
+          paretoFrontier: result.paretoFrontier.map((candidate) => (
+            exportCandidate(candidate, true)
+          )),
+          recommendation: exportCandidate(result.recommendation, true),
+          noSafeImprovement: result.noSafeImprovement,
+          replayParityVerified: result.replayParityVerified,
+        };
+      })()
     : LISTEN_SEQUENCE_SUMMARY_MODE
     ? {
         renderer: result.renderer,
@@ -632,6 +722,14 @@ for (let index = 0; index < selectedConfigurations.length; index += 1) {
       `safety=${summary.statefulSafety.total}/${summary.eventResetSafety.total} ` +
       `raw-delta=${summary.rawEvidenceDelta} ` +
       `audio=${result.audioSignature.pcmHash}`,
+    );
+  } else if (LISTEN_THRESHOLD_SWEEP_MODE) {
+    console.error(
+      `${configuration.name}: evaluated=${result.profilesEvaluated}/${result.gridSize} ` +
+      `rejected-safety=${result.profilesRejectedBySafety} ` +
+      `frontier=${result.paretoFrontier.length} ` +
+      `recommendation=${result.recommendation.profile.id} ` +
+      `no-safe-improvement=${result.noSafeImprovement}`,
     );
   } else if (LISTEN_SEQUENCE_MODE) {
     const slowest = result.perSpeed[0];

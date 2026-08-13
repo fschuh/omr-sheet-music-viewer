@@ -9,8 +9,10 @@ import {
 import {
   runBundledListenSequenceBenchmark,
   runCourseClearArticulationMatrix,
+  runListenThresholdSweep,
   type ListenArticulationMatrixResult,
   type ListenSequenceBenchmarkResult,
+  type ListenThresholdSweepResult,
 } from "./listenSequenceBenchmark";
 import {
   runListenInferenceResetBenchmark,
@@ -21,16 +23,18 @@ let automaticBenchmarkStarted = false;
 
 export function ListenBenchmarkPage() {
   const [runningTask, setRunningTask] = useState<
-    "online_amt" | "spectral" | "sequence" | "articulation" | "reset-comparison" | null
+    "online_amt" | "spectral" | "sequence" | "threshold-sweep" | "articulation" | "reset-comparison" | null
   >(null);
   const running = runningTask !== null;
   const [progress, setProgress] = useState("");
   const [progressTask, setProgressTask] = useState<
-    "isolated" | "sequence" | "articulation" | "reset-comparison"
+    "isolated" | "sequence" | "threshold-sweep" | "articulation" | "reset-comparison"
   >("isolated");
   const [error, setError] = useState<string | null>(null);
   const [automated, setAutomated] = useState<ListenBenchmarkSummary | null>(null);
   const [sequenceResult, setSequenceResult] = useState<ListenSequenceBenchmarkResult | null>(null);
+  const [thresholdSweepResult, setThresholdSweepResult] =
+    useState<ListenThresholdSweepResult | null>(null);
   const [articulationResult, setArticulationResult] =
     useState<ListenArticulationMatrixResult | null>(null);
   const [resetComparisonResult, setResetComparisonResult] =
@@ -45,7 +49,10 @@ export function ListenBenchmarkPage() {
   useEffect(() => {
     if (automaticBenchmarkStarted) return;
     const query = new URLSearchParams(window.location.search);
-    if (query.get("listen-articulation") === "auto") {
+    if (query.get("listen-threshold-sweep") === "auto") {
+      automaticBenchmarkStarted = true;
+      void runThresholdSweep();
+    } else if (query.get("listen-articulation") === "auto") {
       automaticBenchmarkStarted = true;
       void runArticulation();
     } else if (query.get("listen-inference-reset") === "auto") {
@@ -84,7 +91,7 @@ export function ListenBenchmarkPage() {
     }
   }
 
-  async function runSequence() {
+  async function runSequence(): Promise<ListenSequenceBenchmarkResult | null> {
     setRunningTask("sequence");
     setProgressTask("sequence");
     setError(null);
@@ -98,6 +105,35 @@ export function ListenBenchmarkPage() {
       (window as typeof window & {
         listenSequenceBenchmarkResult?: ListenSequenceBenchmarkResult;
       }).listenSequenceBenchmarkResult = result;
+      document.body.dataset.status = "complete";
+      return result;
+    } catch (benchmarkError) {
+      setError(benchmarkError instanceof Error ? benchmarkError.message : String(benchmarkError));
+      document.body.dataset.status = "error";
+    } finally {
+      setRunningTask(null);
+    }
+    return null;
+  }
+
+  async function runThresholdSweep() {
+    setRunningTask("threshold-sweep");
+    setProgressTask("threshold-sweep");
+    setError(null);
+    document.body.dataset.status = "running";
+    try {
+      const corpus = sequenceResult ?? await runSequence();
+      if (!corpus) return;
+      setRunningTask("threshold-sweep");
+      setProgressTask("threshold-sweep");
+      document.body.dataset.status = "running";
+      const result = await runListenThresholdSweep(corpus, (complete, total, label) => {
+        setProgress(`${complete} / ${total} profiles · ${label}`);
+      });
+      setThresholdSweepResult(result);
+      (window as typeof window & {
+        listenThresholdSweepResult?: ListenThresholdSweepResult;
+      }).listenThresholdSweepResult = result;
       document.body.dataset.status = "complete";
     } catch (benchmarkError) {
       setError(benchmarkError instanceof Error ? benchmarkError.message : String(benchmarkError));
@@ -499,6 +535,113 @@ export function ListenBenchmarkPage() {
             </div>
             <h3>Detailed continuous diagnostics</h3>
             <pre>{sequenceDiagnostics(sequenceResult)}</pre>
+          </>
+        ) : null}
+      </section>
+
+      <section className="sequence-benchmark threshold-sweep-benchmark">
+        <h2>Threshold replay sweep</h2>
+        <p>
+          Replays the retained stateful traces with fixed timing and no new rendering or
+          inference. The sweep is available after continuous traces exist and never changes the
+          production profile automatically.
+        </p>
+        <button
+          type="button"
+          disabled={running || sequenceResult === null}
+          onClick={() => void runThresholdSweep()}
+        >
+          {runningTask === "threshold-sweep" ? "Sweeping…" : "Replay threshold sweep"}
+        </button>
+        {progress && progressTask === "threshold-sweep"
+          ? <span className="benchmark-progress">{progress}</span>
+          : null}
+        {thresholdSweepResult ? (
+          <>
+            <p>
+              Evaluated {thresholdSweepResult.profilesEvaluated} / {thresholdSweepResult.gridSize}
+              profiles; {thresholdSweepResult.profilesRejectedBySafety} rejected by safety.{" "}
+              Recommendation: <strong>{thresholdSweepResult.recommendation.profile.id}</strong>{" "}
+              ({thresholdSweepResult.noSafeImprovement ? "production retained" : "safe improvement"}).
+            </p>
+            <div className="benchmark-table-wrap">
+              <table className="benchmark-table">
+                <thead>
+                  <tr>
+                    <th>Candidate</th>
+                    <th>Safe</th>
+                    <th>Independent</th>
+                    <th>Ordered</th>
+                    <th>Complete passages</th>
+                    <th>Latency p95</th>
+                    <th>Safety false / skip / duplicate</th>
+                    <th>Carried-bass incomplete</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[thresholdSweepResult.productionBaseline, ...thresholdSweepResult.paretoFrontier
+                    .filter((candidate) => (
+                      candidate.profile.id !== thresholdSweepResult.productionBaseline.profile.id
+                    ))
+                    .slice(0, 7)]
+                    .map((candidate) => (
+                      <tr key={candidate.profile.id}>
+                        <td><code>{candidate.profile.id}</code></td>
+                        <td>{candidate.safety.passed ? "Yes" : "No"}</td>
+                        <td>{candidate.independentMatchCount}</td>
+                        <td>{candidate.orderedAdvanceCount}</td>
+                        <td>{candidate.completePassageCount}</td>
+                        <td>{candidate.p95OrderedAdvanceLatencyMs ?? "—"} ms</td>
+                        <td>{candidate.safety.falseAdvanceCount} / {candidate.safety.skippedAdvanceCount} / {candidate.safety.duplicateAdvanceCount}</td>
+                        <td>{candidate.safety.incompleteCarriedBassAdvances}</td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            </div>
+            <h3>Recommendation deltas by speed</h3>
+            <div className="benchmark-table-wrap">
+              <table className="benchmark-table">
+                <thead>
+                  <tr>
+                    <th>Interval</th>
+                    <th>Independent</th>
+                    <th>Ordered</th>
+                    <th>Prefix</th>
+                    <th>Complete passages</th>
+                    <th>Latency p95</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {thresholdSweepResult.recommendation.nonSafetyDeltasFromProduction
+                    .map((delta) => (
+                      <tr key={delta.intervalMs}>
+                        <td>{Number.isInteger(delta.intervalMs)
+                          ? delta.intervalMs
+                          : delta.intervalMs.toFixed(1)} ms</td>
+                        <td>{delta.independentMatchDelta >= 0 ? "+" : ""}{delta.independentMatchDelta}</td>
+                        <td>{delta.orderedAdvanceDelta >= 0 ? "+" : ""}{delta.orderedAdvanceDelta}</td>
+                        <td>{delta.orderedPrefixDelta >= 0 ? "+" : ""}{delta.orderedPrefixDelta}</td>
+                        <td>{delta.completePassageDelta >= 0 ? "+" : ""}{delta.completePassageDelta}</td>
+                        <td>{delta.p95OrderedAdvanceLatencyDeltaMs === null
+                          ? "—"
+                          : `${delta.p95OrderedAdvanceLatencyDeltaMs >= 0 ? "+" : ""}${delta.p95OrderedAdvanceLatencyDeltaMs.toFixed(1)} ms`}</td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            </div>
+            <h3>Production baseline and candidate configuration</h3>
+            <pre>{JSON.stringify({
+              production: thresholdSweepResult.productionProfile,
+              recommendation: thresholdSweepResult.recommendation.profile,
+              paretoFrontier: thresholdSweepResult.paretoFrontier.map((candidate) => ({
+                profile: candidate.profile,
+                eligible: candidate.eligible,
+                safety: candidate.safety,
+                perSpeedDeltas: candidate.nonSafetyDeltasFromProduction,
+              })),
+            }, null, 2)}</pre>
           </>
         ) : null}
       </section>

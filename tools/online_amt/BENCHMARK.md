@@ -45,6 +45,69 @@ Parity:
 Entries are kept newest first so renderer and recognition changes remain
 comparable over time.
 
+### Threshold replay sweep — August 13, 2026
+
+The browser retained one stateful continuous trace for each of 13 sequence
+families at all six configured speeds, including wrong-note, extra-note, and
+carried-bass safety cases. The sweep varied five matcher properties:
+`onsetThreshold`, `targetNoteThreshold`, `activeTargetThreshold`,
+`extraNoteThreshold`, and `requireFreshBassOnset`; all timing and inference
+settings remained fixed. Production-profile replay reproduced the captured
+per-event and aggregate results exactly before the inference-free sweep ran.
+The bounded grid evaluated all 1,000 profiles in about 150 seconds; 680 were
+rejected by the safety gates.
+
+| Profile | Independent | Ordered | Prefix total | Complete passages | Ordered p95 | Safety (false / skip / duplicate / carried bass) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Production `o0p600-t0p500-a0p350-x0p970-b1` | 291 | 283 | 199 | 33 | 214.67 ms | 0 / 0 / 0 / 0 |
+| Recommended `o0p450-t0p500-a0p200-x0p990-b1` | 308 | 365 | 268 | 43 | 209.33 ms | 0 / 0 / 0 / 0 |
+
+Explicit matcher settings:
+
+| Setting | Production | Recommended |
+| --- | ---: | ---: |
+| `onsetThreshold` | 0.60 | 0.45 |
+| `targetNoteThreshold` | 0.50 | 0.50 |
+| `activeTargetThreshold` | 0.35 | 0.20 |
+| `extraNoteThreshold` | 0.97 | 0.99 |
+| `requireFreshBassOnset` | `true` | `true` |
+
+Recommended-profile deltas from production by speed:
+
+| Interval | Independent | Ordered | Prefix | Complete passages | Ordered p95 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 1000 ms | +2 | +4 | +4 | 0 | -8 ms |
+| 500 ms | +3 | +7 | +7 | +1 | 0 ms |
+| 333⅓ ms | +7 | +39 | +39 | +5 | -13.33 ms |
+| 250 ms | +4 | +19 | +19 | +1 | 0 ms |
+| 167 ms | 0 | +8 | 0 | +2 | -7 ms |
+| 125 ms | +1 | +5 | 0 | +1 | 0 ms |
+
+The eligible Pareto frontier contains 15 profiles. All retain
+`targetNoteThreshold=0.50` and `requireFreshBassOnset=true`; profile IDs encode
+onset, target, active-target, extra-note, and fresh-bass values respectively.
+
+| Frontier profile | Independent | Ordered | Prefix total | Complete | Ordered p95 | Distance |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `o0p450-t0p500-a0p200-x0p990-b1` | 308 | 365 | 268 | 43 | 209.33 ms | 0.320 |
+| `o0p450-t0p500-a0p275-x0p990-b1` | 307 | 362 | 265 | 42 | 209.33 ms | 0.245 |
+| `o0p450-t0p500-a0p350-x0p990-b1` | 306 | 348 | 251 | 42 | 212 ms | 0.170 |
+| `o0p500-t0p500-a0p275-x0p990-b1` | 305 | 354 | 257 | 40 | 212 ms | 0.195 |
+| `o0p500-t0p500-a0p350-x0p990-b1` | 304 | 340 | 243 | 40 | 212 ms | 0.120 |
+| `o0p550-t0p500-a0p275-x0p990-b1` | 302 | 345 | 252 | 36 | 212 ms | 0.145 |
+| `o0p550-t0p500-a0p350-x0p990-b1` | 301 | 331 | 238 | 36 | 214 ms | 0.070 |
+| `o0p450-t0p500-a0p200-x0p900-b1` | 300 | 333 | 250 | 38 | 209.33 ms | 0.370 |
+| `o0p450-t0p500-a0p275-x0p900-b1` | 299 | 330 | 247 | 37 | 209.33 ms | 0.295 |
+| `o0p600-t0p500-a0p350-x0p990-b1` | 299 | 308 | 215 | 35 | 214 ms | 0.020 |
+| `o0p450-t0p500-a0p350-x0p900-b1` | 298 | 316 | 233 | 37 | 209.33 ms | 0.220 |
+| `o0p500-t0p500-a0p275-x0p900-b1` | 297 | 322 | 239 | 35 | 209.33 ms | 0.245 |
+| `o0p500-t0p500-a0p350-x0p900-b1` | 296 | 308 | 225 | 35 | 209.33 ms | 0.170 |
+| `o0p550-t0p500-a0p275-x0p900-b1` | 294 | 316 | 236 | 33 | 209.33 ms | 0.195 |
+| `o0p550-t0p500-a0p350-x0p900-b1` | 293 | 302 | 222 | 33 | 209.33 ms | 0.120 |
+
+The recommendation is measurement-only. Production remains at onset 0.60,
+target-note 0.50, active-target 0.35, extra-note 0.97, with fresh bass required.
+
 ### Stateful vs event-reset inference diagnostic — August 12, 2026
 
 Implemented as a separate diagnostic benchmark in
@@ -240,4 +303,7 @@ node tools\online_amt\run_browser_benchmarks.mjs `
 
 node tools\online_amt\run_browser_benchmarks.mjs `
   http://127.0.0.1:5174/online-amt-benchmark.html listen-inference-reset-summary
+
+node tools\online_amt\run_browser_benchmarks.mjs `
+  http://127.0.0.1:5173/ listen-threshold-sweep
 ```

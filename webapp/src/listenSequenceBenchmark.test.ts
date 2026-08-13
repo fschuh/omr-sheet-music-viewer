@@ -20,15 +20,24 @@ import {
   courseClearArticulationDefinitions,
   diagnoseListenArticulationRun,
   evaluateTraceRecognitionLayers,
+  generateListenMatcherSweepProfiles,
+  productionListenMatcherProfile,
   interpretListenArticulationMatrix,
+  listenThresholdSweepParetoFrontier,
   materializeListenSequence,
+  rankListenThresholdSweepCandidates,
   replayListenSequenceTrace,
+  runListenThresholdSweep,
   summarizeListenSequenceBenchmark,
+  summarizeListenThresholdSafety,
   type ExpectedPitchDiagnostic,
   type ListenArticulationRunSummary,
   type ListenRecognitionFrame,
   type ListenRecognitionTrace,
   type ListenSequenceDefinition,
+  type ListenSequenceBenchmarkResult,
+  type ListenSequenceAggregateSummary,
+  type ListenThresholdSweepProfileResult,
   type MaterializedListenSequence,
   type SequenceInferenceSession,
   type SequenceOutputDecoder,
@@ -142,6 +151,264 @@ function pitchDiagnostic(update: Partial<ExpectedPitchDiagnostic> = {}): Expecte
     ...update,
   };
 }
+
+test("threshold sweep generates the complete stable 1,000-profile grid", () => {
+  const profiles = generateListenMatcherSweepProfiles();
+  assert.equal(profiles.length, 1_000);
+  assert.equal(new Set(profiles.map(({ id }) => id)).size, 1_000);
+  const production = profiles.find(({ onsetThreshold, targetNoteThreshold, activeTargetThreshold,
+    extraNoteThreshold, requireFreshBassOnset }) => (
+    onsetThreshold === productionListenMatcherProfile.onsetThreshold &&
+    targetNoteThreshold === productionListenMatcherProfile.targetNoteThreshold &&
+    activeTargetThreshold === productionListenMatcherProfile.activeTargetThreshold &&
+    extraNoteThreshold === productionListenMatcherProfile.extraNoteThreshold &&
+    requireFreshBassOnset === productionListenMatcherProfile.requireFreshBassOnset
+  ));
+  assert.ok(production);
+  assert.equal(production.distanceFromProduction, 0);
+});
+
+test("threshold-qualified diagnostics use the supplied profile boundary", () => {
+  const sequence = materializeListenSequence(regularDefinition([[60]]), 1_000);
+  const capturedAt = Math.ceil(sequence.targets[0].scheduledAttackTimeMs / 32) * 32;
+  const shared = trace(sequence, [recognitionFrame(
+    sequence.relevantPitches,
+    capturedAt,
+    [{ midi: 60, confidence: 0.6, noteConfidence: 0.5 }],
+  )]);
+  const low = evaluateTraceRecognitionLayers(sequence, shared, {
+    ...productionListenMatcherProfile,
+    onsetThreshold: 0.6,
+    targetNoteThreshold: 0.5,
+  })[0];
+  const high = evaluateTraceRecognitionLayers(sequence, shared, {
+    ...productionListenMatcherProfile,
+    onsetThreshold: 0.600_001,
+  })[0];
+  assert.equal(low.thresholdQualified, true);
+  assert.equal(high.thresholdQualified, false);
+});
+
+test("active-target and extra-note thresholds include their exact boundary", () => {
+  const chord = materializeListenSequence(regularDefinition([[60, 64]], "active-boundary"), 1_000);
+  const at = Math.ceil(chord.targets[0].scheduledAttackTimeMs / 32) * 32;
+  const activeFrame = recognitionFrame(chord.relevantPitches, at, [{ midi: 60 }], [60, 64]);
+  activeFrame.confidenceEvidence = activeFrame.confidenceEvidence.map((evidence) => ({
+    ...evidence,
+    confidence: evidence.midi === 64 ? 0.35 : evidence.confidence,
+  }));
+  const activeTrace = trace(chord, [
+    activeFrame,
+    { ...activeFrame, capturedAtMs: at + 32, onsets: [], noteEvents: [] },
+  ]);
+  assert.equal(replayListenSequenceTrace(chord, activeTrace, {
+    ...productionListenMatcherProfile,
+    activeTargetThreshold: 0.35,
+  }).events[0].independentlyMatched, true);
+  assert.equal(replayListenSequenceTrace(chord, activeTrace, {
+    ...productionListenMatcherProfile,
+    activeTargetThreshold: 0.350_001,
+  }).events[0].independentlyMatched, false);
+
+  const single = materializeListenSequence(regularDefinition([[60]], "extra-boundary"), 1_000);
+  const extraAt = Math.ceil(single.targets[0].scheduledAttackTimeMs / 32) * 32;
+  const extraTrace = trace(single, [
+    recognitionFrame(single.relevantPitches, extraAt, [
+      { midi: 60, confidence: 0.9, noteConfidence: 0.9 },
+      { midi: 61, confidence: 0.9, noteConfidence: 0.97 },
+    ]),
+    recognitionFrame(single.relevantPitches, extraAt + 32, [], [60]),
+  ]);
+  assert.equal(replayListenSequenceTrace(single, extraTrace, {
+    ...productionListenMatcherProfile,
+    extraNoteThreshold: 0.97,
+  }).events[0].independentlyMatched, false);
+  assert.equal(replayListenSequenceTrace(single, extraTrace, {
+    ...productionListenMatcherProfile,
+    extraNoteThreshold: 0.970_001,
+  }).events[0].independentlyMatched, true);
+});
+
+test("carried-bass safety does not attribute recovery to the incomplete attack", () => {
+  const definition = bundledListenSequences().find(({ id }) => id === "carried-bass-safety")!;
+  const sequence = materializeListenSequence(definition, 1_000);
+  const frames = [
+    recognitionFrame(sequence.relevantPitches, 224, [{ midi: 48 }]),
+    recognitionFrame(sequence.relevantPitches, 256, [], [48]),
+    recognitionFrame(sequence.relevantPitches, 1_248, [{ midi: 60 }, { midi: 64 }], [48, 60, 64]),
+    recognitionFrame(sequence.relevantPitches, 1_280, [], [48, 60, 64]),
+    recognitionFrame(sequence.relevantPitches, 1_800, [], []),
+    recognitionFrame(sequence.relevantPitches, 2_240, [{ midi: 48 }, { midi: 60 }, { midi: 64 }]),
+    recognitionFrame(sequence.relevantPitches, 2_272, [], [48, 60, 64]),
+    recognitionFrame(sequence.relevantPitches, 3_264, [{ midi: 48 }, { midi: 60 }, { midi: 64 }]),
+    recognitionFrame(sequence.relevantPitches, 3_296, [], [48, 60, 64]),
+  ];
+  const run = replayListenSequenceTrace(sequence, trace(sequence, frames));
+  assert.deepEqual(run.attacks[1].advancementTargetIndices, []);
+  assert.equal(run.summary.falseAdvanceCount, 0);
+});
+
+test("disabling fresh bass is rejected when the carried bass completes the chord", () => {
+  const definition = bundledListenSequences().find(({ id }) => id === "carried-bass-safety")!;
+  const sequence = materializeListenSequence(definition, 1_000);
+  const frames = [
+    recognitionFrame(sequence.relevantPitches, 224, [{ midi: 48 }]),
+    recognitionFrame(sequence.relevantPitches, 256, [], [48]),
+    recognitionFrame(sequence.relevantPitches, 1_248, [{ midi: 60 }, { midi: 64 }], [48, 60, 64]),
+    recognitionFrame(sequence.relevantPitches, 1_280, [], [48, 60, 64]),
+    recognitionFrame(sequence.relevantPitches, 1_800, [], []),
+    recognitionFrame(sequence.relevantPitches, 2_240, [{ midi: 48 }, { midi: 60 }, { midi: 64 }]),
+    recognitionFrame(sequence.relevantPitches, 2_272, [], [48, 60, 64]),
+    recognitionFrame(sequence.relevantPitches, 3_264, [{ midi: 48 }, { midi: 60 }, { midi: 64 }]),
+    recognitionFrame(sequence.relevantPitches, 3_296, [], [48, 60, 64]),
+  ];
+  const sharedTrace = trace(sequence, frames);
+  const required = replayListenSequenceTrace(sequence, sharedTrace, {
+    ...productionListenMatcherProfile,
+    requireFreshBassOnset: true,
+  });
+  const relaxed = replayListenSequenceTrace(sequence, sharedTrace, {
+    ...productionListenMatcherProfile,
+    requireFreshBassOnset: false,
+  });
+  assert.deepEqual(required.attacks[1].advancementTargetIndices, []);
+  assert.deepEqual(relaxed.attacks[1].advancementTargetIndices, [1]);
+  assert.equal(summarizeListenThresholdSafety([required]).passed, true);
+  assert.equal(summarizeListenThresholdSafety([relaxed]).passed, false);
+});
+
+test("safety aggregation covers every configured speed", () => {
+  const definition = bundledListenSequences().find(({ id }) => id === "carried-bass-safety")!;
+  const runs = LISTEN_SEQUENCE_INTERVALS_MS.map((intervalMs) => {
+    const sequence = materializeListenSequence(definition, intervalMs);
+    return {
+      ...replayListenSequenceTrace(sequence, trace(sequence, [])),
+      summary: {
+        ...replayListenSequenceTrace(sequence, trace(sequence, [])).summary,
+        falseAdvanceCount: 0,
+        skippedAdvanceCount: 0,
+        duplicateAdvanceCount: 0,
+      },
+    };
+  });
+  const safety = summarizeListenThresholdSafety(runs);
+  assert.equal(safety.sequenceCount, LISTEN_SEQUENCE_INTERVALS_MS.length);
+  assert.deepEqual(
+    safety.speeds.map(({ intervalMs }) => intervalMs),
+    [...LISTEN_SEQUENCE_INTERVALS_MS],
+  );
+  assert.equal(safety.passed, true);
+});
+
+function sweepCandidate(
+  id: string,
+  requireFreshBassOnset: boolean,
+  independentMatchCount: number,
+  fastIndependentCount: number,
+  orderedAdvanceCount: number,
+  latency: number,
+  distanceFromProduction: number,
+): ListenThresholdSweepProfileResult {
+  const speed = (intervalMs: number, count: number) => ({
+    intervalMs,
+    independentMatchCount: count,
+  } as ListenSequenceAggregateSummary);
+  return {
+    profile: {
+      ...productionListenMatcherProfile,
+      id,
+      requireFreshBassOnset,
+      distanceFromProduction,
+    },
+    eligible: true,
+    rejectedBySafety: false,
+    safety: {
+      sequenceCount: 0,
+      speeds: [],
+      falseAdvanceCount: 0,
+      skippedAdvanceCount: 0,
+      duplicateAdvanceCount: 0,
+      incompleteCarriedBassAdvances: 0,
+      passed: true,
+    },
+    independentMatchCount,
+    orderedAdvanceCount,
+    orderedPrefixCompleted: 0,
+    completePassageCount: 0,
+    p95OrderedAdvanceLatencyMs: latency,
+    speedSummaries: [speed(500, fastIndependentCount), speed(1_000, 0)],
+    familySpeedSummaries: [],
+    nonSafetyDeltasFromProduction: [],
+  };
+}
+
+test("threshold ranking and Pareto tie-breaking are deterministic", () => {
+  const relaxed = sweepCandidate("b-relaxed", false, 10, 5, 8, 200, 1);
+  const fresh = sweepCandidate("a-fresh", true, 10, 5, 8, 200, 1);
+  const higherRecall = sweepCandidate("z-recall", false, 11, 4, 7, 220, 2);
+  assert.deepEqual(
+    rankListenThresholdSweepCandidates([relaxed, higherRecall, fresh])
+      .map(({ profile }) => profile.id),
+    ["z-recall", "a-fresh", "b-relaxed"],
+  );
+  assert.deepEqual(
+    listenThresholdSweepParetoFrontier([relaxed, fresh]).map(({ profile }) => profile.id),
+    ["a-fresh", "b-relaxed"],
+  );
+});
+
+test("threshold sweep replays a retained trace without an inference session", async () => {
+  const definition = bundledListenSequences()[0];
+  const sequence = materializeListenSequence(definition, 1_000);
+  const frames = sequence.targets.flatMap((target) => {
+    const at = Math.ceil(target.scheduledAttackTimeMs / 32) * 32;
+    return [
+      recognitionFrame(sequence.relevantPitches, at, target.pitches.map((midi) => ({ midi }))),
+      recognitionFrame(sequence.relevantPitches, at + 32, [], target.pitches),
+    ];
+  });
+  const original = replayListenSequenceTrace(sequence, trace(sequence, frames));
+  const summary = summarizeListenSequenceBenchmark([original]);
+  const benchmark: ListenSequenceBenchmarkResult = {
+    policy: "current-matcher",
+    matcherProfile: { ...productionListenMatcherProfile },
+    runs: [original],
+    ...summary,
+    experimental: {
+      policy: "next-onset-buffer",
+      bufferMs: 192,
+      renderer: { ...LISTEN_BENCHMARK_RENDERER },
+      runs: [],
+      speedSummaries: [],
+      familySpeedSummaries: [],
+      comparison: {
+        currentCorrectAdvanceCount: 0,
+        bufferedCorrectAdvanceCount: 0,
+        correctAdvanceImprovement: 0,
+        currentOrderedPrefixCompleted: 0,
+        bufferedOrderedPrefixCompleted: 0,
+        orderedPrefixImprovement: 0,
+        currentCompletePassageCount: 0,
+        bufferedCompletePassageCount: 0,
+        completePassageImprovement: 0,
+        bufferedFalseAdvanceCount: 0,
+        bufferedSkippedAdvanceCount: 0,
+        bufferedDuplicateAdvanceCount: 0,
+        isolatedBenchmarkUnchanged: true,
+        rawAndIndependentMetricsIdentical: true,
+        accepted: false,
+      },
+    },
+  };
+  let progressCalls = 0;
+  const result = await runListenThresholdSweep(benchmark, () => { progressCalls += 1; }, 128);
+  assert.equal(result.gridSize, 1_000);
+  assert.equal(result.profilesEvaluated, 1_000);
+  assert.equal(result.replayParityVerified, true);
+  assert.ok(progressCalls > 0);
+  assert.equal(result.noSafeImprovement, true);
+  assert.deepEqual(result.recommendation.profile, result.productionBaseline.profile);
+});
 
 test("materializes fixed articulation into a chunk-aligned continuous schedule", () => {
   const sequence = materializeListenSequence(regularDefinition([[60], [62], [64]]), 100);

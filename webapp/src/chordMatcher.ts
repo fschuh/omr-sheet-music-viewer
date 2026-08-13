@@ -5,6 +5,7 @@ export interface ChordMatcherOptions {
   targetNoteThreshold: number;
   activeTargetThreshold: number;
   noteThreshold: number;
+  requireFreshBassOnset: boolean;
   preTargetExtraLookbackMs: number;
   collectionWindowMs: number;
   settleMs: number;
@@ -19,6 +20,7 @@ export const defaultChordMatcherOptions: ChordMatcherOptions = {
   targetNoteThreshold: 0.12,
   activeTargetThreshold: 0.35,
   noteThreshold: 0.6,
+  requireFreshBassOnset: true,
   preTargetExtraLookbackMs: 30,
   collectionWindowMs: 400,
   settleMs: 80,
@@ -256,10 +258,20 @@ export class ExactChordMatcher {
     ) {
       for (const active of result.targetPitchEvidence) {
         const lowestTarget = this.target.size > 0 ? Math.min(...this.target) : Infinity;
+        const allowCarriedBassEvidence = !this.options.requireFreshBassOnset &&
+          this.target.size >= 3 && active.midi === lowestTarget;
         if (
           !this.target.has(active.midi) ||
-          (eligible.eventBased && this.carryOverPitches.has(active.midi)) ||
-          (this.target.size >= 3 && active.midi === lowestTarget) ||
+          (
+            eligible.eventBased &&
+            this.carryOverPitches.has(active.midi) &&
+            !allowCarriedBassEvidence
+          ) ||
+          (
+            this.options.requireFreshBassOnset &&
+            this.target.size >= 3 &&
+            active.midi === lowestTarget
+          ) ||
           active.confidence < this.options.activeTargetThreshold ||
           this.accumulated.has(active.midi)
         ) continue;

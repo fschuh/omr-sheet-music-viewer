@@ -1,6 +1,7 @@
 import {
   ExactChordMatcher,
   defaultChordMatcherOptions,
+  type ChordMatcherOptions,
 } from "./chordMatcher";
 import { COURSE_CLEAR_BENCHMARK_MOMENTS } from "./listenBenchmarkFixtures";
 import {
@@ -78,6 +79,86 @@ const matcherOptions = {
   ...onlineAmtChordMatcherOptions,
 };
 
+/** The five tunable matcher controls used by the inference-free replay sweep. */
+export interface ListenMatcherProfile {
+  onsetThreshold: number;
+  targetNoteThreshold: number;
+  activeTargetThreshold: number;
+  extraNoteThreshold: number;
+  requireFreshBassOnset: boolean;
+}
+
+export const productionListenMatcherProfile: ListenMatcherProfile = Object.freeze({
+  onsetThreshold: matcherOptions.onsetThreshold,
+  targetNoteThreshold: matcherOptions.targetNoteThreshold,
+  activeTargetThreshold: matcherOptions.activeTargetThreshold,
+  extraNoteThreshold: matcherOptions.noteThreshold,
+  requireFreshBassOnset: matcherOptions.requireFreshBassOnset,
+});
+
+export function matcherOptionsForProfile(
+  profile: ListenMatcherProfile = productionListenMatcherProfile,
+): ChordMatcherOptions {
+  return {
+    ...matcherOptions,
+    onsetThreshold: profile.onsetThreshold,
+    targetNoteThreshold: profile.targetNoteThreshold,
+    activeTargetThreshold: profile.activeTargetThreshold,
+    noteThreshold: profile.extraNoteThreshold,
+    requireFreshBassOnset: profile.requireFreshBassOnset,
+  };
+}
+
+function profileDistanceFromProduction(profile: ListenMatcherProfile): number {
+  return Math.abs(profile.onsetThreshold - productionListenMatcherProfile.onsetThreshold) +
+    Math.abs(profile.targetNoteThreshold - productionListenMatcherProfile.targetNoteThreshold) +
+    Math.abs(profile.activeTargetThreshold - productionListenMatcherProfile.activeTargetThreshold) +
+    Math.abs(profile.extraNoteThreshold - productionListenMatcherProfile.extraNoteThreshold) +
+    (profile.requireFreshBassOnset === productionListenMatcherProfile.requireFreshBassOnset ? 0 : 1);
+}
+
+export interface ListenMatcherSweepProfile extends ListenMatcherProfile {
+  id: string;
+  distanceFromProduction: number;
+}
+
+export const LISTEN_MATCHER_SWEEP_ONSET_THRESHOLDS = [0.45, 0.50, 0.55, 0.60, 0.65] as const;
+export const LISTEN_MATCHER_SWEEP_TARGET_THRESHOLDS = [0.35, 0.425, 0.50, 0.575, 0.65] as const;
+export const LISTEN_MATCHER_SWEEP_ACTIVE_THRESHOLDS = [0.20, 0.275, 0.35, 0.425, 0.50] as const;
+export const LISTEN_MATCHER_SWEEP_EXTRA_THRESHOLDS = [0.90, 0.94, 0.97, 0.99] as const;
+export const LISTEN_MATCHER_SWEEP_FRESH_BASS = [true, false] as const;
+
+function stableThresholdId(value: number): string {
+  return value.toFixed(3).replace(".", "p");
+}
+
+export function generateListenMatcherSweepProfiles(): ListenMatcherSweepProfile[] {
+  const profiles: ListenMatcherSweepProfile[] = [];
+  for (const onsetThreshold of LISTEN_MATCHER_SWEEP_ONSET_THRESHOLDS) {
+    for (const targetNoteThreshold of LISTEN_MATCHER_SWEEP_TARGET_THRESHOLDS) {
+      for (const activeTargetThreshold of LISTEN_MATCHER_SWEEP_ACTIVE_THRESHOLDS) {
+        for (const extraNoteThreshold of LISTEN_MATCHER_SWEEP_EXTRA_THRESHOLDS) {
+          for (const requireFreshBassOnset of LISTEN_MATCHER_SWEEP_FRESH_BASS) {
+            const profile = {
+              onsetThreshold,
+              targetNoteThreshold,
+              activeTargetThreshold,
+              extraNoteThreshold,
+              requireFreshBassOnset,
+            };
+            profiles.push({
+              ...profile,
+              id: `o${stableThresholdId(onsetThreshold)}-t${stableThresholdId(targetNoteThreshold)}-a${stableThresholdId(activeTargetThreshold)}-x${stableThresholdId(extraNoteThreshold)}-b${requireFreshBassOnset ? "1" : "0"}`,
+              distanceFromProduction: profileDistanceFromProduction(profile),
+            });
+          }
+        }
+      }
+    }
+  }
+  return profiles;
+}
+
 export interface ListenSequenceNote {
   midi: number;
   offsetMs?: number;
@@ -96,6 +177,8 @@ export interface ListenSequenceAttackDefinition {
   gainReferenceChordSize?: number;
   /** False for a deliberate wrong/extra-note safety attack. */
   expectedAdvance: boolean;
+  /** Start a safety target at this attack even though the attack is invalid. */
+  targetStart?: boolean;
 }
 
 export interface ListenSequenceDefinition {
@@ -120,6 +203,7 @@ export interface ScheduledSequenceAttack {
   targetIndex: number;
   scheduledAtMs: number;
   expectedAdvance: boolean;
+  targetStart?: boolean;
   playedPitches: number[];
   notes: ScheduledSequenceNote[];
   gainReferenceChordSize?: number;
@@ -309,6 +393,7 @@ export interface ListenSequenceRunSummary {
 
 export interface ListenSequenceRunResult {
   policy: ListenSequenceReplayPolicy;
+  matcherProfile?: ListenMatcherProfile;
   sequenceId: string;
   sequenceLabel: string;
   family: string;
@@ -413,12 +498,65 @@ export interface ListenSequenceBaselineObservations {
 
 export interface ListenSequenceBenchmarkResult {
   policy: "current-matcher";
+  matcherProfile: ListenMatcherProfile;
   renderer: ListenBenchmarkRendererConfiguration;
   runs: ListenSequenceRunResult[];
   speedSummaries: ListenSequenceAggregateSummary[];
   familySpeedSummaries: ListenSequenceAggregateSummary[];
   baseline: ListenSequenceBaselineObservations;
   experimental: ExperimentalListenSequenceResult;
+}
+
+export interface ListenThresholdSweepSafetySummary {
+  sequenceCount: number;
+  speeds: Array<{
+    intervalMs: number;
+    falseAdvanceCount: number;
+    skippedAdvanceCount: number;
+    duplicateAdvanceCount: number;
+    incompleteCarriedBassAdvances: number;
+  }>;
+  falseAdvanceCount: number;
+  skippedAdvanceCount: number;
+  duplicateAdvanceCount: number;
+  incompleteCarriedBassAdvances: number;
+  passed: boolean;
+}
+
+export interface ListenThresholdSweepProfileResult {
+  profile: ListenMatcherSweepProfile;
+  eligible: boolean;
+  rejectedBySafety: boolean;
+  safety: ListenThresholdSweepSafetySummary;
+  independentMatchCount: number;
+  orderedAdvanceCount: number;
+  orderedPrefixCompleted: number;
+  completePassageCount: number;
+  p95OrderedAdvanceLatencyMs: number | null;
+  speedSummaries: ListenSequenceAggregateSummary[];
+  familySpeedSummaries: ListenSequenceAggregateSummary[];
+  nonSafetyDeltasFromProduction: Array<{
+    intervalMs: number;
+    independentMatchDelta: number;
+    orderedAdvanceDelta: number;
+    orderedPrefixDelta: number;
+    completePassageDelta: number;
+    p95OrderedAdvanceLatencyDeltaMs: number | null;
+  }>;
+  detailedRuns?: ListenSequenceRunResult[];
+}
+
+export interface ListenThresholdSweepResult {
+  productionProfile: ListenMatcherProfile;
+  gridSize: number;
+  profilesEvaluated: number;
+  profilesRejectedBySafety: number;
+  productionBaseline: ListenThresholdSweepProfileResult;
+  candidates: ListenThresholdSweepProfileResult[];
+  paretoFrontier: ListenThresholdSweepProfileResult[];
+  recommendation: ListenThresholdSweepProfileResult;
+  noSafeImprovement: boolean;
+  replayParityVerified: true;
 }
 
 export interface ListenArticulationSilenceGapDiagnostic {
@@ -756,6 +894,20 @@ export function bundledListenSequences(): ListenSequenceDefinition[] {
         { at: 3, targetIndex: 2, notes: [64, 67], expectedAdvance: true },
       ],
     },
+    {
+      id: "carried-bass-safety",
+      family: "safety",
+      label: "Carried-bass fresh-onset safety",
+      targets: [[48], [48, 60, 64], [48, 60, 64]],
+      attacks: [
+        { at: 0, targetIndex: 0, notes: [note(48, { holdMs: 1_500 })], expectedAdvance: true },
+        // The old bass remains active while only the upper voices arrive. This
+        // must not advance the following triad when the fresh-bass rule is on.
+        { at: 1, targetIndex: 1, notes: [60, 64], expectedAdvance: false, targetStart: true },
+        { at: 2, targetIndex: 1, notes: [48, 60, 64], expectedAdvance: true },
+        { at: 3, targetIndex: 2, notes: [48, 60, 64], expectedAdvance: true },
+      ],
+    },
   ];
 }
 
@@ -798,6 +950,7 @@ export function materializeListenSequence(
       targetIndex: attack.targetIndex,
       scheduledAtMs,
       expectedAdvance: attack.expectedAdvance,
+      targetStart: attack.targetStart,
       playedPitches: sortedUnique(normalized.map(({ midi }) => midi)),
       notes,
       gainReferenceChordSize: attack.gainReferenceChordSize,
@@ -805,7 +958,7 @@ export function materializeListenSequence(
   });
   const targets = definition.targets.map((pitches, index): ScheduledSequenceTarget => {
     const expectedAttack = attacks.find((attack) => (
-      attack.targetIndex === index && attack.expectedAdvance
+      attack.targetIndex === index && (attack.expectedAdvance || attack.targetStart)
     ));
     if (!expectedAttack) {
       throw new Error(`${definition.id} target ${index} has no expected attack.`);
@@ -1120,11 +1273,33 @@ function percentile(values: readonly number[], proportion: number): number | nul
   return ordered[Math.ceil(ordered.length * proportion) - 1];
 }
 
+function firstFrameAtOrAfter(
+  frames: readonly ListenRecognitionFrame[],
+  timeMs: number,
+): number {
+  let low = 0;
+  let high = frames.length;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (frames[middle].capturedAtMs < timeMs) low = middle + 1;
+    else high = middle;
+  }
+  return low;
+}
+
+function lastFrameBefore(
+  frames: readonly ListenRecognitionFrame[],
+  timeMs: number,
+): ListenRecognitionFrame | null {
+  return frames[firstFrameAtOrAfter(frames, timeMs) - 1] ?? null;
+}
+
 function evidenceInWindow(
   trace: ListenRecognitionTrace,
   midi: number,
   startMs: number,
   endMs: number,
+  profile: ListenMatcherProfile = productionListenMatcherProfile,
 ): {
   maximum: number;
   firstRawAtMs: number | null;
@@ -1133,14 +1308,18 @@ function evidenceInWindow(
   let maximum = 0;
   let firstRawAtMs: number | null = null;
   let firstQualifyingAtMs: number | null = null;
-  for (const frame of trace.frames) {
-    if (frame.capturedAtMs < startMs || frame.capturedAtMs >= endMs) continue;
+  for (
+    let index = firstFrameAtOrAfter(trace.frames, startMs);
+    index < trace.frames.length && trace.frames[index].capturedAtMs < endMs;
+    index += 1
+  ) {
+    const frame = trace.frames[index];
     const confidence = frame.confidenceEvidence.find((pitch) => pitch.midi === midi)?.confidence ?? 0;
     maximum = Math.max(maximum, confidence);
     if (confidence >= 0.05 && firstRawAtMs === null) {
       firstRawAtMs = frame.capturedAtMs;
     }
-    if (confidence >= matcherOptions.activeTargetThreshold && firstQualifyingAtMs === null) {
+    if (confidence >= profile.activeTargetThreshold && firstQualifyingAtMs === null) {
       firstQualifyingAtMs = frame.capturedAtMs;
     }
   }
@@ -1187,7 +1366,9 @@ export interface TraceEventRecognitionDiagnostic {
 export function evaluateTraceRecognitionLayers(
   sequence: MaterializedListenSequence,
   trace: ListenRecognitionTrace,
+  profile: ListenMatcherProfile = productionListenMatcherProfile,
 ): TraceEventRecognitionDiagnostic[] {
+  const profileOptions = matcherOptionsForProfile(profile);
   const observations = recognizedAttacks(trace);
   const scheduledNotes = sequence.attacks.flatMap(({ notes }) => notes);
   const assignments = assignRecognitionEventsToAttacks(scheduledNotes, observations);
@@ -1210,7 +1391,7 @@ export function evaluateTraceRecognitionLayers(
       const requiredAttackType = scheduledNote
         ? requirements.get(scheduledNote.id) ?? "onset"
         : null;
-      const active = evidenceInWindow(trace, midi, windowStartMs, windowEndMs);
+      const active = evidenceInWindow(trace, midi, windowStartMs, windowEndMs, profile);
       const rawPitchAttacks = windowObservations.filter((observation) => (
         observation.midi === midi
       ));
@@ -1219,8 +1400,8 @@ export function evaluateTraceRecognitionLayers(
         ...rawPitchAttacks.map(({ confidence }) => confidence),
       );
       const qualifyingOnset = assignment !== undefined &&
-        assignment.confidence >= matcherOptions.onsetThreshold &&
-        assignment.noteConfidence >= matcherOptions.targetNoteThreshold;
+        assignment.confidence >= profile.onsetThreshold &&
+        assignment.noteConfidence >= profile.targetNoteThreshold;
       const firstAttackAtMs = rawPitchAttacks
         .map(({ timeMs }) => timeMs)
         .sort((left, right) => left - right)[0] ?? null;
@@ -1253,37 +1434,40 @@ export function evaluateTraceRecognitionLayers(
           : active.firstRawAtMs !== null,
         thresholdQualified: attackRequired
           ? qualifyingOnset
-          : active.maximum >= matcherOptions.activeTargetThreshold,
+          : active.maximum >= profile.activeTargetThreshold,
       };
     });
     const confidentUnexpectedPitches = sortedUnique(windowObservations
       .filter((observation) => (
         !target.pitches.includes(observation.midi) &&
-        observation.confidence >= matcherOptions.onsetThreshold &&
-        observation.noteConfidence >= matcherOptions.noteThreshold
+        observation.confidence >= profile.onsetThreshold &&
+        observation.noteConfidence >= profile.extraNoteThreshold
       ))
       .map(({ midi }) => midi));
 
-    const matcher = new ExactChordMatcher(onlineAmtChordMatcherOptions);
+    const matcher = new ExactChordMatcher(profileOptions);
     matcher.reset(0, 0, false);
-    let previousFrame: ListenRecognitionFrame | null = null;
-    for (const frame of trace.frames) {
-      if (frame.capturedAtMs >= target.scheduledAttackTimeMs) break;
-      matcher.consume(matcherResult(frame, 0, []));
-      previousFrame = frame;
-    }
+    // Only the immediately preceding frame is needed to seed the event-based
+    // carry-over state. Replaying every earlier frame here made a 1,000-profile
+    // sweep quadratic in passage length without changing the independent result.
+    const previousFrame = lastFrameBefore(trace.frames, target.scheduledAttackTimeMs);
+    if (previousFrame) matcher.consume(matcherResult(previousFrame, 0, []));
     matcher.setTarget(target.pitches, 1, target.scheduledAttackTimeMs);
     const carryOverPitches = new Set(
       previousFrame?.activePitches
-        .filter(({ confidence }) => confidence >= matcherOptions.activeTargetThreshold)
+        .filter(({ confidence }) => confidence >= profile.activeTargetThreshold)
         .map(({ midi }) => midi) ?? [],
     );
     let independentMatchAtMs: number | null = null;
     let independentStaleGeneration = false;
     const independentExtras = new Set<number>();
-    for (const frame of trace.frames) {
-      if (frame.capturedAtMs < target.scheduledAttackTimeMs) continue;
-      if (frame.capturedAtMs >= windowEndMs) break;
+    for (
+      let frameIndex = firstFrameAtOrAfter(trace.frames, target.scheduledAttackTimeMs);
+      frameIndex < trace.frames.length &&
+        trace.frames[frameIndex].capturedAtMs < windowEndMs;
+      frameIndex += 1
+    ) {
+      const frame = trace.frames[frameIndex];
       const update = matcher.consume(matcherResult(frame, 1, target.pitches));
       independentStaleGeneration ||= update.stale;
       for (const midi of update.extraPitches) independentExtras.add(midi);
@@ -1299,7 +1483,7 @@ export function evaluateTraceRecognitionLayers(
       if (
         pitch.requiredAttackType === "reOnset" &&
         !pitch.rawAttackDetected &&
-        pitch.maximumActiveConfidence >= matcherOptions.activeTargetThreshold
+        pitch.maximumActiveConfidence >= profile.activeTargetThreshold
       ) {
         rawFailureReasons.push("retrigger-not-detected");
       } else if (
@@ -1323,7 +1507,7 @@ export function evaluateTraceRecognitionLayers(
         target.pitches.length >= 3 &&
         missingOnsets.some((pitch) => (
           pitch.midi === bass &&
-          pitch.maximumActiveConfidence >= matcherOptions.activeTargetThreshold
+          pitch.maximumActiveConfidence >= profile.activeTargetThreshold
         ))
       ) {
         independentFailureReasons.push("missing-required-bass-onset");
@@ -1339,7 +1523,7 @@ export function evaluateTraceRecognitionLayers(
         .sort((left, right) => left - right);
       if (
         evidenceTimes.length >= 2 &&
-        evidenceTimes.at(-1)! - evidenceTimes[0] > matcherOptions.collectionWindowMs
+        evidenceTimes.at(-1)! - evidenceTimes[0] > profileOptions.collectionWindowMs
       ) {
         independentFailureReasons.push("evidence-too-spread-out");
       }
@@ -1397,6 +1581,7 @@ export interface SequenceFailureInput {
 
 export function classifyListenSequenceFailure(
   input: SequenceFailureInput,
+  profile: ListenMatcherProfile = productionListenMatcherProfile,
 ): { reasons: ListenSequenceFailureReason[]; primary: ListenSequenceFailureReason | null } {
   if (
     input.rawFailureReasons !== undefined ||
@@ -1441,7 +1626,7 @@ export function classifyListenSequenceFailure(
     const missingQualifying = input.expectedPitches.filter((pitch) => !pitch.qualifyingOnset);
     if (missingQualifying.some((pitch) => (
       input.previousTargetPitches.includes(pitch.midi) &&
-      pitch.maximumActiveConfidence >= matcherOptions.activeTargetThreshold
+      pitch.maximumActiveConfidence >= profile.activeTargetThreshold
     ))) {
       reasons.push("retrigger-not-detected");
     }
@@ -1450,7 +1635,7 @@ export function classifyListenSequenceFailure(
       input.targetPitches.length >= 3 &&
       missingQualifying.some((pitch) => (
         pitch.midi === bass &&
-        pitch.maximumActiveConfidence >= matcherOptions.activeTargetThreshold
+        pitch.maximumActiveConfidence >= profile.activeTargetThreshold
       ))
     ) {
       reasons.push("missing-required-bass-onset");
@@ -1496,9 +1681,13 @@ export function classifyListenSequenceFailure(
 export function replayListenSequenceTrace(
   sequence: MaterializedListenSequence,
   trace: ListenRecognitionTrace,
-  policy: ListenSequenceReplayPolicy = "current-matcher",
+  policyOrProfile: ListenSequenceReplayPolicy | ListenMatcherProfile = "current-matcher",
+  profileArgument: ListenMatcherProfile = productionListenMatcherProfile,
 ): ListenSequenceRunResult {
-  const matcher = new ExactChordMatcher(onlineAmtChordMatcherOptions);
+  const policy = typeof policyOrProfile === "string" ? policyOrProfile : "current-matcher";
+  const profile = typeof policyOrProfile === "string" ? profileArgument : policyOrProfile;
+  const profileOptions = matcherOptionsForProfile(profile);
+  const matcher = new ExactChordMatcher(profileOptions);
   let targetIndex = 0;
   let generation = 1;
   matcher.setTarget(sequence.targets[0]?.pitches ?? [], generation, 0);
@@ -1533,8 +1722,8 @@ export function replayListenSequenceTrace(
       if (
         target.pitches.includes(onset.midi) &&
         attackEvents.has(onset.midi) &&
-        onset.confidence >= matcherOptions.onsetThreshold &&
-        onset.noteConfidence >= matcherOptions.targetNoteThreshold
+        onset.confidence >= profile.onsetThreshold &&
+        onset.noteConfidence >= profile.targetNoteThreshold
       ) {
         observedTargetOnsets.add(onset.midi);
       }
@@ -1548,7 +1737,7 @@ export function replayListenSequenceTrace(
       observedTargetOnsets.has(midi) ||
       (
         !(target.pitches.length >= 3 && midi === bass) &&
-        (maximumTargetEvidence.get(midi) ?? 0) >= matcherOptions.activeTargetThreshold
+        (maximumTargetEvidence.get(midi) ?? 0) >= profile.activeTargetThreshold
       )
     ));
   };
@@ -1563,10 +1752,15 @@ export function replayListenSequenceTrace(
   const recordAdvancement = (atMs: number) => {
     const target = sequence.targets[targetIndex];
     if (!target) return;
-    const expectedAttack = sequence.attacks[target.attackIndex];
+    // Safety targets may begin with an intentionally invalid attack. Attribute
+    // a later advancement to the expected correct attack, while retaining the
+    // safety attack as the event's diagnostic start time.
+    const expectedAttack = sequence.attacks.find((attack) => (
+      attack.targetIndex === targetIndex && attack.expectedAdvance
+    )) ?? sequence.attacks[target.attackIndex];
     const expectedIsRecent = atMs >= expectedAttack.scheduledAtMs &&
       atMs - expectedAttack.scheduledAtMs <=
-        matcherOptions.collectionWindowMs + matcherOptions.settleMs + FRAME_MS;
+        profileOptions.collectionWindowMs + profileOptions.settleMs + FRAME_MS;
     const fallbackAttack = [...sequence.attacks]
       .filter((attack) => attack.scheduledAtMs <= atMs)
       .at(-1);
@@ -1610,8 +1804,8 @@ export function replayListenSequenceTrace(
         nextTarget.pitches.includes(event.midi) &&
         frame.onsets.some((onset) => (
           onset.midi === event.midi &&
-          onset.confidence >= matcherOptions.onsetThreshold &&
-          onset.noteConfidence >= matcherOptions.targetNoteThreshold
+          onset.confidence >= profile.onsetThreshold &&
+          onset.noteConfidence >= profile.targetNoteThreshold
         ))
       ));
       const candidatePitches = new Set(candidateEvents.map(({ midi }) => midi));
@@ -1691,7 +1885,7 @@ export function replayListenSequenceTrace(
     nextAttackIndex += 1;
   }
 
-  const recognitionLayers = evaluateTraceRecognitionLayers(sequence, trace);
+  const recognitionLayers = evaluateTraceRecognitionLayers(sequence, trace, profile);
   const advancementSourceCounts = new Map<number, number>();
   const duplicateAdvancementTargets = new Set<number>();
   for (const advancement of advancements) {
@@ -1723,8 +1917,11 @@ export function replayListenSequenceTrace(
       advancement === undefined || nextTarget.scheduledAttackTimeMs < advancement.atMs
     );
     const activeTargetIndexAtAttack = attackTargetAtTime.get(target.attackIndex) ?? null;
+    const expectedTargetAttack = sequence.attacks.find((attack) => (
+      attack.targetIndex === index && attack.expectedAdvance
+    ));
     const orderedAdvanced = advancement !== undefined &&
-      sourceAttack?.index === target.attackIndex &&
+      sourceAttack?.index === expectedTargetAttack?.index &&
       !duplicate &&
       !skipped &&
       !falseAdvance;
@@ -1811,7 +2008,7 @@ export function replayListenSequenceTrace(
       rawFailureReasons: event.rawFailureReasons,
       independentFailureReasons: event.independentFailureReasons,
       orderedFailureReasons,
-    });
+    }, profile);
     return {
       ...event,
       blockedByPriorStall,
@@ -1882,6 +2079,7 @@ export function replayListenSequenceTrace(
   };
   return {
     policy,
+    matcherProfile: { ...profile },
     sequenceId: sequence.definition.id,
     sequenceLabel: sequence.definition.label,
     family: sequence.definition.family,
@@ -1910,9 +2108,7 @@ function modelStateBeforeAttack(
   midi: number,
   attackTimeMs: number,
 ): number | null {
-  const frame = [...trace.frames]
-    .reverse()
-    .find(({ capturedAtMs }) => capturedAtMs < attackTimeMs);
+  const frame = lastFrameBefore(trace.frames, attackTimeMs);
   if (!frame) return null;
   if (frame.modelStates.length === 88) {
     return frame.modelStates[midi - FIRST_PIANO_MIDI] ?? null;
@@ -1925,12 +2121,11 @@ function activeBeforeAttack(
   trace: ListenRecognitionTrace,
   midi: number,
   attackTimeMs: number,
+  profile: ListenMatcherProfile = productionListenMatcherProfile,
 ): boolean {
-  const frame = [...trace.frames]
-    .reverse()
-    .find(({ capturedAtMs }) => capturedAtMs < attackTimeMs);
+  const frame = lastFrameBefore(trace.frames, attackTimeMs);
   return frame?.activePitches.some((pitch) => (
-    pitch.midi === midi && pitch.confidence >= matcherOptions.activeTargetThreshold
+    pitch.midi === midi && pitch.confidence >= profile.activeTargetThreshold
   )) ?? false;
 }
 
@@ -1955,6 +2150,7 @@ export function diagnoseListenArticulationRun(
   articulation: ListenSequenceArticulation,
   sequence: MaterializedListenSequence,
   run: ListenSequenceRunResult,
+  profile: ListenMatcherProfile = productionListenMatcherProfile,
 ): { events: ListenArticulationEventDiagnostic[]; summary: ListenArticulationRunSummary } {
   const events = run.events.map((event, index): ListenArticulationEventDiagnostic => {
     const previousTarget = sequence.targets[index - 1];
@@ -1971,6 +2167,7 @@ export function diagnoseListenArticulationRun(
           run.trace,
           midi,
           currentTarget.scheduledAttackTimeMs,
+          profile,
         ),
         offsetBeforeNextAttack: run.trace.frames.some((frame) => frame.noteEvents.some(
           (noteEvent) => noteEvent.midi === midi &&
@@ -2398,7 +2595,7 @@ function familyCompletion(
 
 export function summarizeListenSequenceBenchmark(
   runs: readonly ListenSequenceRunResult[],
-): Omit<ListenSequenceBenchmarkResult, "policy" | "runs" | "experimental"> {
+): Omit<ListenSequenceBenchmarkResult, "policy" | "runs" | "experimental" | "matcherProfile"> {
   const intervals = sortedUnique(runs.map(({ intervalMs }) => intervalMs)).sort(
     (left, right) => right - left,
   );
@@ -2666,6 +2863,7 @@ export async function runBundledListenSequenceBenchmark(
     const experimentalSummary = summarizeListenSequenceBenchmark(experimentalRuns);
     return {
       policy: "current-matcher",
+      matcherProfile: { ...productionListenMatcherProfile },
       runs,
       ...summary,
       experimental: {
@@ -2682,4 +2880,312 @@ export async function runBundledListenSequenceBenchmark(
     if (session) await session.dispose();
     else await pendingSession.then((created) => created.dispose()).catch(() => undefined);
   }
+}
+
+function thresholdRunSignature(run: ListenSequenceRunResult): string {
+  return JSON.stringify({
+    events: run.events,
+    attacks: run.attacks,
+    summary: run.summary,
+  });
+}
+
+function sequenceForRun(run: ListenSequenceRunResult): MaterializedListenSequence {
+  const definition = bundledListenSequences().find(({ id }) => id === run.sequenceId);
+  if (!definition) throw new Error(`Cannot reconstruct benchmark sequence ${run.sequenceId}.`);
+  return materializeListenSequence(definition, run.intervalMs);
+}
+
+function assertProductionReplayParity(
+  result: ListenSequenceBenchmarkResult,
+): void {
+  for (const originalRun of result.runs) {
+    const sequence = sequenceForRun(originalRun);
+    const replayed = replayListenSequenceTrace(
+      sequence,
+      originalRun.trace,
+      originalRun.policy,
+      productionListenMatcherProfile,
+    );
+    if (thresholdRunSignature(originalRun) !== thresholdRunSignature(replayed)) {
+      throw new Error(
+        `Production matcher replay parity failed for ${originalRun.sequenceId} at ${originalRun.intervalMs} ms.`,
+      );
+    }
+  }
+}
+
+export function summarizeListenThresholdSafety(
+  runs: readonly ListenSequenceRunResult[],
+): ListenThresholdSweepSafetySummary {
+  const safetyRuns = runs.filter(({ family }) => family === "safety");
+  const speeds = sortedUnique(safetyRuns.map(({ intervalMs }) => intervalMs))
+    .sort((left, right) => right - left)
+    .map((intervalMs) => {
+      const selected = safetyRuns.filter((run) => run.intervalMs === intervalMs);
+      const incompleteCarriedBassAdvances = selected.reduce((total, run) => {
+        if (run.sequenceId !== "carried-bass-safety") return total;
+        return total + run.attacks
+          .filter(({ index }) => index === 1)
+          .reduce((count, attack) => count + attack.advancementTargetIndices.length, 0);
+      }, 0);
+      return {
+        intervalMs,
+        falseAdvanceCount: selected.reduce((total, run) => total + run.summary.falseAdvanceCount, 0),
+        skippedAdvanceCount: selected.reduce((total, run) => total + run.summary.skippedAdvanceCount, 0),
+        duplicateAdvanceCount: selected.reduce((total, run) => total + run.summary.duplicateAdvanceCount, 0),
+        incompleteCarriedBassAdvances,
+      };
+    });
+  const falseAdvanceCount = speeds.reduce((total, speed) => total + speed.falseAdvanceCount, 0);
+  const skippedAdvanceCount = speeds.reduce((total, speed) => total + speed.skippedAdvanceCount, 0);
+  const duplicateAdvanceCount = speeds.reduce((total, speed) => total + speed.duplicateAdvanceCount, 0);
+  const incompleteCarriedBassAdvances = speeds.reduce(
+    (total, speed) => total + speed.incompleteCarriedBassAdvances,
+    0,
+  );
+  return {
+    sequenceCount: safetyRuns.length,
+    speeds,
+    falseAdvanceCount,
+    skippedAdvanceCount,
+    duplicateAdvanceCount,
+    incompleteCarriedBassAdvances,
+    passed: falseAdvanceCount === 0 &&
+      skippedAdvanceCount === 0 &&
+      duplicateAdvanceCount === 0 &&
+      incompleteCarriedBassAdvances === 0,
+  };
+}
+
+function thresholdProfileResult(
+  result: ListenSequenceBenchmarkResult,
+  profile: ListenMatcherSweepProfile,
+  runs: readonly ListenSequenceRunResult[],
+  production: ListenThresholdSweepProfileResult | null,
+): ListenThresholdSweepProfileResult {
+  const nonSafetyRuns = runs.filter(({ family }) => family !== "safety");
+  const intervals = sortedUnique(nonSafetyRuns.map(({ intervalMs }) => intervalMs))
+    .sort((left, right) => right - left);
+  const speedSummaries = intervals.map((intervalMs) => aggregateRuns(
+    nonSafetyRuns.filter((run) => run.intervalMs === intervalMs),
+    intervalMs,
+  ));
+  const families = [...new Set(nonSafetyRuns.map(({ family }) => family))].sort();
+  const familySpeedSummaries = intervals.flatMap((intervalMs) => families.flatMap((family) => {
+    const selected = nonSafetyRuns.filter((run) => (
+      run.intervalMs === intervalMs && run.family === family
+    ));
+    return selected.length === 0 ? [] : [aggregateRuns(selected, intervalMs, family)];
+  }));
+  const independentMatchCount = nonSafetyRuns.reduce(
+    (total, run) => total + run.summary.independentMatchCount,
+    0,
+  );
+  const orderedAdvanceCount = nonSafetyRuns.reduce(
+    (total, run) => total + run.summary.orderedAdvanceCount,
+    0,
+  );
+  const orderedPrefixCompleted = nonSafetyRuns.reduce(
+    (total, run) => total + run.summary.orderedPrefixCompleted,
+    0,
+  );
+  const completePassageCount = nonSafetyRuns.filter(({ summary }) => summary.complete).length;
+  const orderedLatencies = nonSafetyRuns.flatMap((run) => run.events.flatMap((event) => (
+    event.orderedAdvanced && event.orderedAdvanceLatencyMs !== null
+      ? [event.orderedAdvanceLatencyMs]
+      : []
+  )));
+  const profileResult: ListenThresholdSweepProfileResult = {
+    profile,
+    eligible: false,
+    rejectedBySafety: false,
+    safety: summarizeListenThresholdSafety(runs),
+    independentMatchCount,
+    orderedAdvanceCount,
+    orderedPrefixCompleted,
+    completePassageCount,
+    p95OrderedAdvanceLatencyMs: percentile(orderedLatencies, 0.95),
+    speedSummaries,
+    familySpeedSummaries,
+    nonSafetyDeltasFromProduction: production === null ? [] : speedSummaries.map((summary) => {
+      const baseline = production.speedSummaries.find(({ intervalMs }) => (
+        intervalMs === summary.intervalMs
+      ));
+      const baselinePrefix = baseline?.orderedPrefixCompleted ?? 0;
+      const baselineComplete = baseline === undefined
+        ? 0
+        : baseline.completePassageRate * baseline.sequenceCount;
+      const candidateComplete = summary.completePassageRate * summary.sequenceCount;
+      return {
+        intervalMs: summary.intervalMs,
+        independentMatchDelta: summary.independentMatchCount - (baseline?.independentMatchCount ?? 0),
+        orderedAdvanceDelta: summary.orderedAdvanceCount - (baseline?.orderedAdvanceCount ?? 0),
+        orderedPrefixDelta: summary.orderedPrefixCompleted - baselinePrefix,
+        completePassageDelta: candidateComplete - baselineComplete,
+        p95OrderedAdvanceLatencyDeltaMs: summary.p95OrderedAdvanceLatencyMs === null ||
+            baseline?.p95OrderedAdvanceLatencyMs === null || baseline === undefined
+          ? null
+          : summary.p95OrderedAdvanceLatencyMs - baseline.p95OrderedAdvanceLatencyMs,
+      };
+    }),
+  };
+  return profileResult;
+}
+
+function fastIndependentMatchCount(result: ListenThresholdSweepProfileResult): number {
+  return result.speedSummaries
+    .filter(({ intervalMs }) => (
+      intervalMs === 500 || intervalMs === 1_000 / 3 || intervalMs === 250
+    ))
+    .reduce((total, summary) => total + summary.independentMatchCount, 0);
+}
+
+function thresholdProfileComparator(
+  left: ListenThresholdSweepProfileResult,
+  right: ListenThresholdSweepProfileResult,
+): number {
+  const leftFast = fastIndependentMatchCount(left);
+  const rightFast = fastIndependentMatchCount(right);
+  const leftLatency = left.p95OrderedAdvanceLatencyMs ?? Infinity;
+  const rightLatency = right.p95OrderedAdvanceLatencyMs ?? Infinity;
+  return right.independentMatchCount - left.independentMatchCount ||
+    rightFast - leftFast ||
+    right.orderedAdvanceCount - left.orderedAdvanceCount ||
+    leftLatency - rightLatency ||
+    left.profile.distanceFromProduction - right.profile.distanceFromProduction ||
+    Number(right.profile.requireFreshBassOnset) - Number(left.profile.requireFreshBassOnset) ||
+    left.profile.id.localeCompare(right.profile.id);
+}
+
+export function rankListenThresholdSweepCandidates(
+  candidates: readonly ListenThresholdSweepProfileResult[],
+): ListenThresholdSweepProfileResult[] {
+  return [...candidates].sort(thresholdProfileComparator);
+}
+
+export function listenThresholdSweepParetoFrontier(
+  candidates: readonly ListenThresholdSweepProfileResult[],
+): ListenThresholdSweepProfileResult[] {
+  const dominates = (left: ListenThresholdSweepProfileResult, right: ListenThresholdSweepProfileResult) => {
+    const leftLatency = left.p95OrderedAdvanceLatencyMs ?? Infinity;
+    const rightLatency = right.p95OrderedAdvanceLatencyMs ?? Infinity;
+    const leftFast = fastIndependentMatchCount(left);
+    const rightFast = fastIndependentMatchCount(right);
+    const atLeastAsGood = left.independentMatchCount >= right.independentMatchCount &&
+      leftFast >= rightFast &&
+      left.orderedAdvanceCount >= right.orderedAdvanceCount &&
+      leftLatency <= rightLatency &&
+      left.profile.distanceFromProduction <= right.profile.distanceFromProduction;
+    const strictlyBetter = left.independentMatchCount > right.independentMatchCount ||
+      leftFast > rightFast ||
+      left.orderedAdvanceCount > right.orderedAdvanceCount ||
+      leftLatency < rightLatency ||
+      left.profile.distanceFromProduction < right.profile.distanceFromProduction;
+    return atLeastAsGood && strictlyBetter;
+  };
+  return candidates
+    .filter((candidate) => !candidates.some((other) => other !== candidate && dominates(other, candidate)))
+    .sort(thresholdProfileComparator);
+}
+
+/** Replays the retained stateful corpus against all 1,000 matcher profiles. */
+export async function runListenThresholdSweep(
+  result: ListenSequenceBenchmarkResult,
+  onProgress: (completed: number, total: number, label: string) => void = () => undefined,
+  batchSize = 8,
+): Promise<ListenThresholdSweepResult> {
+  if (result.policy !== "current-matcher") {
+    throw new Error("Threshold sweep requires the current matcher policy corpus.");
+  }
+  if (result.runs.some((run) => (run.trace.resetPlan?.mode ?? "stateful") !== "stateful")) {
+    throw new Error("Threshold sweep accepts only stateful continuous traces.");
+  }
+  assertProductionReplayParity(result);
+  const replayCorpus = result.runs.map((run) => ({ run, sequence: sequenceForRun(run) }));
+  const profiles = generateListenMatcherSweepProfiles();
+  const productionProfile = profiles.find(({ id }) => (
+    id === `o${stableThresholdId(productionListenMatcherProfile.onsetThreshold)}-t${stableThresholdId(productionListenMatcherProfile.targetNoteThreshold)}-a${stableThresholdId(productionListenMatcherProfile.activeTargetThreshold)}-x${stableThresholdId(productionListenMatcherProfile.extraNoteThreshold)}-b${productionListenMatcherProfile.requireFreshBassOnset ? "1" : "0"}`
+  )) ?? {
+    ...productionListenMatcherProfile,
+    id: "production",
+    distanceFromProduction: 0,
+  };
+  const productionRuns = replayCorpus.map(({ run, sequence }) => replayListenSequenceTrace(
+    sequence,
+    run.trace,
+    run.policy,
+    productionListenMatcherProfile,
+  ));
+  const productionBaseline = thresholdProfileResult(
+    result,
+    productionProfile,
+    productionRuns,
+    null,
+  );
+  productionBaseline.rejectedBySafety = !productionBaseline.safety.passed;
+  const evaluations: ListenThresholdSweepProfileResult[] = [];
+  const safeBatchSize = Math.max(1, Math.floor(batchSize));
+  for (let index = 0; index < profiles.length; index += 1) {
+    const profile = profiles[index];
+    const profileRuns = replayCorpus.map(({ run, sequence }) => replayListenSequenceTrace(
+      sequence,
+      run.trace,
+      run.policy,
+      profile,
+    ));
+    const evaluation = thresholdProfileResult(result, profile, profileRuns, productionBaseline);
+    evaluation.rejectedBySafety = !evaluation.safety.passed;
+    const independentImprovement = evaluation.independentMatchCount >
+      productionBaseline.independentMatchCount;
+    const independentAt1000 = evaluation.nonSafetyDeltasFromProduction
+      .find(({ intervalMs }) => intervalMs === 1_000)?.independentMatchDelta ?? -Infinity;
+    const aggregateOrderedImprovement = evaluation.orderedAdvanceCount >=
+      productionBaseline.orderedAdvanceCount;
+    evaluation.eligible = evaluation.safety.passed &&
+      independentImprovement &&
+      independentAt1000 >= 0 &&
+      aggregateOrderedImprovement;
+    evaluations.push(evaluation);
+    if ((index + 1) % safeBatchSize === 0 || index + 1 === profiles.length) {
+      onProgress(index + 1, profiles.length, `Profile ${index + 1} / ${profiles.length}`);
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    }
+  }
+  const eligible = rankListenThresholdSweepCandidates(
+    evaluations.filter(({ eligible }) => eligible),
+  );
+  const ranked = eligible.length > 0 ? eligible : [productionBaseline];
+  const recommendation = ranked[0];
+  const detailedProfiles = [productionBaseline, ...eligible.slice(0, 7)];
+  const detailedById = new Map(detailedProfiles.map((candidate) => [candidate.profile.id, candidate]));
+  for (const candidate of detailedProfiles) {
+    const sourceRuns = candidate.profile.id === productionProfile.id
+      ? productionRuns
+      : replayCorpus.map(({ run, sequence }) => replayListenSequenceTrace(
+        sequence,
+        run.trace,
+        run.policy,
+        candidate.profile,
+      ));
+    candidate.detailedRuns = sourceRuns;
+  }
+  const paretoFrontierCandidates = eligible.length === 0
+    ? [productionBaseline]
+    : listenThresholdSweepParetoFrontier(eligible);
+  const paretoFrontier = paretoFrontierCandidates.map((candidate) => (
+    detailedById.get(candidate.profile.id) ?? candidate
+  ));
+  return {
+    productionProfile: { ...productionListenMatcherProfile },
+    gridSize: profiles.length,
+    profilesEvaluated: evaluations.length,
+    profilesRejectedBySafety: evaluations.filter(({ rejectedBySafety }) => rejectedBySafety).length,
+    productionBaseline,
+    candidates: evaluations,
+    paretoFrontier,
+    recommendation,
+    noSafeImprovement: eligible.length === 0,
+    replayParityVerified: true,
+  };
 }
