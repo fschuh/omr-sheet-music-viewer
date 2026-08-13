@@ -45,6 +45,54 @@ Parity:
 Entries are kept newest first so renderer and recognition changes remain
 comparable over time.
 
+### Stateful vs event-reset inference diagnostic — August 12, 2026
+
+Implemented as a separate diagnostic benchmark in
+`webapp/src/listenInferenceResetBenchmark.ts`. It renders the canonical normal-articulation
+Course Clear passage exactly once (27 events, 1000 ms interval, 420 ms hold, 350 ms
+release), then sends the same PCM object and 512-sample frame boundaries through:
+
+- stateful continuous inference, with one initial session/decoder reset;
+- event-reset continuous inference, with paired session/decoder resets before events 1–26;
+- unique isolated one-event controls, each with the existing 220 ms pre-roll.
+
+Reset points are aligned to the first frame beginning at or after scheduled attack minus
+220 ms. The first normal-articulation reset begins at 1024 ms for the 1220 ms attack,
+providing 196 ms of clean warm-up after the preceding 990 ms release-tail end. Every
+trace records the reset plan, renderer diagnostics, PCM hash, and per-chunk hashes so
+browser automation can verify that only the recurrent reset schedule differs.
+
+Verification results:
+
+- `npm run build`: passed.
+- `npm test`: 195 / 195 tests passed, including the new reset-plan, paired-input,
+  reset-order, classification, and conclusion tests.
+- Production listen mode and matcher behavior remain unchanged; this comparison is
+  exposed only through the benchmark page button and the `listen-inference-reset` /
+  `listen-inference-reset-summary` automation modes.
+
+Measured browser run (August 13, 2026, `listen-inference-reset-summary`):
+
+| Control | Independent match | Ordered advance | Safety (false / skip / duplicate) | Latency p50 / p95 |
+| --- | ---: | ---: | ---: | ---: |
+| Isolated | 26 / 27 (96.3%) | 26 / 27 (96.3%) | 0 / 0 / 0 | — |
+| Stateful continuous | 26 / 27 (96.3%) | 20 / 27 (74.1%) | 0 / 0 / 0 | 188 / 204 ms |
+| Event-reset continuous | 25 / 27 (92.6%) | 20 / 27 (74.1%) | 0 / 0 / 0 | 188 / 204 ms |
+
+The reset comparison recovered 0 events and lost 0 events; it recovered 2 raw
+pitch qualifications and lost 0, while raw complete evidence stayed at 23 / 27
+and fresh attacks stayed at 67 / 67. Independent matching changed by -1 event,
+ordered advancement did not change, and no safety errors increased. The computed
+conclusion is `matcher-playhead-cascade`: independent recognition was essentially
+unchanged while ordered advancement remained behind it. The result’s run-local PCM
+signature was `7e01bcd1` over 434,176 samples and 848 identical 512-sample chunks
+between the two continuous passes.
+
+The page exposes the complete captured conclusion as
+`window.listenInferenceResetBenchmarkResult.conclusion` and retains the raw-model,
+decoder-event, per-pitch, reset-plan, safety, latency, and isolated-control details
+for subsequent runs.
+
 ### Course Clear articulation matrix — August 12, 2026
 
 Four independent continuous traces used the same 27 Course Clear targets and
@@ -186,4 +234,10 @@ node tools\online_amt\run_browser_benchmarks.mjs `
 
 node tools\online_amt\run_browser_benchmarks.mjs `
   http://127.0.0.1:5174/online-amt-benchmark.html listen-articulation-summary
+
+node tools\online_amt\run_browser_benchmarks.mjs `
+  http://127.0.0.1:5174/online-amt-benchmark.html listen-inference-reset
+
+node tools\online_amt\run_browser_benchmarks.mjs `
+  http://127.0.0.1:5174/online-amt-benchmark.html listen-inference-reset-summary
 ```

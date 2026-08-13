@@ -25,6 +25,8 @@ import {
   type ListenBenchmarkAudioRenderResult,
   type ListenBenchmarkRendererConfiguration,
   measureBenchmarkPcm,
+  signatureForBenchmarkPcm,
+  type ListenBenchmarkAudioSignature,
   renderBenchmarkAudio,
 } from "./listenBenchmarkAudio";
 import type {
@@ -154,6 +156,24 @@ export interface ListenRecognitionFrame {
   inferenceDurationMs: number;
 }
 
+export type ListenInferenceMode = "stateful" | "event-reset";
+
+export interface ListenTraceResetPoint {
+  /** Zero-based 512-sample chunk index immediately before which to reset. */
+  frameIndex: number;
+  eventIndex: number;
+  requestedAtMs: number;
+  actualFrameStartMs: number;
+  scheduledAttackTimeMs: number;
+  actualWarmupMs: number;
+}
+
+export interface ListenTraceResetPlan {
+  mode: ListenInferenceMode;
+  /** Event-reset points exclude the initial passage reset. */
+  points: ListenTraceResetPoint[];
+}
+
 export interface ListenRecognitionTrace {
   sequenceId: string;
   intervalMs: number;
@@ -162,6 +182,8 @@ export interface ListenRecognitionTrace {
   relevantPitches: number[];
   renderer: ListenBenchmarkRendererConfiguration;
   audioDiagnostics: ListenBenchmarkAudioDiagnostics;
+  audioSignature?: ListenBenchmarkAudioSignature;
+  resetPlan?: ListenTraceResetPlan;
   pcm: Float32Array;
   frames: ListenRecognitionFrame[];
   maximumInferenceMs: number;
@@ -851,6 +873,48 @@ export function renderListenSequenceAudio(
   });
 }
 
+function normalizedTraceResetPlan(
+  plan: ListenTraceResetPlan | undefined,
+  frameCount: number,
+): ListenTraceResetPlan {
+  const normalized = plan ?? { mode: "stateful", points: [] };
+  if (normalized.mode === "stateful" && normalized.points.length > 0) {
+    throw new Error("Stateful trace reset plans cannot contain event reset points.");
+  }
+  const points = normalized.points.map((point) => ({ ...point }));
+  let previousFrameIndex = -1;
+  let previousEventIndex = 0;
+  for (const point of points) {
+    if (!Number.isInteger(point.frameIndex) || point.frameIndex <= previousFrameIndex) {
+      throw new Error("Trace reset points must use strictly increasing frame indices.");
+    }
+    if (!Number.isInteger(point.eventIndex) || point.eventIndex <= previousEventIndex) {
+      throw new Error("Trace reset points must use strictly increasing event indices after event zero.");
+    }
+    if (point.frameIndex >= frameCount) {
+      throw new Error(`Trace reset frame ${point.frameIndex} is outside the audio.`);
+    }
+    const actualFrameStartMs = point.frameIndex * FRAME_MS;
+    if (Math.abs(actualFrameStartMs - point.actualFrameStartMs) > 1e-9) {
+      throw new Error(`Trace reset frame ${point.frameIndex} has an incorrect aligned timestamp.`);
+    }
+    if (point.actualFrameStartMs < point.requestedAtMs - 1e-9) {
+      throw new Error("Trace reset warm-up cannot begin before the requested pre-roll time.");
+    }
+    if (point.actualFrameStartMs >= point.scheduledAttackTimeMs) {
+      throw new Error("Trace reset points must occur before their scheduled attack.");
+    }
+    if (Math.abs(
+      point.actualWarmupMs - (point.scheduledAttackTimeMs - point.actualFrameStartMs),
+    ) > 1e-9) {
+      throw new Error("Trace reset point warm-up does not match its aligned frame.");
+    }
+    previousFrameIndex = point.frameIndex;
+    previousEventIndex = point.eventIndex;
+  }
+  return { mode: normalized.mode, points };
+}
+
 export async function captureListenSequenceTrace(options: {
   sequenceId: string;
   intervalMs: number;
@@ -860,11 +924,14 @@ export async function captureListenSequenceTrace(options: {
   decoder?: SequenceOutputDecoder;
   renderer?: ListenBenchmarkRendererConfiguration;
   audioDiagnostics?: ListenBenchmarkAudioDiagnostics;
+  resetPlan?: ListenTraceResetPlan;
 }): Promise<ListenRecognitionTrace> {
   if (options.audio.length % ONLINE_AMT_CHUNK_SIZE !== 0) {
     throw new Error("Continuous sequence audio must contain complete 512-sample chunks.");
   }
   const decoder = options.decoder ?? new OnlineAmtOutputDecoder();
+  const frameCount = options.audio.length / ONLINE_AMT_CHUNK_SIZE;
+  const resetPlan = normalizedTraceResetPlan(options.resetPlan, frameCount);
   options.session.reset();
   decoder.reset();
   const frames: ListenRecognitionFrame[] = [];
@@ -876,6 +943,12 @@ export async function captureListenSequenceTrace(options: {
     sampleOffset < options.audio.length;
     sampleOffset += ONLINE_AMT_CHUNK_SIZE
   ) {
+    const frameIndex = sampleOffset / ONLINE_AMT_CHUNK_SIZE;
+    if (resetPlan.points.some((point) => point.frameIndex === frameIndex)) {
+      // ONNX recurrent state and decoder transition history are one reset unit.
+      options.session.reset();
+      decoder.reset();
+    }
     const output = await options.session.run(
       options.audio.subarray(sampleOffset, sampleOffset + ONLINE_AMT_CHUNK_SIZE),
     );
@@ -915,6 +988,15 @@ export async function captureListenSequenceTrace(options: {
       inferenceDurationMs: output.inferenceTimeMs,
     });
   }
+  const audioSignature = signatureForBenchmarkPcm(
+    options.audio,
+    ONLINE_AMT_SAMPLE_RATE,
+    ONLINE_AMT_CHUNK_SIZE,
+  );
+  const audioDiagnostics = {
+    ...(options.audioDiagnostics ?? measureBenchmarkPcm(options.audio)),
+    audioSignature,
+  };
   return {
     sequenceId: options.sequenceId,
     intervalMs: options.intervalMs,
@@ -922,7 +1004,9 @@ export async function captureListenSequenceTrace(options: {
     chunkSize: ONLINE_AMT_CHUNK_SIZE,
     relevantPitches: [...options.relevantPitches],
     renderer: { ...(options.renderer ?? LISTEN_BENCHMARK_RENDERER) },
-    audioDiagnostics: options.audioDiagnostics ?? measureBenchmarkPcm(options.audio),
+    audioDiagnostics,
+    audioSignature,
+    resetPlan,
     pcm: new Float32Array(options.audio),
     frames,
     maximumInferenceMs,

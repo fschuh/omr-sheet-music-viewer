@@ -49,6 +49,17 @@ export interface ListenBenchmarkAudioDiagnostics {
   durationMs: number;
   peak: number;
   rms: number;
+  /** Added by inference traces so paired passes can prove byte-identical input. */
+  audioSignature?: ListenBenchmarkAudioSignature;
+}
+
+export interface ListenBenchmarkAudioSignature {
+  sampleRate: number;
+  chunkSize: number;
+  frameCount: number;
+  pcmByteLength: number;
+  pcmHash: string;
+  chunkHashes: string[];
 }
 
 export interface ListenBenchmarkAudioRenderResult {
@@ -148,6 +159,42 @@ export function measureBenchmarkPcm(
     durationMs: pcm.length * 1_000 / sampleRate,
     peak,
     rms: pcm.length === 0 ? 0 : Math.sqrt(sumSquares / pcm.length),
+  };
+}
+
+function hashBytes(bytes: Uint8Array): string {
+  // FNV-1a is small, deterministic in every browser, and sufficient for the
+  // diagnostic identity check. The benchmark still compares the actual PCM
+  // length and chunk layout alongside this hash.
+  let hash = 0x811c9dc5;
+  for (const byte of bytes) {
+    hash ^= byte;
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, "0");
+}
+
+export function signatureForBenchmarkPcm(
+  pcm: Float32Array,
+  sampleRate = ONLINE_AMT_SAMPLE_RATE,
+  chunkSize = ONLINE_AMT_CHUNK_SIZE,
+): ListenBenchmarkAudioSignature {
+  if (pcm.length % chunkSize !== 0) {
+    throw new Error(`Cannot sign PCM with incomplete ${chunkSize}-sample chunks.`);
+  }
+  const bytes = new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength);
+  const chunkHashes = [] as string[];
+  for (let offset = 0; offset < pcm.length; offset += chunkSize) {
+    const chunk = pcm.subarray(offset, offset + chunkSize);
+    chunkHashes.push(hashBytes(new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength)));
+  }
+  return {
+    sampleRate,
+    chunkSize,
+    frameCount: pcm.length,
+    pcmByteLength: bytes.byteLength,
+    pcmHash: hashBytes(bytes),
+    chunkHashes,
   };
 }
 

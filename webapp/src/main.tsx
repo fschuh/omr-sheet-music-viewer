@@ -8,7 +8,8 @@ const query = new URLSearchParams(window.location.search);
 if (
   query.has("listen-benchmark") ||
   query.has("listen-sequence") ||
-  query.has("listen-articulation")
+  query.has("listen-articulation") ||
+  query.has("listen-inference-reset")
 ) {
   void import("./ListenBenchmarkPage").then(({ ListenBenchmarkPage }) => {
     root.render(<StrictMode><ListenBenchmarkPage /></StrictMode>);

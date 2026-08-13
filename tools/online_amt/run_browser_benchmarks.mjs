@@ -14,6 +14,10 @@ const LISTEN_ARTICULATION_SUMMARY_MODE = CONFIGURATION_FILTER ===
   "listen-articulation-summary";
 const LISTEN_ARTICULATION_MODE = CONFIGURATION_FILTER === "listen-articulation" ||
   LISTEN_ARTICULATION_SUMMARY_MODE;
+const LISTEN_INFERENCE_RESET_SUMMARY_MODE = CONFIGURATION_FILTER ===
+  "listen-inference-reset-summary";
+const LISTEN_INFERENCE_RESET_MODE = CONFIGURATION_FILTER === "listen-inference-reset" ||
+  LISTEN_INFERENCE_RESET_SUMMARY_MODE;
 const LISTEN_PARITY_MODE = CONFIGURATION_FILTER === "listen-parity";
 const FINGERING_SMOKE_MODE = CONFIGURATION_FILTER === "fingering-smoke";
 const CONFIGURATIONS = [
@@ -127,7 +131,8 @@ async function runConfiguration(configuration, index) {
     await client.send("Page.enable");
     const pageUrl = LISTEN_PARITY_MODE
       ? BASE_URL.replace(/online-amt-benchmark\.html(?:\?.*)?$/, "listen-benchmark-parity.html")
-      : (LISTEN_ACCURACY_MODE || LISTEN_SEQUENCE_MODE || LISTEN_ARTICULATION_MODE) &&
+      : (LISTEN_ACCURACY_MODE || LISTEN_SEQUENCE_MODE || LISTEN_ARTICULATION_MODE ||
+        LISTEN_INFERENCE_RESET_MODE) &&
         /online-amt-benchmark\.html(?:\?|$)/.test(BASE_URL)
       ? BASE_URL.replace(/online-amt-benchmark\.html/, "index.html")
       : BASE_URL;
@@ -192,7 +197,61 @@ async function runConfiguration(configuration, index) {
     }
     return await evaluate(
       client,
-      LISTEN_ARTICULATION_MODE
+      LISTEN_INFERENCE_RESET_MODE
+        ? `(() => {
+            const result = window.listenInferenceResetBenchmarkResult;
+            const control = (run) => ({
+              independentMatchCount: run.summary.independentMatchCount,
+              independentMatchRate: run.summary.independentMatchRate,
+              orderedAdvanceCount: run.summary.orderedAdvanceCount,
+              orderedAdvanceRate: run.summary.orderedAdvanceRate,
+              falseAdvanceCount: run.summary.falseAdvanceCount,
+              skippedAdvanceCount: run.summary.skippedAdvanceCount,
+              duplicateAdvanceCount: run.summary.duplicateAdvanceCount,
+              p50IndependentMatchLatencyMs: run.summary.p50IndependentMatchLatencyMs,
+              p95IndependentMatchLatencyMs: run.summary.p95IndependentMatchLatencyMs,
+              p50OrderedAdvanceLatencyMs: run.summary.p50OrderedAdvanceLatencyMs,
+              p95OrderedAdvanceLatencyMs: run.summary.p95OrderedAdvanceLatencyMs,
+            });
+            return {
+              sequenceId: result.sequenceId,
+              intervalMs: result.intervalMs,
+              renderer: result.renderer,
+              audioDiagnostics: result.audioDiagnostics,
+              audioSignature: result.audioSignature,
+              resetPlan: result.resetPlan,
+              conclusion: result.conclusion,
+              summary: result.summary,
+              controls: {
+                isolated: {
+                  independentMatchCount: result.events.filter((event) => event.isolated.event.independentlyMatched).length,
+                  independentMatchRate: result.events.filter((event) => event.isolated.event.independentlyMatched).length / result.events.length,
+                  orderedAdvanceCount: result.events.filter((event) => event.isolated.event.orderedAdvanced).length,
+                  orderedAdvanceRate: result.events.filter((event) => event.isolated.event.orderedAdvanced).length / result.events.length,
+                  falseAdvanceCount: 0,
+                  skippedAdvanceCount: 0,
+                  duplicateAdvanceCount: 0,
+                },
+                stateful: control(result.stateful),
+                eventReset: control(result.eventReset),
+              },
+              classifications: result.events.map((event) => ({
+                index: event.index,
+                targetPitches: event.targetPitches,
+                classification: event.classification,
+                rawEvidenceDelta: event.rawEvidenceDelta,
+                freshAttackDelta: event.freshAttackDelta,
+                independentMatchDelta: event.independentMatchDelta,
+                orderedAdvanceDelta: event.orderedAdvanceDelta,
+                rawModelOutputChangedAfterReset: event.rawModelOutputChangedAfterReset,
+                decoderEventsChangedAfterReset: event.decoderEventsChangedAfterReset,
+                statefulSustainBecameResetOnset: event.statefulSustainBecameResetOnset,
+                independentLatencyDeltaMs: event.independentLatencyDeltaMs,
+                orderedLatencyDeltaMs: event.orderedLatencyDeltaMs,
+              })),
+            };
+          })()`
+        : LISTEN_ARTICULATION_MODE
         ? `(() => {
             const result = window.listenArticulationBenchmarkResult;
             return {
@@ -428,6 +487,13 @@ const selectedConfigurations = FINGERING_SMOKE_MODE
       name: LISTEN_SEQUENCE_SUMMARY_MODE ? "listen-sequence-summary" : "listen-sequence",
       query: "listen-sequence=auto",
     }]
+  : LISTEN_INFERENCE_RESET_MODE
+  ? [{
+      name: LISTEN_INFERENCE_RESET_SUMMARY_MODE
+        ? "listen-inference-reset-summary"
+        : "listen-inference-reset",
+      query: "listen-inference-reset=auto",
+    }]
   : LISTEN_ARTICULATION_MODE
   ? [{
       name: LISTEN_ARTICULATION_SUMMARY_MODE
@@ -485,7 +551,24 @@ for (let index = 0; index < selectedConfigurations.length; index += 1) {
       duplicateAdvanceCount: run.duplicateAdvanceCount,
     })),
   });
-  const exportedResult = LISTEN_ARTICULATION_SUMMARY_MODE
+  const exportedResult = LISTEN_INFERENCE_RESET_SUMMARY_MODE
+    ? {
+        sequenceId: result.sequenceId,
+        intervalMs: result.intervalMs,
+        renderer: result.renderer,
+        audioDiagnostics: {
+          frameCount: result.audioDiagnostics.frameCount,
+          durationMs: result.audioDiagnostics.durationMs,
+          peak: result.audioDiagnostics.peak,
+          rms: result.audioDiagnostics.rms,
+        },
+        audioSignature: result.audioSignature,
+        resetPlan: result.resetPlan,
+        summary: result.summary,
+        conclusion: result.conclusion,
+        controls: result.controls,
+      }
+    : LISTEN_ARTICULATION_SUMMARY_MODE
     ? {
         renderer: result.renderer,
         intervalMs: result.intervalMs,
@@ -536,6 +619,19 @@ for (let index = 0; index < selectedConfigurations.length; index += 1) {
       `${detached.deltaFromNormal.independentMatchCount} ` +
       `safety=${detached.summary.falseAdvanceCount}/` +
       `${detached.summary.skippedAdvanceCount}/${detached.summary.duplicateAdvanceCount}`,
+    );
+  } else if (LISTEN_INFERENCE_RESET_MODE) {
+    const summary = result.summary;
+    console.error(
+      `${configuration.name}: conclusion=${result.conclusion.code} ` +
+      `recovered/lost=${summary.recoveredEventCount}/${summary.lostEventCount} ` +
+      `independent=${summary.independentMatchCounts.stateful}/` +
+      `${summary.independentMatchCounts.eventReset} ` +
+      `ordered=${summary.orderedAdvanceCounts.stateful}/` +
+      `${summary.orderedAdvanceCounts.eventReset} ` +
+      `safety=${summary.statefulSafety.total}/${summary.eventResetSafety.total} ` +
+      `raw-delta=${summary.rawEvidenceDelta} ` +
+      `audio=${result.audioSignature.pcmHash}`,
     );
   } else if (LISTEN_SEQUENCE_MODE) {
     const slowest = result.perSpeed[0];

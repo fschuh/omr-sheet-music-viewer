@@ -12,23 +12,29 @@ import {
   type ListenArticulationMatrixResult,
   type ListenSequenceBenchmarkResult,
 } from "./listenSequenceBenchmark";
+import {
+  runListenInferenceResetBenchmark,
+  type ListenInferenceResetBenchmarkResult,
+} from "./listenInferenceResetBenchmark";
 
 let automaticBenchmarkStarted = false;
 
 export function ListenBenchmarkPage() {
   const [runningTask, setRunningTask] = useState<
-    "online_amt" | "spectral" | "sequence" | "articulation" | null
+    "online_amt" | "spectral" | "sequence" | "articulation" | "reset-comparison" | null
   >(null);
   const running = runningTask !== null;
   const [progress, setProgress] = useState("");
   const [progressTask, setProgressTask] = useState<
-    "isolated" | "sequence" | "articulation"
+    "isolated" | "sequence" | "articulation" | "reset-comparison"
   >("isolated");
   const [error, setError] = useState<string | null>(null);
   const [automated, setAutomated] = useState<ListenBenchmarkSummary | null>(null);
   const [sequenceResult, setSequenceResult] = useState<ListenSequenceBenchmarkResult | null>(null);
   const [articulationResult, setArticulationResult] =
     useState<ListenArticulationMatrixResult | null>(null);
+  const [resetComparisonResult, setResetComparisonResult] =
+    useState<ListenInferenceResetBenchmarkResult | null>(null);
   const [manual, setManual] = useState<ListenBenchmarkTrial[]>([]);
   const [manualSource, setManualSource] = useState<"acoustic" | "digital">("acoustic");
   const [manualCorrect, setManualCorrect] = useState(true);
@@ -42,6 +48,9 @@ export function ListenBenchmarkPage() {
     if (query.get("listen-articulation") === "auto") {
       automaticBenchmarkStarted = true;
       void runArticulation();
+    } else if (query.get("listen-inference-reset") === "auto") {
+      automaticBenchmarkStarted = true;
+      void runResetComparison();
     } else if (query.get("listen-sequence") === "auto") {
       automaticBenchmarkStarted = true;
       void runSequence();
@@ -112,6 +121,27 @@ export function ListenBenchmarkPage() {
       (window as typeof window & {
         listenArticulationBenchmarkResult?: ListenArticulationMatrixResult;
       }).listenArticulationBenchmarkResult = result;
+      document.body.dataset.status = "complete";
+    } catch (benchmarkError) {
+      setError(benchmarkError instanceof Error ? benchmarkError.message : String(benchmarkError));
+      document.body.dataset.status = "error";
+    } finally {
+      setRunningTask(null);
+    }
+  }
+
+  async function runResetComparison() {
+    setRunningTask("reset-comparison");
+    setProgressTask("reset-comparison");
+    setError(null);
+    setProgress("Preparing stateful/reset comparison…");
+    document.body.dataset.status = "running";
+    try {
+      const result = await runListenInferenceResetBenchmark((stage) => setProgress(stage));
+      setResetComparisonResult(result);
+      (window as typeof window & {
+        listenInferenceResetBenchmarkResult?: ListenInferenceResetBenchmarkResult;
+      }).listenInferenceResetBenchmarkResult = result;
       document.body.dataset.status = "complete";
     } catch (benchmarkError) {
       setError(benchmarkError instanceof Error ? benchmarkError.message : String(benchmarkError));
@@ -228,6 +258,34 @@ export function ListenBenchmarkPage() {
       },
     })),
   }, null, 2);
+  const resetComparisonDiagnostics = (result: ListenInferenceResetBenchmarkResult) => JSON.stringify({
+    sequenceId: result.sequenceId,
+    intervalMs: result.intervalMs,
+    renderer: result.renderer,
+    audioDiagnostics: result.audioDiagnostics,
+    audioSignature: result.audioSignature,
+    resetPlan: result.resetPlan,
+    summary: result.summary,
+    conclusion: result.conclusion,
+    isolatedEvents: result.isolatedEvents.map((isolated) => ({
+      key: isolated.key,
+      targetPitches: isolated.targetPitches,
+      scoreEventIndices: isolated.scoreEventIndices,
+      summary: isolated.run.summary,
+    })),
+    events: result.events.map((event) => ({
+      index: event.index,
+      targetPitches: event.targetPitches,
+      classification: event.classification,
+      isolated: event.isolated.event,
+      stateful: event.stateful.event,
+      eventReset: event.eventReset.event,
+      pitches: event.pitches,
+      rawModelOutputChangedAfterReset: event.rawModelOutputChangedAfterReset,
+      decoderEventsChangedAfterReset: event.decoderEventsChangedAfterReset,
+      statefulSustainBecameResetOnset: event.statefulSustainBecameResetOnset,
+    })),
+  }, null, 2);
   const automatedCorrectAdvances = automated?.trials.filter((trial) => (
     trial.expectedCorrect && trial.advanced
   )).length ?? 0;
@@ -237,6 +295,26 @@ export function ListenBenchmarkPage() {
   const percentageDelta = (value: number) => (
     `${value >= 0 ? "+" : ""}${(value * 100).toFixed(1)} pp`
   );
+  const resetControlRows = resetComparisonResult ? [
+    {
+      label: "Isolated",
+      independent: resetComparisonResult.events.filter(({ isolated }) => isolated.event.independentlyMatched).length,
+      ordered: resetComparisonResult.events.filter(({ isolated }) => isolated.event.orderedAdvanced).length,
+      safety: "—",
+    },
+    {
+      label: "Stateful continuous",
+      independent: resetComparisonResult.summary.independentMatchCounts.stateful,
+      ordered: resetComparisonResult.summary.orderedAdvanceCounts.stateful,
+      safety: `${resetComparisonResult.summary.statefulSafety.falseAdvanceCount} / ${resetComparisonResult.summary.statefulSafety.skippedAdvanceCount} / ${resetComparisonResult.summary.statefulSafety.duplicateAdvanceCount}`,
+    },
+    {
+      label: "Event-reset continuous",
+      independent: resetComparisonResult.summary.independentMatchCounts.eventReset,
+      ordered: resetComparisonResult.summary.orderedAdvanceCounts.eventReset,
+      safety: `${resetComparisonResult.summary.eventResetSafety.falseAdvanceCount} / ${resetComparisonResult.summary.eventResetSafety.skippedAdvanceCount} / ${resetComparisonResult.summary.eventResetSafety.duplicateAdvanceCount}`,
+    },
+  ] : [];
 
   return (
     <main className="benchmark-page">
@@ -494,6 +572,68 @@ export function ListenBenchmarkPage() {
             </div>
             <h3>Detailed articulation diagnostics</h3>
             <pre>{articulationDiagnostics(articulationResult)}</pre>
+          </>
+        ) : null}
+      </section>
+
+      <section className="sequence-benchmark reset-comparison-benchmark">
+        <h2>Stateful/reset inference comparison</h2>
+        <p>
+          Diagnostic only: one canonical normal-articulation Course Clear passage is rendered once,
+          then captured with current stateful inference and with a paired session/decoder reset
+          before each event’s aligned 220 ms warm-up window. Isolated one-event controls are reused
+          for repeated identical chords.
+        </p>
+        <button type="button" disabled={running} onClick={() => void runResetComparison()}>
+          {runningTask === "reset-comparison" ? "Running…" : "Run stateful/reset comparison"}
+        </button>
+        {progress && progressTask === "reset-comparison"
+          ? <span className="benchmark-progress">{progress}</span>
+          : null}
+        {resetComparisonResult ? (
+          <>
+            <p>
+              <strong>{resetComparisonResult.conclusion.text}</strong>{" "}
+              Recovered {resetComparisonResult.summary.recoveredEventCount}, lost {resetComparisonResult.summary.lostEventCount};
+              raw Δ {resetComparisonResult.summary.rawEvidenceDelta >= 0 ? "+" : ""}
+              {resetComparisonResult.summary.rawEvidenceDelta}, independent Δ {resetComparisonResult.summary.independentMatchDelta >= 0 ? "+" : ""}
+              {resetComparisonResult.summary.independentMatchDelta}, ordered Δ {resetComparisonResult.summary.orderedAdvanceDelta >= 0 ? "+" : ""}
+              {resetComparisonResult.summary.orderedAdvanceDelta}.
+            </p>
+            <div className="benchmark-table-wrap">
+              <table className="benchmark-table">
+                <thead>
+                  <tr>
+                    <th>Control</th>
+                    <th>Independent match</th>
+                    <th>Ordered advancement</th>
+                    <th>False / skip / duplicate</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {resetControlRows.map((row) => (
+                    <tr key={row.label}>
+                      <td>{row.label}</td>
+                      <td>{row.independent}/{resetComparisonResult.events.length} ({(
+                        row.independent / resetComparisonResult.events.length * 100
+                      ).toFixed(1)}%)</td>
+                      <td>{row.ordered}/{resetComparisonResult.events.length} ({(
+                        row.ordered / resetComparisonResult.events.length * 100
+                      ).toFixed(1)}%)</td>
+                      <td>{row.safety}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p>
+              Recovered/lost pitches: {resetComparisonResult.summary.recoveredPitchCount} / {resetComparisonResult.summary.lostPitchCount}.{" "}
+              Sustain-to-onset: {resetComparisonResult.summary.sustainToOnsetCount}.{" "}
+              Audio signature: <code>{resetComparisonResult.audioSignature.pcmHash}</code> ({resetComparisonResult.audioSignature.chunkHashes.length} chunks).{" "}
+              {resetComparisonResult.summary.safetyErrorsIncreased ? "Safety errors increased." : "No safety-error increase."}
+            </p>
+            <h3>Detailed reset comparison diagnostics</h3>
+            <pre>{resetComparisonDiagnostics(resetComparisonResult)}</pre>
           </>
         ) : null}
       </section>
