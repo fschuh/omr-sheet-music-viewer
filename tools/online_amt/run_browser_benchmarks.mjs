@@ -10,6 +10,10 @@ const LISTEN_ACCURACY_MODE = CONFIGURATION_FILTER === "listen-accuracy";
 const LISTEN_SEQUENCE_SUMMARY_MODE = CONFIGURATION_FILTER === "listen-sequence-summary";
 const LISTEN_SEQUENCE_MODE = CONFIGURATION_FILTER === "listen-sequence" ||
   LISTEN_SEQUENCE_SUMMARY_MODE;
+const LISTEN_ARTICULATION_SUMMARY_MODE = CONFIGURATION_FILTER ===
+  "listen-articulation-summary";
+const LISTEN_ARTICULATION_MODE = CONFIGURATION_FILTER === "listen-articulation" ||
+  LISTEN_ARTICULATION_SUMMARY_MODE;
 const LISTEN_PARITY_MODE = CONFIGURATION_FILTER === "listen-parity";
 const FINGERING_SMOKE_MODE = CONFIGURATION_FILTER === "fingering-smoke";
 const CONFIGURATIONS = [
@@ -123,7 +127,7 @@ async function runConfiguration(configuration, index) {
     await client.send("Page.enable");
     const pageUrl = LISTEN_PARITY_MODE
       ? BASE_URL.replace(/online-amt-benchmark\.html(?:\?.*)?$/, "listen-benchmark-parity.html")
-      : (LISTEN_ACCURACY_MODE || LISTEN_SEQUENCE_MODE) &&
+      : (LISTEN_ACCURACY_MODE || LISTEN_SEQUENCE_MODE || LISTEN_ARTICULATION_MODE) &&
         /online-amt-benchmark\.html(?:\?|$)/.test(BASE_URL)
       ? BASE_URL.replace(/online-amt-benchmark\.html/, "index.html")
       : BASE_URL;
@@ -167,7 +171,9 @@ async function runConfiguration(configuration, index) {
       })()`);
     }
     const deadline = Date.now() + (
-      LISTEN_SEQUENCE_MODE ? 600_000 : LISTEN_PARITY_MODE ? 180_000 : 120_000
+      (LISTEN_SEQUENCE_MODE || LISTEN_ARTICULATION_MODE)
+        ? 600_000
+        : LISTEN_PARITY_MODE ? 180_000 : 120_000
     );
     let status = "";
     while (Date.now() < deadline) {
@@ -186,7 +192,60 @@ async function runConfiguration(configuration, index) {
     }
     return await evaluate(
       client,
-      LISTEN_SEQUENCE_MODE
+      LISTEN_ARTICULATION_MODE
+        ? `(() => {
+            const result = window.listenArticulationBenchmarkResult;
+            return {
+              renderer: result.renderer,
+              intervalMs: result.intervalMs,
+              eventCount: result.eventCount,
+              conclusion: result.conclusion,
+              profiles: result.runs.map((profile) => ({
+                articulation: profile.articulation,
+                summary: profile.summary,
+                deltaFromNormal: profile.deltaFromNormal,
+                failures: profile.run.events
+                  .filter((event) => event.failureReasons.length > 0)
+                  .map((event) => ({
+                    position: event.index,
+                    targetPitches: event.targetPitches,
+                    playedPitches: event.playedPitches,
+                    expectedPitchFailures: event.expectedPitches
+                      .filter((pitch) => !pitch.requiredRawEvidencePresent || !pitch.thresholdQualified)
+                      .map((pitch) => ({
+                        midi: pitch.midi,
+                        requiredAttackType: pitch.requiredAttackType,
+                        rawAttackDetected: pitch.rawAttackDetected,
+                        maximumOnsetConfidence: pitch.maximumOnsetConfidence,
+                        maximumActiveConfidence: pitch.maximumActiveConfidence,
+                      })),
+                    rawFailureReasons: event.rawFailureReasons,
+                    independentFailureReasons: event.independentFailureReasons,
+                    orderedFailureReasons: event.orderedFailureReasons,
+                    primaryFailure: event.primaryFailure,
+                    staleState: (() => {
+                      const stale = profile.events[event.index];
+                      return {
+                        expectedFreshAttackCount: stale.expectedFreshAttackCount,
+                        producedFreshAttackCount: stale.producedFreshAttackCount,
+                        repeatedPitchesInSustain: stale.repeatedPitchesInSustain,
+                        departingPitchesStillActive: stale.departingPitches
+                          .filter((pitch) => pitch.activeAtNextAttack)
+                          .map((pitch) => pitch.midi),
+                        departingPitchesWithoutOffset: stale.departingPitches
+                          .filter((pitch) => !pitch.offsetBeforeNextAttack)
+                          .map((pitch) => pitch.midi),
+                        confidentPreviousChordExtraPitches:
+                          stale.confidentPreviousChordExtraPitches,
+                        silenceGapRms: stale.silenceGap?.rms ?? null,
+                        failureClassification: stale.failureClassification,
+                      };
+                    })(),
+                  })),
+              })),
+            };
+          })()`
+        : LISTEN_SEQUENCE_MODE
         ? `(() => {
             const result = window.listenSequenceBenchmarkResult;
             const exportSummary = (summary) => ({
@@ -369,6 +428,13 @@ const selectedConfigurations = FINGERING_SMOKE_MODE
       name: LISTEN_SEQUENCE_SUMMARY_MODE ? "listen-sequence-summary" : "listen-sequence",
       query: "listen-sequence=auto",
     }]
+  : LISTEN_ARTICULATION_MODE
+  ? [{
+      name: LISTEN_ARTICULATION_SUMMARY_MODE
+        ? "listen-articulation-summary"
+        : "listen-articulation",
+      query: "listen-articulation=auto",
+    }]
   : LISTEN_PARITY_MODE
   ? [{ name: "listen-parity", query: "" }]
   : LISTEN_ACCURACY_MODE
@@ -419,7 +485,19 @@ for (let index = 0; index < selectedConfigurations.length; index += 1) {
       duplicateAdvanceCount: run.duplicateAdvanceCount,
     })),
   });
-  const exportedResult = LISTEN_SEQUENCE_SUMMARY_MODE
+  const exportedResult = LISTEN_ARTICULATION_SUMMARY_MODE
+    ? {
+        renderer: result.renderer,
+        intervalMs: result.intervalMs,
+        eventCount: result.eventCount,
+        conclusion: result.conclusion,
+        profiles: result.profiles.map((profile) => ({
+          articulation: profile.articulation,
+          summary: profile.summary,
+          deltaFromNormal: profile.deltaFromNormal,
+        })),
+      }
+    : LISTEN_SEQUENCE_SUMMARY_MODE
     ? {
         renderer: result.renderer,
         baseline: result.baseline,
@@ -449,6 +527,16 @@ for (let index = 0; index < selectedConfigurations.length; index += 1) {
     );
   } else if (LISTEN_PARITY_MODE) {
     console.error(`${configuration.name}: ${result.checks.length} parity checks passed`);
+  } else if (LISTEN_ARTICULATION_MODE) {
+    const detached = result.profiles.find(({ articulation }) => articulation === "detached");
+    console.error(
+      `${configuration.name}: conclusion=${result.conclusion.code} ` +
+      `detached-independent=${detached.summary.independentMatchCount}/${result.eventCount} ` +
+      `delta=${detached.deltaFromNormal.independentMatchCount >= 0 ? "+" : ""}` +
+      `${detached.deltaFromNormal.independentMatchCount} ` +
+      `safety=${detached.summary.falseAdvanceCount}/` +
+      `${detached.summary.skippedAdvanceCount}/${detached.summary.duplicateAdvanceCount}`,
+    );
   } else if (LISTEN_SEQUENCE_MODE) {
     const slowest = result.perSpeed[0];
     const fastest = result.perSpeed.at(-1);

@@ -35,6 +35,11 @@ export interface ListenBenchmarkAudioNote {
 export interface ListenBenchmarkAudioAttack {
   onsetMs: number;
   notes: readonly (number | ListenBenchmarkAudioNote)[];
+  /**
+   * Chord size used for per-note level when a physical attack contains only
+   * the newly introduced notes of a larger sounding chord.
+   */
+  gainReferenceChordSize?: number;
   holdMs?: number;
   releaseMs?: number;
 }
@@ -106,6 +111,15 @@ function requireFiniteNonNegative(name: string, value: number): void {
   }
 }
 
+export function benchmarkChordGain(chordSize: number): number {
+  if (!Number.isInteger(chordSize) || chordSize <= 0) {
+    throw new Error(
+      `Benchmark gain-reference chord size must be a positive integer, received ${chordSize}.`,
+    );
+  }
+  return Math.min(0.8, 0.9 / Math.sqrt(chordSize));
+}
+
 function alignedFrameCount(durationMs: number, sampleRate: number, chunkSize: number): number {
   requireFiniteNonNegative("Benchmark durationMs", durationMs);
   if (!Number.isInteger(sampleRate) || sampleRate <= 0) {
@@ -165,7 +179,8 @@ export async function renderBenchmarkAudio(
   const offline = new OfflineAudioContext(1, frameCount, sampleRate);
   for (const attack of options.attacks) {
     requireFiniteNonNegative("Benchmark attack onsetMs", attack.onsetMs);
-    const chordGain = Math.min(0.8, 0.9 / Math.sqrt(Math.max(1, attack.notes.length)));
+    const gainReferenceChordSize = attack.gainReferenceChordSize ?? attack.notes.length;
+    const chordGain = benchmarkChordGain(gainReferenceChordSize);
     for (const rawNote of attack.notes) {
       const note = normalizedNote(rawNote);
       const offsetMs = note.offsetMs ?? 0;

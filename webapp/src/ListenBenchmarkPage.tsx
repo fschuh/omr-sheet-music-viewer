@@ -8,19 +8,27 @@ import {
 } from "./listenBenchmark";
 import {
   runBundledListenSequenceBenchmark,
+  runCourseClearArticulationMatrix,
+  type ListenArticulationMatrixResult,
   type ListenSequenceBenchmarkResult,
 } from "./listenSequenceBenchmark";
 
 let automaticBenchmarkStarted = false;
 
 export function ListenBenchmarkPage() {
-  const [runningTask, setRunningTask] = useState<"online_amt" | "spectral" | "sequence" | null>(null);
+  const [runningTask, setRunningTask] = useState<
+    "online_amt" | "spectral" | "sequence" | "articulation" | null
+  >(null);
   const running = runningTask !== null;
   const [progress, setProgress] = useState("");
-  const [progressTask, setProgressTask] = useState<"isolated" | "sequence">("isolated");
+  const [progressTask, setProgressTask] = useState<
+    "isolated" | "sequence" | "articulation"
+  >("isolated");
   const [error, setError] = useState<string | null>(null);
   const [automated, setAutomated] = useState<ListenBenchmarkSummary | null>(null);
   const [sequenceResult, setSequenceResult] = useState<ListenSequenceBenchmarkResult | null>(null);
+  const [articulationResult, setArticulationResult] =
+    useState<ListenArticulationMatrixResult | null>(null);
   const [manual, setManual] = useState<ListenBenchmarkTrial[]>([]);
   const [manualSource, setManualSource] = useState<"acoustic" | "digital">("acoustic");
   const [manualCorrect, setManualCorrect] = useState(true);
@@ -31,7 +39,10 @@ export function ListenBenchmarkPage() {
   useEffect(() => {
     if (automaticBenchmarkStarted) return;
     const query = new URLSearchParams(window.location.search);
-    if (query.get("listen-sequence") === "auto") {
+    if (query.get("listen-articulation") === "auto") {
+      automaticBenchmarkStarted = true;
+      void runArticulation();
+    } else if (query.get("listen-sequence") === "auto") {
       automaticBenchmarkStarted = true;
       void runSequence();
     } else if (query.get("listen-benchmark") === "auto") {
@@ -78,6 +89,29 @@ export function ListenBenchmarkPage() {
       (window as typeof window & {
         listenSequenceBenchmarkResult?: ListenSequenceBenchmarkResult;
       }).listenSequenceBenchmarkResult = result;
+      document.body.dataset.status = "complete";
+    } catch (benchmarkError) {
+      setError(benchmarkError instanceof Error ? benchmarkError.message : String(benchmarkError));
+      document.body.dataset.status = "error";
+    } finally {
+      setRunningTask(null);
+    }
+  }
+
+  async function runArticulation() {
+    setRunningTask("articulation");
+    setProgressTask("articulation");
+    setError(null);
+    setProgress("Preparing Course Clear articulation profiles…");
+    document.body.dataset.status = "running";
+    try {
+      const result = await runCourseClearArticulationMatrix((complete, total, label) => {
+        setProgress(`${complete} / ${total} articulations · ${label}`);
+      });
+      setArticulationResult(result);
+      (window as typeof window & {
+        listenArticulationBenchmarkResult?: ListenArticulationMatrixResult;
+      }).listenArticulationBenchmarkResult = result;
       document.body.dataset.status = "complete";
     } catch (benchmarkError) {
       setError(benchmarkError instanceof Error ? benchmarkError.message : String(benchmarkError));
@@ -164,12 +198,45 @@ export function ListenBenchmarkPage() {
       },
     })),
   }, null, 2);
+  const articulationDiagnostics = (result: ListenArticulationMatrixResult) => JSON.stringify({
+    renderer: result.renderer,
+    intervalMs: result.intervalMs,
+    eventCount: result.eventCount,
+    conclusion: result.conclusion,
+    profiles: result.runs.map((profile) => ({
+      articulation: profile.articulation,
+      summary: profile.summary,
+      deltaFromNormal: profile.deltaFromNormal,
+      staleStateEvents: profile.events,
+      failures: profile.run.events
+        .filter((event) => event.failureReasons.length > 0)
+        .map((event) => ({
+          index: event.index,
+          targetPitches: event.targetPitches,
+          expectedPitches: event.expectedPitches,
+          confidentUnexpectedPitches: event.confidentUnexpectedPitches,
+          rawFailureReasons: event.rawFailureReasons,
+          independentFailureReasons: event.independentFailureReasons,
+          orderedFailureReasons: event.orderedFailureReasons,
+          primaryFailure: event.primaryFailure,
+        })),
+      trace: {
+        audioDiagnostics: profile.run.trace.audioDiagnostics,
+        frameCount: profile.run.trace.frames.length,
+        maximumInferenceMs: profile.run.trace.maximumInferenceMs,
+        maximumProcessingBacklogMs: profile.run.trace.maximumProcessingBacklogMs,
+      },
+    })),
+  }, null, 2);
   const automatedCorrectAdvances = automated?.trials.filter((trial) => (
     trial.expectedCorrect && trial.advanced
   )).length ?? 0;
   const automatedCourseClearAdvances = automated?.trials.filter((trial) => (
     trial.fixtureGroup === "course-clear" && trial.expectedCorrect && trial.advanced
   )).length ?? 0;
+  const percentageDelta = (value: number) => (
+    `${value >= 0 ? "+" : ""}${(value * 100).toFixed(1)} pp`
+  );
 
   return (
     <main className="benchmark-page">
@@ -354,6 +421,79 @@ export function ListenBenchmarkPage() {
             </div>
             <h3>Detailed continuous diagnostics</h3>
             <pre>{sequenceDiagnostics(sequenceResult)}</pre>
+          </>
+        ) : null}
+      </section>
+
+      <section className="sequence-benchmark articulation-benchmark">
+        <h2>Course Clear articulation matrix</h2>
+        <p>
+          Four independent continuous traces use the same 27 targets and 1000 ms attack
+          timestamps. Only hold scheduling changes. Detached leaves a 400 ms silent gap,
+          normal is the canonical 420 ms hold, legato overlaps by 250 ms, and
+          sustained-shared attacks only newly introduced chord tones.
+        </p>
+        <button type="button" disabled={running} onClick={() => void runArticulation()}>
+          {runningTask === "articulation" ? "Running…" : "Run articulation matrix"}
+        </button>
+        {progress && progressTask === "articulation"
+          ? <span className="benchmark-progress">{progress}</span>
+          : null}
+        {articulationResult ? (
+          <>
+            <p>
+              <strong>{articulationResult.conclusion.text}</strong>{" "}
+              “Substantial” is fixed at {articulationResult.conclusion.substantialThresholdCount}
+              /{articulationResult.eventCount} additional independent matches ({(
+                articulationResult.conclusion.substantialThresholdRate * 100
+              ).toFixed(1)} percentage points) without added safety errors.
+            </p>
+            <div className="benchmark-table-wrap">
+              <table className="benchmark-table">
+                <thead>
+                  <tr>
+                    <th>Articulation</th>
+                    <th>Raw evidence</th>
+                    <th>Fresh attacks</th>
+                    <th>Independent match</th>
+                    <th>Ordered advance</th>
+                    <th>Complete</th>
+                    <th>Stale sustain</th>
+                    <th>Carry-over events</th>
+                    <th>False / skip / duplicate</th>
+                    <th>Δ raw / independent / ordered</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {articulationResult.runs.map((profile) => (
+                    <tr key={profile.articulation}>
+                      <td>{profile.articulation}</td>
+                      <td>{profile.summary.rawEvidenceCount}/{profile.summary.expectedEventCount} ({(
+                        profile.summary.rawEvidenceRate * 100
+                      ).toFixed(1)}%)</td>
+                      <td>{profile.summary.producedFreshAttackCount}/{profile.summary.expectedFreshAttackCount} ({(
+                        profile.summary.freshAttackRate * 100
+                      ).toFixed(1)}%)</td>
+                      <td>{profile.summary.independentMatchCount}/{profile.summary.expectedEventCount} ({(
+                        profile.summary.independentMatchRate * 100
+                      ).toFixed(1)}%)</td>
+                      <td>{profile.summary.orderedAdvanceCount}/{profile.summary.expectedEventCount} ({(
+                        profile.summary.orderedAdvanceRate * 100
+                      ).toFixed(1)}%)</td>
+                      <td>{profile.summary.completePassage ? "Yes" : "No"}</td>
+                      <td>{profile.summary.staleSustainPitchCount}</td>
+                      <td>{profile.summary.carryOverEventCount}</td>
+                      <td>{profile.summary.falseAdvanceCount} / {profile.summary.skippedAdvanceCount} / {profile.summary.duplicateAdvanceCount}</td>
+                      <td>{percentageDelta(profile.deltaFromNormal.rawEvidenceRate)} / {percentageDelta(
+                        profile.deltaFromNormal.independentMatchRate
+                      )} / {percentageDelta(profile.deltaFromNormal.orderedAdvanceRate)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <h3>Detailed articulation diagnostics</h3>
+            <pre>{articulationDiagnostics(articulationResult)}</pre>
           </>
         ) : null}
       </section>

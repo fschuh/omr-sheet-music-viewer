@@ -8,7 +8,10 @@ import {
   renderBenchmarkAudio,
 } from "./listenBenchmarkAudio";
 import {
+  benchmarkAudioAttacksForSequence,
+  bundledListenSequences,
   captureListenSequenceTrace,
+  courseClearArticulationDefinitions,
   materializeListenSequence,
   renderListenSequenceAudio,
   replayListenSequenceTrace,
@@ -43,6 +46,14 @@ function maximumAbsoluteDifference(
     maximum = Math.max(maximum, Math.abs(left[index] - right[index]));
   }
   return maximum;
+}
+
+function pcmRms(pcm: Float32Array, startFrame: number, endFrame: number): number {
+  let sumSquares = 0;
+  for (let frame = startFrame; frame < endFrame; frame += 1) {
+    sumSquares += pcm[frame] * pcm[frame];
+  }
+  return endFrame <= startFrame ? 0 : Math.sqrt(sumSquares / (endFrame - startFrame));
 }
 
 function oneEventDefinition(notes: readonly number[], id: string): ListenSequenceDefinition {
@@ -205,6 +216,112 @@ export async function runListenBenchmarkParityTests(
   );
   checks.push({ name: "sustained-note overrides affect only the requested schedule", passed: true });
 
+  onProgress("Checking Course Clear articulation rendering…");
+  const articulationDefinitions = courseClearArticulationDefinitions();
+  const existingCourseClear = materializeListenSequence(
+    bundledListenSequences().find(({ id }) => id === "course-clear-27")!,
+    1_000,
+  );
+  const normalCourseClear = materializeListenSequence(
+    articulationDefinitions.find(({ articulation }) => articulation === "normal")!,
+    1_000,
+  );
+  const existingCourseClearAudio = await renderListenSequenceAudio(existingCourseClear);
+  const normalCourseClearAudio = await renderListenSequenceAudio(normalCourseClear);
+  recordPcm(
+    "normal articulation preserves the current Course Clear PCM",
+    existingCourseClearAudio.pcm,
+    normalCourseClearAudio.pcm,
+    undefined,
+    1e-6,
+  );
+
+  const detachedCourseClear = materializeListenSequence(
+    articulationDefinitions.find(({ articulation }) => articulation === "detached")!,
+    1_000,
+  );
+  const detachedCourseClearAudio = await renderListenSequenceAudio(detachedCourseClear);
+  let maximumDetachedGapRms = 0;
+  for (let index = 1; index < detachedCourseClear.attacks.length; index += 1) {
+    const previousEnvelopeEndMs = Math.max(...detachedCourseClear.attacks[index - 1].notes.map(
+      ({ releaseTimeMs }) => releaseTimeMs + LISTEN_BENCHMARK_RELEASE_MS,
+    ));
+    maximumDetachedGapRms = Math.max(
+      maximumDetachedGapRms,
+      pcmRms(
+        detachedCourseClearAudio.pcm,
+        Math.ceil(previousEnvelopeEndMs * 16),
+        Math.floor(detachedCourseClear.attacks[index].scheduledAtMs * 16),
+      ),
+    );
+  }
+  require(maximumDetachedGapRms === 0, `Detached gap RMS was ${maximumDetachedGapRms}.`);
+  checks.push({ name: "every detached Course Clear gap contains digital silence", passed: true });
+
+  const legatoCourseClear = materializeListenSequence(
+    articulationDefinitions.find(({ articulation }) => articulation === "legato")!,
+    1_000,
+  );
+  const legatoCourseClearAudio = await renderListenSequenceAudio(legatoCourseClear);
+  const secondAttackFrame = Math.round(legatoCourseClear.attacks[1].scheduledAtMs * 16);
+  const legatoPreAttackRms = pcmRms(
+    legatoCourseClearAudio.pcm,
+    secondAttackFrame - 100 * 16,
+    secondAttackFrame,
+  );
+  const normalPreAttackRms = pcmRms(
+    normalCourseClearAudio.pcm,
+    secondAttackFrame - 100 * 16,
+    secondAttackFrame,
+  );
+  require(legatoPreAttackRms > 0, "Legato release tail was silent before the next attack.");
+  require(normalPreAttackRms === 0, "Normal articulation unexpectedly sounded before attack two.");
+  checks.push({ name: "legato release tails overlap the following attack", passed: true });
+
+  const sustainedCourseClear = materializeListenSequence(
+    articulationDefinitions.find(({ articulation }) => articulation === "sustained-shared")!,
+    1_000,
+  );
+  const normalPartialAttack = benchmarkAudioAttacksForSequence(normalCourseClear)[23];
+  const sustainedPartialAttack = benchmarkAudioAttacksForSequence(sustainedCourseClear)[23];
+  const normalPartialChord = await renderBenchmarkAudio({
+    attacks: [{ ...normalPartialAttack, onsetMs: 220 }],
+    durationMs: 1_400,
+  });
+  const normalHeldTones = await renderBenchmarkAudio({
+    attacks: [{
+      onsetMs: 220,
+      gainReferenceChordSize: normalPartialAttack.notes.length,
+      notes: normalPartialAttack.notes.filter((note) => (
+        typeof note === "number" ? note !== 62 : note.midi !== 62
+      )),
+    }],
+    durationMs: 1_400,
+  });
+  const sustainedNewTone = await renderBenchmarkAudio({
+    attacks: [{ ...sustainedPartialAttack, onsetMs: 220 }],
+    durationMs: 1_400,
+  });
+  let maximumNewToneGainDifference = 0;
+  for (let frame = 0; frame < normalPartialChord.pcm.length; frame += 1) {
+    maximumNewToneGainDifference = Math.max(
+      maximumNewToneGainDifference,
+      Math.abs(
+        normalPartialChord.pcm[frame] - normalHeldTones.pcm[frame] -
+        sustainedNewTone.pcm[frame]
+      ),
+    );
+  }
+  require(
+    maximumNewToneGainDifference <= 1e-6,
+    `Sustained-shared new-note gain differed by ${maximumNewToneGainDifference}.`,
+  );
+  checks.push({
+    name: "sustained-shared new notes retain normal whole-chord gain",
+    maximumAbsolutePcmDifference: maximumNewToneGainDifference,
+    passed: true,
+  });
+
   for (const rendered of [
     isolatedC4,
     continuousC4,
@@ -214,6 +331,10 @@ export async function runListenBenchmarkParityTests(
     rolledOffset,
     repeated,
     sustainedC,
+    existingCourseClearAudio,
+    normalCourseClearAudio,
+    detachedCourseClearAudio,
+    legatoCourseClearAudio,
   ]) {
     require(rendered.pcm.length % 512 === 0, "A rendered output was not 512-sample aligned.");
   }

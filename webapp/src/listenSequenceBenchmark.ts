@@ -47,6 +47,29 @@ export const LISTEN_SEQUENCE_TAIL_MS = 900;
 export const LISTEN_SEQUENCE_ONSET_BUFFER_MS = 192;
 const RECOGNITION_ASSIGNMENT_MS = 450;
 const FRAME_MS = ONLINE_AMT_CHUNK_SIZE * 1_000 / ONLINE_AMT_SAMPLE_RATE;
+const FIRST_PIANO_MIDI = 21;
+
+export const COURSE_CLEAR_ARTICULATION_INTERVAL_MS = 1_000;
+export const LISTEN_ARTICULATION_SUBSTANTIAL_EVENT_COUNT = 3;
+
+export type ListenSequenceArticulation =
+  | "detached"
+  | "normal"
+  | "legato"
+  | "sustained-shared";
+
+export const LISTEN_SEQUENCE_ARTICULATIONS: readonly ListenSequenceArticulation[] = [
+  "detached",
+  "normal",
+  "legato",
+  "sustained-shared",
+] as const;
+
+export const LISTEN_ARTICULATION_HOLD_MS = Object.freeze({
+  detached: 250,
+  normal: LISTEN_BENCHMARK_DEFAULT_HOLD_MS,
+  legato: 900,
+});
 
 const matcherOptions = {
   ...defaultChordMatcherOptions,
@@ -56,6 +79,8 @@ const matcherOptions = {
 export interface ListenSequenceNote {
   midi: number;
   offsetMs?: number;
+  /** Absolute hold duration. Takes precedence over durationIntervals. */
+  holdMs?: number;
   durationIntervals?: number;
 }
 
@@ -65,6 +90,8 @@ export interface ListenSequenceAttackDefinition {
   /** Score target expected to be active for this physical attack. */
   targetIndex: number;
   notes: readonly (number | ListenSequenceNote)[];
+  /** Preserve whole-chord gain when this attack contains only new chord tones. */
+  gainReferenceChordSize?: number;
   /** False for a deliberate wrong/extra-note safety attack. */
   expectedAdvance: boolean;
 }
@@ -75,6 +102,7 @@ export interface ListenSequenceDefinition {
   label: string;
   targets: readonly (readonly number[])[];
   attacks: readonly ListenSequenceAttackDefinition[];
+  articulation?: ListenSequenceArticulation;
 }
 
 export interface ScheduledSequenceNote {
@@ -92,6 +120,7 @@ export interface ScheduledSequenceAttack {
   expectedAdvance: boolean;
   playedPitches: number[];
   notes: ScheduledSequenceNote[];
+  gainReferenceChordSize?: number;
 }
 
 export interface ScheduledSequenceTarget {
@@ -370,6 +399,119 @@ export interface ListenSequenceBenchmarkResult {
   experimental: ExperimentalListenSequenceResult;
 }
 
+export interface ListenArticulationSilenceGapDiagnostic {
+  startMs: number;
+  endMs: number;
+  durationMs: number;
+  rms: number;
+}
+
+export interface ListenArticulationDepartingPitchDiagnostic {
+  midi: number;
+  activeAtNextAttack: boolean;
+  offsetBeforeNextAttack: boolean;
+}
+
+export interface ListenArticulationEventDiagnostic {
+  index: number;
+  expectedFreshAttackCount: number;
+  producedFreshAttackCount: number;
+  expectedOnsetCount: number;
+  producedOnsetCount: number;
+  expectedReOnsetCount: number;
+  producedReOnsetCount: number;
+  repeatedPitches: number[];
+  repeatedPitchesInSustain: number[];
+  departingPitches: ListenArticulationDepartingPitchDiagnostic[];
+  confidentPreviousChordExtraPitches: number[];
+  silenceGap: ListenArticulationSilenceGapDiagnostic | null;
+  failureClassification: "retrigger-not-detected" | "carry-over" |
+    "model-no-evidence" | null;
+}
+
+export interface ListenArticulationRunSummary {
+  articulation: ListenSequenceArticulation;
+  expectedEventCount: number;
+  rawEvidenceCount: number;
+  rawEvidenceRate: number;
+  expectedFreshAttackCount: number;
+  producedFreshAttackCount: number;
+  freshAttackRate: number;
+  expectedOnsetCount: number;
+  producedOnsetCount: number;
+  expectedReOnsetCount: number;
+  producedReOnsetCount: number;
+  independentMatchCount: number;
+  independentMatchRate: number;
+  orderedAdvanceCount: number;
+  orderedAdvanceRate: number;
+  completePassage: boolean;
+  staleSustainPitchCount: number;
+  carryOverEventCount: number;
+  departingPitchActiveCount: number;
+  departingPitchOffsetBeforeNextAttackCount: number;
+  confidentPreviousChordExtraCount: number;
+  retriggerNotDetectedFailureCount: number;
+  carryOverFailureCount: number;
+  modelNoEvidenceFailureCount: number;
+  falseAdvanceCount: number;
+  skippedAdvanceCount: number;
+  duplicateAdvanceCount: number;
+  detachedSilenceGapCount: number;
+  maximumDetachedSilenceGapRms: number | null;
+}
+
+export interface ListenArticulationNormalDelta {
+  rawEvidenceCount: number;
+  rawEvidenceRate: number;
+  producedFreshAttackCount: number;
+  freshAttackRate: number;
+  independentMatchCount: number;
+  independentMatchRate: number;
+  orderedAdvanceCount: number;
+  orderedAdvanceRate: number;
+  staleSustainPitchCount: number;
+  carryOverEventCount: number;
+  falseAdvanceCount: number;
+  skippedAdvanceCount: number;
+  duplicateAdvanceCount: number;
+}
+
+export interface ListenArticulationRunResult {
+  articulation: ListenSequenceArticulation;
+  run: ListenSequenceRunResult;
+  events: ListenArticulationEventDiagnostic[];
+  summary: ListenArticulationRunSummary;
+  deltaFromNormal: ListenArticulationNormalDelta;
+}
+
+export type ListenArticulationDiagnosticCode =
+  | "recognizer-state-release-interference"
+  | "matcher-carry-over-handling"
+  | "ordered-cascade-playhead"
+  | "base-model-recall"
+  | "inconclusive-safety-errors"
+  | "inconclusive";
+
+export interface ListenArticulationDiagnosticConclusion {
+  code: ListenArticulationDiagnosticCode;
+  text: string;
+  substantialThresholdCount: 3;
+  substantialThresholdRate: number;
+  detachedIndependentMatchImprovement: number;
+  detachedOrderedAdvanceImprovement: number;
+  safetyErrorsIntroduced: boolean;
+  substantialDetachedImprovement: boolean;
+}
+
+export interface ListenArticulationMatrixResult {
+  intervalMs: 1_000;
+  eventCount: number;
+  renderer: ListenBenchmarkRendererConfiguration;
+  runs: ListenArticulationRunResult[];
+  conclusion: ListenArticulationDiagnosticConclusion;
+}
+
 export interface SequenceInferenceSession {
   reset(): void;
   run(audio: Float32Array): Promise<OnlineAmtStepResult>;
@@ -409,6 +551,82 @@ function regularSequence(
       expectedAdvance: true,
     })),
   };
+}
+
+function sameChord(
+  left: readonly number[],
+  right: readonly number[],
+): boolean {
+  if (left.length !== right.length) return false;
+  const rightPitches = new Set(right);
+  return left.every((midi) => rightPitches.has(midi));
+}
+
+function fixedArticulationCourseClearDefinition(
+  articulation: "detached" | "normal" | "legato",
+): ListenSequenceDefinition {
+  const targets = COURSE_CLEAR_BENCHMARK_MOMENTS.map(({ pitches }) => pitches);
+  const holdMs = LISTEN_ARTICULATION_HOLD_MS[articulation];
+  return {
+    id: `course-clear-articulation-${articulation}`,
+    family: "course-clear-articulation",
+    label: `Course Clear · ${articulation}`,
+    articulation,
+    targets,
+    attacks: targets.map((pitches, index) => ({
+      at: index,
+      targetIndex: index,
+      notes: pitches.map((midi) => note(midi, { holdMs })),
+      expectedAdvance: true,
+    })),
+  };
+}
+
+function sustainedSharedCourseClearDefinition(): ListenSequenceDefinition {
+  const targets = COURSE_CLEAR_BENCHMARK_MOMENTS.map(({ pitches }) => pitches);
+  return {
+    id: "course-clear-articulation-sustained-shared",
+    family: "course-clear-articulation",
+    label: "Course Clear · sustained shared notes",
+    articulation: "sustained-shared",
+    targets,
+    attacks: targets.map((pitches, index) => {
+      const previous = targets[index - 1];
+      const reattackWholeChord = previous === undefined || sameChord(previous, pitches);
+      const attackedPitches = reattackWholeChord
+        ? pitches
+        : pitches.filter((midi) => !previous.includes(midi));
+      return {
+        at: index,
+        targetIndex: index,
+        gainReferenceChordSize: pitches.length,
+        notes: attackedPitches.map((midi) => {
+          let finalAdjacentIndex = index;
+          while (finalAdjacentIndex + 1 < targets.length) {
+            const current = targets[finalAdjacentIndex];
+            const next = targets[finalAdjacentIndex + 1];
+            if (sameChord(current, next) || !next.includes(midi)) break;
+            finalAdjacentIndex += 1;
+          }
+          return note(midi, {
+            holdMs: (finalAdjacentIndex - index) * COURSE_CLEAR_ARTICULATION_INTERVAL_MS +
+              LISTEN_BENCHMARK_DEFAULT_HOLD_MS,
+          });
+        }),
+        expectedAdvance: true,
+      };
+    }),
+  };
+}
+
+/** Four controlled schedules sharing the same Course Clear targets and attack times. */
+export function courseClearArticulationDefinitions(): ListenSequenceDefinition[] {
+  return [
+    fixedArticulationCourseClearDefinition("detached"),
+    fixedArticulationCourseClearDefinition("normal"),
+    fixedArticulationCourseClearDefinition("legato"),
+    sustainedSharedCourseClearDefinition(),
+  ];
 }
 
 /** Deterministic passages used by every speed in the baseline matrix. */
@@ -542,14 +760,15 @@ export function materializeListenSequence(
     const normalized = attack.notes.map(normalizedNote);
     const notes = normalized.map((playedNote, noteIndex): ScheduledSequenceNote => {
       const attackTimeMs = scheduledAtMs + (playedNote.offsetMs ?? 0);
+      const holdMs = playedNote.holdMs ?? (playedNote.durationIntervals === undefined
+        ? LISTEN_BENCHMARK_DEFAULT_HOLD_MS
+        : playedNote.durationIntervals * intervalMs);
       return {
         id: `${attackIndex}:${noteIndex}`,
         midi: playedNote.midi,
         attackIndex,
         attackTimeMs,
-        releaseTimeMs: attackTimeMs + (playedNote.durationIntervals === undefined
-          ? LISTEN_BENCHMARK_DEFAULT_HOLD_MS
-          : playedNote.durationIntervals * intervalMs),
+        releaseTimeMs: attackTimeMs + holdMs,
       };
     });
     return {
@@ -559,6 +778,7 @@ export function materializeListenSequence(
       expectedAdvance: attack.expectedAdvance,
       playedPitches: sortedUnique(normalized.map(({ midi }) => midi)),
       notes,
+      gainReferenceChordSize: attack.gainReferenceChordSize,
     };
   });
   const targets = definition.targets.map((pitches, index): ScheduledSequenceTarget => {
@@ -610,6 +830,7 @@ export function benchmarkAudioAttacksForSequence(
 ): ListenBenchmarkAudioAttack[] {
   return sequence.attacks.map((attack) => ({
     onsetMs: attack.scheduledAtMs,
+    gainReferenceChordSize: attack.gainReferenceChordSize,
     notes: attack.notes.map((playedNote) => ({
       midi: playedNote.midi,
       offsetMs: playedNote.attackTimeMs - attack.scheduledAtMs,
@@ -1600,6 +1821,351 @@ export function replayListenSequenceTrace(
   };
 }
 
+function modelStateBeforeAttack(
+  trace: ListenRecognitionTrace,
+  midi: number,
+  attackTimeMs: number,
+): number | null {
+  const frame = [...trace.frames]
+    .reverse()
+    .find(({ capturedAtMs }) => capturedAtMs < attackTimeMs);
+  if (!frame) return null;
+  if (frame.modelStates.length === 88) {
+    return frame.modelStates[midi - FIRST_PIANO_MIDI] ?? null;
+  }
+  const relevantIndex = trace.relevantPitches.indexOf(midi);
+  return relevantIndex < 0 ? null : frame.modelStates[relevantIndex] ?? null;
+}
+
+function activeBeforeAttack(
+  trace: ListenRecognitionTrace,
+  midi: number,
+  attackTimeMs: number,
+): boolean {
+  const frame = [...trace.frames]
+    .reverse()
+    .find(({ capturedAtMs }) => capturedAtMs < attackTimeMs);
+  return frame?.activePitches.some((pitch) => (
+    pitch.midi === midi && pitch.confidence >= matcherOptions.activeTargetThreshold
+  )) ?? false;
+}
+
+function pcmRmsInWindow(
+  trace: ListenRecognitionTrace,
+  startMs: number,
+  endMs: number,
+): number {
+  const startFrame = Math.max(0, Math.ceil(startMs * trace.sampleRate / 1_000));
+  const endFrame = Math.min(trace.pcm.length, Math.floor(endMs * trace.sampleRate / 1_000));
+  if (endFrame <= startFrame) return 0;
+  let sumSquares = 0;
+  for (let frame = startFrame; frame < endFrame; frame += 1) {
+    const value = trace.pcm[frame];
+    sumSquares += value * value;
+  }
+  return Math.sqrt(sumSquares / (endFrame - startFrame));
+}
+
+/** Derives articulation-specific state and release diagnostics without rerunning inference. */
+export function diagnoseListenArticulationRun(
+  articulation: ListenSequenceArticulation,
+  sequence: MaterializedListenSequence,
+  run: ListenSequenceRunResult,
+): { events: ListenArticulationEventDiagnostic[]; summary: ListenArticulationRunSummary } {
+  const events = run.events.map((event, index): ListenArticulationEventDiagnostic => {
+    const previousTarget = sequence.targets[index - 1];
+    const currentTarget = sequence.targets[index];
+    const repeatedPitches = previousTarget
+      ? currentTarget.pitches.filter((midi) => previousTarget.pitches.includes(midi))
+      : [];
+    const previousPitches = previousTarget?.pitches ?? [];
+    const departingPitches = previousPitches
+      .filter((midi) => !currentTarget.pitches.includes(midi))
+      .map((midi): ListenArticulationDepartingPitchDiagnostic => ({
+        midi,
+        activeAtNextAttack: activeBeforeAttack(
+          run.trace,
+          midi,
+          currentTarget.scheduledAttackTimeMs,
+        ),
+        offsetBeforeNextAttack: run.trace.frames.some((frame) => frame.noteEvents.some(
+          (noteEvent) => noteEvent.midi === midi &&
+            noteEvent.type === "offset" &&
+            noteEvent.eventTimeMs > (previousTarget?.scheduledAttackTimeMs ?? -Infinity) &&
+            noteEvent.eventTimeMs < currentTarget.scheduledAttackTimeMs,
+        )),
+      }));
+    const expectedFreshPitches = event.expectedPitches.filter(({ attackRequired }) => (
+      attackRequired
+    ));
+    const nextPhysicalAttack = sequence.attacks
+      .filter(({ scheduledAtMs }) => scheduledAtMs > currentTarget.scheduledAttackTimeMs)
+      .at(0);
+    const freshAttackWindowEndMs = nextPhysicalAttack?.scheduledAtMs ?? Infinity;
+    const observedFreshAttacks = new Map<number, "onset" | "reOnset">();
+    for (const frame of run.trace.frames) {
+      for (const noteEvent of frame.noteEvents) {
+        if (
+          noteEvent.type === "offset" ||
+          noteEvent.eventTimeMs < currentTarget.scheduledAttackTimeMs - FRAME_MS ||
+          noteEvent.eventTimeMs >= freshAttackWindowEndMs ||
+          !expectedFreshPitches.some(({ midi }) => midi === noteEvent.midi) ||
+          observedFreshAttacks.has(noteEvent.midi)
+        ) continue;
+        observedFreshAttacks.set(noteEvent.midi, noteEvent.type);
+      }
+    }
+    const previousPhysicalAttack = sequence.attacks
+      .filter(({ scheduledAtMs }) => scheduledAtMs < currentTarget.scheduledAttackTimeMs)
+      .at(-1);
+    const previousEnvelopeEndMs = previousPhysicalAttack && previousPhysicalAttack.notes.length > 0
+      ? Math.max(...previousPhysicalAttack.notes.map(({ releaseTimeMs }) => (
+          releaseTimeMs + LISTEN_BENCHMARK_RELEASE_MS
+        )))
+      : null;
+    const silenceGap = articulation === "detached" && previousEnvelopeEndMs !== null &&
+        previousEnvelopeEndMs < currentTarget.scheduledAttackTimeMs
+      ? {
+          startMs: previousEnvelopeEndMs,
+          endMs: currentTarget.scheduledAttackTimeMs,
+          durationMs: currentTarget.scheduledAttackTimeMs - previousEnvelopeEndMs,
+          rms: pcmRmsInWindow(
+            run.trace,
+            previousEnvelopeEndMs,
+            currentTarget.scheduledAttackTimeMs,
+          ),
+        }
+      : null;
+    const allFailureReasons = new Set(event.failureReasons);
+    const failureClassification = allFailureReasons.has("retrigger-not-detected")
+      ? "retrigger-not-detected" as const
+      : allFailureReasons.has("carry-over")
+      ? "carry-over" as const
+      : allFailureReasons.has("model-no-evidence")
+      ? "model-no-evidence" as const
+      : null;
+    return {
+      index,
+      expectedFreshAttackCount: expectedFreshPitches.length,
+      producedFreshAttackCount: observedFreshAttacks.size,
+      expectedOnsetCount: expectedFreshPitches.filter(({ requiredAttackType }) => (
+        requiredAttackType === "onset"
+      )).length,
+      producedOnsetCount: [...observedFreshAttacks.values()].filter((type) => (
+        type === "onset"
+      )).length,
+      expectedReOnsetCount: expectedFreshPitches.filter(({ requiredAttackType }) => (
+        requiredAttackType === "reOnset"
+      )).length,
+      producedReOnsetCount: [...observedFreshAttacks.values()].filter((type) => (
+        type === "reOnset"
+      )).length,
+      repeatedPitches,
+      repeatedPitchesInSustain: repeatedPitches.filter((midi) => (
+        modelStateBeforeAttack(run.trace, midi, currentTarget.scheduledAttackTimeMs) === 2
+      )),
+      departingPitches,
+      confidentPreviousChordExtraPitches: event.unexpectedPitches.filter((midi) => (
+        previousPitches.includes(midi)
+      )),
+      silenceGap,
+      failureClassification,
+    };
+  });
+  const expectedFreshAttackCount = events.reduce(
+    (total, event) => total + event.expectedFreshAttackCount,
+    0,
+  );
+  const producedFreshAttackCount = events.reduce(
+    (total, event) => total + event.producedFreshAttackCount,
+    0,
+  );
+  const detachedGaps = events.flatMap(({ silenceGap }) => silenceGap ? [silenceGap] : []);
+  const failureCount = (reason: ListenSequenceFailureReason) => run.events.filter((event) => (
+    event.failureReasons.includes(reason)
+  )).length;
+  return {
+    events,
+    summary: {
+      articulation,
+      expectedEventCount: run.summary.expectedEventCount,
+      rawEvidenceCount: run.summary.rawCompleteEvidenceCount,
+      rawEvidenceRate: run.summary.rawCompleteEvidenceRate,
+      expectedFreshAttackCount,
+      producedFreshAttackCount,
+      freshAttackRate: expectedFreshAttackCount === 0
+        ? 0
+        : producedFreshAttackCount / expectedFreshAttackCount,
+      expectedOnsetCount: events.reduce(
+        (total, event) => total + event.expectedOnsetCount,
+        0,
+      ),
+      producedOnsetCount: events.reduce(
+        (total, event) => total + event.producedOnsetCount,
+        0,
+      ),
+      expectedReOnsetCount: events.reduce(
+        (total, event) => total + event.expectedReOnsetCount,
+        0,
+      ),
+      producedReOnsetCount: events.reduce(
+        (total, event) => total + event.producedReOnsetCount,
+        0,
+      ),
+      independentMatchCount: run.summary.independentMatchCount,
+      independentMatchRate: run.summary.independentMatchRate,
+      orderedAdvanceCount: run.summary.orderedAdvanceCount,
+      orderedAdvanceRate: run.summary.orderedAdvanceRate,
+      completePassage: run.summary.complete,
+      staleSustainPitchCount: events.reduce(
+        (total, event) => total + event.repeatedPitchesInSustain.length,
+        0,
+      ),
+      carryOverEventCount: events.filter((event) => (
+        event.departingPitches.some(({ activeAtNextAttack }) => activeAtNextAttack) ||
+        event.confidentPreviousChordExtraPitches.length > 0 ||
+        event.failureClassification === "carry-over"
+      )).length,
+      departingPitchActiveCount: events.reduce(
+        (total, event) => total + event.departingPitches.filter(({ activeAtNextAttack }) => (
+          activeAtNextAttack
+        )).length,
+        0,
+      ),
+      departingPitchOffsetBeforeNextAttackCount: events.reduce(
+        (total, event) => total + event.departingPitches.filter(({ offsetBeforeNextAttack }) => (
+          offsetBeforeNextAttack
+        )).length,
+        0,
+      ),
+      confidentPreviousChordExtraCount: events.reduce(
+        (total, event) => total + event.confidentPreviousChordExtraPitches.length,
+        0,
+      ),
+      retriggerNotDetectedFailureCount: failureCount("retrigger-not-detected"),
+      carryOverFailureCount: failureCount("carry-over"),
+      modelNoEvidenceFailureCount: failureCount("model-no-evidence"),
+      falseAdvanceCount: run.summary.falseAdvanceCount,
+      skippedAdvanceCount: run.summary.skippedAdvanceCount,
+      duplicateAdvanceCount: run.summary.duplicateAdvanceCount,
+      detachedSilenceGapCount: detachedGaps.length,
+      maximumDetachedSilenceGapRms: detachedGaps.length === 0
+        ? null
+        : Math.max(...detachedGaps.map(({ rms }) => rms)),
+    },
+  };
+}
+
+function articulationDelta(
+  summary: ListenArticulationRunSummary,
+  normal: ListenArticulationRunSummary,
+): ListenArticulationNormalDelta {
+  return {
+    rawEvidenceCount: summary.rawEvidenceCount - normal.rawEvidenceCount,
+    rawEvidenceRate: summary.rawEvidenceRate - normal.rawEvidenceRate,
+    producedFreshAttackCount:
+      summary.producedFreshAttackCount - normal.producedFreshAttackCount,
+    freshAttackRate: summary.freshAttackRate - normal.freshAttackRate,
+    independentMatchCount: summary.independentMatchCount - normal.independentMatchCount,
+    independentMatchRate: summary.independentMatchRate - normal.independentMatchRate,
+    orderedAdvanceCount: summary.orderedAdvanceCount - normal.orderedAdvanceCount,
+    orderedAdvanceRate: summary.orderedAdvanceRate - normal.orderedAdvanceRate,
+    staleSustainPitchCount: summary.staleSustainPitchCount - normal.staleSustainPitchCount,
+    carryOverEventCount: summary.carryOverEventCount - normal.carryOverEventCount,
+    falseAdvanceCount: summary.falseAdvanceCount - normal.falseAdvanceCount,
+    skippedAdvanceCount: summary.skippedAdvanceCount - normal.skippedAdvanceCount,
+    duplicateAdvanceCount: summary.duplicateAdvanceCount - normal.duplicateAdvanceCount,
+  };
+}
+
+export function interpretListenArticulationMatrix(
+  runs: readonly Pick<ListenArticulationRunResult, "articulation" | "summary">[],
+): ListenArticulationDiagnosticConclusion {
+  const normal = runs.find(({ articulation }) => articulation === "normal")?.summary;
+  const detached = runs.find(({ articulation }) => articulation === "detached")?.summary;
+  if (!normal || !detached) {
+    throw new Error("Articulation interpretation requires normal and detached runs.");
+  }
+  const independentImprovement = detached.independentMatchCount - normal.independentMatchCount;
+  const orderedImprovement = detached.orderedAdvanceCount - normal.orderedAdvanceCount;
+  const rawImprovement = detached.rawEvidenceCount - normal.rawEvidenceCount;
+  const safetyErrorsIntroduced = detached.falseAdvanceCount > normal.falseAdvanceCount ||
+    detached.skippedAdvanceCount > normal.skippedAdvanceCount ||
+    detached.duplicateAdvanceCount > normal.duplicateAdvanceCount;
+  const substantialDetachedImprovement =
+    independentImprovement >= LISTEN_ARTICULATION_SUBSTANTIAL_EVENT_COUNT &&
+    !safetyErrorsIntroduced;
+  let code: ListenArticulationDiagnosticCode = "inconclusive";
+  let conclusion = "No articulation profile isolated one dominant failure layer.";
+  if (safetyErrorsIntroduced) {
+    code = "inconclusive-safety-errors";
+    conclusion = "Detached articulation introduced safety errors, so its improvement is not accepted.";
+  } else if (
+    substantialDetachedImprovement &&
+    rawImprovement >= LISTEN_ARTICULATION_SUBSTANTIAL_EVENT_COUNT &&
+    detached.staleSustainPitchCount < normal.staleSustainPitchCount
+  ) {
+    code = "recognizer-state-release-interference";
+    conclusion = "Detached attacks improved raw recognition and reduced stale sustain; recognizer state or release interference is likely.";
+  } else if (
+    substantialDetachedImprovement &&
+    Math.abs(rawImprovement) < LISTEN_ARTICULATION_SUBSTANTIAL_EVENT_COUNT
+  ) {
+    code = "matcher-carry-over-handling";
+    conclusion = "Raw evidence stayed similar while independent matching improved; matcher carry-over handling is likely.";
+  } else if (
+    Math.abs(independentImprovement) < LISTEN_ARTICULATION_SUBSTANTIAL_EVENT_COUNT &&
+    orderedImprovement >= LISTEN_ARTICULATION_SUBSTANTIAL_EVENT_COUNT
+  ) {
+    code = "ordered-cascade-playhead";
+    conclusion = "Only ordered progress improved substantially; cascade or playhead behavior is the likely layer.";
+  } else if (
+    independentImprovement < LISTEN_ARTICULATION_SUBSTANTIAL_EVENT_COUNT &&
+    detached.modelNoEvidenceFailureCount > 0
+  ) {
+    code = "base-model-recall";
+    conclusion = "Detached articulation did not substantially improve independent matching and expected pitches still lacked evidence; base-model recall remains the likely limitation.";
+  }
+  return {
+    code,
+    text: conclusion,
+    substantialThresholdCount: LISTEN_ARTICULATION_SUBSTANTIAL_EVENT_COUNT,
+    substantialThresholdRate: LISTEN_ARTICULATION_SUBSTANTIAL_EVENT_COUNT /
+      COURSE_CLEAR_BENCHMARK_MOMENTS.length,
+    detachedIndependentMatchImprovement: independentImprovement,
+    detachedOrderedAdvanceImprovement: orderedImprovement,
+    safetyErrorsIntroduced,
+    substantialDetachedImprovement,
+  };
+}
+
+export function summarizeCourseClearArticulationMatrix(
+  capturedRuns: readonly {
+    articulation: ListenSequenceArticulation;
+    sequence: MaterializedListenSequence;
+    run: ListenSequenceRunResult;
+  }[],
+): ListenArticulationMatrixResult {
+  const diagnosed = capturedRuns.map(({ articulation, sequence, run }) => ({
+    articulation,
+    run,
+    ...diagnoseListenArticulationRun(articulation, sequence, run),
+  }));
+  const normal = diagnosed.find(({ articulation }) => articulation === "normal")?.summary;
+  if (!normal) throw new Error("Articulation matrix is missing its normal control run.");
+  const runs: ListenArticulationRunResult[] = diagnosed.map((entry) => ({
+    ...entry,
+    deltaFromNormal: articulationDelta(entry.summary, normal),
+  }));
+  return {
+    intervalMs: COURSE_CLEAR_ARTICULATION_INTERVAL_MS,
+    eventCount: COURSE_CLEAR_BENCHMARK_MOMENTS.length,
+    renderer: { ...(runs[0]?.run.renderer ?? LISTEN_BENCHMARK_RENDERER) },
+    runs,
+    conclusion: interpretListenArticulationMatrix(runs),
+  };
+}
+
 function aggregateRuns(
   runs: readonly ListenSequenceRunResult[],
   intervalMs: number,
@@ -1900,6 +2466,79 @@ export function compareListenSequencePolicies(
       bufferedSkippedAdvanceCount === 0 &&
       bufferedDuplicateAdvanceCount === 0,
   };
+}
+
+export interface CaptureCourseClearArticulationMatrixOptions {
+  session: SequenceInferenceSession;
+  decoderFactory?: () => SequenceOutputDecoder;
+  render?: (
+    sequence: MaterializedListenSequence,
+  ) => Promise<ListenBenchmarkAudioRenderResult>;
+  onProgress?: (completed: number, total: number, label: string) => void;
+}
+
+/** Captures four independent PCM/model traces and replays only the current matcher policy. */
+export async function captureCourseClearArticulationMatrix(
+  options: CaptureCourseClearArticulationMatrixOptions,
+): Promise<ListenArticulationMatrixResult> {
+  const definitions = courseClearArticulationDefinitions();
+  const capturedRuns: Array<{
+    articulation: ListenSequenceArticulation;
+    sequence: MaterializedListenSequence;
+    run: ListenSequenceRunResult;
+  }> = [];
+  for (let index = 0; index < definitions.length; index += 1) {
+    const definition = definitions[index];
+    const articulation = definition.articulation;
+    if (!articulation) throw new Error(`${definition.id} has no articulation profile.`);
+    const sequence = materializeListenSequence(
+      definition,
+      COURSE_CLEAR_ARTICULATION_INTERVAL_MS,
+    );
+    const rendered = await (options.render ?? renderListenSequenceAudio)(sequence);
+    const trace = await captureListenSequenceTrace({
+      sequenceId: definition.id,
+      intervalMs: COURSE_CLEAR_ARTICULATION_INTERVAL_MS,
+      audio: rendered.pcm,
+      relevantPitches: sequence.relevantPitches,
+      session: options.session,
+      decoder: options.decoderFactory?.(),
+      renderer: rendered.renderer,
+      audioDiagnostics: rendered.diagnostics,
+    });
+    capturedRuns.push({
+      articulation,
+      sequence,
+      run: replayListenSequenceTrace(sequence, trace, "current-matcher"),
+    });
+    options.onProgress?.(
+      index + 1,
+      definitions.length,
+      `${definition.label} at ${COURSE_CLEAR_ARTICULATION_INTERVAL_MS} ms`,
+    );
+  }
+  return summarizeCourseClearArticulationMatrix(capturedRuns);
+}
+
+export async function runCourseClearArticulationMatrix(
+  onProgress: (completed: number, total: number, label: string) => void = () => undefined,
+): Promise<ListenArticulationMatrixResult> {
+  const pendingSession = OnlineAmtSession.create({
+    modelUrl: new URL("models/online_amt_streaming.onnx", document.baseURI).href,
+    numThreads: 1,
+    graphOptimizationLevel: "all",
+    enableCpuMemArena: true,
+    enableMemPattern: true,
+    executionMode: "sequential",
+  });
+  let session: OnlineAmtSession | null = null;
+  try {
+    session = await pendingSession;
+    return await captureCourseClearArticulationMatrix({ session, onProgress });
+  } finally {
+    if (session) await session.dispose();
+    else await pendingSession.then((created) => created.dispose()).catch(() => undefined);
+  }
 }
 
 export async function runBundledListenSequenceBenchmark(

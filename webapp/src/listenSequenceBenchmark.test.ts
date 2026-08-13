@@ -2,18 +2,30 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { DecodedOnlineAmtOutput } from "./onlineAmtOutput";
 import type { OnlineAmtStepResult } from "./onlineAmtSession";
-import { LISTEN_BENCHMARK_RENDERER } from "./listenBenchmarkAudio";
 import {
+  LISTEN_BENCHMARK_RELEASE_MS,
+  LISTEN_BENCHMARK_RENDERER,
+  benchmarkChordGain,
+} from "./listenBenchmarkAudio";
+import {
+  COURSE_CLEAR_ARTICULATION_INTERVAL_MS,
   LISTEN_SEQUENCE_INTERVALS_MS,
   assignRecognitionEventsToAttacks,
+  benchmarkAudioAttacksForSequence,
+  bundledListenSequences,
+  captureCourseClearArticulationMatrix,
   captureListenSequenceTrace,
   classifyListenSequenceFailure,
   compareListenSequencePolicies,
+  courseClearArticulationDefinitions,
+  diagnoseListenArticulationRun,
   evaluateTraceRecognitionLayers,
+  interpretListenArticulationMatrix,
   materializeListenSequence,
   replayListenSequenceTrace,
   summarizeListenSequenceBenchmark,
   type ExpectedPitchDiagnostic,
+  type ListenArticulationRunSummary,
   type ListenRecognitionFrame,
   type ListenRecognitionTrace,
   type ListenSequenceDefinition,
@@ -137,6 +149,258 @@ test("materializes fixed articulation into a chunk-aligned continuous schedule",
   for (const attack of sequence.attacks) {
     assert.equal(attack.notes[0].releaseTimeMs - attack.notes[0].attackTimeMs, 420);
   }
+});
+
+test("materializes exact Course Clear articulation timing profiles", () => {
+  const sequences = new Map(courseClearArticulationDefinitions().map((definition) => [
+    definition.articulation,
+    materializeListenSequence(definition, COURSE_CLEAR_ARTICULATION_INTERVAL_MS),
+  ]));
+  const detached = sequences.get("detached")!;
+  const normal = sequences.get("normal")!;
+  const legato = sequences.get("legato")!;
+
+  for (const [sequence, holdMs, gapMs, overlapMs] of [
+    [detached, 250, 400, 0],
+    [normal, 420, 230, 0],
+    [legato, 900, 0, 250],
+  ] as const) {
+    const first = sequence.attacks[0].notes[0];
+    const nextAttackAt = sequence.attacks[1].scheduledAtMs;
+    const envelopeEnd = first.releaseTimeMs + LISTEN_BENCHMARK_RELEASE_MS;
+    assert.equal(first.releaseTimeMs - first.attackTimeMs, holdMs);
+    assert.equal(Math.max(0, nextAttackAt - envelopeEnd), gapMs);
+    assert.equal(Math.max(0, envelopeEnd - nextAttackAt), overlapMs);
+  }
+  const attackTimes = normal.attacks.map(({ scheduledAtMs }) => scheduledAtMs);
+  for (const sequence of sequences.values()) {
+    assert.deepEqual(sequence.attacks.map(({ scheduledAtMs }) => scheduledAtMs), attackTimes);
+    assert.deepEqual(sequence.targets.map(({ pitches }) => pitches), normal.targets.map(({ pitches }) => pitches));
+  }
+});
+
+test("normal Course Clear scheduling is identical to the existing canonical passage", () => {
+  const existing = bundledListenSequences().find(({ id }) => id === "course-clear-27")!;
+  const normal = courseClearArticulationDefinitions().find(({ articulation }) => (
+    articulation === "normal"
+  ))!;
+  const existingSequence = materializeListenSequence(existing, 1_000);
+  const normalSequence = materializeListenSequence(normal, 1_000);
+
+  assert.deepEqual(
+    benchmarkAudioAttacksForSequence(normalSequence),
+    benchmarkAudioAttacksForSequence(existingSequence),
+  );
+  assert.equal(normalSequence.durationMs, existingSequence.durationMs);
+});
+
+test("sustained-shared keeps partial common tones in one source and reattacks repeated chords", () => {
+  const definition = courseClearArticulationDefinitions().find(({ articulation }) => (
+    articulation === "sustained-shared"
+  ))!;
+  const sequence = materializeListenSequence(definition, 1_000);
+  const sharedSourceAttack = sequence.attacks[22];
+  const partialAttack = sequence.attacks[23];
+  const repeatedAttack = sequence.attacks[24];
+
+  assert.deepEqual(partialAttack.playedPitches, [62]);
+  assert.equal(
+    sharedSourceAttack.notes.find(({ midi }) => midi === 74)!.releaseTimeMs -
+      sharedSourceAttack.scheduledAtMs,
+    1_420,
+  );
+  assert.equal(
+    sharedSourceAttack.notes.find(({ midi }) => midi === 82)!.releaseTimeMs -
+      sharedSourceAttack.scheduledAtMs,
+    1_420,
+  );
+  assert.deepEqual(repeatedAttack.playedPitches, [62, 74, 82]);
+  assert.ok(repeatedAttack.notes.every((playedNote) => (
+    playedNote.releaseTimeMs - playedNote.attackTimeMs === 420
+  )));
+});
+
+test("sustained partial attacks retain normal whole-chord note gain", () => {
+  const definitions = courseClearArticulationDefinitions();
+  const normal = materializeListenSequence(
+    definitions.find(({ articulation }) => articulation === "normal")!,
+    1_000,
+  );
+  const sustained = materializeListenSequence(
+    definitions.find(({ articulation }) => articulation === "sustained-shared")!,
+    1_000,
+  );
+  const normalAttack = benchmarkAudioAttacksForSequence(normal)[23];
+  const sustainedAttack = benchmarkAudioAttacksForSequence(sustained)[23];
+
+  assert.equal(normalAttack.notes.length, 3);
+  assert.equal(sustainedAttack.notes.length, 1);
+  assert.equal(sustainedAttack.gainReferenceChordSize, 3);
+  assert.equal(
+    benchmarkChordGain(normalAttack.notes.length),
+    benchmarkChordGain(sustainedAttack.gainReferenceChordSize!),
+  );
+});
+
+test("fresh-attack diagnostics accept an onset after a detached repeated pitch", () => {
+  const definition: ListenSequenceDefinition = {
+    id: "detached-repeat",
+    family: "test",
+    label: "Detached repeat",
+    articulation: "detached",
+    targets: [[60], [60]],
+    attacks: [
+      { at: 0, targetIndex: 0, notes: [{ midi: 60, holdMs: 250 }], expectedAdvance: true },
+      { at: 1, targetIndex: 1, notes: [{ midi: 60, holdMs: 250 }], expectedAdvance: true },
+    ],
+  };
+  const sequence = materializeListenSequence(definition, 1_000);
+  const sharedTrace = trace(sequence, [
+    recognitionFrame(sequence.relevantPitches, 224, [{ midi: 60, type: "onset" }]),
+    recognitionFrame(sequence.relevantPitches, 256, [], [60]),
+    recognitionFrame(sequence.relevantPitches, 1_216, [], []),
+    recognitionFrame(sequence.relevantPitches, 1_248, [{ midi: 60, type: "onset" }]),
+  ]);
+  const run = replayListenSequenceTrace(sequence, sharedTrace);
+  const diagnosed = diagnoseListenArticulationRun("detached", sequence, run);
+
+  assert.equal(run.events[1].expectedPitches[0].requiredAttackType, "reOnset");
+  assert.equal(run.events[1].expectedPitches[0].rawAttackDetected, false);
+  assert.equal(diagnosed.events[1].producedFreshAttackCount, 1);
+  assert.equal(diagnosed.events[1].producedOnsetCount, 1);
+  assert.equal(diagnosed.events[1].producedReOnsetCount, 0);
+});
+
+test("captures exactly one session and decoder reset per articulation", async () => {
+  class FakeSession implements SequenceInferenceSession {
+    resetCount = 0;
+    reset() { this.resetCount += 1; }
+    async run(): Promise<OnlineAmtStepResult> {
+      return {
+        scores: new Float32Array(88 * 5),
+        states: new Uint8Array(88),
+        signalActive: false,
+        inferenceTimeMs: 1,
+      };
+    }
+  }
+  let decoderResetCount = 0;
+  const session = new FakeSession();
+  const result = await captureCourseClearArticulationMatrix({
+    session,
+    decoderFactory: () => ({
+      reset() { decoderResetCount += 1; },
+      decode() {
+        return {
+          onsets: [],
+          recognizedActivePitches: [],
+          targetPitchEvidence: [],
+          noteStates: [],
+          noteEvents: [],
+        };
+      },
+    }),
+    async render() {
+      return {
+        pcm: new Float32Array(512),
+        renderer: { ...LISTEN_BENCHMARK_RENDERER },
+        diagnostics: { frameCount: 512, durationMs: 32, peak: 0, rms: 0 },
+      };
+    },
+  });
+
+  assert.equal(session.resetCount, 4);
+  assert.equal(decoderResetCount, 4);
+  assert.equal(result.runs.length, 4);
+  assert.deepEqual(result.runs.find(({ articulation }) => articulation === "normal")!
+    .deltaFromNormal, {
+    rawEvidenceCount: 0,
+    rawEvidenceRate: 0,
+    producedFreshAttackCount: 0,
+    freshAttackRate: 0,
+    independentMatchCount: 0,
+    independentMatchRate: 0,
+    orderedAdvanceCount: 0,
+    orderedAdvanceRate: 0,
+    staleSustainPitchCount: 0,
+    carryOverEventCount: 0,
+    falseAdvanceCount: 0,
+    skippedAdvanceCount: 0,
+    duplicateAdvanceCount: 0,
+  });
+  const detached = result.runs.find(({ articulation }) => articulation === "detached")!;
+  assert.equal(detached.summary.detachedSilenceGapCount, 26);
+  assert.equal(detached.summary.maximumDetachedSilenceGapRms, 0);
+});
+
+function articulationSummary(
+  articulation: "normal" | "detached",
+  update: Partial<ListenArticulationRunSummary> = {},
+): ListenArticulationRunSummary {
+  return {
+    articulation,
+    expectedEventCount: 27,
+    rawEvidenceCount: 10,
+    rawEvidenceRate: 10 / 27,
+    expectedFreshAttackCount: 60,
+    producedFreshAttackCount: 40,
+    freshAttackRate: 2 / 3,
+    expectedOnsetCount: 55,
+    producedOnsetCount: 38,
+    expectedReOnsetCount: 5,
+    producedReOnsetCount: 2,
+    independentMatchCount: 10,
+    independentMatchRate: 10 / 27,
+    orderedAdvanceCount: 10,
+    orderedAdvanceRate: 10 / 27,
+    completePassage: false,
+    staleSustainPitchCount: 5,
+    carryOverEventCount: 2,
+    departingPitchActiveCount: 2,
+    departingPitchOffsetBeforeNextAttackCount: 0,
+    confidentPreviousChordExtraCount: 1,
+    retriggerNotDetectedFailureCount: 1,
+    carryOverFailureCount: 1,
+    modelNoEvidenceFailureCount: 0,
+    falseAdvanceCount: 0,
+    skippedAdvanceCount: 0,
+    duplicateAdvanceCount: 0,
+    detachedSilenceGapCount: articulation === "detached" ? 26 : 0,
+    maximumDetachedSilenceGapRms: articulation === "detached" ? 0 : null,
+    ...update,
+  };
+}
+
+test("interprets articulation improvements at the predefined three-event threshold", () => {
+  const conclusion = (
+    normalUpdate: Partial<ListenArticulationRunSummary>,
+    detachedUpdate: Partial<ListenArticulationRunSummary>,
+  ) => interpretListenArticulationMatrix([
+    { articulation: "normal", summary: articulationSummary("normal", normalUpdate) },
+    { articulation: "detached", summary: articulationSummary("detached", detachedUpdate) },
+  ]).code;
+
+  assert.equal(conclusion({}, {
+    independentMatchCount: 13,
+    rawEvidenceCount: 13,
+    staleSustainPitchCount: 2,
+  }), "recognizer-state-release-interference");
+  assert.equal(conclusion({}, {
+    independentMatchCount: 13,
+    rawEvidenceCount: 11,
+  }), "matcher-carry-over-handling");
+  assert.equal(conclusion({ orderedAdvanceCount: 5 }, {
+    independentMatchCount: 11,
+    orderedAdvanceCount: 8,
+  }), "ordered-cascade-playhead");
+  assert.equal(conclusion({}, {
+    independentMatchCount: 11,
+    modelNoEvidenceFailureCount: 2,
+  }), "base-model-recall");
+  assert.equal(conclusion({}, {
+    independentMatchCount: 13,
+    falseAdvanceCount: 1,
+  }), "inconclusive-safety-errors");
 });
 
 test("resets inference and decoding once per sequence rather than once per event", async () => {
