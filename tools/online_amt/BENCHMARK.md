@@ -117,18 +117,22 @@ release), then sends the same PCM object and 512-sample frame boundaries through
 
 - stateful continuous inference, with one initial session/decoder reset;
 - event-reset continuous inference, with paired session/decoder resets before events 1–26;
-- unique isolated one-event controls, each with the existing 220 ms pre-roll.
+- frame-phase-matched isolated one-event controls, reused only when both chord and
+  position within the 512-sample frame match.
 
 Reset points are aligned to the first frame beginning at or after scheduled attack minus
 220 ms. The first normal-articulation reset begins at 1024 ms for the 1220 ms attack,
 providing 196 ms of clean warm-up after the preceding 990 ms release-tail end. Every
 trace records the reset plan, renderer diagnostics, PCM hash, and per-chunk hashes so
 browser automation can verify that only the recurrent reset schedule differs.
+Isolated controls use the reset point as local frame zero, so each attack has the same
+4, 12, 20, or 28 ms offset within its attack frame as the corresponding continuous event.
+Raw-model comparisons include scores, decoded states, and the model silence gate.
 
 Verification results:
 
 - `npm run build`: passed.
-- `npm test`: 195 / 195 tests passed, including the new reset-plan, paired-input,
+- `npm test`: 204 / 204 tests passed, including reset-plan, paired-input,
   reset-order, classification, and conclusion tests.
 - Production listen mode and matcher behavior remain unchanged; this comparison is
   exposed only through the benchmark page button and the `listen-inference-reset` /
@@ -138,7 +142,7 @@ Measured browser run (August 13, 2026, `listen-inference-reset-summary`):
 
 | Control | Independent match | Ordered advance | Safety (false / skip / duplicate) | Latency p50 / p95 |
 | --- | ---: | ---: | ---: | ---: |
-| Isolated | 26 / 27 (96.3%) | 26 / 27 (96.3%) | 0 / 0 / 0 | — |
+| Isolated | 25 / 27 (92.6%) | 25 / 27 (92.6%) | 0 / 0 / 0 | — |
 | Stateful continuous | 26 / 27 (96.3%) | 20 / 27 (74.1%) | 0 / 0 / 0 | 188 / 204 ms |
 | Event-reset continuous | 25 / 27 (92.6%) | 20 / 27 (74.1%) | 0 / 0 / 0 | 188 / 204 ms |
 
@@ -147,8 +151,9 @@ pitch qualifications and lost 0, while raw complete evidence stayed at 23 / 27
 and fresh attacks stayed at 67 / 67. Independent matching changed by -1 event,
 ordered advancement did not change, and no safety errors increased. The computed
 conclusion is `matcher-playhead-cascade`: independent recognition was essentially
-unchanged while ordered advancement remained behind it. The result’s run-local PCM
-signature was `7e01bcd1` over 434,176 samples and 848 identical 512-sample chunks
+unchanged while ordered advancement remained behind it. Phase-matched isolated and
+event-reset inference both produced 25 / 27 independent matches. The result’s run-local
+PCM signature was `a40feae1` over 434,176 samples and 848 identical 512-sample chunks
 between the two continuous passes.
 
 The page exposes the complete captured conclusion as

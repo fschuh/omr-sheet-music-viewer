@@ -1,5 +1,6 @@
 import {
   COURSE_CLEAR_ARTICULATION_INTERVAL_MS,
+  LISTEN_SEQUENCE_PRE_ROLL_MS,
   captureListenSequenceTrace,
   courseClearArticulationDefinitions,
   diagnoseListenArticulationRun,
@@ -68,6 +69,9 @@ export type ListenInferenceResetEventClassification =
   | "recovered-by-event-reset"
   | "lost-after-event-reset"
   | "continuous-failure-isolated-pass"
+  | "continuous-pass-isolated-failure"
+  | "stateful-only-isolated-failure"
+  | "event-reset-only-isolated-failure"
   | "failed-all-modes"
   | "ordered-only-failure";
 
@@ -229,14 +233,22 @@ export function buildListenInferenceResetPlan(
   return { mode, points };
 }
 
-function oneEventDefinition(pitches: readonly number[], key: string) {
+function oneEventDefinition(
+  pitches: readonly number[],
+  key: string,
+  localAttackTimeMs: number,
+) {
   return {
     id: `course-clear-isolated-${key || "empty"}`,
     family: "course-clear-isolated",
     label: `Course Clear isolated ${key}`,
     targets: [sortedPitches(pitches)],
     attacks: [{
-      at: 0,
+      // Preserve the continuous event's position inside its 512-sample chunk.
+      // The initial zero state then sees the same number of complete silent
+      // frames and the same partial attack frame as the event-reset pass.
+      at: (localAttackTimeMs - LISTEN_SEQUENCE_PRE_ROLL_MS) /
+        COURSE_CLEAR_ARTICULATION_INTERVAL_MS,
       targetIndex: 0,
       notes: sortedPitches(pitches),
       expectedAdvance: true,
@@ -294,6 +306,7 @@ function rawOutputHash(
   return hashNumbers(traceWindow(trace, scheduledAttackTimeMs, nextAttackTimeMs).flatMap((frame) => [
     ...frame.modelScores,
     ...frame.modelStates,
+    Number(frame.signalActive),
   ]));
 }
 
@@ -319,7 +332,8 @@ function changedFrameOutput(
   if (leftFrames.length !== rightFrames.length) return true;
   return leftFrames.some((frame, index) => (
     !sameNumberArray(frame.modelScores, rightFrames[index].modelScores) ||
-    !sameNumberArray(frame.modelStates, rightFrames[index].modelStates)
+    !sameNumberArray(frame.modelStates, rightFrames[index].modelStates) ||
+    frame.signalActive !== rightFrames[index].signalActive
   ));
 }
 
@@ -381,13 +395,36 @@ export function classifyListenInferenceResetOutcome(
       (!statefulOrderedAdvance || !eventResetOrderedAdvance)) {
     return "ordered-only-failure";
   }
-  if (statefulPass && eventResetPass) return "passed-all";
+  if (isolatedPass && statefulPass && eventResetPass) return "passed-all";
+  if (!isolatedPass && statefulPass && eventResetPass) {
+    return "continuous-pass-isolated-failure";
+  }
   if (!statefulPass && eventResetPass && isolatedPass) return "recovered-by-event-reset";
-  if (statefulPass && !eventResetPass) return "lost-after-event-reset";
+  if (!statefulPass && eventResetPass && !isolatedPass) {
+    return "event-reset-only-isolated-failure";
+  }
+  if (statefulPass && !eventResetPass && isolatedPass) return "lost-after-event-reset";
+  if (statefulPass && !eventResetPass && !isolatedPass) {
+    return "stateful-only-isolated-failure";
+  }
   if (!statefulPass && !eventResetPass && isolatedPass) {
     return "continuous-failure-isolated-pass";
   }
   return "failed-all-modes";
+}
+
+function isolatedWarmupForEvent(
+  sequence: MaterializedListenSequence,
+  resetPlan: ListenTraceResetPlan,
+  eventIndex: number,
+): number {
+  if (eventIndex === 0) {
+    // Both continuous modes perform their one initial reset at frame zero.
+    return sequence.targets[0].scheduledAttackTimeMs;
+  }
+  const point = resetPlan.points.find((candidate) => candidate.eventIndex === eventIndex);
+  if (!point) throw new Error(`Event-reset plan has no point for event ${eventIndex}.`);
+  return point.actualWarmupMs;
 }
 
 function classifyEvent(
@@ -774,18 +811,19 @@ export async function captureListenInferenceResetBenchmark(
     "current-matcher",
   );
 
-  options.onProgress?.("Capturing unique isolated Course Clear controls…");
+  options.onProgress?.("Capturing frame-phase-matched isolated Course Clear controls…");
   const isolatedByKey = new Map<string, ListenIsolatedEventResult>();
   for (let index = 0; index < sequence.targets.length; index += 1) {
     const targetPitches = sortedPitches(sequence.targets[index].pitches);
-    const key = eventKey(targetPitches);
+    const isolatedWarmupMs = isolatedWarmupForEvent(sequence, resetPlan, index);
+    const key = `${eventKey(targetPitches)}@${isolatedWarmupMs}ms`;
     const existing = isolatedByKey.get(key);
     if (existing) {
       existing.scoreEventIndices.push(index);
       continue;
     }
     const isolatedSequence = materializeListenSequence(
-      oneEventDefinition(targetPitches, key),
+      oneEventDefinition(targetPitches, key, isolatedWarmupMs),
       COURSE_CLEAR_ARTICULATION_INTERVAL_MS,
     );
     const isolatedRendered = await render(isolatedSequence);

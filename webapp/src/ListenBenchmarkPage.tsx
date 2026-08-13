@@ -724,8 +724,8 @@ export function ListenBenchmarkPage() {
         <p>
           Diagnostic only: one canonical normal-articulation Course Clear passage is rendered once,
           then captured with current stateful inference and with a paired session/decoder reset
-          before each event’s aligned 220 ms warm-up window. Isolated one-event controls are reused
-          for repeated identical chords.
+          before each event’s frame-aligned warm-up window. Isolated one-event controls preserve
+          the corresponding attack’s 512-sample frame phase and are reused only when chord and phase match.
         </p>
         <button type="button" disabled={running} onClick={() => void runResetComparison()}>
           {runningTask === "reset-comparison" ? "Running…" : "Run stateful/reset comparison"}

@@ -20,11 +20,11 @@ import {
   type ListenInferenceResetSummary,
 } from "./listenInferenceResetBenchmark";
 
-function emptyOutput(): OnlineAmtStepResult {
+function emptyOutput(signalActive = false): OnlineAmtStepResult {
   return {
     scores: new Float32Array(88 * 5),
     states: new Uint8Array(88),
-    signalActive: false,
+    signalActive,
     inferenceTimeMs: 1,
   };
 }
@@ -44,7 +44,7 @@ function regularDefinition(targets: readonly (readonly number[])[]): ListenSeque
   };
 }
 
-test("builds aligned event-reset points after a clean 220 ms warm-up", () => {
+test("builds aligned event-reset points with six clean pre-attack frames", () => {
   const normal = courseClearArticulationDefinitions().find(({ articulation }) => (
     articulation === "normal"
   ))!;
@@ -56,8 +56,15 @@ test("builds aligned event-reset points after a clean 220 ms warm-up", () => {
   assert.equal(plan.points[0].requestedAtMs, 1_000);
   assert.equal(plan.points[0].actualFrameStartMs, 1_024);
   assert.equal(plan.points[0].actualWarmupMs, 196);
+  assert.deepEqual(
+    [...new Set(plan.points.map(({ actualWarmupMs }) => actualWarmupMs))],
+    [196, 204, 212, 220],
+  );
   assert.ok(plan.points.every((point) => point.actualFrameStartMs >= point.requestedAtMs));
-  assert.ok(plan.points.every((point) => point.actualFrameStartMs >= 990));
+  assert.ok(plan.points.every((point) => {
+    const previousAttack = sequence.targets[point.eventIndex - 1].scheduledAttackTimeMs;
+    return point.actualFrameStartMs >= previousAttack + 420 + 350;
+  }));
   assert.ok(plan.points.every((point) => point.eventIndex > 0));
   assert.deepEqual(buildListenInferenceResetPlan(sequence, "stateful"), {
     mode: "stateful",
@@ -81,8 +88,15 @@ test("renders the continuous passage once and sends identical chunks to both pas
   ))!;
   const sequence = materializeListenSequence(normal, COURSE_CLEAR_ARTICULATION_INTERVAL_MS);
   const continuousFrameCount = sequence.frameCount / 512;
-  const uniqueChordCount = new Set(sequence.targets.map(({ pitches }) => pitches.join(","))).size;
-  const renderedIds: string[] = [];
+  const resetPlan = buildListenInferenceResetPlan(sequence, "event-reset");
+  const warmupByEvent = new Map([
+    [0, sequence.targets[0].scheduledAttackTimeMs],
+    ...resetPlan.points.map(({ eventIndex, actualWarmupMs }) => [eventIndex, actualWarmupMs] as const),
+  ]);
+  const uniqueControlCount = new Set(sequence.targets.map(({ pitches }, index) => (
+    `${pitches.join(",")}@${warmupByEvent.get(index)}ms`
+  ))).size;
+  const renderedSequences: typeof sequence[] = [];
   const chunks: Float32Array[] = [];
   const resetLog: string[] = [];
   const runBoundaries: number[] = [];
@@ -95,7 +109,9 @@ test("renders the continuous passage once and sends identical chunks to both pas
     }
     async run(audio: Float32Array): Promise<OnlineAmtStepResult> {
       chunks.push(new Float32Array(audio));
-      return emptyOutput();
+      // Scores and states stay byte-identical. Only the raw signal gate differs
+      // between the stateful pass and every later reset-backed pass.
+      return emptyOutput(this.resetCount > 1);
     }
   }
   class FakeDecoder implements SequenceOutputDecoder {
@@ -115,7 +131,7 @@ test("renders the continuous passage once and sends identical chunks to both pas
     session,
     decoderFactory: () => new FakeDecoder(),
     render: async (value) => {
-      renderedIds.push(value.definition.id);
+      renderedSequences.push(value);
       return {
         pcm: new Float32Array(value.frameCount),
         renderer: { ...LISTEN_BENCHMARK_RENDERER },
@@ -124,9 +140,9 @@ test("renders the continuous passage once and sends identical chunks to both pas
     },
   });
 
-  assert.equal(renderedIds.filter((id) => id === normal.id).length, 1);
-  assert.equal(renderedIds.length, uniqueChordCount + 1);
-  assert.equal(session.resetCount, 1 + 1 + 26 + uniqueChordCount);
+  assert.equal(renderedSequences.filter(({ definition }) => definition.id === normal.id).length, 1);
+  assert.equal(renderedSequences.length, uniqueControlCount + 1);
+  assert.equal(session.resetCount, 1 + 1 + 26 + uniqueControlCount);
   assert.equal(result.stateful.trace.resetPlan?.mode, "stateful");
   assert.equal(result.eventReset.trace.resetPlan?.mode, "event-reset");
   assert.equal(result.eventReset.trace.resetPlan?.points[0].eventIndex, 1);
@@ -138,6 +154,19 @@ test("renders the continuous passage once and sends identical chunks to both pas
   );
   assert.ok(resetLog.every((entry, index) => index === 0 || entry !== resetLog[index - 1]));
   assert.ok(runBoundaries.includes(continuousFrameCount));
+  assert.ok(result.events.every(({ rawModelOutputChangedAfterReset, stateful, eventReset }) => (
+    rawModelOutputChangedAfterReset && stateful.rawOutputHash !== eventReset.rawOutputHash
+  )));
+  for (const isolated of result.isolatedEvents) {
+    for (const scoreEventIndex of isolated.scoreEventIndices) {
+      const expectedWarmupMs = warmupByEvent.get(scoreEventIndex);
+      assert.equal(isolated.sequence.targets[0].scheduledAttackTimeMs, expectedWarmupMs);
+      assert.equal(
+        isolated.sequence.targets[0].scheduledAttackTimeMs % 32,
+        sequence.targets[scoreEventIndex].scheduledAttackTimeMs % 32,
+      );
+    }
+  }
 });
 
 test("does not reset event zero twice and resets session and decoder together", async () => {
@@ -171,7 +200,7 @@ test("does not reset event zero twice and resets session and decoder together", 
   assert.equal(points.some(({ eventIndex }) => eventIndex === 0), false);
 });
 
-test("classifies reset recovery, loss, isolated-only failure, and ordered-only failure", () => {
+test("classifies every isolated/stateful/reset outcome and ordered-only failures", () => {
   const flags = (update: Partial<Parameters<typeof classifyListenInferenceResetOutcome>[0]> = {}) => ({
     isolatedPass: true,
     statefulPass: true,
@@ -186,6 +215,9 @@ test("classifies reset recovery, loss, isolated-only failure, and ordered-only f
   assert.equal(classifyListenInferenceResetOutcome(flags({ statefulPass: false })), "recovered-by-event-reset");
   assert.equal(classifyListenInferenceResetOutcome(flags({ eventResetPass: false })), "lost-after-event-reset");
   assert.equal(classifyListenInferenceResetOutcome(flags({ statefulPass: false, eventResetPass: false })), "continuous-failure-isolated-pass");
+  assert.equal(classifyListenInferenceResetOutcome(flags({ isolatedPass: false })), "continuous-pass-isolated-failure");
+  assert.equal(classifyListenInferenceResetOutcome(flags({ isolatedPass: false, eventResetPass: false })), "stateful-only-isolated-failure");
+  assert.equal(classifyListenInferenceResetOutcome(flags({ isolatedPass: false, statefulPass: false })), "event-reset-only-isolated-failure");
   assert.equal(classifyListenInferenceResetOutcome(flags({ isolatedPass: false, statefulPass: false, eventResetPass: false })), "failed-all-modes");
   assert.equal(classifyListenInferenceResetOutcome(flags({ statefulOrderedAdvance: false })), "ordered-only-failure");
 });
