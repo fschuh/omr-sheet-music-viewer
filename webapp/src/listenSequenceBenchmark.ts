@@ -295,6 +295,8 @@ export interface ExpectedPitchDiagnostic {
   midi: number;
   attackRequired: boolean;
   requiredAttackType: RequiredAttackType | null;
+  /** Decoder transition observed for this physical attack, even when its type differs. */
+  observedAttackType: RequiredAttackType | null;
   rawAttackDetected: boolean;
   rawOnsetProduced: boolean;
   rawOnsetTimeMs: number | null;
@@ -649,7 +651,7 @@ export type ListenArticulationDiagnosticCode =
   | "recognizer-state-release-interference"
   | "matcher-carry-over-handling"
   | "ordered-cascade-playhead"
-  | "base-model-recall"
+  | "no-detached-benefit"
   | "inconclusive-safety-errors"
   | "inconclusive";
 
@@ -1201,18 +1203,18 @@ function scheduledAttackTypes(
   const ordered = [...scheduledNotes].sort((left, right) => (
     left.attackTimeMs - right.attackTimeMs || left.midi - right.midi
   ));
-  const previousAttackByPitch = new Map<number, number>();
+  const previousNoteByPitch = new Map<number, ScheduledSequenceNote>();
   const requirements = new Map<string, RequiredAttackType>();
   for (const scheduled of ordered) {
-    const previousAttackIndex = previousAttackByPitch.get(scheduled.midi);
+    const previous = previousNoteByPitch.get(scheduled.midi);
     requirements.set(
       scheduled.id,
-      previousAttackIndex !== undefined &&
-          previousAttackIndex === scheduled.attackIndex - 1
+      previous !== undefined &&
+          previous.releaseTimeMs + LISTEN_BENCHMARK_RELEASE_MS > scheduled.attackTimeMs
         ? "reOnset"
         : "onset",
     );
-    previousAttackByPitch.set(scheduled.midi, scheduled.attackIndex);
+    previousNoteByPitch.set(scheduled.midi, scheduled);
   }
   return requirements;
 }
@@ -1254,11 +1256,14 @@ export function assignRecognitionEventsToAttacks(
       .filter((scheduled) => (
         scheduled.midi === observation.midi &&
         !assignments.has(scheduled.id) &&
-        requirements.get(scheduled.id) === observation.type &&
         scheduled.attackTimeMs <= observation.timeMs + FRAME_MS &&
         observation.timeMs <= (attributionEnds.get(scheduled.attackIndex) ?? -Infinity)
       ))
-      .sort((left, right) => right.attackTimeMs - left.attackTimeMs);
+      .sort((left, right) => (
+        Number(requirements.get(right.id) === observation.type) -
+          Number(requirements.get(left.id) === observation.type) ||
+        right.attackTimeMs - left.attackTimeMs
+      ));
     if (candidates[0]) {
       assignments.set(candidates[0].id, observation);
       assignedObservations.add(observation);
@@ -1419,6 +1424,7 @@ export function evaluateTraceRecognitionLayers(
         midi,
         attackRequired,
         requiredAttackType,
+        observedAttackType: assignment?.type ?? null,
         rawAttackDetected: assignment !== undefined,
         rawOnsetProduced: assignment !== undefined,
         rawOnsetTimeMs: assignment?.timeMs ?? null,
@@ -2400,12 +2406,9 @@ export function interpretListenArticulationMatrix(
   ) {
     code = "ordered-cascade-playhead";
     conclusion = "Only ordered progress improved substantially; cascade or playhead behavior is the likely layer.";
-  } else if (
-    independentImprovement < LISTEN_ARTICULATION_SUBSTANTIAL_EVENT_COUNT &&
-    detached.modelNoEvidenceFailureCount > 0
-  ) {
-    code = "base-model-recall";
-    conclusion = "Detached articulation did not substantially improve independent matching and expected pitches still lacked evidence; base-model recall remains the likely limitation.";
+  } else if (independentImprovement < LISTEN_ARTICULATION_SUBSTANTIAL_EVENT_COUNT) {
+    code = "no-detached-benefit";
+    conclusion = "Detached articulation did not substantially improve independent matching, so stale sustain/release state is not the main Course Clear limitation at 1000 ms. This matrix does not identify the remaining cause.";
   }
   return {
     code,

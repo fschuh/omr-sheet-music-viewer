@@ -292,6 +292,7 @@ async function runConfiguration(configuration) {
                       .map((pitch) => ({
                         midi: pitch.midi,
                         requiredAttackType: pitch.requiredAttackType,
+                        observedAttackType: pitch.observedAttackType,
                         rawAttackDetected: pitch.rawAttackDetected,
                         maximumOnsetConfidence: pitch.maximumOnsetConfidence,
                         maximumActiveConfidence: pitch.maximumActiveConfidence,

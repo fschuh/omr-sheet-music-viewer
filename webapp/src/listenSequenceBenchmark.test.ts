@@ -136,6 +136,7 @@ function pitchDiagnostic(update: Partial<ExpectedPitchDiagnostic> = {}): Expecte
     midi: 60,
     attackRequired: true,
     requiredAttackType: "onset",
+    observedAttackType: null,
     rawAttackDetected: false,
     rawOnsetProduced: false,
     rawOnsetTimeMs: null,
@@ -531,11 +532,36 @@ test("fresh-attack diagnostics accept an onset after a detached repeated pitch",
   const run = replayListenSequenceTrace(sequence, sharedTrace);
   const diagnosed = diagnoseListenArticulationRun("detached", sequence, run);
 
-  assert.equal(run.events[1].expectedPitches[0].requiredAttackType, "reOnset");
-  assert.equal(run.events[1].expectedPitches[0].rawAttackDetected, false);
+  assert.equal(run.events[1].expectedPitches[0].requiredAttackType, "onset");
+  assert.equal(run.events[1].expectedPitches[0].observedAttackType, "onset");
+  assert.equal(run.events[1].expectedPitches[0].rawAttackDetected, true);
   assert.equal(diagnosed.events[1].producedFreshAttackCount, 1);
   assert.equal(diagnosed.events[1].producedOnsetCount, 1);
   assert.equal(diagnosed.events[1].producedReOnsetCount, 0);
+});
+
+test("records an attack transition mismatch without discarding the physical attack", () => {
+  const definition: ListenSequenceDefinition = {
+    id: "overlapping-repeat",
+    family: "test",
+    label: "Overlapping repeat",
+    articulation: "legato",
+    targets: [[60], [60]],
+    attacks: [
+      { at: 0, targetIndex: 0, notes: [{ midi: 60, holdMs: 900 }], expectedAdvance: true },
+      { at: 1, targetIndex: 1, notes: [{ midi: 60, holdMs: 900 }], expectedAdvance: true },
+    ],
+  };
+  const sequence = materializeListenSequence(definition, 1_000);
+  const run = replayListenSequenceTrace(sequence, trace(sequence, [
+    recognitionFrame(sequence.relevantPitches, 224, [{ midi: 60, type: "onset" }]),
+    recognitionFrame(sequence.relevantPitches, 1_248, [{ midi: 60, type: "onset" }]),
+  ]));
+
+  assert.equal(run.events[1].expectedPitches[0].requiredAttackType, "reOnset");
+  assert.equal(run.events[1].expectedPitches[0].observedAttackType, "onset");
+  assert.equal(run.events[1].expectedPitches[0].rawAttackDetected, true);
+  assert.equal(run.events[1].expectedPitches[0].requiredRawEvidencePresent, true);
 });
 
 test("captures exactly one session and decoder reset per articulation", async () => {
@@ -663,7 +689,7 @@ test("interprets articulation improvements at the predefined three-event thresho
   assert.equal(conclusion({}, {
     independentMatchCount: 11,
     modelNoEvidenceFailureCount: 2,
-  }), "base-model-recall");
+  }), "no-detached-benefit");
   assert.equal(conclusion({}, {
     independentMatchCount: 13,
     falseAdvanceCount: 1,
@@ -966,7 +992,7 @@ test("reports raw attack evidence that remains below matcher thresholds", () => 
   assert.ok(event.rawFailureReasons.includes("onset-below-threshold"));
 });
 
-test("requires a re-onset observation for an immediately repeated scheduled pitch", () => {
+test("attributes an immediately repeated physical attack despite a transition mismatch", () => {
   const sequence = materializeListenSequence(regularDefinition([[60], [60]]), 200);
   const notes = sequence.attacks.flatMap(({ notes: attackNotes }) => attackNotes);
   const assignments = assignRecognitionEventsToAttacks(notes, [
@@ -974,8 +1000,8 @@ test("requires a re-onset observation for an immediately repeated scheduled pitc
     { midi: 60, timeMs: 448, confidence: 0.9, noteConfidence: 0.9, type: "onset" },
   ]);
 
-  assert.equal(assignments.size, 1);
-  assert.equal(assignments.has(notes[1].id), false);
+  assert.equal(assignments.size, 2);
+  assert.equal(assignments.get(notes[1].id)?.type, "onset");
 });
 
 test("never assigns one decoded attack to multiple scheduled attacks", () => {

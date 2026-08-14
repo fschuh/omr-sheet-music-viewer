@@ -132,7 +132,7 @@ Raw-model comparisons include scores, decoded states, and the model silence gate
 Verification results:
 
 - `npm run build`: passed.
-- `npm test`: 204 / 204 tests passed, including reset-plan, paired-input,
+- `npm test`: 205 / 205 tests passed, including reset-plan, paired-input,
   reset-order, classification, and conclusion tests.
 - Production listen mode and matcher behavior remain unchanged; this comparison is
   exposed only through the benchmark page button and the `listen-inference-reset` /
@@ -147,13 +147,13 @@ Measured browser run (August 13, 2026, `listen-inference-reset-summary`):
 | Event-reset continuous | 25 / 27 (92.6%) | 20 / 27 (74.1%) | 0 / 0 / 0 | 188 / 204 ms |
 
 The reset comparison recovered 0 events and lost 0 events; it recovered 2 raw
-pitch qualifications and lost 0, while raw complete evidence stayed at 23 / 27
+pitch qualifications and lost 0, while raw complete evidence stayed at 25 / 27
 and fresh attacks stayed at 67 / 67. Independent matching changed by -1 event,
 ordered advancement did not change, and no safety errors increased. The computed
 conclusion is `matcher-playhead-cascade`: independent recognition was essentially
 unchanged while ordered advancement remained behind it. Phase-matched isolated and
 event-reset inference both produced 25 / 27 independent matches. The result’s run-local
-PCM signature was `a40feae1` over 434,176 samples and 848 identical 512-sample chunks
+PCM signature was `4747ade6` over 434,176 samples and 848 identical 512-sample chunks
 between the two continuous passes.
 
 The page exposes the complete captured conclusion as
@@ -161,36 +161,45 @@ The page exposes the complete captured conclusion as
 decoder-event, per-pitch, reset-plan, safety, latency, and isolated-control details
 for subsequent runs.
 
-### Course Clear articulation matrix — August 12, 2026
+### Course Clear articulation matrix — corrected August 13, 2026
 
 Four independent continuous traces used the same 27 Course Clear targets and
 1000 ms attack timestamps. The renderer, online-AMT session configuration, and
-current matcher policy were fixed; only hold scheduling changed. The onset
+current matcher policy were fixed; only articulation scheduling changed. The onset
 buffer experiment was not included.
 
 | Articulation | Raw evidence | Fresh attacks | Independent match | Ordered advance | Complete | Stale sustain | Carry-over events | False / skip / duplicate |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | Detached, 250 ms hold | 23 / 27 (85.2%) | 65 / 69 (94.2%) | 25 / 27 (92.6%) | 20 / 27 (74.1%) | No | 0 | 1 | 0 / 0 / 0 |
-| Normal, 420 ms hold | 23 / 27 (85.2%) | 67 / 69 (97.1%) | 26 / 27 (96.3%) | 20 / 27 (74.1%) | No | 0 | 1 | 0 / 0 / 0 |
-| Legato, 900 ms hold | 19 / 27 (70.4%) | 68 / 69 (98.6%) | 24 / 27 (88.9%) | 3 / 27 (11.1%) | No | 8 | 24 | 0 / 0 / 0 |
-| Sustained shared notes | 24 / 27 (88.9%) | 66 / 67 (98.5%) | 25 / 27 (92.6%) | 20 / 27 (74.1%) | No | 2 | 2 | 0 / 0 / 0 |
+| Normal, 420 ms hold | 25 / 27 (92.6%) | 67 / 69 (97.1%) | 26 / 27 (96.3%) | 20 / 27 (74.1%) | No | 0 | 1 | 0 / 0 / 0 |
+| Legato, 900 ms hold | 26 / 27 (96.3%) | 68 / 69 (98.6%) | 24 / 27 (88.9%) | 3 / 27 (11.1%) | No | 8 | 24 | 0 / 0 / 0 |
+| Sustained shared notes | 26 / 27 (96.3%) | 66 / 67 (98.5%) | 25 / 27 (92.6%) | 20 / 27 (74.1%) | No | 2 | 2 | 0 / 0 / 0 |
 
 The a-priori substantial-improvement threshold was three additional
 independent matches (3 / 27, 11.1 percentage points) without added safety
-errors. Detached produced one fewer independent match than normal, identical
-raw evidence, two fewer fresh attacks, no stale sustains in either profile, and
-no change in ordered advancement. All 26 detached inter-attack gaps were
-exactly 400 ms with measured RMS 0. The computed conclusion is
-`base-model-recall`: detached release isolation did not help, and expected
-pitches still had missing model evidence. Legato strongly increased carry-over
-and reduced ordered progress, while sustained shared notes added one
-raw-evidence event but lost one independent match.
+errors. Detached produced one fewer independent match than normal, two fewer
+raw-evidence events, two fewer fresh attacks, no stale sustains in either profile,
+and no change in ordered advancement. All 26 detached inter-attack gaps were
+exactly 400 ms with measured RMS 0. Detached release isolation therefore did
+not help, so stale sustain/release state is not the main Course Clear limitation
+at 1000 ms. The articulation matrix does not by itself identify the remaining
+cause; the later reset diagnostic attributes the independent-versus-ordered gap
+to matcher/playhead cascade. Legato produced one more raw-evidence event than
+normal but strongly increased carry-over and reduced ordered progress, while
+sustained shared notes also added one raw-evidence event but lost one independent
+match.
+
+This corrected rerun determines the expected transition from acoustic envelope
+overlap and accepts either an `onset` or `reOnset` decoder transition as evidence
+of a physical attack, while retaining the expected and observed types separately.
+Older raw-evidence baselines below retain the strict transition-matching semantics
+used when they were recorded.
 
 Browser renderer checks passed before the matrix: normal and the existing
 Course Clear render differed by at most one Float32 ULP (`1.19e-7`), detached
 gaps were silent, legato release tails overlapped the next attack, and the
 sustained-shared new-note gain differed from the equivalent normal-chord
-contribution by at most `7.45e-8`.
+contribution by at most `5.96e-8`.
 
 ### Canonical renderer baseline — August 12, 2026
 
