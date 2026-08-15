@@ -47,12 +47,12 @@ comparable over time.
 
 ### Score-rise retrigger replay — August 14, 2026
 
-This benchmark-only experiment added a disabled-by-default score-rise detector to
-the shared online-AMT output decoder and replayed retained raw model scores/states.
-`onlineAmtWorker.ts` still constructs `new OnlineAmtOutputDecoder()` without
-options, so production Listen behavior remains disabled and unchanged. The detector
-receives only current/past model output, signal state, and decoder history; scheduled
-attacks and score pitches are used only after decoding for evaluation.
+This benchmark-only experiment added an isolated score-rise detector beside the
+trace-replay harness and replayed retained raw model scores/states. The production
+`OnlineAmtOutputDecoder` contains no retrigger options or detector integration, and
+`onlineAmtWorker.ts` remains unchanged. The experimental detector receives only
+current/past model output, signal state, and decoder history; scheduled attacks and
+score pitches are used only after decoding for evaluation.
 
 The measured corpus contained 82 stateful traces: all 13 continuous sequence
 families at six speeds (78 traces) plus detached, normal, legato, and

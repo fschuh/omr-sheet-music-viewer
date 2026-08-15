@@ -1,12 +1,12 @@
 import { LISTEN_BENCHMARK_RELEASE_MS } from "./listenBenchmarkAudio";
+import { OnlineAmtOutputDecoder } from "./onlineAmtOutput";
 import {
   disabledOnlineAmtRetriggerOptions,
-  OnlineAmtOutputDecoder,
   OnlineAmtScoreRiseRetriggerDetector,
   onlineAmtActiveProbability,
   onlineAmtAttackProbability,
   type OnlineAmtRetriggerOptions,
-} from "./onlineAmtOutput";
+} from "./onlineAmtRetriggerDetector";
 import {
   assignRecognitionEventsToAttacks,
   bundledListenSequences,
