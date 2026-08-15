@@ -45,6 +45,138 @@ Parity:
 Entries are kept newest first so renderer and recognition changes remain
 comparable over time.
 
+### Score-rise retrigger replay — August 14, 2026
+
+This benchmark-only experiment added a disabled-by-default score-rise detector to
+the shared online-AMT output decoder and replayed retained raw model scores/states.
+`onlineAmtWorker.ts` still constructs `new OnlineAmtOutputDecoder()` without
+options, so production Listen behavior remains disabled and unchanged. The detector
+receives only current/past model output, signal state, and decoder history; scheduled
+attacks and score pitches are used only after decoding for evaluation.
+
+The measured corpus contained 82 stateful traces: all 13 continuous sequence
+families at six speeds (78 traces) plus detached, normal, legato, and
+sustained-shared Course Clear articulation traces. Disabled replay reproduced every
+captured onset, note event, active-confidence value, and timestamp exactly before
+the sweep. The full automation export records `pcmHash`, byte length, frame count,
+and reset mode for every trace. Articulation PCM identities from the full diagnostic
+run were:
+
+| Articulation | PCM hash | Bytes | Frames |
+| --- | --- | ---: | ---: |
+| Detached | `73a9e085` | 1,736,704 | 848 |
+| Normal | `c7bc8914` | 1,736,704 | 848 |
+| Legato | `c753ad3e` | 1,759,232 | 859 |
+| Sustained shared | `2962fe17` | 1,736,704 | 848 |
+
+The opportunity audit evaluated 1,318 scheduled pitch attacks. Expected transition
+type came from acoustic-envelope overlap, while either observed `onset` or
+`reOnset` counted as a physical attack.
+
+| Audit classification | Pitch attacks |
+| --- | ---: |
+| Hidden rise under sustain | 2 |
+| No event and no useful rise | 165 |
+| Decoder event below matcher threshold | 40 |
+| Decoder event blocked by matcher/carry-over/playhead state | 533 |
+| Already recognized | 578 |
+
+Both hidden opportunities were Course Clear attack 20, MIDI 65:
+
+| Trace | Scheduled attack | Expected / observed | Peak attack probability | Local minimum | Maximum rise | Active confidence | Existing failure |
+| --- | ---: | --- | ---: | ---: | ---: | ---: | --- |
+| Continuous, 250 ms | 5,220 ms | `reOnset` / none | 0.35676 | 0.00000018 | 0.35676 | 0.99476 | `carry-over` |
+| Legato articulation, 1000 ms | 20,220 ms | `onset` / none | 0.44633 | 0.00000008 | 0.44633 | 0.99979 | `carry-over` |
+
+The fixed grid evaluated all 432 requested combinations. Exact synthetic-stream
+memoization reduced downstream matcher replay to five unique event streams without
+changing per-candidate decoding or physical/safety attribution. All 432 candidates
+failed decoder safety; 351 also failed at least one matcher gate. No candidate was
+eligible.
+
+The highest-ranked diagnostic profile was
+`p0p350-r0p300-a0p300-l3-f4` (peak 0.35, rise 0.30, re-arm 0.30,
+3-frame lookback, 4-frame refractory). It recovered both hidden attacks at 156 ms
+and 164 ms latency, respectively. Recoveries were confined to Course Clear (one at
+250 ms and one in 1000 ms legato); repeated notes, repeated chords, shared bass,
+and other shared-pitch families gained no missing physical attacks.
+
+The same candidate emitted 24 synthetic events: 2 recoveries, 5 duplicates of
+natural attacks, and 17 unassigned decoder false positives. The duplicate events
+were:
+
+| Trace | MIDI | Time | Attack probability | Assigned attack | Latency |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Carried-bass safety, 500 ms | 64 | 1,856 ms | 0.38536 | 3 | 136 ms |
+| Carried-bass safety, 333⅓ ms | 60 | 1,024 ms | 0.39545 | 2 | 137.33 ms |
+| Independent triads, 167 ms | 64 | 608 ms | 0.35265 | 2 | 54 ms |
+| Course Clear, 167 ms | 60 | 2,048 ms | 0.49997 | 11 | -9 ms |
+| Legato articulation | 76 | 7,360 ms | 0.49045 | 7 | 140 ms |
+
+Every unassigned synthetic decoder event is listed below. Eight occurred during a
+held-note window, eight during a release tail, and one was outside either envelope
+category. These counts overlap neither the five duplicates nor the two recoveries.
+
+| Trace | MIDI | Time | Attack probability | Safety classification |
+| --- | ---: | ---: | ---: | --- |
+| Weak chord, 333⅓ ms | 70 | 736 ms | 0.38858 | Release tail |
+| Course Clear, 333⅓ ms | 75 | 5,056 ms | 0.45162 | Release tail |
+| Course Clear, 333⅓ ms | 72 | 5,376 ms | 0.38991 | Release tail |
+| Course Clear, 250 ms | 75 | 3,872 ms | 0.41414 | Held note |
+| Rolled triads, 250 ms | 48 | 640 ms | 0.37886 | Held note |
+| Course Clear, 167 ms | 52 | 704 ms | 0.47213 | Held note |
+| Course Clear, 167 ms | 52 | 1,376 ms | 0.43618 | Release tail |
+| Course Clear, 167 ms | 55 | 1,568 ms | 0.36049 | Release tail |
+| Course Clear, 167 ms | 53 | 4,064 ms | 0.53490 | Release tail |
+| Course Clear, 167 ms | 70 | 4,544 ms | 0.46838 | Unassigned, outside held/tail windows |
+| Rolled triads, 167 ms | 62 | 736 ms | 0.44128 | Held note |
+| Alternating C4/G4, 125 ms | 67 | 736 ms | 0.42250 | Held note |
+| Course Clear, 125 ms | 63 | 1,856 ms | 0.37804 | Held note |
+| Course Clear, 125 ms | 68 | 1,984 ms | 0.45648 | Held note |
+| Rolled triads, 125 ms | 48 | 512 ms | 0.35446 | Held note |
+| Legato articulation | 76 | 6,368 ms | 0.47694 | Release tail |
+| Legato articulation | 68 | 14,368 ms | 0.38075 | Release tail |
+
+No synthetic event occurred in the explicit legato-nonshared transition windows or
+on the incomplete carried-bass pitch, and the incomplete carried-bass attack never
+advanced. However, the held, release-tail, duplicate, and unassigned-event gates are
+independently fatal.
+
+Matcher replay for the diagnostic candidate nevertheless passed the matcher-only
+gates under both requested profiles:
+
+| Matcher profile | Independent | Ordered | Prefix | Complete | Retrigger failures | Bass-onset failures | Carry-over | Safety false / skip / duplicate / incomplete bass |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Production baseline | 391 | 346 | 262 | 33 | 35 | 40 | 60 | 0 / 0 / 0 / 0 |
+| Production + diagnostic decoder | 393 | 346 | 262 | 33 | 34 | 40 | 60 | 0 / 0 / 0 / 0 |
+| Threshold recommendation baseline | 410 | 445 | 348 | 43 | 35 | 31 | 53 | 0 / 0 / 0 / 0 |
+| Threshold recommendation + diagnostic decoder | 412 | 457 | 362 | 45 | 34 | 31 | 52 | 0 / 0 / 0 / 0 |
+
+Production independent recognition at 1000 ms changed from 167 to 168; the
+threshold recommendation changed from 171 to 172. Independent latency remained
+188 ms p50 / 208 ms p95 under both profiles. Production ordered latency remained
+189 ms p50 / 214.67 ms p95; recommended-profile ordered latency remained
+190.67 ms p50 / 209.33 ms p95. Natural event streams and timestamps were unchanged.
+
+Conclusion: `no-safe-separation`. Usable hidden score rises do exist, and one removes
+a targeted `retrigger-not-detected` failure under both matcher profiles, but every
+grid configuration that recovers a missing attack also manufactures decoder events.
+The best diagnostic candidate creates 22 false/duplicate events to recover 2 attacks.
+Production retrigger detection therefore remains disabled; matcher/carry-over work is
+the safer next direction.
+
+Verification on the clean local Vite server:
+
+- Full unit suite passed: 227/227 tests.
+- Production build passed.
+- Full and concise `listen-retrigger-sweep` browser exports completed with identical
+  audit counts, candidate ID, recovery count, safety counts, and conclusion.
+- Existing sequence, 1,000-profile threshold, corrected articulation, and corrected
+  reset browser regressions completed. Threshold replay reproduced
+  `o0p450-t0p500-a0p200-x0p990-b1`; articulation reproduced `no-detached-benefit`;
+  reset reproduced `matcher-playhead-cascade`; all established safety controls stayed
+  at zero.
+
 ### Threshold replay sweep — August 13, 2026
 
 The browser retained one stateful continuous trace for each of 13 sequence

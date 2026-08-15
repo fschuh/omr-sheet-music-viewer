@@ -9,6 +9,7 @@ if (
   query.has("listen-benchmark") ||
   query.has("listen-sequence") ||
   query.has("listen-threshold-sweep") ||
+  query.has("listen-retrigger-sweep") ||
   query.has("listen-articulation") ||
   query.has("listen-inference-reset")
 ) {

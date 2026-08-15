@@ -18,17 +18,24 @@ import {
   runListenInferenceResetBenchmark,
   type ListenInferenceResetBenchmarkResult,
 } from "./listenInferenceResetBenchmark";
+import {
+  runListenRetriggerSweep,
+  thresholdSweepRecommendedListenMatcherProfile,
+  type ListenRetriggerSweepResult,
+} from "./listenRetriggerBenchmark";
 
 let automaticBenchmarkStarted = false;
 
 export function ListenBenchmarkPage() {
   const [runningTask, setRunningTask] = useState<
-    "online_amt" | "spectral" | "sequence" | "threshold-sweep" | "articulation" | "reset-comparison" | null
+    "online_amt" | "spectral" | "sequence" | "threshold-sweep" | "retrigger-sweep" |
+      "articulation" | "reset-comparison" | null
   >(null);
   const running = runningTask !== null;
   const [progress, setProgress] = useState("");
   const [progressTask, setProgressTask] = useState<
-    "isolated" | "sequence" | "threshold-sweep" | "articulation" | "reset-comparison"
+    "isolated" | "sequence" | "threshold-sweep" | "retrigger-sweep" | "articulation" |
+      "reset-comparison"
   >("isolated");
   const [error, setError] = useState<string | null>(null);
   const [automated, setAutomated] = useState<ListenBenchmarkSummary | null>(null);
@@ -37,6 +44,8 @@ export function ListenBenchmarkPage() {
     useState<ListenThresholdSweepResult | null>(null);
   const [articulationResult, setArticulationResult] =
     useState<ListenArticulationMatrixResult | null>(null);
+  const [retriggerSweepResult, setRetriggerSweepResult] =
+    useState<ListenRetriggerSweepResult | null>(null);
   const [resetComparisonResult, setResetComparisonResult] =
     useState<ListenInferenceResetBenchmarkResult | null>(null);
   const [manual, setManual] = useState<ListenBenchmarkTrial[]>([]);
@@ -49,7 +58,10 @@ export function ListenBenchmarkPage() {
   useEffect(() => {
     if (automaticBenchmarkStarted) return;
     const query = new URLSearchParams(window.location.search);
-    if (query.get("listen-threshold-sweep") === "auto") {
+    if (query.get("listen-retrigger-sweep") === "auto") {
+      automaticBenchmarkStarted = true;
+      void runRetriggerSweep();
+    } else if (query.get("listen-threshold-sweep") === "auto") {
       automaticBenchmarkStarted = true;
       void runThresholdSweep();
     } else if (query.get("listen-articulation") === "auto") {
@@ -134,6 +146,53 @@ export function ListenBenchmarkPage() {
       (window as typeof window & {
         listenThresholdSweepResult?: ListenThresholdSweepResult;
       }).listenThresholdSweepResult = result;
+      document.body.dataset.status = "complete";
+    } catch (benchmarkError) {
+      setError(benchmarkError instanceof Error ? benchmarkError.message : String(benchmarkError));
+      document.body.dataset.status = "error";
+    } finally {
+      setRunningTask(null);
+    }
+  }
+
+  async function runRetriggerSweep() {
+    setRunningTask("retrigger-sweep");
+    setProgressTask("retrigger-sweep");
+    setError(null);
+    setProgress("Preparing retained stateful trace corpus…");
+    document.body.dataset.status = "running";
+    try {
+      const corpus = sequenceResult ?? await runSequence();
+      if (!corpus) return;
+      setRunningTask("retrigger-sweep");
+      setProgressTask("retrigger-sweep");
+      document.body.dataset.status = "running";
+      let articulations = articulationResult;
+      if (!articulations) {
+        setProgress("Capturing corrected Course Clear articulation traces…");
+        articulations = await runCourseClearArticulationMatrix((complete, total, label) => {
+          setProgress(`${complete} / ${total} articulations · ${label}`);
+        });
+        setArticulationResult(articulations);
+        (window as typeof window & {
+          listenArticulationBenchmarkResult?: ListenArticulationMatrixResult;
+        }).listenArticulationBenchmarkResult = articulations;
+      }
+      const matcherRecommendation = thresholdSweepResult?.recommendation.profile ??
+        thresholdSweepRecommendedListenMatcherProfile;
+      setProgress("Verifying decoder parity and auditing hidden score rises…");
+      const result = await runListenRetriggerSweep(
+        corpus,
+        articulations,
+        matcherRecommendation,
+        (complete, total, label) => {
+          setProgress(`${complete} / ${total} retrigger profiles · ${label}`);
+        },
+      );
+      setRetriggerSweepResult(result);
+      (window as typeof window & {
+        listenRetriggerSweepResult?: ListenRetriggerSweepResult;
+      }).listenRetriggerSweepResult = result;
       document.body.dataset.status = "complete";
     } catch (benchmarkError) {
       setError(benchmarkError instanceof Error ? benchmarkError.message : String(benchmarkError));
@@ -294,6 +353,54 @@ export function ListenBenchmarkPage() {
       },
     })),
   }, null, 2);
+  const retriggerDiagnostics = (result: ListenRetriggerSweepResult) => {
+    const selected = result.recommendation ?? result.diagnosticCandidate;
+    return JSON.stringify({
+      benchmarkOnly: result.benchmarkOnly,
+      productionEnabled: result.productionEnabled,
+      replayParityVerified: result.replayParityVerified,
+      conclusion: result.conclusion,
+      traceIdentities: result.traceIdentities,
+      audit: result.audit,
+      gridSize: result.gridSize,
+      candidatesEvaluated: result.candidatesEvaluated,
+      uniqueSyntheticStreamsEvaluated: result.uniqueSyntheticStreamsEvaluated,
+      candidatesRejectedByDecoderSafety: result.candidatesRejectedByDecoderSafety,
+      candidatesRejectedByMatcherSafety: result.candidatesRejectedByMatcherSafety,
+      matcherProfiles: result.matcherProfiles,
+      eligibleCandidateIds: result.eligibleCandidates.map(({ options }) => options.id),
+      selectedCandidate: selected ? {
+        options: selected.options,
+        decoder: selected.decoder,
+        matcherProfiles: selected.matcherProfiles,
+        eligible: selected.eligible,
+        rejectionReasons: selected.rejectionReasons,
+        falseOrDuplicateSyntheticEvents: selected.decoder.syntheticEvents.filter((event) => (
+          event.unassigned || event.duplicateNaturalAttack || event.duringHeldNote ||
+          event.duringReleaseTail || event.duringLegatoNonsharedTransition ||
+          event.duringIncompleteCarriedBassAttack
+        )),
+      } : null,
+      candidateGateSummary: result.candidates.map((candidate) => ({
+        id: candidate.options.id,
+        eligible: candidate.eligible,
+        rejectionReasons: candidate.rejectionReasons,
+        recoveredMissingPhysicalAttacks: candidate.decoder.recoveredMissingPhysicalAttacks,
+        syntheticEventCount: candidate.decoder.syntheticEventCount,
+        unassignedSyntheticEventCount: candidate.decoder.unassignedSyntheticEventCount,
+        duplicateNaturalEventCount: candidate.decoder.duplicateNaturalEventCount,
+        heldNoteSyntheticEventCount: candidate.decoder.heldNoteSyntheticEventCount,
+        matcherProfiles: candidate.matcherProfiles.map((profile) => ({
+          label: profile.label,
+          passed: profile.passed,
+          independentMatchDelta: profile.independentMatchDelta,
+          orderedAdvanceDelta: profile.orderedAdvanceDelta,
+          targetedFailureReduction: profile.targetedFailureReduction,
+          rejectionReasons: profile.rejectionReasons,
+        })),
+      })),
+    }, null, 2);
+  };
   const resetComparisonDiagnostics = (result: ListenInferenceResetBenchmarkResult) => JSON.stringify({
     sequenceId: result.sequenceId,
     intervalMs: result.intervalMs,
@@ -537,6 +644,97 @@ export function ListenBenchmarkPage() {
             <pre>{sequenceDiagnostics(sequenceResult)}</pre>
           </>
         ) : null}
+      </section>
+
+      <section className="sequence-benchmark retrigger-sweep-benchmark">
+        <h2>Replay retrigger detector</h2>
+        <p>
+          Benchmark only. This action captures or reuses the stateful six-speed and corrected
+          articulation traces, verifies disabled decoder parity, audits genuinely missing
+          physical attacks, and re-decodes the retained raw scores through the fixed 432-profile
+          score-rise grid. It never enables retrigger detection in Listen mode.
+        </p>
+        <button type="button" disabled={running} onClick={() => void runRetriggerSweep()}>
+          {runningTask === "retrigger-sweep" ? "Replaying…" : "Replay retrigger detector"}
+        </button>
+        {progress && progressTask === "retrigger-sweep"
+          ? <span className="benchmark-progress">{progress}</span>
+          : null}
+        {retriggerSweepResult ? (() => {
+          const selected = retriggerSweepResult.recommendation ??
+            retriggerSweepResult.diagnosticCandidate;
+          const hidden = retriggerSweepResult.audit.opportunities.filter(({ classification }) => (
+            classification === "hidden-rise-under-sustain"
+          ));
+          return (
+            <>
+              <p className={retriggerSweepResult.recommendation
+                ? "benchmark-outcome benchmark-outcome-pass"
+                : "benchmark-outcome benchmark-outcome-fail"}>
+                <strong>{retriggerSweepResult.conclusion.text}</strong>
+              </p>
+              <p>
+                Hidden-rise opportunities: {hidden.length}. Evaluated {retriggerSweepResult.candidatesEvaluated} / {retriggerSweepResult.gridSize}
+                candidates across {retriggerSweepResult.uniqueSyntheticStreamsEvaluated} exact synthetic streams; {retriggerSweepResult.candidatesRejectedByDecoderSafety} rejected by decoder safety and {" "}
+                {retriggerSweepResult.candidatesRejectedByMatcherSafety} rejected by matcher safety. Production enabled: no.
+              </p>
+              {hidden.length > 0 ? (
+                <p>
+                  Locations: {hidden.map((opportunity) => (
+                    `${opportunity.sequenceId}@${Number.isInteger(opportunity.intervalMs)
+                      ? opportunity.intervalMs
+                      : opportunity.intervalMs.toFixed(1)}ms#${opportunity.attackIndex}:${opportunity.midi}`
+                  )).join(", ")}
+                </p>
+              ) : null}
+              <div className="benchmark-table-wrap">
+                <table className="benchmark-table">
+                  <thead>
+                    <tr>
+                      <th>Matcher profile</th>
+                      <th>Baseline independent / ordered</th>
+                      <th>Candidate independent / ordered</th>
+                      <th>Targeted failures removed</th>
+                      <th>Safety false / skip / duplicate / carried bass</th>
+                      <th>Gate</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {retriggerSweepResult.matcherProfiles.map((baseline) => {
+                      const evaluation = selected?.matcherProfiles.find(({ label }) => (
+                        label === baseline.label
+                      ));
+                      const candidate = evaluation?.candidate;
+                      return (
+                        <tr key={baseline.label}>
+                          <td>{baseline.label}</td>
+                          <td>{baseline.baseline.independentMatchCount} / {baseline.baseline.orderedAdvanceCount}</td>
+                          <td>{candidate
+                            ? `${candidate.independentMatchCount} / ${candidate.orderedAdvanceCount}`
+                            : "—"}</td>
+                          <td>{evaluation?.targetedFailureReduction ?? "—"}</td>
+                          <td>{candidate
+                            ? `${candidate.falseAdvanceCount} / ${candidate.skippedAdvanceCount} / ${candidate.duplicateAdvanceCount} / ${candidate.incompleteCarriedBassAdvances}`
+                            : "—"}</td>
+                          <td>{evaluation ? (evaluation.passed ? "Pass" : "Fail") : "—"}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              {selected ? (
+                <p>
+                  {selected.eligible ? "Recommended" : "Best diagnostic"} candidate: <code>{selected.options.id}</code>.{" "}
+                  Recovered {selected.decoder.recoveredMissingPhysicalAttacks} / {selected.decoder.missingPhysicalAttacksInProduction} missing physical attacks with {selected.decoder.syntheticEventCount} synthetic events; {" "}
+                  unassigned {selected.decoder.unassignedSyntheticEventCount}, duplicate {selected.decoder.duplicateNaturalEventCount}, held-note {selected.decoder.heldNoteSyntheticEventCount}, release-tail {selected.decoder.releaseTailSyntheticEventCount}, legato-nonshared {selected.decoder.legatoNonsharedSyntheticEventCount}, incomplete carried-bass {selected.decoder.incompleteCarriedBassSyntheticEventCount}.
+                </p>
+              ) : null}
+              <h3>Detailed retrigger audit, assignments, deltas, and safety gates</h3>
+              <pre>{retriggerDiagnostics(retriggerSweepResult)}</pre>
+            </>
+          );
+        })() : null}
       </section>
 
       <section className="sequence-benchmark threshold-sweep-benchmark">

@@ -12,6 +12,10 @@ const LISTEN_SEQUENCE_SUMMARY_MODE = CONFIGURATION_FILTER === "listen-sequence-s
 const LISTEN_SEQUENCE_MODE = CONFIGURATION_FILTER === "listen-sequence" ||
   LISTEN_SEQUENCE_SUMMARY_MODE;
 const LISTEN_THRESHOLD_SWEEP_MODE = CONFIGURATION_FILTER === "listen-threshold-sweep";
+const LISTEN_RETRIGGER_SWEEP_SUMMARY_MODE = CONFIGURATION_FILTER ===
+  "listen-retrigger-sweep-summary";
+const LISTEN_RETRIGGER_SWEEP_MODE = CONFIGURATION_FILTER === "listen-retrigger-sweep" ||
+  LISTEN_RETRIGGER_SWEEP_SUMMARY_MODE;
 const LISTEN_ARTICULATION_SUMMARY_MODE = CONFIGURATION_FILTER ===
   "listen-articulation-summary";
 const LISTEN_ARTICULATION_MODE = CONFIGURATION_FILTER === "listen-articulation" ||
@@ -75,10 +79,14 @@ async function waitForDevTools(port, timeoutMs = 15_000) {
 function cdpClient(webSocketUrl) {
   const socket = new WebSocket(webSocketUrl);
   const pending = new Map();
+  const listeners = new Map();
   let nextId = 1;
   socket.onmessage = ({ data }) => {
     const message = JSON.parse(data);
-    if (!message.id) return;
+    if (!message.id) {
+      for (const listener of listeners.get(message.method) ?? []) listener(message.params ?? {});
+      return;
+    }
     const request = pending.get(message.id);
     if (!request) return;
     pending.delete(message.id);
@@ -97,6 +105,11 @@ function cdpClient(webSocketUrl) {
         pending.set(id, { resolve: resolveRequest, reject: rejectRequest });
         socket.send(JSON.stringify({ id, method, params }));
       });
+    },
+    on(method, listener) {
+      const registered = listeners.get(method) ?? [];
+      registered.push(listener);
+      listeners.set(method, registered);
     },
     close() {
       socket.close();
@@ -145,11 +158,24 @@ async function runConfiguration(configuration) {
   try {
     const webSocketUrl = await waitForDevTools(port);
     client = cdpClient(webSocketUrl);
+    const pageErrors = [];
+    client.on("Runtime.exceptionThrown", ({ exceptionDetails }) => {
+      pageErrors.push(
+        exceptionDetails?.exception?.description ?? exceptionDetails?.text ??
+          "Unreported page exception",
+      );
+    });
+    client.on("Runtime.consoleAPICalled", ({ type, args }) => {
+      if (type !== "error") return;
+      pageErrors.push(args?.map(({ value, description }) => value ?? description).join(" ") ??
+        "Unreported console error");
+    });
     await client.send("Runtime.enable");
     await client.send("Page.enable");
     const pageUrl = LISTEN_PARITY_MODE
       ? BASE_URL.replace(/online-amt-benchmark\.html(?:\?.*)?$/, "listen-benchmark-parity.html")
-      : (LISTEN_ACCURACY_MODE || LISTEN_SEQUENCE_MODE || LISTEN_THRESHOLD_SWEEP_MODE || LISTEN_ARTICULATION_MODE ||
+      : (LISTEN_ACCURACY_MODE || LISTEN_SEQUENCE_MODE || LISTEN_THRESHOLD_SWEEP_MODE ||
+        LISTEN_RETRIGGER_SWEEP_MODE || LISTEN_ARTICULATION_MODE ||
         LISTEN_INFERENCE_RESET_MODE) &&
         /online-amt-benchmark\.html(?:\?|$)/.test(BASE_URL)
       ? BASE_URL.replace(/online-amt-benchmark\.html/, "index.html")
@@ -194,7 +220,9 @@ async function runConfiguration(configuration) {
       })()`);
     }
     const deadline = Date.now() + (
-      (LISTEN_SEQUENCE_MODE || LISTEN_THRESHOLD_SWEEP_MODE || LISTEN_ARTICULATION_MODE)
+      LISTEN_RETRIGGER_SWEEP_MODE
+        ? 1_200_000
+        : (LISTEN_SEQUENCE_MODE || LISTEN_THRESHOLD_SWEEP_MODE || LISTEN_ARTICULATION_MODE)
         ? 600_000
         : LISTEN_PARITY_MODE ? 180_000 : 120_000
     );
@@ -202,6 +230,9 @@ async function runConfiguration(configuration) {
     while (Date.now() < deadline) {
       status = await evaluate(client, "document.body?.dataset.status ?? ''");
       if (status === "complete" || status === "error") break;
+      if (pageErrors.length > 0) {
+        throw new Error(`${configuration.name} page error: ${pageErrors.join("\n")}`);
+      }
       await delay(200);
     }
     if (status !== "complete") {
@@ -215,7 +246,42 @@ async function runConfiguration(configuration) {
     }
     return await evaluate(
       client,
-      LISTEN_INFERENCE_RESET_MODE
+      LISTEN_RETRIGGER_SWEEP_MODE
+        ? `(() => {
+            const result = window.listenRetriggerSweepResult;
+            const exportCandidate = (candidate) => ({
+              options: candidate.options,
+              eligible: candidate.eligible,
+              rejectedByDecoderSafety: candidate.rejectedByDecoderSafety,
+              rejectedByMatcherSafety: candidate.rejectedByMatcherSafety,
+              rejectionReasons: candidate.rejectionReasons,
+              decoder: candidate.decoder,
+              matcherProfiles: candidate.matcherProfiles,
+            });
+            return {
+              benchmarkOnly: result.benchmarkOnly,
+              productionEnabled: result.productionEnabled,
+              replayParityVerified: result.replayParityVerified,
+              traceIdentities: result.traceIdentities,
+              audit: result.audit,
+              gridSize: result.gridSize,
+              candidatesEvaluated: result.candidatesEvaluated,
+              uniqueSyntheticStreamsEvaluated: result.uniqueSyntheticStreamsEvaluated,
+              candidatesRejectedByDecoderSafety: result.candidatesRejectedByDecoderSafety,
+              candidatesRejectedByMatcherSafety: result.candidatesRejectedByMatcherSafety,
+              matcherProfiles: result.matcherProfiles,
+              candidates: result.candidates.map(exportCandidate),
+              eligibleCandidates: result.eligibleCandidates.map(exportCandidate),
+              recommendation: result.recommendation
+                ? exportCandidate(result.recommendation)
+                : null,
+              diagnosticCandidate: result.diagnosticCandidate
+                ? exportCandidate(result.diagnosticCandidate)
+                : null,
+              conclusion: result.conclusion,
+            };
+          })()`
+        : LISTEN_INFERENCE_RESET_MODE
         ? `(() => {
             const result = window.listenInferenceResetBenchmarkResult;
             const control = (run) => ({
@@ -535,6 +601,13 @@ const selectedConfigurations = FINGERING_SMOKE_MODE
       name: "fingering-smoke",
       query: `fingering-notes=${process.argv[4] ?? "500"}`,
     }]
+  : LISTEN_RETRIGGER_SWEEP_MODE
+  ? [{
+      name: LISTEN_RETRIGGER_SWEEP_SUMMARY_MODE
+        ? "listen-retrigger-sweep-summary"
+        : "listen-retrigger-sweep",
+      query: "listen-retrigger-sweep=auto",
+    }]
   : LISTEN_SEQUENCE_MODE
   ? [{
       name: LISTEN_SEQUENCE_SUMMARY_MODE ? "listen-sequence-summary" : "listen-sequence",
@@ -609,7 +682,50 @@ for (let index = 0; index < selectedConfigurations.length; index += 1) {
       duplicateAdvanceCount: run.duplicateAdvanceCount,
     })),
   });
-  const exportedResult = LISTEN_INFERENCE_RESET_SUMMARY_MODE
+  const exportedResult = LISTEN_RETRIGGER_SWEEP_SUMMARY_MODE
+    ? (() => {
+        const selected = result.recommendation ?? result.diagnosticCandidate;
+        const selectedSummary = selected ? {
+          options: selected.options,
+          eligible: selected.eligible,
+          rejectionReasons: selected.rejectionReasons,
+          decoder: {
+            ...selected.decoder,
+            syntheticEvents: selected.decoder.syntheticEvents.filter((event) => (
+              event.recoveredMissingPhysicalAttack || event.unassigned ||
+              event.duplicateNaturalAttack || event.duringHeldNote ||
+              event.duringReleaseTail || event.duringLegatoNonsharedTransition ||
+              event.duringIncompleteCarriedBassAttack
+            )),
+          },
+          matcherProfiles: selected.matcherProfiles,
+        } : null;
+        return {
+          benchmarkOnly: result.benchmarkOnly,
+          productionEnabled: result.productionEnabled,
+          replayParityVerified: result.replayParityVerified,
+          traceIdentities: result.traceIdentities,
+          audit: {
+            conclusion: result.audit.conclusion,
+            hiddenRiseCount: result.audit.hiddenRiseCount,
+            classificationCounts: result.audit.classificationCounts,
+            hiddenRiseOpportunities: result.audit.opportunities.filter(({ classification }) => (
+              classification === "hidden-rise-under-sustain"
+            )),
+          },
+          gridSize: result.gridSize,
+          candidatesEvaluated: result.candidatesEvaluated,
+          uniqueSyntheticStreamsEvaluated: result.uniqueSyntheticStreamsEvaluated,
+          candidatesRejectedByDecoderSafety: result.candidatesRejectedByDecoderSafety,
+          candidatesRejectedByMatcherSafety: result.candidatesRejectedByMatcherSafety,
+          eligibleCandidateCount: result.eligibleCandidates.length,
+          matcherProfiles: result.matcherProfiles,
+          recommendation: result.recommendation ? selectedSummary : null,
+          diagnosticCandidate: result.recommendation ? null : selectedSummary,
+          conclusion: result.conclusion,
+        };
+      })()
+    : LISTEN_INFERENCE_RESET_SUMMARY_MODE
     ? {
         sequenceId: result.sequenceId,
         intervalMs: result.intervalMs,
@@ -701,6 +817,20 @@ for (let index = 0; index < selectedConfigurations.length; index += 1) {
     );
   } else if (LISTEN_PARITY_MODE) {
     console.error(`${configuration.name}: ${result.checks.length} parity checks passed`);
+  } else if (LISTEN_RETRIGGER_SWEEP_MODE) {
+    const selected = result.recommendation ?? result.diagnosticCandidate;
+    console.error(
+      `${configuration.name}: conclusion=${result.conclusion.code} ` +
+      `hidden=${result.audit.hiddenRiseCount} ` +
+      `evaluated=${result.candidatesEvaluated}/${result.gridSize} ` +
+      `streams=${result.uniqueSyntheticStreamsEvaluated} ` +
+      `eligible=${result.eligibleCandidates.length} ` +
+      `selected=${selected?.options.id ?? "none"} ` +
+      `recovered=${selected?.decoder.recoveredMissingPhysicalAttacks ?? 0} ` +
+      `synthetic=${selected?.decoder.syntheticEventCount ?? 0} ` +
+      `false=${selected?.decoder.unassignedSyntheticEventCount ?? 0} ` +
+      `duplicate=${selected?.decoder.duplicateNaturalEventCount ?? 0}`,
+    );
   } else if (LISTEN_ARTICULATION_MODE) {
     const detached = result.profiles.find(({ articulation }) => articulation === "detached");
     console.error(
