@@ -73,9 +73,11 @@ the spectral implementation has its own comparison button. The benchmark renders
 isolated notes and one-to-six-note chords from the bundled piano samples, reports
 analysis and onset-to-advance latency, and keeps the acceptance gate fixed at p95
 below 400 ms, 95% correct advancement, and zero distinguishable wrong-note false
-advances. The same page records manual acoustic- and digital-piano trials; those
-real-input trials are still required before changing the preliminary
-`online_amt` matcher profile.
+advances. Automated listening runs keep the historical direct sample mixer and an
+app-equivalent Tone.js sampler/compressor/limiter renderer as separately labelled,
+side-by-side configurations. The same page records manual acoustic- and
+digital-piano trials; those real-input trials are still required before changing
+the preliminary `online_amt` matcher profile.
 
 ## Development
 

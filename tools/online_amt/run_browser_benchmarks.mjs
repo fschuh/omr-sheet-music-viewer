@@ -259,6 +259,7 @@ async function runConfiguration(configuration) {
               matcherProfiles: candidate.matcherProfiles,
             });
             return {
+              renderer: result.renderer,
               benchmarkOnly: result.benchmarkOnly,
               productionEnabled: result.productionEnabled,
               replayParityVerified: result.replayParityVerified,
@@ -596,46 +597,59 @@ async function runConfiguration(configuration) {
   }
 }
 
+function pairedRendererConfigurations(name, query) {
+  return [
+    {
+      name: `${name}-legacy`,
+      query: `${query}&benchmark-renderer=legacy`,
+    },
+    {
+      name: `${name}-tone`,
+      query: `${query}&benchmark-renderer=tone`,
+    },
+  ];
+}
+
 const selectedConfigurations = FINGERING_SMOKE_MODE
   ? [{
       name: "fingering-smoke",
       query: `fingering-notes=${process.argv[4] ?? "500"}`,
     }]
   : LISTEN_RETRIGGER_SWEEP_MODE
-  ? [{
-      name: LISTEN_RETRIGGER_SWEEP_SUMMARY_MODE
+  ? pairedRendererConfigurations(
+      LISTEN_RETRIGGER_SWEEP_SUMMARY_MODE
         ? "listen-retrigger-sweep-summary"
         : "listen-retrigger-sweep",
-      query: "listen-retrigger-sweep=auto",
-    }]
+      "listen-retrigger-sweep=auto",
+    )
   : LISTEN_SEQUENCE_MODE
-  ? [{
-      name: LISTEN_SEQUENCE_SUMMARY_MODE ? "listen-sequence-summary" : "listen-sequence",
-      query: "listen-sequence=auto",
-    }]
+  ? pairedRendererConfigurations(
+      LISTEN_SEQUENCE_SUMMARY_MODE ? "listen-sequence-summary" : "listen-sequence",
+      "listen-sequence=auto",
+    )
   : LISTEN_THRESHOLD_SWEEP_MODE
-  ? [{
-      name: "listen-threshold-sweep",
-      query: "listen-threshold-sweep=auto",
-    }]
+  ? pairedRendererConfigurations(
+      "listen-threshold-sweep",
+      "listen-threshold-sweep=auto",
+    )
   : LISTEN_INFERENCE_RESET_MODE
-  ? [{
-      name: LISTEN_INFERENCE_RESET_SUMMARY_MODE
+  ? pairedRendererConfigurations(
+      LISTEN_INFERENCE_RESET_SUMMARY_MODE
         ? "listen-inference-reset-summary"
         : "listen-inference-reset",
-      query: "listen-inference-reset=auto",
-    }]
+      "listen-inference-reset=auto",
+    )
   : LISTEN_ARTICULATION_MODE
-  ? [{
-      name: LISTEN_ARTICULATION_SUMMARY_MODE
+  ? pairedRendererConfigurations(
+      LISTEN_ARTICULATION_SUMMARY_MODE
         ? "listen-articulation-summary"
         : "listen-articulation",
-      query: "listen-articulation=auto",
-    }]
+      "listen-articulation=auto",
+    )
   : LISTEN_PARITY_MODE
   ? [{ name: "listen-parity", query: "" }]
   : LISTEN_ACCURACY_MODE
-  ? [{ name: "listen-accuracy", query: "listen-benchmark=auto" }]
+  ? pairedRendererConfigurations("listen-accuracy", "listen-benchmark=auto")
   : CONFIGURATION_FILTER
   ? CONFIGURATIONS.filter(({ name }) => name === CONFIGURATION_FILTER)
   : CONFIGURATIONS;
@@ -701,6 +715,7 @@ for (let index = 0; index < selectedConfigurations.length; index += 1) {
           matcherProfiles: selected.matcherProfiles,
         } : null;
         return {
+          renderer: result.renderer,
           benchmarkOnly: result.benchmarkOnly,
           productionEnabled: result.productionEnabled,
           replayParityVerified: result.replayParityVerified,
@@ -773,6 +788,7 @@ for (let index = 0; index < selectedConfigurations.length; index += 1) {
           } : {}),
         });
         return {
+          renderer: result.renderer,
           productionProfile: result.productionProfile,
           gridSize: result.gridSize,
           profilesEvaluated: result.profilesEvaluated,

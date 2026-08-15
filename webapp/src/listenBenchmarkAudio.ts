@@ -1,11 +1,19 @@
+import * as Tone from "tone";
 import { ONLINE_AMT_CHUNK_SIZE, ONLINE_AMT_SAMPLE_RATE } from "./onlineAmtProtocol";
-import { pianoSampleUrls } from "./piano";
+import {
+  createTonePianoGraph,
+  midiToPitchName,
+  PIANO_NOTE_RELEASE_SECONDS,
+  pianoChordVelocity,
+  pianoSampleUrls,
+  type TonePianoGraph,
+} from "./piano";
 
 export const LISTEN_BENCHMARK_DEFAULT_HOLD_MS = 420;
 export const LISTEN_BENCHMARK_RELEASE_MS = 350;
 
 export interface ListenBenchmarkRendererConfiguration {
-  version: "bundled-piano-web-audio-v1";
+  version: "bundled-piano-web-audio-v1" | "bundled-piano-tone-v2";
   sampleRate: 16_000;
   chunkSize: 512;
   defaultHoldMs: 420;
@@ -21,6 +29,21 @@ export const LISTEN_BENCHMARK_RENDERER: ListenBenchmarkRendererConfiguration = O
   releaseMs: LISTEN_BENCHMARK_RELEASE_MS,
   normalization: "none",
 });
+
+export const LISTEN_BENCHMARK_TONE_RENDERER: ListenBenchmarkRendererConfiguration =
+  Object.freeze({
+    version: "bundled-piano-tone-v2",
+    sampleRate: ONLINE_AMT_SAMPLE_RATE,
+    chunkSize: ONLINE_AMT_CHUNK_SIZE,
+    defaultHoldMs: LISTEN_BENCHMARK_DEFAULT_HOLD_MS,
+    releaseMs: LISTEN_BENCHMARK_RELEASE_MS,
+    normalization: "none",
+  });
+
+export const LISTEN_BENCHMARK_RENDERERS = Object.freeze([
+  LISTEN_BENCHMARK_RENDERER,
+  LISTEN_BENCHMARK_TONE_RENDERER,
+]);
 
 export interface ListenBenchmarkAudioNote {
   midi: number;
@@ -73,7 +96,12 @@ export interface RenderBenchmarkAudioOptions {
   durationMs: number;
   sampleRate?: number;
   chunkSize?: number;
+  renderer?: ListenBenchmarkRendererConfiguration;
 }
+
+export type ListenBenchmarkAudioRenderer = (
+  options: RenderBenchmarkAudioOptions,
+) => Promise<ListenBenchmarkAudioRenderResult>;
 
 interface PreparedPianoSample {
   sourceMidi: number;
@@ -101,6 +129,33 @@ function nearestBundledSample(midi: number): [number, string] {
 
 async function preparedSample(midi: number): Promise<PreparedPianoSample> {
   const [sourceMidi, url] = nearestBundledSample(midi);
+  let pending = decodedSamples.get(url);
+  if (!pending) {
+    pending = fetch(url).then(async (response) => {
+      if (!response.ok) throw new Error(`Could not load benchmark sample ${url}.`);
+      return contextForDecoding().decodeAudioData(await response.arrayBuffer());
+    });
+    decodedSamples.set(url, pending);
+  }
+  return { sourceMidi, buffer: await pending };
+}
+
+function nearestToneBundledSample(midi: number): [number, string] {
+  const samples = Object.entries(pianoSampleUrls()).map(
+    ([pitch, url]): [number, string] => [Number(pitch), url],
+  );
+  return samples.reduce((nearest, candidate) => {
+    const candidateDistance = Math.abs(candidate[0] - midi);
+    const nearestDistance = Math.abs(nearest[0] - midi);
+    return candidateDistance < nearestDistance ||
+      (candidateDistance === nearestDistance && candidate[0] > nearest[0])
+      ? candidate
+      : nearest;
+  });
+}
+
+async function preparedToneSample(midi: number): Promise<PreparedPianoSample> {
+  const [sourceMidi, url] = nearestToneBundledSample(midi);
   let pending = decodedSamples.get(url);
   if (!pending) {
     pending = fetch(url).then(async (response) => {
@@ -199,10 +254,10 @@ export function signatureForBenchmarkPcm(
 }
 
 /**
- * Renders every bundled-piano benchmark fixture through the same browser audio graph.
+ * Preserves the original direct sample mixer as the canonical historical renderer.
  * No completed-buffer normalization is performed; level is fixed per physical attack.
  */
-export async function renderBenchmarkAudio(
+async function renderLegacyBenchmarkAudio(
   options: RenderBenchmarkAudioOptions,
 ): Promise<ListenBenchmarkAudioRenderResult> {
   const sampleRate = options.sampleRate ?? ONLINE_AMT_SAMPLE_RATE;
@@ -263,4 +318,81 @@ export async function renderBenchmarkAudio(
     renderer: { ...LISTEN_BENCHMARK_RENDERER },
     diagnostics: measureBenchmarkPcm(pcm, sampleRate),
   };
+}
+
+async function renderToneBenchmarkAudio(
+  options: RenderBenchmarkAudioOptions,
+): Promise<ListenBenchmarkAudioRenderResult> {
+  const sampleRate = options.sampleRate ?? ONLINE_AMT_SAMPLE_RATE;
+  const chunkSize = options.chunkSize ?? ONLINE_AMT_CHUNK_SIZE;
+  if (sampleRate !== ONLINE_AMT_SAMPLE_RATE || chunkSize !== ONLINE_AMT_CHUNK_SIZE) {
+    throw new Error(
+      `The Tone benchmark renderer requires ${ONLINE_AMT_SAMPLE_RATE} Hz and ` +
+      `${ONLINE_AMT_CHUNK_SIZE}-sample chunks.`,
+    );
+  }
+  const frameCount = alignedFrameCount(options.durationMs, sampleRate, chunkSize);
+  const notes = options.attacks.flatMap((attack) => attack.notes.map(normalizedNote));
+  const prepared = await Promise.all([...new Set(notes.map(({ midi }) => midi))].map(
+    async (midi) => {
+      if (!Number.isInteger(midi) || midi < 0 || midi > 127) {
+        throw new Error(`Benchmark MIDI notes must be integers from 0 to 127, received ${midi}.`);
+      }
+      return preparedToneSample(midi);
+    },
+  ));
+  const samples = Object.fromEntries(
+    prepared.map(({ sourceMidi, buffer }) => [sourceMidi, buffer]),
+  );
+  const graphs: TonePianoGraph[] = [];
+  try {
+    const rendered = await Tone.Offline(async (context) => {
+      const graph = createTonePianoGraph(context, samples);
+      graphs.push(graph);
+      await graph.loaded;
+      for (const attack of options.attacks) {
+        requireFiniteNonNegative("Benchmark attack onsetMs", attack.onsetMs);
+        const gainReferenceChordSize = attack.gainReferenceChordSize ?? attack.notes.length;
+        const velocity = pianoChordVelocity(gainReferenceChordSize);
+        for (const rawNote of attack.notes) {
+          const note = normalizedNote(rawNote);
+          const offsetMs = note.offsetMs ?? 0;
+          const holdMs = note.holdMs ?? attack.holdMs ?? LISTEN_BENCHMARK_DEFAULT_HOLD_MS;
+          const releaseMs = note.releaseMs ?? attack.releaseMs ?? LISTEN_BENCHMARK_RELEASE_MS;
+          requireFiniteNonNegative("Benchmark note offsetMs", offsetMs);
+          requireFiniteNonNegative("Benchmark note holdMs", holdMs);
+          requireFiniteNonNegative("Benchmark note releaseMs", releaseMs);
+          if (releaseMs !== PIANO_NOTE_RELEASE_SECONDS * 1_000) {
+            throw new Error(
+              `The Tone renderer reuses the app's ${PIANO_NOTE_RELEASE_SECONDS * 1_000} ms ` +
+              `release; received ${releaseMs} ms.`,
+            );
+          }
+          const pitch = midiToPitchName(note.midi);
+          const startsAt = (attack.onsetMs + offsetMs) / 1_000;
+          graph.sampler.triggerAttack(pitch, startsAt, velocity);
+          graph.sampler.triggerRelease(pitch, startsAt + holdMs / 1_000);
+        }
+      }
+    }, frameCount / sampleRate, 1, sampleRate);
+    const pcm = new Float32Array(rendered.getChannelData(0));
+    return {
+      pcm,
+      renderer: { ...LISTEN_BENCHMARK_TONE_RENDERER },
+      diagnostics: measureBenchmarkPcm(pcm, sampleRate),
+    };
+  } finally {
+    for (const graph of graphs) graph.dispose();
+  }
+}
+
+/**
+ * Renders with the historical direct Web Audio mixer unless a renderer is selected explicitly.
+ */
+export function renderBenchmarkAudio(
+  options: RenderBenchmarkAudioOptions,
+): Promise<ListenBenchmarkAudioRenderResult> {
+  return options.renderer?.version === LISTEN_BENCHMARK_TONE_RENDERER.version
+    ? renderToneBenchmarkAudio(options)
+    : renderLegacyBenchmarkAudio(options);
 }

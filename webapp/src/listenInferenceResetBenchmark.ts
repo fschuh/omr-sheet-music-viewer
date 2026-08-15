@@ -868,6 +868,7 @@ export async function captureListenInferenceResetBenchmark(
 
 export async function runListenInferenceResetBenchmark(
   onProgress: (stage: string) => void = () => undefined,
+  renderer: ListenBenchmarkRendererConfiguration = LISTEN_BENCHMARK_RENDERER,
 ): Promise<ListenInferenceResetBenchmarkResult> {
   const pendingSession = OnlineAmtSession.create({
     modelUrl: new URL("models/online_amt_streaming.onnx", document.baseURI).href,
@@ -880,7 +881,11 @@ export async function runListenInferenceResetBenchmark(
   let session: OnlineAmtSession | null = null;
   try {
     session = await pendingSession;
-    return await captureListenInferenceResetBenchmark({ session, onProgress });
+    return await captureListenInferenceResetBenchmark({
+      session,
+      onProgress,
+      render: (sequence) => renderListenSequenceAudio(sequence, renderer),
+    });
   } finally {
     if (session) await session.dispose();
     else await pendingSession.then((created) => created.dispose()).catch(() => undefined);

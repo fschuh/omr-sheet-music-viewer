@@ -549,6 +549,7 @@ export interface ListenThresholdSweepProfileResult {
 }
 
 export interface ListenThresholdSweepResult {
+  renderer: ListenBenchmarkRendererConfiguration;
   productionProfile: ListenMatcherProfile;
   gridSize: number;
   profilesEvaluated: number;
@@ -1016,15 +1017,17 @@ export function benchmarkAudioAttacksForSequence(
   }));
 }
 
-/** Renders a materialized passage through the canonical bundled-piano Web Audio graph. */
+/** Renders a materialized passage through the selected bundled-piano graph. */
 export function renderListenSequenceAudio(
   sequence: MaterializedListenSequence,
+  renderer: ListenBenchmarkRendererConfiguration = LISTEN_BENCHMARK_RENDERER,
 ): Promise<ListenBenchmarkAudioRenderResult> {
   return renderBenchmarkAudio({
     attacks: benchmarkAudioAttacksForSequence(sequence),
     durationMs: sequence.durationMs,
     sampleRate: ONLINE_AMT_SAMPLE_RATE,
     chunkSize: ONLINE_AMT_CHUNK_SIZE,
+    renderer,
   });
 }
 
@@ -2646,7 +2649,7 @@ export function summarizeListenSequenceBenchmark(
     0,
   );
   return {
-    renderer: { ...LISTEN_BENCHMARK_RENDERER },
+    renderer: { ...(runs[0]?.renderer ?? LISTEN_BENCHMARK_RENDERER) },
     speedSummaries,
     familySpeedSummaries,
     baseline: {
@@ -2806,6 +2809,7 @@ export async function captureCourseClearArticulationMatrix(
 
 export async function runCourseClearArticulationMatrix(
   onProgress: (completed: number, total: number, label: string) => void = () => undefined,
+  renderer: ListenBenchmarkRendererConfiguration = LISTEN_BENCHMARK_RENDERER,
 ): Promise<ListenArticulationMatrixResult> {
   const pendingSession = OnlineAmtSession.create({
     modelUrl: new URL("models/online_amt_streaming.onnx", document.baseURI).href,
@@ -2818,7 +2822,11 @@ export async function runCourseClearArticulationMatrix(
   let session: OnlineAmtSession | null = null;
   try {
     session = await pendingSession;
-    return await captureCourseClearArticulationMatrix({ session, onProgress });
+    return await captureCourseClearArticulationMatrix({
+      session,
+      onProgress,
+      render: (sequence) => renderListenSequenceAudio(sequence, renderer),
+    });
   } finally {
     if (session) await session.dispose();
     else await pendingSession.then((created) => created.dispose()).catch(() => undefined);
@@ -2827,6 +2835,7 @@ export async function runCourseClearArticulationMatrix(
 
 export async function runBundledListenSequenceBenchmark(
   onProgress: (completed: number, total: number, label: string) => void = () => undefined,
+  renderer: ListenBenchmarkRendererConfiguration = LISTEN_BENCHMARK_RENDERER,
 ): Promise<ListenSequenceBenchmarkResult> {
   const definitions = bundledListenSequences();
   const cases = LISTEN_SEQUENCE_INTERVALS_MS.flatMap((intervalMs) => (
@@ -2848,7 +2857,7 @@ export async function runBundledListenSequenceBenchmark(
     for (let index = 0; index < cases.length; index += 1) {
       const { definition, intervalMs } = cases[index];
       const sequence = materializeListenSequence(definition, intervalMs);
-      const rendered = await renderListenSequenceAudio(sequence);
+      const rendered = await renderListenSequenceAudio(sequence, renderer);
       const trace = await captureListenSequenceTrace({
         sequenceId: definition.id,
         intervalMs,
@@ -2872,7 +2881,7 @@ export async function runBundledListenSequenceBenchmark(
       experimental: {
         policy: "next-onset-buffer",
         bufferMs: LISTEN_SEQUENCE_ONSET_BUFFER_MS,
-        renderer: { ...LISTEN_BENCHMARK_RENDERER },
+        renderer: { ...renderer },
         runs: experimentalRuns,
         speedSummaries: experimentalSummary.speedSummaries,
         familySpeedSummaries: experimentalSummary.familySpeedSummaries,
@@ -3180,6 +3189,7 @@ export async function runListenThresholdSweep(
     detailedById.get(candidate.profile.id) ?? candidate
   ));
   return {
+    renderer: { ...result.renderer },
     productionProfile: { ...productionListenMatcherProfile },
     gridSize: profiles.length,
     profilesEvaluated: evaluations.length,

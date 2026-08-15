@@ -23,10 +23,23 @@ import {
   thresholdSweepRecommendedListenMatcherProfile,
   type ListenRetriggerSweepResult,
 } from "./listenRetriggerBenchmark";
+import {
+  LISTEN_BENCHMARK_RENDERER,
+  LISTEN_BENCHMARK_TONE_RENDERER,
+  type ListenBenchmarkRendererConfiguration,
+} from "./listenBenchmarkAudio";
 
 let automaticBenchmarkStarted = false;
 
+function requestedRenderer(): ListenBenchmarkRendererConfiguration {
+  const query = new URLSearchParams(window.location.search);
+  return query.get("benchmark-renderer") === "tone"
+    ? LISTEN_BENCHMARK_TONE_RENDERER
+    : LISTEN_BENCHMARK_RENDERER;
+}
+
 export function ListenBenchmarkPage() {
+  const benchmarkRenderer = useMemo(requestedRenderer, []);
   const [runningTask, setRunningTask] = useState<
     "online_amt" | "spectral" | "sequence" | "threshold-sweep" | "retrigger-sweep" |
       "articulation" | "reset-comparison" | null
@@ -90,7 +103,7 @@ export function ListenBenchmarkPage() {
         : runBundledListenBenchmark;
       const result = await benchmark((complete, total) => {
         setProgress(`${complete} / ${total} fixtures`);
-      });
+      }, benchmarkRenderer);
       setAutomated(result);
       (window as typeof window & { listenBenchmarkResult?: ListenBenchmarkSummary })
         .listenBenchmarkResult = result;
@@ -112,7 +125,7 @@ export function ListenBenchmarkPage() {
     try {
       const result = await runBundledListenSequenceBenchmark((complete, total, label) => {
         setProgress(`${complete} / ${total} sequences · ${label}`);
-      });
+      }, benchmarkRenderer);
       setSequenceResult(result);
       (window as typeof window & {
         listenSequenceBenchmarkResult?: ListenSequenceBenchmarkResult;
@@ -172,7 +185,7 @@ export function ListenBenchmarkPage() {
         setProgress("Capturing corrected Course Clear articulation traces…");
         articulations = await runCourseClearArticulationMatrix((complete, total, label) => {
           setProgress(`${complete} / ${total} articulations · ${label}`);
-        });
+        }, benchmarkRenderer);
         setArticulationResult(articulations);
         (window as typeof window & {
           listenArticulationBenchmarkResult?: ListenArticulationMatrixResult;
@@ -211,7 +224,7 @@ export function ListenBenchmarkPage() {
     try {
       const result = await runCourseClearArticulationMatrix((complete, total, label) => {
         setProgress(`${complete} / ${total} articulations · ${label}`);
-      });
+      }, benchmarkRenderer);
       setArticulationResult(result);
       (window as typeof window & {
         listenArticulationBenchmarkResult?: ListenArticulationMatrixResult;
@@ -232,7 +245,10 @@ export function ListenBenchmarkPage() {
     setProgress("Preparing stateful/reset comparison…");
     document.body.dataset.status = "running";
     try {
-      const result = await runListenInferenceResetBenchmark((stage) => setProgress(stage));
+      const result = await runListenInferenceResetBenchmark(
+        (stage) => setProgress(stage),
+        benchmarkRenderer,
+      );
       setResetComparisonResult(result);
       (window as typeof window & {
         listenInferenceResetBenchmarkResult?: ListenInferenceResetBenchmarkResult;
@@ -356,6 +372,7 @@ export function ListenBenchmarkPage() {
   const retriggerDiagnostics = (result: ListenRetriggerSweepResult) => {
     const selected = result.recommendation ?? result.diagnosticCandidate;
     return JSON.stringify({
+      renderer: result.renderer,
       benchmarkOnly: result.benchmarkOnly,
       productionEnabled: result.productionEnabled,
       replayParityVerified: result.replayParityVerified,
@@ -462,6 +479,10 @@ export function ListenBenchmarkPage() {
   return (
     <main className="benchmark-page">
       <h1>Listen-mode benchmark</h1>
+      <p>
+        Renderer: <code>{benchmarkRenderer.version}</code>. Automated commands run the historical
+        direct mixer and the app-equivalent Tone graph as separate, side-by-side configurations.
+      </p>
       <p>
         This page keeps isolated recognition checks separate from continuous playing tests.
         The application default is online_amt; the spectral implementation remains available
@@ -831,6 +852,7 @@ export function ListenBenchmarkPage() {
             </div>
             <h3>Production baseline and candidate configuration</h3>
             <pre>{JSON.stringify({
+              renderer: thresholdSweepResult.renderer,
               production: thresholdSweepResult.productionProfile,
               recommendation: thresholdSweepResult.recommendation.profile,
               paretoFrontier: thresholdSweepResult.paretoFrontier.map((candidate) => ({

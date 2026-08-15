@@ -11,11 +11,19 @@ const SAMPLE_FILES = [
   "Mp-Gs6", "Mp-A6", "Mp-As6",
 ] as const;
 
-const NOTE_RELEASE_SECONDS = 0.35;
+export const PIANO_NOTE_RELEASE_SECONDS = 0.35;
 const AUDITION_HOLD_MS = 420;
-const AUDITION_DECAY_GUARD_MS = NOTE_RELEASE_SECONDS * 1_000 + 200;
-const SAMPLER_VOLUME_DB = -4;
-const LIMITER_THRESHOLD_DB = -1;
+const AUDITION_DECAY_GUARD_MS = PIANO_NOTE_RELEASE_SECONDS * 1_000 + 200;
+export const PIANO_SAMPLER_ATTACK_SECONDS = 0.002;
+export const PIANO_SAMPLER_VOLUME_DB = -4;
+export const PIANO_LIMITER_THRESHOLD_DB = -1;
+export const PIANO_COMPRESSOR_OPTIONS = Object.freeze({
+  threshold: -18,
+  ratio: 3,
+  attack: 0.003,
+  release: 0.2,
+  knee: 12,
+});
 const WARMUP_NOTE = "C4";
 const WARMUP_VELOCITY = 0.0001;
 const WARMUP_DURATION_SECONDS = 0.02;
@@ -66,6 +74,13 @@ export function midiToPitchName(midi: number): string {
   return `${PITCH_CLASSES[midi % 12]}${Math.floor(midi / 12) - 1}`;
 }
 
+export function pianoChordVelocity(chordSize: number): number {
+  if (!Number.isInteger(chordSize) || chordSize <= 0) {
+    throw new Error(`Piano chord size must be a positive integer, received ${chordSize}.`);
+  }
+  return Math.min(0.78, 0.9 / Math.sqrt(chordSize));
+}
+
 function wait(milliseconds: number): Promise<void> {
   return new Promise((resolve) => globalThis.setTimeout(resolve, milliseconds));
 }
@@ -78,42 +93,72 @@ export interface PianoPlaybackEngine {
   release(notes: readonly string[]): void;
 }
 
+export interface TonePianoGraph {
+  sampler: Tone.Sampler;
+  compressor: Tone.Compressor;
+  limiter: Tone.Limiter;
+  loaded: Promise<void>;
+  dispose(): void;
+}
+
+export type TonePianoSamples = Readonly<Record<
+  number,
+  string | AudioBuffer | Tone.ToneAudioBuffer
+>>;
+
+/** Builds the graph shared by realtime playback and offline benchmark rendering. */
+export function createTonePianoGraph(
+  context: Tone.BaseContext = Tone.getContext(),
+  samples: TonePianoSamples = pianoSampleUrls(),
+): TonePianoGraph {
+  let resolveLoaded!: () => void;
+  let rejectLoaded!: (error: unknown) => void;
+  const loaded = new Promise<void>((resolve, reject) => {
+    resolveLoaded = resolve;
+    rejectLoaded = reject;
+  });
+  const limiter = new Tone.Limiter({
+    context,
+    threshold: PIANO_LIMITER_THRESHOLD_DB,
+  }).connect(context.destination);
+  const compressor = new Tone.Compressor({
+    context,
+    ...PIANO_COMPRESSOR_OPTIONS,
+  }).connect(limiter);
+  const sampler = new Tone.Sampler({
+    context,
+    urls: { ...samples },
+    attack: PIANO_SAMPLER_ATTACK_SECONDS,
+    release: PIANO_NOTE_RELEASE_SECONDS,
+    curve: "exponential",
+    volume: PIANO_SAMPLER_VOLUME_DB,
+    onload: resolveLoaded,
+    onerror: rejectLoaded,
+  }).connect(compressor);
+  return {
+    sampler,
+    compressor,
+    limiter,
+    loaded,
+    dispose: () => {
+      sampler.dispose();
+      compressor.dispose();
+      limiter.dispose();
+    },
+  };
+}
+
 class TonePianoPlaybackEngine implements PianoPlaybackEngine {
-  private readonly sampler: Tone.Sampler;
-  private readonly compressor: Tone.Compressor;
-  private readonly limiter: Tone.Limiter;
-  private readonly loaded: Promise<void>;
+  private readonly graph: TonePianoGraph;
   private activation: Promise<void> | null = null;
   private preparation: Promise<void> | null = null;
 
   constructor() {
-    let resolveLoaded!: () => void;
-    let rejectLoaded!: (error: unknown) => void;
-    this.loaded = new Promise<void>((resolve, reject) => {
-      resolveLoaded = resolve;
-      rejectLoaded = reject;
-    });
-    this.limiter = new Tone.Limiter(LIMITER_THRESHOLD_DB).toDestination();
-    this.compressor = new Tone.Compressor({
-      threshold: -18,
-      ratio: 3,
-      attack: 0.003,
-      release: 0.2,
-      knee: 12,
-    }).connect(this.limiter);
-    this.sampler = new Tone.Sampler({
-      urls: pianoSampleUrls(),
-      attack: 0.002,
-      release: NOTE_RELEASE_SECONDS,
-      curve: "exponential",
-      volume: SAMPLER_VOLUME_DB,
-      onload: resolveLoaded,
-      onerror: rejectLoaded,
-    }).connect(this.compressor);
+    this.graph = createTonePianoGraph();
   }
 
   async load(): Promise<void> {
-    await this.loaded;
+    await this.graph.loaded;
   }
 
   activate(): Promise<void> {
@@ -135,8 +180,8 @@ class TonePianoPlaybackEngine implements PianoPlaybackEngine {
       this.preparation = this.ready()
         .then(async () => {
           const startTime = Tone.immediate() + 0.008;
-          this.sampler.triggerAttack(WARMUP_NOTE, startTime, WARMUP_VELOCITY);
-          this.sampler.triggerRelease(WARMUP_NOTE, startTime + WARMUP_DURATION_SECONDS);
+          this.graph.sampler.triggerAttack(WARMUP_NOTE, startTime, WARMUP_VELOCITY);
+          this.graph.sampler.triggerRelease(WARMUP_NOTE, startTime + WARMUP_DURATION_SECONDS);
           await new Promise<void>((resolve) => globalThis.setTimeout(resolve, WARMUP_SETTLE_MS));
         })
         .catch((error: unknown) => {
@@ -148,11 +193,11 @@ class TonePianoPlaybackEngine implements PianoPlaybackEngine {
   }
 
   attack(notes: readonly string[], velocity: number): void {
-    this.sampler.triggerAttack([...notes], Tone.immediate() + 0.008, velocity);
+    this.graph.sampler.triggerAttack([...notes], Tone.immediate() + 0.008, velocity);
   }
 
   release(notes: readonly string[]): void {
-    if (notes.length > 0) this.sampler.triggerRelease([...notes], Tone.immediate());
+    if (notes.length > 0) this.graph.sampler.triggerRelease([...notes], Tone.immediate());
   }
 }
 
@@ -216,7 +261,7 @@ export class PianoSampler {
     if (generation !== this.playGeneration) return;
 
     const notes = midiNotes.map(midiToPitchName);
-    const velocity = Math.min(0.78, 0.9 / Math.sqrt(notes.length));
+    const velocity = pianoChordVelocity(notes.length);
     this.audioEngine().attack(notes, velocity);
     this.activeNotes = notes;
   }
@@ -229,7 +274,7 @@ export class PianoSampler {
     })));
     const newNotes = notes.filter((note) => !this.activeNotes.includes(note));
     if (newNotes.length === 0) return;
-    const velocity = Math.min(0.78, 0.9 / Math.sqrt(newNotes.length));
+    const velocity = pianoChordVelocity(newNotes.length);
     this.audioEngine().attack(newNotes, velocity);
     this.activeNotes = Array.from(new Set([...this.activeNotes, ...newNotes]));
   }
@@ -267,7 +312,7 @@ export class PianoSampler {
     if (generation !== this.playGeneration) return;
     const engine = this.audioEngine();
     const notes = midiNotes.map(midiToPitchName);
-    engine.attack(notes, Math.min(0.78, 0.9 / Math.sqrt(notes.length)));
+    engine.attack(notes, pianoChordVelocity(notes.length));
     this.activeNotes = notes;
     await wait(timing.holdMs ?? AUDITION_HOLD_MS);
     if (generation !== this.playGeneration) return;

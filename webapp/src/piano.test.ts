@@ -1,11 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  pianoChordVelocity,
   pianoSampleUrls,
   PianoSampler,
   pitchToMidi,
   type PianoPlaybackEngine,
 } from "./piano";
+
+test("uses the shared playback velocity curve for notes and chords", () => {
+  assert.equal(pianoChordVelocity(1), 0.78);
+  assert.ok(Math.abs(pianoChordVelocity(3) - 0.9 / Math.sqrt(3)) < 1e-9);
+  assert.throws(() => pianoChordVelocity(0), /positive integer/);
+});
 
 test("parses natural, sharp, flat, and double-accidental pitches", () => {
   assert.equal(pitchToMidi("C4"), 60);

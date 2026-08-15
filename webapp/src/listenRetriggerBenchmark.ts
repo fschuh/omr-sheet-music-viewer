@@ -248,6 +248,7 @@ export interface ListenRetriggerTraceIdentity {
 }
 
 export interface ListenRetriggerSweepResult {
+  renderer: ListenSequenceBenchmarkResult["renderer"];
   benchmarkOnly: true;
   productionEnabled: false;
   replayParityVerified: true;
@@ -1138,6 +1139,7 @@ export async function runListenRetriggerSweep(
         text: "Hidden score rises existed, but every candidate failed at least one decoder or matcher gate.",
       };
   return {
+    renderer: { ...sequenceResult.renderer },
     benchmarkOnly: true,
     productionEnabled: false,
     replayParityVerified: true,

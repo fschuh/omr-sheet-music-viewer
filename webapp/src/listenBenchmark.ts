@@ -121,7 +121,7 @@ export function summarizeListenBenchmark(trials: ListenBenchmarkTrial[]): Listen
   acceptance.passed = acceptance.latency && acceptance.successRate &&
     acceptance.courseClearSuccessRate && acceptance.falseAdvances;
   return {
-    renderer: { ...LISTEN_BENCHMARK_RENDERER },
+    renderer: { ...(trials.find(({ renderer }) => renderer)?.renderer ?? LISTEN_BENCHMARK_RENDERER) },
     trials,
     correctTrialCount: correct.length,
     successRate,
@@ -136,6 +136,7 @@ export function summarizeListenBenchmark(trials: ListenBenchmarkTrial[]): Listen
 /** Represents an isolated fixture as the canonical one-event sequence. */
 export function renderIsolatedListenBenchmarkAudio(
   playedPitches: readonly number[],
+  renderer: ListenBenchmarkRendererConfiguration = LISTEN_BENCHMARK_RENDERER,
 ): Promise<ListenBenchmarkAudioRenderResult> {
   return renderBenchmarkAudio({
     attacks: [{
@@ -147,6 +148,7 @@ export function renderIsolatedListenBenchmarkAudio(
     durationMs: ISOLATED_LISTEN_BENCHMARK_DURATION_MS,
     sampleRate: 16_000,
     chunkSize: ONLINE_AMT_CHUNK_SIZE,
+    renderer,
   });
 }
 
@@ -178,13 +180,15 @@ export function isMathematicallyAmbiguousCase(
 class SpectralBenchmarkClient {
   private readonly audioContext = new AudioContext({ latencyHint: "interactive" });
 
+  constructor(private readonly renderer: ListenBenchmarkRendererConfiguration) {}
+
   async evaluate(
     generation: number,
     targetPitches: readonly number[],
     playedPitches: readonly number[],
   ): Promise<BundledBenchmarkEvaluation> {
     await this.audioContext.resume();
-    const rendered = await renderIsolatedListenBenchmarkAudio(playedPitches);
+    const rendered = await renderIsolatedListenBenchmarkAudio(playedPitches, this.renderer);
 
     const analyser = this.audioContext.createAnalyser();
     analyser.fftSize = FFT_SIZE;
@@ -316,6 +320,8 @@ class OnlineAmtBenchmarkClient {
     executionMode: "sequential",
   });
 
+  constructor(private readonly renderer: ListenBenchmarkRendererConfiguration) {}
+
   async evaluate(
     generation: number,
     targetPitches: readonly number[],
@@ -326,6 +332,7 @@ class OnlineAmtBenchmarkClient {
       targetPitches,
       playedPitches,
       session: await this.session,
+      renderer: this.renderer,
     });
   }
 
@@ -350,8 +357,12 @@ export async function captureIsolatedOnlineAmtBenchmark(options: {
   targetPitches: readonly number[];
   playedPitches: readonly number[];
   session: SequenceInferenceSession;
+  renderer?: ListenBenchmarkRendererConfiguration;
 }): Promise<BundledBenchmarkEvaluation> {
-  const rendered = await renderIsolatedListenBenchmarkAudio(options.playedPitches);
+  const rendered = await renderIsolatedListenBenchmarkAudio(
+    options.playedPitches,
+    options.renderer,
+  );
   const relevantPitches = [...new Set([
     ...options.targetPitches,
     ...options.playedPitches,
@@ -509,12 +520,14 @@ async function runBundledBenchmark(
 
 export function runBundledListenBenchmark(
   onProgress: (completed: number, total: number) => void = () => undefined,
+  renderer: ListenBenchmarkRendererConfiguration = LISTEN_BENCHMARK_RENDERER,
 ): Promise<ListenBenchmarkSummary> {
-  return runBundledBenchmark(new SpectralBenchmarkClient(), onProgress);
+  return runBundledBenchmark(new SpectralBenchmarkClient(renderer), onProgress);
 }
 
 export function runBundledOnlineAmtBenchmark(
   onProgress: (completed: number, total: number) => void = () => undefined,
+  renderer: ListenBenchmarkRendererConfiguration = LISTEN_BENCHMARK_RENDERER,
 ): Promise<ListenBenchmarkSummary> {
-  return runBundledBenchmark(new OnlineAmtBenchmarkClient(), onProgress);
+  return runBundledBenchmark(new OnlineAmtBenchmarkClient(renderer), onProgress);
 }

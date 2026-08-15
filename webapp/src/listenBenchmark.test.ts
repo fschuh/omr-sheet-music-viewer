@@ -6,6 +6,7 @@ import {
   summarizeListenBenchmark,
   type ListenBenchmarkTrial,
 } from "./listenBenchmark";
+import { LISTEN_BENCHMARK_TONE_RENDERER } from "./listenBenchmarkAudio";
 
 function trial(update: Partial<ListenBenchmarkTrial> = {}): ListenBenchmarkTrial {
   return {
@@ -35,6 +36,13 @@ test("benchmark gate preserves the fixed latency, success, and false-advance cri
   assert.equal(oneMiss.acceptance.successRate, true);
   assert.equal(summarizeListenBenchmark([trial({ onsetToAdvanceMs: 400 })]).acceptance.latency, false);
   assert.equal(summarizeListenBenchmark([trial({ expectedCorrect: false })]).acceptance.falseAdvances, false);
+});
+
+test("summary retains the renderer that produced its trials", () => {
+  const summary = summarizeListenBenchmark([
+    trial({ renderer: { ...LISTEN_BENCHMARK_TONE_RENDERER } }),
+  ]);
+  assert.equal(summary.renderer.version, "bundled-piano-tone-v2");
 });
 
 test("reports exact upper-harmonic ties separately from distinguishable errors", () => {

@@ -45,6 +45,31 @@ Parity:
 Entries are kept newest first so renderer and recognition changes remain
 comparable over time.
 
+### Paired legacy and app-playback renderers — August 15, 2026
+
+The listening automation now runs each recognition benchmark twice and keeps the
+results as adjacent configurations:
+
+- `*-legacy` uses the unchanged `bundled-piano-web-audio-v1` renderer: direct
+  sample mixing, its historical chord-gain curve, and a linear 350 ms release.
+- `*-tone` uses `bundled-piano-tone-v2`. It shares the app's Tone.js sampler
+  construction, velocity curve, exponential release, sampler volume, compressor,
+  and limiter rather than duplicating those settings in benchmark code.
+
+Both paths use the same bundled sample recordings, schedules, chunk alignment,
+model, matcher, and acceptance criteria. Renderer identity is included in full and
+summary JSON exports, so a result from one path cannot be mistaken for the other.
+The historical renderer remains the default when the benchmark API is called
+without an explicit renderer; `benchmark-renderer=tone` selects the app-playback
+path on the benchmark page.
+
+`listen-parity` intentionally remains legacy-only. Its sample-linearity and
+additivity checks describe the direct mixer and are not valid after the app graph's
+compressor and limiter. All recognition modes (`listen-accuracy`, sequence,
+articulation, inference-reset, threshold, and retrigger) run the paired
+configurations automatically. This entry records the harness change only; it does
+not replace either renderer's measured baseline with unrecorded results.
+
 ### Score-rise retrigger replay — August 14, 2026
 
 This benchmark-only experiment added an isolated score-rise detector beside the
@@ -411,6 +436,10 @@ digital-piano input trials. Keep the current preliminary matcher profile unless
 those trials show a systematic error.
 
 Commands:
+
+Except for `listen-parity`, each listening command below runs the legacy renderer
+first and the Tone renderer second, emitting adjacent `*-legacy` and `*-tone`
+entries.
 
 ```powershell
 & '..\..\online_amt\.venv\Scripts\python.exe' `
