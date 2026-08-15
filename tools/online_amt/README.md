@@ -24,8 +24,9 @@ weighted state scores for all 88 piano keys plus every updated streaming state.
 Passing `reset=true` selects initial mel/CNN/LSTM state embedded in the graph.
 
 The browser runtime uses the same 512-sample cadence in an AudioWorklet and
-passes chunks to a dedicated inference worker. See `BENCHMARK.md` for the latest
-PyTorch, native ONNX Runtime, and browser WASM parity and latency results.
+passes chunks to a dedicated inference worker. See the [benchmark index](BENCHMARK.md)
+and [runtime benchmark](RUNTIME_BENCHMARK.md) for the PyTorch, native ONNX Runtime,
+and browser WASM parity and latency results.
 
 The exported graph and the adapted streaming code are derived from
 `jdasam/online_amt`, which is distributed under the MIT license. The required
