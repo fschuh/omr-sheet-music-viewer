@@ -7,6 +7,7 @@ import { basename, join, resolve, sep } from "node:path";
 const CHROME = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
 const BASE_URL = process.argv[2] ?? "http://127.0.0.1:5173/online-amt-benchmark.html";
 const CONFIGURATION_FILTER = process.argv[3];
+const LISTEN_SMOKE_MODE = CONFIGURATION_FILTER === "listen-smoke";
 const LISTEN_ACCURACY_MODE = CONFIGURATION_FILTER === "listen-accuracy";
 const LISTEN_SEQUENCE_SUMMARY_MODE = CONFIGURATION_FILTER === "listen-sequence-summary";
 const LISTEN_SEQUENCE_MODE = CONFIGURATION_FILTER === "listen-sequence" ||
@@ -174,7 +175,8 @@ async function runConfiguration(configuration) {
     await client.send("Page.enable");
     const pageUrl = LISTEN_PARITY_MODE
       ? BASE_URL.replace(/online-amt-benchmark\.html(?:\?.*)?$/, "listen-benchmark-parity.html")
-      : (LISTEN_ACCURACY_MODE || LISTEN_SEQUENCE_MODE || LISTEN_THRESHOLD_SWEEP_MODE ||
+      : (LISTEN_SMOKE_MODE || LISTEN_ACCURACY_MODE || LISTEN_SEQUENCE_MODE ||
+        LISTEN_THRESHOLD_SWEEP_MODE ||
         LISTEN_RETRIGGER_SWEEP_MODE || LISTEN_ARTICULATION_MODE ||
         LISTEN_INFERENCE_RESET_MODE) &&
         /online-amt-benchmark\.html(?:\?|$)/.test(BASE_URL)
@@ -184,6 +186,59 @@ async function runConfiguration(configuration) {
     await client.send("Page.navigate", {
       url: `${pageUrl}${separator}${configuration.query}`,
     });
+    if (LISTEN_SMOKE_MODE) {
+      return await evaluate(client, `(async () => {
+        const startedAt = performance.now();
+        const [{ captureIsolatedOnlineAmtBenchmark }, { OnlineAmtSession }, audio] =
+          await Promise.all([
+            import("/src/listenBenchmark.ts"),
+            import("/src/onlineAmtSession.ts"),
+            import("/src/listenBenchmarkAudio.ts"),
+          ]);
+        const renderer = new URLSearchParams(location.search).get("benchmark-renderer") === "tone"
+          ? audio.LISTEN_BENCHMARK_TONE_RENDERER
+          : audio.LISTEN_BENCHMARK_RENDERER;
+        const session = await OnlineAmtSession.create({
+          modelUrl: new URL("/models/online_amt_streaming.onnx", location.href).href,
+          numThreads: 1,
+          graphOptimizationLevel: "all",
+          enableCpuMemArena: true,
+          enableMemPattern: true,
+          executionMode: "sequential",
+        });
+        try {
+          const result = await captureIsolatedOnlineAmtBenchmark({
+            generation: 1,
+            targetPitches: [60, 64, 67],
+            playedPitches: [60, 64, 67],
+            session,
+            renderer,
+          });
+          if (!result.advanced) {
+            throw new Error("The smoke-test C-major chord did not advance.");
+          }
+          if (result.renderer?.version !== renderer.version) {
+            throw new Error(
+              \`Expected renderer \${renderer.version}, received \${result.renderer?.version}.\`,
+            );
+          }
+          return {
+            passed: true,
+            renderer: result.renderer,
+            targetPitches: [60, 64, 67],
+            advanced: result.advanced,
+            onsetToAdvanceMs: result.onsetToAdvanceMs,
+            maximumInferenceMs: result.analysisMs,
+            audioDiagnostics: result.audioDiagnostics,
+            recognizedOnsets: result.recognizedOnsets,
+            traceFrameCount: result.trace?.frames.length ?? 0,
+            elapsedMs: performance.now() - startedAt,
+          };
+        } finally {
+          await session.dispose();
+        }
+      })()`);
+    }
     if (FINGERING_SMOKE_MODE) {
       const deadline = Date.now() + 30_000;
       while (Date.now() < deadline) {
@@ -222,7 +277,8 @@ async function runConfiguration(configuration) {
     const deadline = Date.now() + (
       LISTEN_RETRIGGER_SWEEP_MODE
         ? 1_200_000
-        : (LISTEN_SEQUENCE_MODE || LISTEN_THRESHOLD_SWEEP_MODE || LISTEN_ARTICULATION_MODE)
+        : (LISTEN_ACCURACY_MODE || LISTEN_SEQUENCE_MODE || LISTEN_THRESHOLD_SWEEP_MODE ||
+          LISTEN_ARTICULATION_MODE)
         ? 600_000
         : LISTEN_PARITY_MODE ? 180_000 : 120_000
     );
@@ -236,13 +292,14 @@ async function runConfiguration(configuration) {
       await delay(200);
     }
     if (status !== "complete") {
-      const detail = await evaluate(
-        client,
-        "[document.querySelector('#status')?.textContent, " +
-          "document.querySelector('#result')?.textContent].filter(Boolean).join('\\n') " +
-          "|| document.body?.innerText",
-      );
-      throw new Error(`${configuration.name} failed: ${detail}`);
+      const detail = await evaluate(client, `(() => ({
+        href: location.href,
+        readyState: document.readyState,
+        status: document.body?.dataset.status ?? "",
+        bodyText: document.body?.innerText ?? "",
+        rootHtmlLength: document.querySelector("#root")?.innerHTML.length ?? 0,
+      }))()`);
+      throw new Error(`${configuration.name} failed: ${JSON.stringify(detail)}`);
     }
     return await evaluate(
       client,
@@ -615,6 +672,8 @@ const selectedConfigurations = FINGERING_SMOKE_MODE
       name: "fingering-smoke",
       query: `fingering-notes=${process.argv[4] ?? "500"}`,
     }]
+  : LISTEN_SMOKE_MODE
+  ? pairedRendererConfigurations("listen-smoke", "listen-smoke=auto")
   : LISTEN_RETRIGGER_SWEEP_MODE
   ? pairedRendererConfigurations(
       LISTEN_RETRIGGER_SWEEP_SUMMARY_MODE
@@ -821,7 +880,15 @@ for (let index = 0; index < selectedConfigurations.length; index += 1) {
       }
     : result;
   results.push({ name: configuration.name, ...exportedResult });
-  if (result.wall) {
+  if (LISTEN_SMOKE_MODE) {
+    console.error(
+      `${configuration.name}: passed=${result.passed} ` +
+      `advanced=${result.advanced} onset=${result.onsetToAdvanceMs}ms ` +
+      `inference=${result.maximumInferenceMs.toFixed(2)}ms ` +
+      `peak=${result.audioDiagnostics.peak.toFixed(6)} ` +
+      `elapsed=${result.elapsedMs.toFixed(0)}ms`,
+    );
+  } else if (result.wall) {
     console.error(
       `${configuration.name}: p50=${result.wall.p50Ms.toFixed(2)}ms ` +
       `p95=${result.wall.p95Ms.toFixed(2)}ms p99=${result.wall.p99Ms.toFixed(2)}ms`,

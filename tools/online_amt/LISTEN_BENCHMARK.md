@@ -7,6 +7,86 @@
 Entries are kept newest first so renderer and recognition changes remain
 comparable over time.
 
+### Paired renderer baseline — August 15, 2026
+
+Measured with Chrome 152.0.7977.42 on the 10-logical-processor development
+Windows machine at commit `d95922c`. The matcher, model, fixtures, schedules,
+sample rate, and chunk size were identical between renderers. The paired smoke
+test passed before the complete isolated corpus (106 correct trials plus safety
+cases) and complete 13-family × 6-speed continuous corpus were each run twice;
+both repetitions produced the same recognition summaries and failure identities.
+
+The preflight rendered and recognized one C-major triad through the complete
+browser pipeline before the full runs began:
+
+| Renderer | Advanced | Onset-to-advance | PCM peak | PCM RMS | Trace frames |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Direct v1 | Yes | 196 ms | 0.603168 | 0.100907 | 35 |
+| Tone v2 | Yes | 196 ms | 0.432499 | 0.078035 | 35 |
+
+Isolated accuracy:
+
+| Metric | Direct v1 | Tone v2 | Tone delta |
+| --- | ---: | ---: | ---: |
+| Correct trials advanced | 104 / 106 (98.1%) | 100 / 106 (94.3%) | −4 (−3.8 pp) |
+| Course Clear correct trials advanced | 52 / 54 (96.3%) | 48 / 54 (88.9%) | −4 (−7.4 pp) |
+| Distinguishable wrong-note false advances | 0 | 0 | 0 |
+| Mathematically ambiguous advances | 4 | 5 | +1 |
+| P95 onset-to-advance latency | 196 ms | 228 ms | +32 ms |
+| Fixed acceptance gate | Pass | Fail | — |
+
+Every miss was deterministic and occurred twice because each Course Clear
+fixture is repeated twice:
+
+| Course Clear target | Missing onset | Direct misses | Tone misses |
+| --- | ---: | ---: | ---: |
+| Measure 2, moment 6: `[56, 68, 75]` | 75 | 0 | 2 |
+| Measure 3, moment 4: `[50, 62, 70]` | 70 | 0 | 2 |
+| Measure 3, moment 5: `[53, 65, 74]` | 65 | 2 | 2 |
+
+The Tone path therefore exposes two additional weak upper-note cases and does
+not pass the existing 95% overall or Course Clear acceptance thresholds. Its
+lower C-major preflight peak/RMS is consistent with a materially different
+processed signal level, but this one fixture does not by itself prove that level
+is the cause of the additional misses.
+
+Continuous production-policy results aggregate 78 passages and 510 expected
+events:
+
+| Metric | Direct v1 | Tone v2 | Tone delta |
+| --- | ---: | ---: | ---: |
+| Complete passages | 49 / 78 (62.8%) | 53 / 78 (67.9%) | +4 (+5.1 pp) |
+| Raw complete evidence | 418 / 510 (82.0%) | 377 / 510 (73.9%) | −41 (−8.0 pp) |
+| Independent matches | 330 / 510 (64.7%) | 329 / 510 (64.5%) | −1 (−0.2 pp) |
+| Ordered advances | 331 / 510 (64.9%) | 355 / 510 (69.6%) | +24 (+4.7 pp) |
+| All-sequence false advances | 8 | 1 | −7 |
+| Safety-family false / skipped / duplicate | 0 / 0 / 0 | 0 / 0 / 0 | 0 / 0 / 0 |
+
+The per-speed comparison keeps passage completion, ordered advancement, and
+latency adjacent:
+
+| Interval | Complete passages, Direct / Tone | Ordered advances, Direct / Tone | P95 ordered latency, Direct / Tone |
+| --- | ---: | ---: | ---: |
+| 1000 ms | 8 / 13 · 9 / 13 | 66 / 85 · 63 / 85 | 220 ms · 228 ms |
+| 500 ms | 9 / 13 · 9 / 13 | 73 / 85 · 70 / 85 | 208 ms · 224 ms |
+| 333.33 ms | 7 / 13 · 9 / 13 | 43 / 85 · 56 / 85 | 228 ms · 228 ms |
+| 250 ms | 9 / 13 · 10 / 13 | 53 / 85 · 63 / 85 | 214 ms · 234 ms |
+| 167 ms | 7 / 13 · 8 / 13 | 45 / 85 · 52 / 85 | 221 ms · 228 ms |
+| 125 ms | 9 / 13 · 8 / 13 | 51 / 85 · 51 / 85 | 231 ms · 234 ms |
+
+Tone improves aggregate ordered progression and reduces cascading false
+advances, particularly at 3–6 events/second, despite producing less raw complete
+evidence and worse isolated chord accuracy. The next-onset-buffer experiment
+remains rejected under both renderers: Direct lost five correct advances and one
+complete passage while retaining eight false advances; Tone gained nothing and
+retained one false advance.
+
+These results must remain side by side rather than being combined into one score.
+Direct v1 preserves the historical deterministic regression, while Tone v2 is a
+separate app-graph robustness gate that the current preliminary matcher does not
+yet pass. Neither result replaces acoustic-piano, microphone, room-noise, varied
+velocity, or digital-piano trials.
+
 ### Paired legacy and app-playback renderers — August 15, 2026
 
 The listening automation now runs each recognition benchmark twice and keeps the
@@ -406,6 +486,9 @@ from another terminal.
 
 ```powershell
 npm --prefix webapp run dev:wasm-benchmark
+
+node tools\online_amt\run_browser_benchmarks.mjs `
+  http://127.0.0.1:5174/online-amt-benchmark.html listen-smoke
 
 node tools\online_amt\run_browser_benchmarks.mjs `
   http://127.0.0.1:5174/online-amt-benchmark.html listen-accuracy

@@ -7,7 +7,7 @@ the current conclusions remain easy to find.
 | Area | Current conclusion | Detailed report |
 | --- | --- | --- |
 | Runtime | Production's single-threaded optimized browser WASM configuration keeps pace with the 32 ms input cadence and preserves model-output parity. | [Runtime benchmark](RUNTIME_BENCHMARK.md) |
-| Listening | The deterministic corpus remains a regression gate, while acoustic-piano and other live-input trials are still required before production matcher changes. | [Listening benchmark](LISTEN_BENCHMARK.md) |
+| Listening | Direct v1 passes isolated acceptance at 98.1%; Tone v2 falls to 94.3% but improves aggregate continuous ordered advances from 331 to 355. Both retain zero false/skipped/duplicate advances in the dedicated safety families. | [Listening benchmark](LISTEN_BENCHMARK.md) |
 
 ## Listening renderers
 
@@ -21,8 +21,10 @@ columns rather than separating them into renderer-specific reports.
 
 Except for the legacy-only renderer linearity check, listening automation runs
 both configurations consecutively and includes renderer identity in each result.
-Existing numerical history predates the paired run and therefore remains labelled
-as the direct-renderer baseline until new paired measurements are recorded.
+The August 15 paired baseline records both renderers against the same isolated
+and continuous corpora. These deterministic results remain a regression gate;
+acoustic-piano and other live-input trials are still required before production
+matcher changes.
 
 ## Reports
 
