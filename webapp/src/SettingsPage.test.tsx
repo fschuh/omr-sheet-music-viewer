@@ -8,6 +8,7 @@ test("renders every playback command with its default keyboard key and empty MID
   const markup = renderToStaticMarkup(
     <SettingsPage
       shortcuts={defaultPlaybackShortcuts()}
+      playbackPiano="splendid"
       debugPanelEnabled={false}
       nativeAvailable
       midiPorts={["Bluetooth MIDI bridge"]}
@@ -15,6 +16,7 @@ test("renders every playback command with its default keyboard key and empty MID
       midiRefreshing={false}
       midiCaptureCommand={null}
       onChangeShortcuts={() => undefined}
+      onChangePlaybackPiano={() => undefined}
       onChangeDebugPanelEnabled={() => undefined}
       onBeginMidiCapture={() => undefined}
       onCancelMidiCapture={() => undefined}
@@ -33,6 +35,9 @@ test("renders every playback command with its default keyboard key and empty MID
   assert.match(markup, />1 MIDI input connected</);
   assert.match(markup, /Bluetooth MIDI bridge/);
   assert.match(markup, /<h3 id="debug-title">Debug<\/h3>/);
+  assert.match(markup, /aria-label="Playback piano"/);
+  assert.match(markup, />Splendid Grand Piano<\/option>/);
+  assert.match(markup, />Salamander Grand Piano<\/option>/);
   assert.match(markup, />Enable debug panel<\/strong>/);
   assert.doesNotMatch(markup, /type="checkbox" checked=""/);
 });
@@ -41,6 +46,7 @@ test("disables MIDI assignment when initialization fails", () => {
   const markup = renderToStaticMarkup(
     <SettingsPage
       shortcuts={defaultPlaybackShortcuts()}
+      playbackPiano="salamander"
       debugPanelEnabled
       nativeAvailable
       midiPorts={[]}
@@ -48,6 +54,7 @@ test("disables MIDI assignment when initialization fails", () => {
       midiRefreshing={false}
       midiCaptureCommand={null}
       onChangeShortcuts={() => undefined}
+      onChangePlaybackPiano={() => undefined}
       onChangeDebugPanelEnabled={() => undefined}
       onBeginMidiCapture={() => undefined}
       onCancelMidiCapture={() => undefined}

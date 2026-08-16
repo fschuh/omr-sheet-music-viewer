@@ -7,6 +7,7 @@ import {
   type RealtimeScore,
   type RealtimeScoreNote,
 } from "./realtime";
+import type { MusicalDynamic } from "./pianoRegistry";
 
 export const playbackCommandNames = [
   "togglePlayback",
@@ -32,6 +33,7 @@ export interface PlaybackMoment {
   barKey: string;
   visualGroupIds: string[];
   pitches: string[];
+  dynamic: MusicalDynamic;
   keyboardNotes: PlaybackKeyboardNote[];
   center: [number, number];
 }
@@ -109,6 +111,7 @@ interface PlaybackPitchNote {
   musicXmlId: string;
   pitch: string;
   startsAttack: boolean;
+  dynamic: MusicalDynamic;
 }
 
 export function playbackPitchForNote(note: VisualSidecarNote): string | null {
@@ -210,6 +213,7 @@ function clustersByMomentIdForStaffGroup(
 interface NoteByNoteScoreData {
   suppressedNoteIds: Set<string>;
   startsAttackByNoteId: Map<string, boolean>;
+  dynamicByNoteId: Map<string, MusicalDynamic>;
 }
 
 function noteForPage(
@@ -230,8 +234,9 @@ function noteByNoteScoreData(
 ): NoteByNoteScoreData {
   const suppressedNoteIds = new Set<string>();
   const startsAttackByNoteId = new Map<string, boolean>();
+  const dynamicByNoteId = new Map<string, MusicalDynamic>();
   if (!documentScore && !musicXml) {
-    return { suppressedNoteIds, startsAttackByNoteId };
+    return { suppressedNoteIds, startsAttackByNoteId, dynamicByNoteId };
   }
   try {
     const score = documentScore ?? parseRealtimeMusicXml(musicXml!);
@@ -249,11 +254,13 @@ function noteByNoteScoreData(
           // sidecar-defined chord can distinguish held and newly attacked notes.
           for (const note of eventNotes) {
             startsAttackByNoteId.set(note.musicXmlId, scoreNoteStartsAttack(note));
+            dynamicByNoteId.set(note.musicXmlId, note.dynamic);
           }
         } else {
           for (const note of eventNotes) {
             suppressedNoteIds.add(note.musicXmlId);
             startsAttackByNoteId.set(note.musicXmlId, false);
+            dynamicByNoteId.set(note.musicXmlId, note.dynamic);
           }
         }
       }
@@ -261,12 +268,13 @@ function noteByNoteScoreData(
   } catch {
     // Note-by-note playback can still use the visual sidecar when score parsing fails.
   }
-  return { suppressedNoteIds, startsAttackByNoteId };
+  return { suppressedNoteIds, startsAttackByNoteId, dynamicByNoteId };
 }
 
 function playbackNotesForCluster(
   cluster: MomentCluster,
   startsAttackByNoteId: ReadonlyMap<string, boolean>,
+  dynamicByNoteId: ReadonlyMap<string, MusicalDynamic>,
 ): PlaybackPitchNote[] {
   const result: PlaybackPitchNote[] = [];
   const seenIds = new Set<string>();
@@ -277,6 +285,7 @@ function playbackNotesForCluster(
       musicXmlId,
       pitch,
       startsAttack: startsAttackByNoteId.get(musicXmlId) ?? true,
+      dynamic: dynamicByNoteId.get(musicXmlId) ?? "mp",
     });
   };
 
@@ -329,6 +338,7 @@ export function buildPlaybackTimeline(
         const momentNotes = playbackNotesForCluster(
           cluster,
           scoreData.startsAttackByNoteId,
+          scoreData.dynamicByNoteId,
         );
         const visualGroupIds = cluster.groups
           .map((entry) => entry.group.visual_group_id)
@@ -365,6 +375,7 @@ export function buildPlaybackTimeline(
           barKey: cluster.measure === null ? unknownBarKey : `page-${page.index}-measure-${cluster.measure}`,
           visualGroupIds,
           pitches,
+          dynamic: momentNotes.find((note) => note.startsAttack)?.dynamic ?? "mp",
           keyboardNotes,
           center: [cluster.x, centerY],
         });

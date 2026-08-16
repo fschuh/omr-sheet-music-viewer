@@ -1,13 +1,20 @@
 import * as Tone from "tone";
 import { ONLINE_AMT_CHUNK_SIZE, ONLINE_AMT_SAMPLE_RATE } from "./onlineAmtProtocol";
 import {
-  createTonePianoGraph,
+  createTonePianoLayeredGraph,
   midiToPitchName,
   PIANO_NOTE_RELEASE_SECONDS,
   pianoChordVelocity,
-  pianoSampleUrls,
-  type TonePianoGraph,
+  type TonePianoLayeredGraph,
 } from "./piano";
+import {
+  DEFAULT_PIANO_ID,
+  isPianoLayerFor,
+  pianoDefinition,
+  pianoSampleUrlsForLayer,
+  type PianoId,
+  type PianoLayerId,
+} from "./pianoRegistry";
 
 export const LISTEN_BENCHMARK_DEFAULT_HOLD_MS = 420;
 export const LISTEN_BENCHMARK_RELEASE_MS = 350;
@@ -65,7 +72,29 @@ export interface ListenBenchmarkAudioAttack {
   gainReferenceChordSize?: number;
   holdMs?: number;
   releaseMs?: number;
+  /** Recorded acoustic layer; chord mix gain never changes this selection. */
+  layer?: PianoLayerId;
 }
+
+export type ListenBenchmarkDynamicProfile = "constant" | "crescendo-decrescendo";
+
+export interface ListenBenchmarkPianoConfiguration {
+  id: PianoId;
+  displayName: string;
+  layer: PianoLayerId | null;
+  layers: PianoLayerId[];
+  dynamicProfile: ListenBenchmarkDynamicProfile;
+  sampleLibraryVersion: string;
+}
+
+export const LISTEN_BENCHMARK_PIANO: ListenBenchmarkPianoConfiguration = Object.freeze({
+  id: "splendid",
+  displayName: pianoDefinition("splendid").displayName,
+  layer: "mp",
+  layers: ["mp"] as PianoLayerId[],
+  dynamicProfile: "constant",
+  sampleLibraryVersion: pianoDefinition("splendid").source.version,
+});
 
 export interface ListenBenchmarkAudioDiagnostics {
   frameCount: number;
@@ -89,6 +118,7 @@ export interface ListenBenchmarkAudioRenderResult {
   pcm: Float32Array;
   renderer: ListenBenchmarkRendererConfiguration;
   diagnostics: ListenBenchmarkAudioDiagnostics;
+  piano: ListenBenchmarkPianoConfiguration;
 }
 
 export interface RenderBenchmarkAudioOptions {
@@ -97,6 +127,9 @@ export interface RenderBenchmarkAudioOptions {
   sampleRate?: number;
   chunkSize?: number;
   renderer?: ListenBenchmarkRendererConfiguration;
+  piano?: PianoId;
+  layer?: PianoLayerId;
+  dynamicProfile?: ListenBenchmarkDynamicProfile;
 }
 
 export type ListenBenchmarkAudioRenderer = (
@@ -118,8 +151,12 @@ function contextForDecoding(): OfflineAudioContext {
   return decodingContext;
 }
 
-function nearestBundledSample(midi: number): [number, string] {
-  const samples = Object.entries(pianoSampleUrls()).map(
+function nearestBundledSample(
+  midi: number,
+  piano: PianoId,
+  layer: PianoLayerId,
+): [number, string] {
+  const samples = Object.entries(pianoSampleUrlsForLayer(piano, layer)).map(
     ([pitch, url]): [number, string] => [Number(pitch), url],
   );
   return samples.reduce((nearest, candidate) => (
@@ -127,8 +164,12 @@ function nearestBundledSample(midi: number): [number, string] {
   ));
 }
 
-async function preparedSample(midi: number): Promise<PreparedPianoSample> {
-  const [sourceMidi, url] = nearestBundledSample(midi);
+async function preparedSample(
+  midi: number,
+  piano: PianoId,
+  layer: PianoLayerId,
+): Promise<PreparedPianoSample> {
+  const [sourceMidi, url] = nearestBundledSample(midi, piano, layer);
   let pending = decodedSamples.get(url);
   if (!pending) {
     pending = fetch(url).then(async (response) => {
@@ -140,8 +181,12 @@ async function preparedSample(midi: number): Promise<PreparedPianoSample> {
   return { sourceMidi, buffer: await pending };
 }
 
-function nearestToneBundledSample(midi: number): [number, string] {
-  const samples = Object.entries(pianoSampleUrls()).map(
+function nearestToneBundledSample(
+  midi: number,
+  piano: PianoId,
+  layer: PianoLayerId,
+): [number, string] {
+  const samples = Object.entries(pianoSampleUrlsForLayer(piano, layer)).map(
     ([pitch, url]): [number, string] => [Number(pitch), url],
   );
   return samples.reduce((nearest, candidate) => {
@@ -154,8 +199,12 @@ function nearestToneBundledSample(midi: number): [number, string] {
   });
 }
 
-async function preparedToneSample(midi: number): Promise<PreparedPianoSample> {
-  const [sourceMidi, url] = nearestToneBundledSample(midi);
+async function preparedToneSample(
+  midi: number,
+  piano: PianoId,
+  layer: PianoLayerId,
+): Promise<PreparedPianoSample> {
+  const [sourceMidi, url] = nearestToneBundledSample(midi, piano, layer);
   let pending = decodedSamples.get(url);
   if (!pending) {
     pending = fetch(url).then(async (response) => {
@@ -175,6 +224,31 @@ function requireFiniteNonNegative(name: string, value: number): void {
   if (!Number.isFinite(value) || value < 0) {
     throw new Error(`${name} must be a finite non-negative number, received ${value}.`);
   }
+}
+
+function pianoConfiguration(options: RenderBenchmarkAudioOptions): ListenBenchmarkPianoConfiguration {
+  const id = options.piano ?? DEFAULT_PIANO_ID;
+  const definition = pianoDefinition(id);
+  const fallbackLayer = options.layer ?? definition.defaultLayer;
+  if (!isPianoLayerFor(id, fallbackLayer)) {
+    throw new Error(`Piano layer ${fallbackLayer} does not belong to ${id}.`);
+  }
+  const layers = [...new Set(options.attacks.map((attack) => attack.layer ?? fallbackLayer))];
+  for (const layer of layers) {
+    if (!isPianoLayerFor(id, layer)) {
+      throw new Error(`Piano layer ${layer} does not belong to ${id}.`);
+    }
+  }
+  return {
+    id,
+    displayName: definition.displayName,
+    layer: layers.length === 1 ? layers[0] : null,
+    layers,
+    dynamicProfile: options.dynamicProfile ?? (layers.length === 1
+      ? "constant"
+      : "crescendo-decrescendo"),
+    sampleLibraryVersion: definition.source.version,
+  };
 }
 
 export function benchmarkChordGain(chordSize: number): number {
@@ -269,13 +343,21 @@ async function renderLegacyBenchmarkAudio(
     );
   }
   const frameCount = alignedFrameCount(options.durationMs, sampleRate, chunkSize);
-  const prepared = new Map<number, PreparedPianoSample>();
-  const notes = options.attacks.flatMap((attack) => attack.notes.map(normalizedNote));
-  await Promise.all([...new Set(notes.map(({ midi }) => midi))].map(async (midi) => {
+  const piano = pianoConfiguration(options);
+  const fallbackLayer = options.layer ?? pianoDefinition(piano.id).defaultLayer;
+  const prepared = new Map<string, PreparedPianoSample>();
+  const notes = options.attacks.flatMap((attack) => attack.notes.map((note) => ({
+    note: normalizedNote(note),
+    layer: attack.layer ?? fallbackLayer,
+  })));
+  await Promise.all([...new Map(notes.map(({ note, layer }) => [
+    `${layer}:${note.midi}`,
+    { midi: note.midi, layer },
+  ])).values()].map(async ({ midi, layer }) => {
     if (!Number.isInteger(midi) || midi < 0 || midi > 127) {
       throw new Error(`Benchmark MIDI notes must be integers from 0 to 127, received ${midi}.`);
     }
-    prepared.set(midi, await preparedSample(midi));
+    prepared.set(`${layer}:${midi}`, await preparedSample(midi, piano.id, layer));
   }));
 
   const offline = new OfflineAudioContext(1, frameCount, sampleRate);
@@ -283,6 +365,7 @@ async function renderLegacyBenchmarkAudio(
     requireFiniteNonNegative("Benchmark attack onsetMs", attack.onsetMs);
     const gainReferenceChordSize = attack.gainReferenceChordSize ?? attack.notes.length;
     const chordGain = benchmarkChordGain(gainReferenceChordSize);
+    const layer = attack.layer ?? fallbackLayer;
     for (const rawNote of attack.notes) {
       const note = normalizedNote(rawNote);
       const offsetMs = note.offsetMs ?? 0;
@@ -291,7 +374,7 @@ async function renderLegacyBenchmarkAudio(
       requireFiniteNonNegative("Benchmark note offsetMs", offsetMs);
       requireFiniteNonNegative("Benchmark note holdMs", holdMs);
       requireFiniteNonNegative("Benchmark note releaseMs", releaseMs);
-      const sample = prepared.get(note.midi);
+      const sample = prepared.get(`${layer}:${note.midi}`);
       if (!sample) throw new Error(`No bundled piano sample was prepared for MIDI ${note.midi}.`);
 
       const startsAt = (attack.onsetMs + offsetMs) / 1_000;
@@ -317,6 +400,7 @@ async function renderLegacyBenchmarkAudio(
     pcm,
     renderer: { ...LISTEN_BENCHMARK_RENDERER },
     diagnostics: measureBenchmarkPcm(pcm, sampleRate),
+    piano,
   };
 }
 
@@ -332,28 +416,46 @@ async function renderToneBenchmarkAudio(
     );
   }
   const frameCount = alignedFrameCount(options.durationMs, sampleRate, chunkSize);
-  const notes = options.attacks.flatMap((attack) => attack.notes.map(normalizedNote));
-  const prepared = await Promise.all([...new Set(notes.map(({ midi }) => midi))].map(
-    async (midi) => {
+  const piano = pianoConfiguration(options);
+  const fallbackLayer = options.layer ?? pianoDefinition(piano.id).defaultLayer;
+  const notes = options.attacks.flatMap((attack) => attack.notes.map((note) => ({
+    note: normalizedNote(note),
+    layer: attack.layer ?? fallbackLayer,
+  })));
+  const prepared = await Promise.all([...new Map(notes.map(({ note, layer }) => [
+    `${layer}:${note.midi}`,
+    { midi: note.midi, layer },
+  ])).values()].map(
+    async ({ midi, layer }) => {
       if (!Number.isInteger(midi) || midi < 0 || midi > 127) {
         throw new Error(`Benchmark MIDI notes must be integers from 0 to 127, received ${midi}.`);
       }
-      return preparedToneSample(midi);
+      return { layer, prepared: await preparedToneSample(midi, piano.id, layer) };
     },
   ));
-  const samples = Object.fromEntries(
-    prepared.map(({ sourceMidi, buffer }) => [sourceMidi, buffer]),
-  );
-  const graphs: TonePianoGraph[] = [];
+  const samplesByLayer = new Map<PianoLayerId, Record<number, AudioBuffer>>();
+  for (const { layer, prepared: sample } of prepared) {
+    const samples = samplesByLayer.get(layer) ?? {};
+    samples[sample.sourceMidi] = sample.buffer;
+    samplesByLayer.set(layer, samples);
+  }
+  const graphs: TonePianoLayeredGraph[] = [];
   try {
     const rendered = await Tone.Offline(async (context) => {
-      const graph = createTonePianoGraph(context, samples);
+      const graph = createTonePianoLayeredGraph(
+        context,
+        samplesByLayer,
+        pianoDefinition(piano.id).samplerVolumeDb,
+      );
       graphs.push(graph);
       await graph.loaded;
       for (const attack of options.attacks) {
         requireFiniteNonNegative("Benchmark attack onsetMs", attack.onsetMs);
         const gainReferenceChordSize = attack.gainReferenceChordSize ?? attack.notes.length;
         const velocity = pianoChordVelocity(gainReferenceChordSize);
+        const layer = attack.layer ?? fallbackLayer;
+        const sampler = graph.samplers.get(layer);
+        if (!sampler) throw new Error(`No Tone sampler was prepared for ${piano.id}/${layer}.`);
         for (const rawNote of attack.notes) {
           const note = normalizedNote(rawNote);
           const offsetMs = note.offsetMs ?? 0;
@@ -370,8 +472,8 @@ async function renderToneBenchmarkAudio(
           }
           const pitch = midiToPitchName(note.midi);
           const startsAt = (attack.onsetMs + offsetMs) / 1_000;
-          graph.sampler.triggerAttack(pitch, startsAt, velocity);
-          graph.sampler.triggerRelease(pitch, startsAt + holdMs / 1_000);
+          sampler.triggerAttack(pitch, startsAt, velocity);
+          sampler.triggerRelease(pitch, startsAt + holdMs / 1_000);
         }
       }
     }, frameCount / sampleRate, 1, sampleRate);
@@ -380,6 +482,7 @@ async function renderToneBenchmarkAudio(
       pcm,
       renderer: { ...LISTEN_BENCHMARK_TONE_RENDERER },
       diagnostics: measureBenchmarkPcm(pcm, sampleRate),
+      piano,
     };
   } finally {
     for (const graph of graphs) graph.dispose();

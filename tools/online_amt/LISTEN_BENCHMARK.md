@@ -522,4 +522,13 @@ node tools\online_amt\run_browser_benchmarks.mjs `
 
 node tools\online_amt\run_browser_benchmarks.mjs `
   http://127.0.0.1:5174/online-amt-benchmark.html listen-retrigger-sweep-summary
+
+node tools\online_amt\run_browser_benchmarks.mjs `
+  http://127.0.0.1:5174/online-amt-benchmark.html listen-dynamics-constant
+
+node tools\online_amt\run_browser_benchmarks.mjs `
+  http://127.0.0.1:5174/online-amt-benchmark.html listen-dynamics-mixed
 ```
+
+See the [piano dynamics benchmark](PIANO_DYNAMICS_BENCHMARK.md) for the
+velocity-layer methodology, asset smoke checks, and measured 40-run matrix.

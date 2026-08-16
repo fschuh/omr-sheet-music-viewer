@@ -7,6 +7,7 @@ import type {
   VisualGroupRef,
 } from "./types";
 import { isLinkedVisualGroup } from "./types";
+import { MUSICAL_DYNAMICS, type MusicalDynamic } from "./pianoRegistry";
 
 export type PlaybackMode = "note-by-note" | "realtime";
 export type PlaybackStatus = "inactive" | "note-by-note" | "playing" | "paused";
@@ -35,6 +36,8 @@ export interface RealtimeScoreNote {
   voice: string;
   staff: number;
   pitch: string;
+  /** Semantic score dynamic; absent MusicXML markings are normalized to mp. */
+  dynamic: MusicalDynamic;
   onset: number;
   duration: number;
   grace: boolean;
@@ -109,6 +112,7 @@ export interface PerformanceNote {
   id: string;
   musicXmlId: string;
   pitch: string;
+  dynamic: MusicalDynamic;
   onset: number;
   release: number;
   visual: VisualNoteTarget | null;
@@ -430,6 +434,29 @@ function metronomeTempo(direction: Element): number | null {
   return perMinute * beatLength;
 }
 
+function dynamicFromNumber(value: string | null): MusicalDynamic | null {
+  if (value === null || value.trim() === "") return null;
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return null;
+  if (numeric < 36) return "pp";
+  if (numeric < 48) return "p";
+  if (numeric < 64) return "mp";
+  if (numeric < 80) return "mf";
+  if (numeric < 96) return "f";
+  return "ff";
+}
+
+function dynamicFromDirection(direction: Element): MusicalDynamic | null {
+  for (const dynamic of MUSICAL_DYNAMICS) {
+    if (descendants(direction, dynamic).length > 0) return dynamic;
+  }
+  for (const sound of descendants(direction, "sound")) {
+    const dynamic = dynamicFromNumber(sound.getAttribute("dynamics"));
+    if (dynamic) return dynamic;
+  }
+  return null;
+}
+
 interface PartMeasureData {
   number: string;
   pageNumber: number;
@@ -552,12 +579,20 @@ function parsePartMeasure(
   divisionsAtStart: number,
   pageAtStart: number,
   fifthsAtStart: number,
+  dynamicAtStart: MusicalDynamic,
   includeNavigation: boolean,
   voiceEventIndexes: Map<string, number>,
-): { data: PartMeasureData; divisions: number; pageNumber: number; fifths: number } {
+): {
+  data: PartMeasureData;
+  divisions: number;
+  pageNumber: number;
+  fifths: number;
+  dynamic: MusicalDynamic;
+} {
   let divisions = divisionsAtStart;
   let pageNumber = pageAtStart;
   let fifths = fifthsAtStart;
+  let dynamic = dynamicAtStart;
   let cursor = 0;
   let furthest = 0;
   let chordOnset = 0;
@@ -618,6 +653,7 @@ function parsePartMeasure(
             voice,
             staff,
             pitch: formatPitchName(step, octave, alter),
+            dynamic,
             onset,
             duration,
             grace: first(child, "grace") !== null,
@@ -641,6 +677,7 @@ function parsePartMeasure(
       continue;
     }
     if (child.localName === "direction" || child.nodeName.endsWith(":direction")) {
+      dynamic = dynamicFromDirection(child) ?? dynamic;
       const offset = finiteNumber(text(child, "offset")) / divisions;
       let foundSoundTempo = false;
       for (const sound of descendants(child, "sound")) {
@@ -658,6 +695,7 @@ function parsePartMeasure(
       continue;
     }
     if (child.localName === "sound" || child.nodeName.endsWith(":sound")) {
+      dynamic = dynamicFromNumber(child.getAttribute("dynamics")) ?? dynamic;
       const offset = finiteNumber(text(child, "offset")) / divisions;
       const tempo = finiteNumber(child.getAttribute("tempo"));
       if (tempo > 0) tempos.push({ onset: Math.max(0, cursor + offset), bpm: tempo });
@@ -705,6 +743,7 @@ function parsePartMeasure(
     divisions,
     pageNumber,
     fifths,
+    dynamic,
   };
 }
 
@@ -725,6 +764,7 @@ export function parseRealtimeMusicXml(musicXml: string): RealtimeScore {
     let divisions = 1;
     let pageNumber = 1;
     let fifths = 0;
+    let dynamic: MusicalDynamic = "mp";
     const voiceEventIndexes = new Map<string, number>();
     const parsed: PartMeasureData[] = [];
     elements(part, "measure").forEach((measure, measureIndex) => {
@@ -735,12 +775,14 @@ export function parseRealtimeMusicXml(musicXml: string): RealtimeScore {
         divisions,
         pageNumber,
         fifths,
+        dynamic,
         true,
         voiceEventIndexes,
       );
       divisions = result.divisions;
       pageNumber = result.pageNumber;
       fifths = result.fifths;
+      dynamic = result.dynamic;
       parsed.push(result.data);
     });
     inferSamePitchSlurTies(parsed);
@@ -934,6 +976,7 @@ function performanceNote(
     id: `${note.occurrenceId}:${note.musicXmlId}:${index}`,
     musicXmlId: note.musicXmlId,
     pitch,
+    dynamic: note.dynamic,
     onset,
     release,
     visual: visualMap?.get(note.musicXmlId) ?? null,
@@ -1522,7 +1565,7 @@ export function realtimePlayheadAt(
 }
 
 export interface RealtimeAudioSink {
-  attack(pitches: readonly string[]): void;
+  attack(pitches: readonly string[], dynamic: MusicalDynamic): void;
   release(pitches: readonly string[]): void;
   stop(): void;
 }
@@ -1644,17 +1687,25 @@ export class RealtimeController {
         currentByPitch.set(pitch, ids);
       }
       const releases: string[] = [];
-      const attacks: string[] = [];
+      const attacksByDynamic = new Map<MusicalDynamic, string[]>();
       for (const [pitch, currentIds] of currentByPitch) {
         const desiredIds = desiredByPitch.get(pitch);
         if (!desiredIds || ![...currentIds].some((id) => desiredIds.has(id))) releases.push(pitch);
       }
       for (const [pitch, desiredIds] of desiredByPitch) {
         const currentIds = currentByPitch.get(pitch);
-        if (!currentIds || ![...desiredIds].some((id) => currentIds.has(id))) attacks.push(pitch);
+        if (!currentIds || ![...desiredIds].some((id) => currentIds.has(id))) {
+          const desiredNote = activeNotes.find((note) => (
+            note.pitch === pitch && desiredIds.has(note.id)
+          ));
+          const dynamic = desiredNote?.dynamic ?? "mp";
+          const selected = attacksByDynamic.get(dynamic) ?? [];
+          selected.push(pitch);
+          attacksByDynamic.set(dynamic, selected);
+        }
       }
       if (releases.length > 0) this.sink.release(releases);
-      if (attacks.length > 0) this.sink.attack(attacks);
+      for (const [dynamic, attacks] of attacksByDynamic) this.sink.attack(attacks, dynamic);
       this.soundingNotes = new Map(activeNotes.map((note) => [note.id, note.pitch]));
     } else if (this.soundingNotes.size > 0) {
       this.silence();

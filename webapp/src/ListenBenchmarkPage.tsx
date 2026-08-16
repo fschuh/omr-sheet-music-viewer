@@ -28,6 +28,13 @@ import {
   LISTEN_BENCHMARK_TONE_RENDERER,
   type ListenBenchmarkRendererConfiguration,
 } from "./listenBenchmarkAudio";
+import {
+  conciseCourseClearDynamicsResult,
+  runCourseClearConstantLayerDynamics,
+  runCourseClearMixedDynamics,
+  type CourseClearDynamicsSuiteResult,
+  type CourseClearMixedDynamicsSuiteResult,
+} from "./listenDynamicsBenchmark";
 
 let automaticBenchmarkStarted = false;
 
@@ -43,12 +50,14 @@ export function ListenBenchmarkPage() {
   const [runningTask, setRunningTask] = useState<
     "online_amt" | "spectral" | "sequence" | "threshold-sweep" | "retrigger-sweep" |
       "articulation" | "reset-comparison" | null
+      | "dynamics-constant" | "dynamics-mixed"
   >(null);
   const running = runningTask !== null;
   const [progress, setProgress] = useState("");
   const [progressTask, setProgressTask] = useState<
     "isolated" | "sequence" | "threshold-sweep" | "retrigger-sweep" | "articulation" |
       "reset-comparison"
+      | "dynamics-constant" | "dynamics-mixed"
   >("isolated");
   const [error, setError] = useState<string | null>(null);
   const [automated, setAutomated] = useState<ListenBenchmarkSummary | null>(null);
@@ -61,6 +70,10 @@ export function ListenBenchmarkPage() {
     useState<ListenRetriggerSweepResult | null>(null);
   const [resetComparisonResult, setResetComparisonResult] =
     useState<ListenInferenceResetBenchmarkResult | null>(null);
+  const [dynamicsResult, setDynamicsResult] =
+    useState<CourseClearDynamicsSuiteResult | null>(null);
+  const [mixedDynamicsResult, setMixedDynamicsResult] =
+    useState<CourseClearMixedDynamicsSuiteResult | null>(null);
   const [manual, setManual] = useState<ListenBenchmarkTrial[]>([]);
   const [manualSource, setManualSource] = useState<"acoustic" | "digital">("acoustic");
   const [manualCorrect, setManualCorrect] = useState(true);
@@ -71,7 +84,13 @@ export function ListenBenchmarkPage() {
   useEffect(() => {
     if (automaticBenchmarkStarted) return;
     const query = new URLSearchParams(window.location.search);
-    if (query.get("listen-retrigger-sweep") === "auto") {
+    if (query.get("listen-dynamics-constant") === "auto") {
+      automaticBenchmarkStarted = true;
+      void runDynamicsConstant();
+    } else if (query.get("listen-dynamics-mixed") === "auto") {
+      automaticBenchmarkStarted = true;
+      void runDynamicsMixed();
+    } else if (query.get("listen-retrigger-sweep") === "auto") {
       automaticBenchmarkStarted = true;
       void runRetriggerSweep();
     } else if (query.get("listen-threshold-sweep") === "auto") {
@@ -253,6 +272,54 @@ export function ListenBenchmarkPage() {
       (window as typeof window & {
         listenInferenceResetBenchmarkResult?: ListenInferenceResetBenchmarkResult;
       }).listenInferenceResetBenchmarkResult = result;
+      document.body.dataset.status = "complete";
+    } catch (benchmarkError) {
+      setError(benchmarkError instanceof Error ? benchmarkError.message : String(benchmarkError));
+      document.body.dataset.status = "error";
+    } finally {
+      setRunningTask(null);
+    }
+  }
+
+  async function runDynamicsConstant() {
+    setRunningTask("dynamics-constant");
+    setProgressTask("dynamics-constant");
+    setError(null);
+    setProgress("Preparing recorded piano layers…");
+    document.body.dataset.status = "running";
+    try {
+      const result = await runCourseClearConstantLayerDynamics(
+        (complete, total, label) => setProgress(`${complete} / ${total} layers · ${label}`),
+        benchmarkRenderer,
+      );
+      setDynamicsResult(result);
+      (window as typeof window & {
+        listenDynamicsBenchmarkResult?: CourseClearDynamicsSuiteResult;
+      }).listenDynamicsBenchmarkResult = result;
+      document.body.dataset.status = "complete";
+    } catch (benchmarkError) {
+      setError(benchmarkError instanceof Error ? benchmarkError.message : String(benchmarkError));
+      document.body.dataset.status = "error";
+    } finally {
+      setRunningTask(null);
+    }
+  }
+
+  async function runDynamicsMixed() {
+    setRunningTask("dynamics-mixed");
+    setProgressTask("dynamics-mixed");
+    setError(null);
+    setProgress("Preparing continuous crescendo-decrescendo passages…");
+    document.body.dataset.status = "running";
+    try {
+      const result = await runCourseClearMixedDynamics(
+        (complete, total, label) => setProgress(`${complete} / ${total} pianos · ${label}`),
+        benchmarkRenderer,
+      );
+      setMixedDynamicsResult(result);
+      (window as typeof window & {
+        listenMixedDynamicsBenchmarkResult?: CourseClearMixedDynamicsSuiteResult;
+      }).listenMixedDynamicsBenchmarkResult = result;
       document.body.dataset.status = "complete";
     } catch (benchmarkError) {
       setError(benchmarkError instanceof Error ? benchmarkError.message : String(benchmarkError));
@@ -935,6 +1002,117 @@ export function ListenBenchmarkPage() {
             </div>
             <h3>Detailed articulation diagnostics</h3>
             <pre>{articulationDiagnostics(articulationResult)}</pre>
+          </>
+        ) : null}
+      </section>
+
+      <section className="sequence-benchmark dynamics-benchmark">
+        <h2>Course Clear piano dynamics</h2>
+        <p>
+          Constant-layer runs cover all 4 Splendid and 16 Salamander recordings. The mixed
+          suite keeps one uninterrupted 27-attack recognition trace while moving through every
+          layer and back down. Pitch, 1000 ms timing, normal articulation, and matcher policy
+          remain fixed.
+        </p>
+        <button type="button" disabled={running} onClick={() => void runDynamicsConstant()}>
+          {runningTask === "dynamics-constant" ? "Running…" : "Run all constant layers"}
+        </button>{" "}
+        <button type="button" disabled={running} onClick={() => void runDynamicsMixed()}>
+          {runningTask === "dynamics-mixed" ? "Running…" : "Run mixed dynamics"}
+        </button>
+        {progress && (progressTask === "dynamics-constant" || progressTask === "dynamics-mixed")
+          ? <span className="benchmark-progress">{progress}</span>
+          : null}
+        {dynamicsResult ? (
+          <>
+            <h3>Constant-layer results</h3>
+            <div className="benchmark-table-wrap">
+              <table className="benchmark-table">
+                <thead><tr>
+                  <th>Piano / layer</th><th>Independent</th><th>Ordered</th><th>Complete</th>
+                  <th>Misses</th><th>False / skip / duplicate</th><th>p95 latency</th>
+                  <th>Peak / RMS</th><th>PCM</th>
+                </tr></thead>
+                <tbody>
+                  {dynamicsResult.runs.map((run) => (
+                    <tr key={`${run.piano}-${run.layer}`}>
+                      <td>{run.pianoName} · {run.layer}</td>
+                      <td>{run.recognition.summary.independentMatchCount}/27 ({(
+                        run.recognition.summary.independentMatchRate * 100
+                      ).toFixed(1)}%)</td>
+                      <td>{run.recognition.summary.orderedAdvanceCount}/27 ({(
+                        run.recognition.summary.orderedAdvanceRate * 100
+                      ).toFixed(1)}%)</td>
+                      <td>{run.recognition.summary.complete ? "Yes" : "No"}</td>
+                      <td>{run.recognition.summary.missedCount}</td>
+                      <td>{run.recognition.summary.falseAdvanceCount} / {run.recognition.summary.skippedAdvanceCount} / {run.recognition.summary.duplicateAdvanceCount}</td>
+                      <td>{run.recognition.summary.p95OrderedAdvanceLatencyMs === null
+                        ? "—"
+                        : `${run.recognition.summary.p95OrderedAdvanceLatencyMs.toFixed(0)} ms`}</td>
+                      <td>{run.peak.toFixed(4)} / {run.rms.toFixed(4)}</td>
+                      <td><code>{run.pcmSignature.pcmHash}</code></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="benchmark-table-wrap">
+              <table className="benchmark-table">
+                <thead><tr>
+                  <th>Aggregate</th><th>Independent</th><th>Ordered</th><th>Complete</th>
+                  <th>Safety F/S/D</th><th>Worst layer</th>
+                </tr></thead>
+                <tbody>
+                  {[...dynamicsResult.pianos, {
+                    piano: "cross" as const,
+                    pianoName: "Cross-piano (equal weight)",
+                    ...dynamicsResult.crossPiano,
+                  }].map((summary) => (
+                    <tr key={summary.piano}>
+                      <td>{summary.pianoName}</td>
+                      <td>{(summary.independentMatchRate * 100).toFixed(1)}%</td>
+                      <td>{(summary.orderedAdvanceRate * 100).toFixed(1)}%</td>
+                      <td>{summary.completePassageCount}/{summary.runCount} ({(
+                        summary.completePassageRate * 100
+                      ).toFixed(1)}%)</td>
+                      <td>{summary.falseAdvanceCount} / {summary.skippedAdvanceCount} / {summary.duplicateAdvanceCount}</td>
+                      <td>{summary.worstPerformingLayer ?? "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <pre>{JSON.stringify(conciseCourseClearDynamicsResult(dynamicsResult), null, 2)}</pre>
+          </>
+        ) : null}
+        {mixedDynamicsResult ? (
+          <>
+            <h3>Mixed crescendo-decrescendo results</h3>
+            <div className="benchmark-table-wrap">
+              <table className="benchmark-table">
+                <thead><tr>
+                  <th>Piano</th><th>Layer path</th><th>Independent</th><th>Ordered</th>
+                  <th>Complete</th><th>Misses</th><th>False / skip / duplicate</th>
+                  <th>Peak / RMS</th><th>PCM</th>
+                </tr></thead>
+                <tbody>
+                  {mixedDynamicsResult.runs.map((run) => (
+                    <tr key={run.piano}>
+                      <td>{run.pianoName}</td>
+                      <td><code>{run.attackLayers.join(" ")}</code></td>
+                      <td>{run.recognition.summary.independentMatchCount}/27</td>
+                      <td>{run.recognition.summary.orderedAdvanceCount}/27</td>
+                      <td>{run.recognition.summary.complete ? "Yes" : "No"}</td>
+                      <td>{run.recognition.summary.missedCount}</td>
+                      <td>{run.recognition.summary.falseAdvanceCount} / {run.recognition.summary.skippedAdvanceCount} / {run.recognition.summary.duplicateAdvanceCount}</td>
+                      <td>{run.peak.toFixed(4)} / {run.rms.toFixed(4)}</td>
+                      <td><code>{run.pcmSignature.pcmHash}</code></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <pre>{JSON.stringify(conciseCourseClearDynamicsResult(mixedDynamicsResult), null, 2)}</pre>
           </>
         ) : null}
       </section>

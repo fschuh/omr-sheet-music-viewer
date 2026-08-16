@@ -11,7 +11,9 @@ if (
   query.has("listen-threshold-sweep") ||
   query.has("listen-retrigger-sweep") ||
   query.has("listen-articulation") ||
-  query.has("listen-inference-reset")
+  query.has("listen-inference-reset") ||
+  query.has("listen-dynamics-constant") ||
+  query.has("listen-dynamics-mixed")
 ) {
   void import("./ListenBenchmarkPage").then(({ ListenBenchmarkPage }) => {
     root.render(<StrictMode><ListenBenchmarkPage /></StrictMode>);

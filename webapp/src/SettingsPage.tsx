@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { playbackCommandNames, type PlaybackCommand } from "./playback";
+import { PIANO_IDS, PIANO_REGISTRY, type PianoId } from "./pianoRegistry";
 import {
   defaultPlaybackShortcuts,
   formatKeyboardShortcut,
@@ -12,6 +13,7 @@ import {
 
 interface SettingsPageProps {
   shortcuts: PlaybackShortcuts;
+  playbackPiano: PianoId;
   debugPanelEnabled: boolean;
   nativeAvailable: boolean;
   midiPorts: string[];
@@ -19,6 +21,7 @@ interface SettingsPageProps {
   midiRefreshing: boolean;
   midiCaptureCommand: PlaybackCommand | null;
   onChangeShortcuts: (shortcuts: PlaybackShortcuts) => void;
+  onChangePlaybackPiano: (pianoId: PianoId) => void;
   onChangeDebugPanelEnabled: (enabled: boolean) => void;
   onBeginMidiCapture: (command: PlaybackCommand) => void;
   onCancelMidiCapture: () => void;
@@ -28,6 +31,7 @@ interface SettingsPageProps {
 
 export function SettingsPage({
   shortcuts,
+  playbackPiano,
   debugPanelEnabled,
   nativeAvailable,
   midiPorts,
@@ -35,6 +39,7 @@ export function SettingsPage({
   midiRefreshing,
   midiCaptureCommand,
   onChangeShortcuts,
+  onChangePlaybackPiano,
   onChangeDebugPanelEnabled,
   onBeginMidiCapture,
   onCancelMidiCapture,
@@ -109,6 +114,30 @@ export function SettingsPage({
         <h2 id="settings-title">Settings</h2>
         <p>Customize playback controls and optional diagnostics.</p>
       </div>
+
+      <section className="settings-card" aria-labelledby="playback-piano-title">
+        <header className="settings-card-header">
+          <div>
+            <h3 id="playback-piano-title">Playback</h3>
+            <p>Select the recorded piano used for score playback and note audition.</p>
+          </div>
+        </header>
+        <label className="settings-select-row">
+          <span>
+            <strong>Playback piano</strong>
+            <small>MusicXML without a dynamic marking uses mezzo-piano (mp).</small>
+          </span>
+          <select
+            aria-label="Playback piano"
+            value={playbackPiano}
+            onChange={(event) => onChangePlaybackPiano(event.target.value as PianoId)}
+          >
+            {PIANO_IDS.map((pianoId) => (
+              <option key={pianoId} value={pianoId}>{PIANO_REGISTRY[pianoId].displayName}</option>
+            ))}
+          </select>
+        </label>
+      </section>
 
       <section className="settings-card" aria-labelledby="shortcuts-title">
         <header className="settings-card-header">

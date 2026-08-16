@@ -8,6 +8,7 @@ const CHROME = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
 const BASE_URL = process.argv[2] ?? "http://127.0.0.1:5173/online-amt-benchmark.html";
 const CONFIGURATION_FILTER = process.argv[3];
 const LISTEN_SMOKE_MODE = CONFIGURATION_FILTER === "listen-smoke";
+const LISTEN_DYNAMICS_SMOKE_MODE = CONFIGURATION_FILTER === "listen-dynamics-smoke";
 const LISTEN_ACCURACY_MODE = CONFIGURATION_FILTER === "listen-accuracy";
 const LISTEN_SEQUENCE_SUMMARY_MODE = CONFIGURATION_FILTER === "listen-sequence-summary";
 const LISTEN_SEQUENCE_MODE = CONFIGURATION_FILTER === "listen-sequence" ||
@@ -25,6 +26,16 @@ const LISTEN_INFERENCE_RESET_SUMMARY_MODE = CONFIGURATION_FILTER ===
   "listen-inference-reset-summary";
 const LISTEN_INFERENCE_RESET_MODE = CONFIGURATION_FILTER === "listen-inference-reset" ||
   LISTEN_INFERENCE_RESET_SUMMARY_MODE;
+const LISTEN_DYNAMICS_CONSTANT_MODE = [
+  "listen-dynamics-constant",
+  "listen-dynamics-constant-legacy",
+  "listen-dynamics-constant-tone",
+].includes(CONFIGURATION_FILTER);
+const LISTEN_DYNAMICS_MIXED_MODE = [
+  "listen-dynamics-mixed",
+  "listen-dynamics-mixed-legacy",
+  "listen-dynamics-mixed-tone",
+].includes(CONFIGURATION_FILTER);
 const LISTEN_PARITY_MODE = CONFIGURATION_FILTER === "listen-parity";
 const FINGERING_SMOKE_MODE = CONFIGURATION_FILTER === "fingering-smoke";
 const CONFIGURATIONS = [
@@ -175,10 +186,11 @@ async function runConfiguration(configuration) {
     await client.send("Page.enable");
     const pageUrl = LISTEN_PARITY_MODE
       ? BASE_URL.replace(/online-amt-benchmark\.html(?:\?.*)?$/, "listen-benchmark-parity.html")
-      : (LISTEN_SMOKE_MODE || LISTEN_ACCURACY_MODE || LISTEN_SEQUENCE_MODE ||
+      : (LISTEN_SMOKE_MODE || LISTEN_DYNAMICS_SMOKE_MODE || LISTEN_ACCURACY_MODE || LISTEN_SEQUENCE_MODE ||
         LISTEN_THRESHOLD_SWEEP_MODE ||
         LISTEN_RETRIGGER_SWEEP_MODE || LISTEN_ARTICULATION_MODE ||
-        LISTEN_INFERENCE_RESET_MODE) &&
+        LISTEN_INFERENCE_RESET_MODE || LISTEN_DYNAMICS_CONSTANT_MODE ||
+        LISTEN_DYNAMICS_MIXED_MODE) &&
         /online-amt-benchmark\.html(?:\?|$)/.test(BASE_URL)
       ? BASE_URL.replace(/online-amt-benchmark\.html/, "index.html")
       : BASE_URL;
@@ -186,7 +198,7 @@ async function runConfiguration(configuration) {
     await client.send("Page.navigate", {
       url: `${pageUrl}${separator}${configuration.query}`,
     });
-    if (LISTEN_SMOKE_MODE) {
+    if (LISTEN_SMOKE_MODE || LISTEN_DYNAMICS_SMOKE_MODE) {
       return await evaluate(client, `(async () => {
         const startedAt = performance.now();
         const [{ captureIsolatedOnlineAmtBenchmark }, { OnlineAmtSession }, audio] =
@@ -198,6 +210,9 @@ async function runConfiguration(configuration) {
         const renderer = new URLSearchParams(location.search).get("benchmark-renderer") === "tone"
           ? audio.LISTEN_BENCHMARK_TONE_RENDERER
           : audio.LISTEN_BENCHMARK_RENDERER;
+        const query = new URLSearchParams(location.search);
+        const piano = query.get("benchmark-piano") ?? "splendid";
+        const layer = query.get("benchmark-layer") ?? "mp";
         const session = await OnlineAmtSession.create({
           modelUrl: new URL("/models/online_amt_streaming.onnx", location.href).href,
           numThreads: 1,
@@ -213,18 +228,34 @@ async function runConfiguration(configuration) {
             playedPitches: [60, 64, 67],
             session,
             renderer,
+            piano,
+            layer,
           });
-          if (!result.advanced) {
+          if (!result.advanced && !${LISTEN_DYNAMICS_SMOKE_MODE}) {
             throw new Error("The smoke-test C-major chord did not advance.");
+          }
+          if (
+            !Number.isFinite(result.audioDiagnostics?.peak) ||
+            !Number.isFinite(result.audioDiagnostics?.rms) ||
+            result.audioDiagnostics.peak <= 0 || result.audioDiagnostics.rms <= 0
+          ) {
+            throw new Error("The piano/layer smoke rendered silent or non-finite PCM.");
           }
           if (result.renderer?.version !== renderer.version) {
             throw new Error(
               \`Expected renderer \${renderer.version}, received \${result.renderer?.version}.\`,
             );
           }
+          if (result.piano?.id !== piano || result.piano?.layer !== layer) {
+            throw new Error(
+              \`Expected piano/layer \${piano}/\${layer}, received \` +
+              \`\${result.piano?.id}/\${result.piano?.layer}.\`,
+            );
+          }
           return {
             passed: true,
             renderer: result.renderer,
+            piano: result.piano,
             targetPitches: [60, 64, 67],
             advanced: result.advanced,
             onsetToAdvanceMs: result.onsetToAdvanceMs,
@@ -275,7 +306,7 @@ async function runConfiguration(configuration) {
       })()`);
     }
     const deadline = Date.now() + (
-      LISTEN_RETRIGGER_SWEEP_MODE
+      (LISTEN_RETRIGGER_SWEEP_MODE || LISTEN_DYNAMICS_CONSTANT_MODE)
         ? 1_200_000
         : (LISTEN_ACCURACY_MODE || LISTEN_SEQUENCE_MODE || LISTEN_THRESHOLD_SWEEP_MODE ||
           LISTEN_ARTICULATION_MODE)
@@ -303,7 +334,62 @@ async function runConfiguration(configuration) {
     }
     return await evaluate(
       client,
-      LISTEN_RETRIGGER_SWEEP_MODE
+      (LISTEN_DYNAMICS_CONSTANT_MODE || LISTEN_DYNAMICS_MIXED_MODE)
+        ? `(() => {
+            const constant = ${LISTEN_DYNAMICS_CONSTANT_MODE};
+            const result = constant
+              ? window.listenDynamicsBenchmarkResult
+              : window.listenMixedDynamicsBenchmarkResult;
+            return {
+              suite: result.suite,
+              renderer: result.renderer,
+              pianos: result.pianos,
+              crossPiano: result.crossPiano,
+              safety: {
+                falseAdvanceCount: result.crossPiano.falseAdvanceCount,
+                skippedAdvanceCount: result.crossPiano.skippedAdvanceCount,
+                duplicateAdvanceCount: result.crossPiano.duplicateAdvanceCount,
+                carriedBassMatcherConfigurationChanged: false,
+              },
+              runs: result.runs.map((run) => ({
+                renderer: run.renderer,
+                piano: run.piano,
+                pianoName: run.pianoName,
+                layer: run.layer,
+                dynamicProfile: run.dynamicProfile,
+                ...(run.dynamicProfile === "crescendo-decrescendo"
+                  ? { attackLayers: run.attackLayers }
+                  : {}),
+                sampleLibraryVersion: run.sampleLibraryVersion,
+                peak: run.peak,
+                rms: run.rms,
+                pcmSignature: {
+                  sampleRate: run.pcmSignature.sampleRate,
+                  frameCount: run.pcmSignature.frameCount,
+                  pcmByteLength: run.pcmSignature.pcmByteLength,
+                  chunkSize: run.pcmSignature.chunkSize,
+                  pcmHash: run.pcmSignature.pcmHash,
+                },
+                summary: {
+                  complete: run.recognition.summary.complete,
+                  independentMatchCount: run.recognition.summary.independentMatchCount,
+                  independentMatchRate: run.recognition.summary.independentMatchRate,
+                  orderedAdvanceCount: run.recognition.summary.orderedAdvanceCount,
+                  orderedAdvanceRate: run.recognition.summary.orderedAdvanceRate,
+                  missedCount: run.recognition.summary.missedCount,
+                  falseAdvanceCount: run.recognition.summary.falseAdvanceCount,
+                  skippedAdvanceCount: run.recognition.summary.skippedAdvanceCount,
+                  duplicateAdvanceCount: run.recognition.summary.duplicateAdvanceCount,
+                  firstStallIndex: run.recognition.summary.firstStallIndex,
+                  p95IndependentMatchLatencyMs:
+                    run.recognition.summary.p95IndependentMatchLatencyMs,
+                  p95OrderedAdvanceLatencyMs:
+                    run.recognition.summary.p95OrderedAdvanceLatencyMs,
+                },
+              })),
+            };
+          })()`
+        : LISTEN_RETRIGGER_SWEEP_MODE
         ? `(() => {
             const result = window.listenRetriggerSweepResult;
             const exportCandidate = (candidate) => ({
@@ -655,7 +741,7 @@ async function runConfiguration(configuration) {
 }
 
 function pairedRendererConfigurations(name, query) {
-  return [
+  const configurations = [
     {
       name: `${name}-legacy`,
       query: `${query}&benchmark-renderer=legacy`,
@@ -665,6 +751,21 @@ function pairedRendererConfigurations(name, query) {
       query: `${query}&benchmark-renderer=tone`,
     },
   ];
+  return CONFIGURATION_FILTER === `${name}-legacy` ||
+      CONFIGURATION_FILTER === `${name}-tone`
+    ? configurations.filter(({ name: candidate }) => candidate === CONFIGURATION_FILTER)
+    : configurations;
+}
+
+function dynamicsSmokeConfigurations() {
+  return [
+    { piano: "splendid", layer: "mp" },
+    { piano: "salamander", layer: "v01" },
+    { piano: "salamander", layer: "v16" },
+  ].flatMap(({ piano, layer }) => pairedRendererConfigurations(
+    `listen-dynamics-smoke-${piano}-${layer}`,
+    `listen-smoke=auto&benchmark-piano=${piano}&benchmark-layer=${layer}`,
+  ));
 }
 
 const selectedConfigurations = FINGERING_SMOKE_MODE
@@ -674,6 +775,8 @@ const selectedConfigurations = FINGERING_SMOKE_MODE
     }]
   : LISTEN_SMOKE_MODE
   ? pairedRendererConfigurations("listen-smoke", "listen-smoke=auto")
+  : LISTEN_DYNAMICS_SMOKE_MODE
+  ? dynamicsSmokeConfigurations()
   : LISTEN_RETRIGGER_SWEEP_MODE
   ? pairedRendererConfigurations(
       LISTEN_RETRIGGER_SWEEP_SUMMARY_MODE
@@ -704,6 +807,16 @@ const selectedConfigurations = FINGERING_SMOKE_MODE
         ? "listen-articulation-summary"
         : "listen-articulation",
       "listen-articulation=auto",
+    )
+  : LISTEN_DYNAMICS_CONSTANT_MODE
+  ? pairedRendererConfigurations(
+      "listen-dynamics-constant",
+      "listen-dynamics-constant=auto",
+    )
+  : LISTEN_DYNAMICS_MIXED_MODE
+  ? pairedRendererConfigurations(
+      "listen-dynamics-mixed",
+      "listen-dynamics-mixed=auto",
     )
   : LISTEN_PARITY_MODE
   ? [{ name: "listen-parity", query: "" }]
@@ -880,7 +993,7 @@ for (let index = 0; index < selectedConfigurations.length; index += 1) {
       }
     : result;
   results.push({ name: configuration.name, ...exportedResult });
-  if (LISTEN_SMOKE_MODE) {
+  if (LISTEN_SMOKE_MODE || LISTEN_DYNAMICS_SMOKE_MODE) {
     console.error(
       `${configuration.name}: passed=${result.passed} ` +
       `advanced=${result.advanced} onset=${result.onsetToAdvanceMs}ms ` +
@@ -900,6 +1013,26 @@ for (let index = 0; index < selectedConfigurations.length; index += 1) {
     );
   } else if (LISTEN_PARITY_MODE) {
     console.error(`${configuration.name}: ${result.checks.length} parity checks passed`);
+  } else if (LISTEN_DYNAMICS_CONSTANT_MODE || LISTEN_DYNAMICS_MIXED_MODE) {
+    const unsafeRuns = result.runs.filter(({ summary }) => (
+      summary.falseAdvanceCount > 0 ||
+      summary.skippedAdvanceCount > 0 ||
+      summary.duplicateAdvanceCount > 0
+    ));
+    console.error(
+      `${configuration.name}: runs=${result.runs.length} ` +
+      `ordered=${(result.crossPiano.orderedAdvanceRate * 100).toFixed(1)}% ` +
+      `independent=${(result.crossPiano.independentMatchRate * 100).toFixed(1)}% ` +
+      `safety=${result.crossPiano.falseAdvanceCount}/` +
+      `${result.crossPiano.skippedAdvanceCount}/${result.crossPiano.duplicateAdvanceCount}`,
+    );
+    for (const run of unsafeRuns) {
+      console.error(
+        `${configuration.name}: unsafe ${run.piano}/${run.layer ?? run.dynamicProfile} ` +
+        `${run.summary.falseAdvanceCount}/${run.summary.skippedAdvanceCount}/` +
+        `${run.summary.duplicateAdvanceCount}`,
+      );
+    }
   } else if (LISTEN_RETRIGGER_SWEEP_MODE) {
     const selected = result.recommendation ?? result.diagnosticCandidate;
     console.error(
@@ -970,4 +1103,8 @@ for (let index = 0; index < selectedConfigurations.length; index += 1) {
     );
   }
 }
-console.log(JSON.stringify(results, null, 2));
+console.log(JSON.stringify(
+  results,
+  null,
+  LISTEN_DYNAMICS_CONSTANT_MODE || LISTEN_DYNAMICS_MIXED_MODE ? 0 : 2,
+));

@@ -5,6 +5,7 @@ import type { OnlineAmtStepResult } from "./onlineAmtSession";
 import {
   LISTEN_BENCHMARK_RELEASE_MS,
   LISTEN_BENCHMARK_RENDERER,
+  LISTEN_BENCHMARK_PIANO,
   benchmarkChordGain,
 } from "./listenBenchmarkAudio";
 import {
@@ -597,6 +598,7 @@ test("captures exactly one session and decoder reset per articulation", async ()
       return {
         pcm: new Float32Array(512),
         renderer: { ...LISTEN_BENCHMARK_RENDERER },
+        piano: { ...LISTEN_BENCHMARK_PIANO, layers: [...LISTEN_BENCHMARK_PIANO.layers] },
         diagnostics: { frameCount: 512, durationMs: 32, peak: 0, rms: 0 },
       };
     },

@@ -12,6 +12,7 @@ import {
   LISTEN_BENCHMARK_RENDERER,
   type ListenBenchmarkAudioDiagnostics,
   type ListenBenchmarkAudioRenderResult,
+  type ListenBenchmarkPianoConfiguration,
   type ListenBenchmarkRendererConfiguration,
   renderBenchmarkAudio,
 } from "./listenBenchmarkAudio";
@@ -24,6 +25,7 @@ import {
   type ListenRecognitionTrace,
   type SequenceInferenceSession,
 } from "./listenSequenceBenchmark";
+import type { PianoId, PianoLayerId } from "./pianoRegistry";
 
 export { COURSE_CLEAR_BENCHMARK_MOMENTS, type ScoreBenchmarkMoment };
 
@@ -47,6 +49,7 @@ export interface ListenBenchmarkTrial {
   renderer?: ListenBenchmarkRendererConfiguration;
   audioDiagnostics?: ListenBenchmarkAudioDiagnostics;
   trace?: ListenRecognitionTrace;
+  piano?: ListenBenchmarkPianoConfiguration;
   recognizedOnsets?: Array<{
     midi: number;
     confidence: number;
@@ -137,6 +140,7 @@ export function summarizeListenBenchmark(trials: ListenBenchmarkTrial[]): Listen
 export function renderIsolatedListenBenchmarkAudio(
   playedPitches: readonly number[],
   renderer: ListenBenchmarkRendererConfiguration = LISTEN_BENCHMARK_RENDERER,
+  selection: { piano?: PianoId; layer?: PianoLayerId } = {},
 ): Promise<ListenBenchmarkAudioRenderResult> {
   return renderBenchmarkAudio({
     attacks: [{
@@ -149,6 +153,7 @@ export function renderIsolatedListenBenchmarkAudio(
     sampleRate: 16_000,
     chunkSize: ONLINE_AMT_CHUNK_SIZE,
     renderer,
+    ...selection,
   });
 }
 
@@ -350,6 +355,7 @@ type BundledBenchmarkEvaluation = Pick<
   | "renderer"
   | "audioDiagnostics"
   | "trace"
+  | "piano"
 >;
 
 export async function captureIsolatedOnlineAmtBenchmark(options: {
@@ -358,10 +364,13 @@ export async function captureIsolatedOnlineAmtBenchmark(options: {
   playedPitches: readonly number[];
   session: SequenceInferenceSession;
   renderer?: ListenBenchmarkRendererConfiguration;
+  piano?: PianoId;
+  layer?: PianoLayerId;
 }): Promise<BundledBenchmarkEvaluation> {
   const rendered = await renderIsolatedListenBenchmarkAudio(
     options.playedPitches,
     options.renderer,
+    { piano: options.piano, layer: options.layer },
   );
   const relevantPitches = [...new Set([
     ...options.targetPitches,
@@ -416,6 +425,7 @@ export async function captureIsolatedOnlineAmtBenchmark(options: {
     renderer: rendered.renderer,
     audioDiagnostics: rendered.diagnostics,
     trace,
+    piano: rendered.piano,
   };
 }
 

@@ -83,6 +83,7 @@ const moment: PlaybackMoment = {
   barKey: "page-0-measure-1",
   visualGroupIds: groups.map((value) => value.visual_group_id),
   pitches: ["C4", "E3"],
+  dynamic: "mp",
   keyboardNotes: [{ pitch: "C4" }, { pitch: "E3" }],
   center: [301, 435],
 };

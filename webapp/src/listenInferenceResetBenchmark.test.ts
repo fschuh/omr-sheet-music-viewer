@@ -3,6 +3,7 @@ import test from "node:test";
 import type { OnlineAmtStepResult } from "./onlineAmtSession";
 import {
   LISTEN_BENCHMARK_RENDERER,
+  LISTEN_BENCHMARK_PIANO,
 } from "./listenBenchmarkAudio";
 import {
   COURSE_CLEAR_ARTICULATION_INTERVAL_MS,
@@ -135,6 +136,7 @@ test("renders the continuous passage once and sends identical chunks to both pas
       return {
         pcm: new Float32Array(value.frameCount),
         renderer: { ...LISTEN_BENCHMARK_RENDERER },
+        piano: { ...LISTEN_BENCHMARK_PIANO, layers: [...LISTEN_BENCHMARK_PIANO.layers] },
         diagnostics: { frameCount: value.frameCount, durationMs: value.durationMs, peak: 0, rms: 0 },
       };
     },

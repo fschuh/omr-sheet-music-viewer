@@ -1,8 +1,8 @@
 # Splendid Grand Piano samples
 
-This directory contains the `mp` (medium-dynamics) OGG layer of **Splendid
-Grand Piano**, a sampled Steinway piano released into the public domain by
-AKAI.
+This directory contains the `pp`, `mp`, `mf`, and `ff` OGG velocity layers of
+**Splendid Grand Piano**, a sampled Steinway piano released into the public
+domain by AKAI.
 
 - Original sample library: https://github.com/sfzinstruments/SplendidGrandPiano
 - Browser-format conversion: https://github.com/danigb/samples/tree/main/audio/splendid-grand-piano

@@ -62,6 +62,25 @@ test("parses polyphonic cursors, chords, pages, tempo, and ties from partwise Mu
   assert.deepEqual(route.tempoSegments.map((tempo) => tempo.bpm), [90, 120]);
 });
 
+test("defaults missing MusicXML dynamics to mp and carries explicit dynamics forward", () => {
+  const parsed = parseRealtimeMusicXml(score(`
+    <measure number="1">
+      <attributes><divisions>4</divisions></attributes>
+      ${quarter("default-mp", "C")}
+      <direction><direction-type><dynamics><ff/></dynamics></direction-type></direction>
+      ${quarter("explicit-ff", "D")}
+    </measure>
+    <measure number="2">${quarter("carried-ff", "E")}</measure>
+  `));
+
+  assert.deepEqual(parsed.measures.flatMap(({ notes }) => notes.map((note) => note.dynamic)), [
+    "mp", "ff", "ff",
+  ]);
+  assert.deepEqual(expandPerformanceRoute(parsed).notes.map((note) => note.dynamic), [
+    "mp", "ff", "ff",
+  ]);
+});
+
 test("sustains contiguous same-pitch slur endpoints as a realtime tie", () => {
   const parsed = parseRealtimeMusicXml(score(`
     <measure number="1">
@@ -568,8 +587,8 @@ test("controller pauses, resumes, changes tempo in place, and cancels sounding a
   const route: PerformanceRoute = {
     occurrences: [],
     notes: [
-      { id: "c", musicXmlId: "c", pitch: "C4", onset: 0, release: 1, visual: null },
-      { id: "d", musicXmlId: "d", pitch: "D4", onset: 1, release: 2, visual: null },
+      { id: "c", musicXmlId: "c", pitch: "C4", dynamic: "mp", onset: 0, release: 1, visual: null },
+      { id: "d", musicXmlId: "d", pitch: "D4", dynamic: "mp", onset: 1, release: 2, visual: null },
     ],
     events: [],
     tempoSegments: [{ offset: 0, bpm: 60 }],

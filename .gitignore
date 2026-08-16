@@ -18,6 +18,7 @@ _build/
 /webapp/node_modules
 /webapp/.test-dist
 /webapp/*.tsbuildinfo
+/webapp/public/audio/salamander-grand-piano/
 /src-tauri/target
 /src-tauri/gen
 

@@ -1510,6 +1510,25 @@ button:disabled {
   line-height: 1.45;
 }
 
+.settings-select-row {
+  align-items: center;
+  border-top: 1px solid #ddd7cf;
+  display: flex;
+  gap: 24px;
+  justify-content: space-between;
+  padding: 18px 26px 22px;
+}
+
+.settings-select-row > span {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.settings-select-row strong { color: #342e29; font-size: 0.9rem; }
+.settings-select-row small { color: #746c63; font-size: 0.79rem; line-height: 1.45; }
+.settings-select-row select { min-width: 230px; }
+
 .midi-status {
   align-items: center;
   background: #f4f1eb;

@@ -28,6 +28,10 @@ passes chunks to a dedicated inference worker. See the [benchmark index](BENCHMA
 and [runtime benchmark](RUNTIME_BENCHMARK.md) for the PyTorch, native ONNX Runtime,
 and browser WASM parity and latency results.
 
+The benchmark server also prepares the generated Salamander sample tree before
+startup. See the [piano dynamics benchmark](PIANO_DYNAMICS_BENCHMARK.md) for the
+constant-layer and continuous mixed-dynamics commands and measured results.
+
 The exported graph and the adapted streaming code are derived from
 `jdasam/online_amt`, which is distributed under the MIT license. The required
 copyright and license notice is shipped next to the model in

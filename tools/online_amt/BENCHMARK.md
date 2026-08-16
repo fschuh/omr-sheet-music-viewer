@@ -8,6 +8,7 @@ the current conclusions remain easy to find.
 | --- | --- | --- |
 | Runtime | Production's single-threaded optimized browser WASM configuration keeps pace with the 32 ms input cadence and preserves model-output parity. | [Runtime benchmark](RUNTIME_BENCHMARK.md) |
 | Listening | Direct v1 passes isolated acceptance at 98.1%; Tone v2 falls to 94.3% but improves aggregate continuous ordered advances from 331 to 355. Both retain zero false/skipped/duplicate advances in the dedicated safety families. | [Listening benchmark](LISTEN_BENCHMARK.md) |
+| Piano dynamics | All 20 recorded layers render distinctly under both renderers. Constant-layer recognition is 90.9% independent for legacy and 89.2% for Tone on the equal-piano aggregate; one Tone Salamander `v05` false advance is reported explicitly. | [Piano dynamics benchmark](PIANO_DYNAMICS_BENCHMARK.md) |
 
 ## Listening renderers
 
@@ -30,4 +31,5 @@ matcher changes.
 
 - [Runtime performance and parity](RUNTIME_BENCHMARK.md)
 - [Listening accuracy, sequence, articulation, reset, threshold, and retrigger history](LISTEN_BENCHMARK.md)
+- [Piano velocity-layer and mixed-dynamics results](PIANO_DYNAMICS_BENCHMARK.md)
 - [ONNX export and validation workflow](README.md)

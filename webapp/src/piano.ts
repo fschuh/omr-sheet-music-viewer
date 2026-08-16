@@ -1,15 +1,14 @@
 import * as Tone from "tone";
-
-const SAMPLE_FILES = [
-  "mp-B-1", "mp-Ds0", "mp-F0", "mp-G0", "mp-A0", "mp-B0", "mp-Cs1", "mp-D1",
-  "mp-E1", "mp-F1", "mp-G1", "mp-A1", "mp-B1", "mp-C2", "mp-D2", "mp-E2",
-  "mp-F2", "mp-G2", "mp-Gs2", "mp-A2", "mp-As2", "mp-B2", "mp-C3", "mp-D3",
-  "mp-E3", "mp-F3", "mp-G3", "mp-A3", "mp-B3", "mp-C4", "mp-D4", "mp-E4",
-  "mp-F4", "mp-G4", "mp-Gs4", "mp-A4", "mp-As4", "mp-B4", "mp-Cs5", "mp-D5",
-  "mp-Ds5", "mp-E5", "mp-F5", "mp-Fs5", "mp-G5", "mp-Gs5", "mp-A5", "mp-As5",
-  "mp-B5", "mp-C6", "mp-Cs6", "mp-D6", "mp-Ds6", "mp-F6", "mp-Fs6", "mp-G6",
-  "mp-Gs6", "mp-A6", "mp-As6",
-] as const;
+import {
+  DEFAULT_PIANO_ID,
+  isPianoLayerFor,
+  pianoDefinition,
+  pianoLayerForDynamic,
+  pianoSampleUrlsForLayer,
+  type MusicalDynamic,
+  type PianoId,
+  type PianoLayerId,
+} from "./pianoRegistry";
 
 export const PIANO_NOTE_RELEASE_SECONDS = 0.35;
 const AUDITION_HOLD_MS = 420;
@@ -25,7 +24,7 @@ export const PIANO_COMPRESSOR_OPTIONS = Object.freeze({
   knee: 12,
 });
 const WARMUP_NOTE = "C4";
-const WARMUP_VELOCITY = 0.0001;
+const WARMUP_GAIN = 0.0001;
 const WARMUP_DURATION_SECONDS = 0.02;
 const WARMUP_SETTLE_MS = 100;
 
@@ -55,17 +54,9 @@ export function pitchToMidi(pitch: string): number | null {
   return Number.isInteger(midi) && midi >= 0 && midi <= 127 ? midi : null;
 }
 
-const PIANO_SAMPLE_URLS: Readonly<Record<number, string>> = Object.fromEntries(
-  SAMPLE_FILES.map((file): [number, string] => {
-    const labelledMidi = pitchToMidi(file.slice(3).replace("s", "#"));
-    if (labelledMidi === null) throw new Error(`Invalid bundled piano sample name: ${file}`);
-    // This sample set labels each recording one octave below its concert pitch.
-    return [labelledMidi + 12, `/audio/piano/${encodeURIComponent(file)}.ogg`];
-  }),
-);
-
+/** Canonical Splendid mp roots retained for existing callers and regression PCM. */
 export function pianoSampleUrls(): Record<number, string> {
-  return { ...PIANO_SAMPLE_URLS };
+  return pianoSampleUrlsForLayer("splendid", "mp");
 }
 
 const PITCH_CLASSES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"] as const;
@@ -74,27 +65,40 @@ export function midiToPitchName(midi: number): string {
   return `${PITCH_CLASSES[midi % 12]}${Math.floor(midi / 12) - 1}`;
 }
 
-export function pianoChordVelocity(chordSize: number): number {
+/** Per-note mix gain. Recorded acoustic velocity is selected independently by layer. */
+export function pianoChordMixGain(chordSize: number): number {
   if (!Number.isInteger(chordSize) || chordSize <= 0) {
     throw new Error(`Piano chord size must be a positive integer, received ${chordSize}.`);
   }
   return Math.min(0.78, 0.9 / Math.sqrt(chordSize));
 }
 
+/** Backwards-compatible name for the canonical Tone benchmark configuration. */
+export const pianoChordVelocity = pianoChordMixGain;
+
 function wait(milliseconds: number): Promise<void> {
   return new Promise((resolve) => globalThis.setTimeout(resolve, milliseconds));
 }
 
 export interface PianoPlaybackEngine {
-  load(): Promise<void>;
+  load(layers?: readonly PianoLayerId[]): Promise<void>;
   activate(): Promise<void>;
   prepare(): Promise<void>;
-  attack(notes: readonly string[], velocity: number): void;
+  attack(notes: readonly string[], mixGain: number, layer: PianoLayerId): void;
   release(notes: readonly string[]): void;
+  dispose(): void;
 }
 
 export interface TonePianoGraph {
   sampler: Tone.Sampler;
+  compressor: Tone.Compressor;
+  limiter: Tone.Limiter;
+  loaded: Promise<void>;
+  dispose(): void;
+}
+
+export interface TonePianoLayeredGraph {
+  samplers: ReadonlyMap<PianoLayerId, Tone.Sampler>;
   compressor: Tone.Compressor;
   limiter: Tone.Limiter;
   loaded: Promise<void>;
@@ -106,17 +110,19 @@ export type TonePianoSamples = Readonly<Record<
   string | AudioBuffer | Tone.ToneAudioBuffer
 >>;
 
-/** Builds the graph shared by realtime playback and offline benchmark rendering. */
-export function createTonePianoGraph(
-  context: Tone.BaseContext = Tone.getContext(),
-  samples: TonePianoSamples = pianoSampleUrls(),
-): TonePianoGraph {
-  let resolveLoaded!: () => void;
-  let rejectLoaded!: (error: unknown) => void;
-  const loaded = new Promise<void>((resolve, reject) => {
-    resolveLoaded = resolve;
-    rejectLoaded = reject;
-  });
+interface TonePianoOutput {
+  compressor: Tone.Compressor;
+  limiter: Tone.Limiter;
+  dispose(): void;
+}
+
+interface TonePianoLayerSampler {
+  sampler: Tone.Sampler;
+  loaded: Promise<void>;
+  dispose(): void;
+}
+
+function createTonePianoOutput(context: Tone.BaseContext): TonePianoOutput {
   const limiter = new Tone.Limiter({
     context,
     threshold: PIANO_LIMITER_THRESHOLD_DB,
@@ -125,40 +131,114 @@ export function createTonePianoGraph(
     context,
     ...PIANO_COMPRESSOR_OPTIONS,
   }).connect(limiter);
-  const sampler = new Tone.Sampler({
-    context,
-    urls: { ...samples },
-    attack: PIANO_SAMPLER_ATTACK_SECONDS,
-    release: PIANO_NOTE_RELEASE_SECONDS,
-    curve: "exponential",
-    volume: PIANO_SAMPLER_VOLUME_DB,
-    onload: resolveLoaded,
-    onerror: rejectLoaded,
-  }).connect(compressor);
   return {
-    sampler,
     compressor,
     limiter,
-    loaded,
     dispose: () => {
-      sampler.dispose();
       compressor.dispose();
       limiter.dispose();
     },
   };
 }
 
+function createTonePianoLayerSampler(
+  context: Tone.BaseContext,
+  samples: TonePianoSamples,
+  destination: Tone.InputNode,
+  volumeDb = PIANO_SAMPLER_VOLUME_DB,
+): TonePianoLayerSampler {
+  let resolveLoaded!: () => void;
+  let rejectLoaded!: (error: unknown) => void;
+  const loaded = new Promise<void>((resolve, reject) => {
+    resolveLoaded = resolve;
+    rejectLoaded = reject;
+  });
+  const sampler = new Tone.Sampler({
+    context,
+    urls: { ...samples },
+    attack: PIANO_SAMPLER_ATTACK_SECONDS,
+    release: PIANO_NOTE_RELEASE_SECONDS,
+    curve: "exponential",
+    volume: volumeDb,
+    onload: resolveLoaded,
+    onerror: rejectLoaded,
+  }).connect(destination);
+  return { sampler, loaded, dispose: () => sampler.dispose() };
+}
+
+/** Builds the graph shared by canonical realtime playback and offline rendering. */
+export function createTonePianoGraph(
+  context: Tone.BaseContext = Tone.getContext(),
+  samples: TonePianoSamples = pianoSampleUrls(),
+): TonePianoGraph {
+  const output = createTonePianoOutput(context);
+  const layer = createTonePianoLayerSampler(context, samples, output.compressor);
+  return {
+    sampler: layer.sampler,
+    compressor: output.compressor,
+    limiter: output.limiter,
+    loaded: layer.loaded,
+    dispose: () => {
+      layer.dispose();
+      output.dispose();
+    },
+  };
+}
+
+/** Builds multiple acoustic layers over one shared compressor and limiter. */
+export function createTonePianoLayeredGraph(
+  context: Tone.BaseContext,
+  samplesByLayer: ReadonlyMap<PianoLayerId, TonePianoSamples>,
+  volumeDb = PIANO_SAMPLER_VOLUME_DB,
+): TonePianoLayeredGraph {
+  const output = createTonePianoOutput(context);
+  const layers = new Map([...samplesByLayer].map(([layer, samples]) => [
+    layer,
+    createTonePianoLayerSampler(context, samples, output.compressor, volumeDb),
+  ]));
+  return {
+    samplers: new Map([...layers].map(([layer, prepared]) => [layer, prepared.sampler])),
+    compressor: output.compressor,
+    limiter: output.limiter,
+    loaded: Promise.all([...layers.values()].map(({ loaded }) => loaded)).then(() => undefined),
+    dispose: () => {
+      for (const layer of layers.values()) layer.dispose();
+      output.dispose();
+    },
+  };
+}
+
 class TonePianoPlaybackEngine implements PianoPlaybackEngine {
-  private readonly graph: TonePianoGraph;
+  private readonly context = Tone.getContext();
+  private readonly output = createTonePianoOutput(this.context);
+  private readonly samplers = new Map<PianoLayerId, TonePianoLayerSampler>();
+  private readonly activeLayerByNote = new Map<string, PianoLayerId>();
   private activation: Promise<void> | null = null;
   private preparation: Promise<void> | null = null;
+  private disposed = false;
 
-  constructor() {
-    this.graph = createTonePianoGraph();
+  constructor(private readonly pianoId: PianoId) {}
+
+  private layerSampler(layer: PianoLayerId): TonePianoLayerSampler {
+    if (this.disposed) throw new Error("The piano playback engine has been disposed.");
+    if (!isPianoLayerFor(this.pianoId, layer)) {
+      throw new Error(`Piano layer ${layer} does not belong to ${this.pianoId}.`);
+    }
+    let result = this.samplers.get(layer);
+    if (!result) {
+      result = createTonePianoLayerSampler(
+        this.context,
+        pianoSampleUrlsForLayer(this.pianoId, layer),
+        this.output.compressor,
+        pianoDefinition(this.pianoId).samplerVolumeDb,
+      );
+      this.samplers.set(layer, result);
+    }
+    return result;
   }
 
-  async load(): Promise<void> {
-    await this.graph.loaded;
+  async load(layers: readonly PianoLayerId[] = [pianoDefinition(this.pianoId).defaultLayer]): Promise<void> {
+    await Promise.all(layers.map((layer) => this.layerSampler(layer).loaded));
   }
 
   activate(): Promise<void> {
@@ -179,10 +259,12 @@ class TonePianoPlaybackEngine implements PianoPlaybackEngine {
     if (!this.preparation) {
       this.preparation = this.ready()
         .then(async () => {
+          const layer = pianoDefinition(this.pianoId).defaultLayer;
+          const sampler = this.layerSampler(layer).sampler;
           const startTime = Tone.immediate() + 0.008;
-          this.graph.sampler.triggerAttack(WARMUP_NOTE, startTime, WARMUP_VELOCITY);
-          this.graph.sampler.triggerRelease(WARMUP_NOTE, startTime + WARMUP_DURATION_SECONDS);
-          await new Promise<void>((resolve) => globalThis.setTimeout(resolve, WARMUP_SETTLE_MS));
+          sampler.triggerAttack(WARMUP_NOTE, startTime, WARMUP_GAIN);
+          sampler.triggerRelease(WARMUP_NOTE, startTime + WARMUP_DURATION_SECONDS);
+          await wait(WARMUP_SETTLE_MS);
         })
         .catch((error: unknown) => {
           this.preparation = null;
@@ -192,13 +274,56 @@ class TonePianoPlaybackEngine implements PianoPlaybackEngine {
     return this.preparation;
   }
 
-  attack(notes: readonly string[], velocity: number): void {
-    this.graph.sampler.triggerAttack([...notes], Tone.immediate() + 0.008, velocity);
+  attack(notes: readonly string[], mixGain: number, layer: PianoLayerId): void {
+    for (const note of notes) this.activeLayerByNote.set(note, layer);
+    const prepared = this.layerSampler(layer);
+    void prepared.loaded
+      .then(() => {
+        if (this.disposed) return;
+        const stillRequested = notes.filter((note) => this.activeLayerByNote.get(note) === layer);
+        if (stillRequested.length > 0) {
+          prepared.sampler.triggerAttack(stillRequested, Tone.immediate() + 0.008, mixGain);
+        }
+      })
+      // Interactive callers preload their required layers so failures reach the
+      // existing playback-error UI. Keep this defensive handler for attacks
+      // issued by lower-level realtime callers during teardown races.
+      .catch(() => undefined);
   }
 
   release(notes: readonly string[]): void {
-    if (notes.length > 0) this.graph.sampler.triggerRelease([...notes], Tone.immediate());
+    const byLayer = new Map<PianoLayerId, string[]>();
+    for (const note of notes) {
+      const layer = this.activeLayerByNote.get(note);
+      if (!layer) continue;
+      const selected = byLayer.get(layer) ?? [];
+      selected.push(note);
+      byLayer.set(layer, selected);
+      this.activeLayerByNote.delete(note);
+    }
+    const now = Tone.immediate();
+    for (const [layer, selected] of byLayer) {
+      this.samplers.get(layer)?.sampler.triggerRelease(selected, now);
+    }
   }
+
+  dispose(): void {
+    if (this.disposed) return;
+    this.release([...this.activeLayerByNote.keys()]);
+    this.disposed = true;
+    for (const layer of this.samplers.values()) layer.dispose();
+    this.samplers.clear();
+    this.output.dispose();
+  }
+}
+
+function requestedLayer(
+  pianoId: PianoId,
+  dynamicOrLayer: MusicalDynamic | PianoLayerId,
+): PianoLayerId {
+  return isPianoLayerFor(pianoId, dynamicOrLayer)
+    ? dynamicOrLayer
+    : pianoLayerForDynamic(pianoId, dynamicOrLayer as MusicalDynamic);
 }
 
 export class PianoSampler {
@@ -208,16 +333,23 @@ export class PianoSampler {
   private playGeneration = 0;
 
   constructor(
-    private readonly createEngine: () => PianoPlaybackEngine = () => new TonePianoPlaybackEngine(),
+    private readonly createEngine: (pianoId: PianoId) => PianoPlaybackEngine = (
+      pianoId,
+    ) => new TonePianoPlaybackEngine(pianoId),
+    private pianoId: PianoId = DEFAULT_PIANO_ID,
   ) {}
 
+  selectedPiano(): PianoId {
+    return this.pianoId;
+  }
+
   private audioEngine(): PianoPlaybackEngine {
-    if (!this.engine) this.engine = this.createEngine();
+    if (!this.engine) this.engine = this.createEngine(this.pianoId);
     return this.engine;
   }
 
-  preload(): Promise<void> {
-    return this.audioEngine().load();
+  preload(layers?: readonly PianoLayerId[]): Promise<void> {
+    return this.audioEngine().load(layers);
   }
 
   activate(): Promise<void> {
@@ -234,6 +366,16 @@ export class PianoSampler {
     return this.preparation;
   }
 
+  async setPiano(pianoId: PianoId): Promise<void> {
+    if (pianoId === this.pianoId) return this.prepare();
+    this.stop();
+    this.engine?.dispose();
+    this.engine = null;
+    this.preparation = null;
+    this.pianoId = pianoId;
+    await this.prepare();
+  }
+
   /** Current Tone audio-context time used by realtime score scheduling. */
   now(): number {
     return Tone.immediate();
@@ -245,7 +387,17 @@ export class PianoSampler {
     this.activeNotes = [];
   }
 
-  async play(pitches: readonly string[]): Promise<void> {
+  dispose(): void {
+    this.stop();
+    this.engine?.dispose();
+    this.engine = null;
+    this.preparation = null;
+  }
+
+  async play(
+    pitches: readonly string[],
+    dynamicOrLayer: MusicalDynamic | PianoLayerId = "mp",
+  ): Promise<void> {
     const midiNotes = Array.from(new Set(
       pitches.flatMap((pitch) => {
         const midi = pitchToMidi(pitch);
@@ -257,25 +409,40 @@ export class PianoSampler {
     this.activeNotes = [];
     if (midiNotes.length === 0) return;
 
-    await this.prepare();
+    const layer = requestedLayer(this.pianoId, dynamicOrLayer);
+    await Promise.all([
+      this.prepare(),
+      layer === pianoDefinition(this.pianoId).defaultLayer
+        ? Promise.resolve()
+        : this.preload([layer]),
+    ]);
     if (generation !== this.playGeneration) return;
 
     const notes = midiNotes.map(midiToPitchName);
-    const velocity = pianoChordVelocity(notes.length);
-    this.audioEngine().attack(notes, velocity);
+    this.audioEngine().attack(
+      notes,
+      pianoChordMixGain(notes.length),
+      layer,
+    );
     this.activeNotes = notes;
   }
 
   /** Attack additional notes without releasing sustained realtime notes. */
-  attack(pitches: readonly string[]): void {
+  attack(
+    pitches: readonly string[],
+    dynamicOrLayer: MusicalDynamic | PianoLayerId = "mp",
+  ): void {
     const notes = Array.from(new Set(pitches.flatMap((pitch) => {
       const midi = pitchToMidi(pitch);
       return midi === null ? [] : [midiToPitchName(midi)];
     })));
     const newNotes = notes.filter((note) => !this.activeNotes.includes(note));
     if (newNotes.length === 0) return;
-    const velocity = pianoChordVelocity(newNotes.length);
-    this.audioEngine().attack(newNotes, velocity);
+    this.audioEngine().attack(
+      newNotes,
+      pianoChordMixGain(newNotes.length),
+      requestedLayer(this.pianoId, dynamicOrLayer),
+    );
     this.activeNotes = Array.from(new Set([...this.activeNotes, ...newNotes]));
   }
 
@@ -296,6 +463,7 @@ export class PianoSampler {
   async audition(
     pitches: readonly string[],
     timing: { holdMs?: number; decayGuardMs?: number } = {},
+    dynamicOrLayer: MusicalDynamic | PianoLayerId = "mp",
   ): Promise<void> {
     const midiNotes = Array.from(new Set(
       pitches.flatMap((pitch) => {
@@ -308,11 +476,21 @@ export class PianoSampler {
     this.activeNotes = [];
     if (midiNotes.length === 0) return;
 
-    await this.prepare();
+    const layer = requestedLayer(this.pianoId, dynamicOrLayer);
+    await Promise.all([
+      this.prepare(),
+      layer === pianoDefinition(this.pianoId).defaultLayer
+        ? Promise.resolve()
+        : this.preload([layer]),
+    ]);
     if (generation !== this.playGeneration) return;
     const engine = this.audioEngine();
     const notes = midiNotes.map(midiToPitchName);
-    engine.attack(notes, pianoChordVelocity(notes.length));
+    engine.attack(
+      notes,
+      pianoChordMixGain(notes.length),
+      layer,
+    );
     this.activeNotes = notes;
     await wait(timing.holdMs ?? AUDITION_HOLD_MS);
     if (generation !== this.playGeneration) return;

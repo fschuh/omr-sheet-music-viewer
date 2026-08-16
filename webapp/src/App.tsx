@@ -43,7 +43,13 @@ import {
   type PlaybackStatus,
   type StructuralPosition,
 } from "./realtime";
-import { loadDebugPanelEnabled, saveDebugPanelEnabled } from "./preferences";
+import {
+  loadDebugPanelEnabled,
+  loadPlaybackPiano,
+  saveDebugPanelEnabled,
+  savePlaybackPiano,
+} from "./preferences";
+import { pianoLayerForDynamic, type PianoId } from "./pianoRegistry";
 import {
   cancelJob,
   choosePdf,
@@ -218,6 +224,7 @@ export function App() {
   const workerLogOutput = useRef<HTMLDivElement | null>(null);
   const [activePage, setActivePage] = useState<"viewer" | "settings">("viewer");
   const [debugPanelEnabled, setDebugPanelEnabled] = useState(loadDebugPanelEnabled);
+  const [playbackPiano, setPlaybackPiano] = useState(loadPlaybackPiano);
   const activePageRef = useRef(activePage);
   activePageRef.current = activePage;
   const [shortcuts, setShortcuts] = useState<PlaybackShortcuts>(loadPlaybackShortcuts);
@@ -364,6 +371,7 @@ export function App() {
       visualGroupIds: groupIds,
       pitches: realtimeFrame.activeNotes.map((note) => note.pitch),
       keyboardNotes: realtimeDisplayNotes,
+      dynamic: realtimeFrame.activeNotes.find((note) => note.onset <= realtimeFrame.offset + 1e-6)?.dynamic ?? "mp",
       center: [realtimePlayhead?.x ?? anchor.visual.x, anchor.visual.y] as [number, number],
     };
   }, [realtimeDisplayNotes, realtimeFrame, realtimePlayhead]);
@@ -373,7 +381,7 @@ export function App() {
   if (!realtimeControllerRef.current) {
     realtimeControllerRef.current = new RealtimeController(
       {
-        attack: (pitches) => pianoSampler.attack(pitches),
+        attack: (pitches, dynamic) => pianoSampler.attack(pitches, dynamic),
         release: (pitches) => pianoSampler.release(pitches),
         stop: () => pianoSampler.stop(),
       },
@@ -432,7 +440,7 @@ export function App() {
       }
       const moment = currentPlaybackMoment(playbackTimeline, next);
       if (moment) {
-        void pianoSampler.play(moment.pitches)
+        void pianoSampler.play(moment.pitches, moment.dynamic)
           .then(() => setPlaybackAudioError(null))
           .catch((audioError: unknown) => {
             const message = audioError instanceof Error ? audioError.message : String(audioError);
@@ -482,7 +490,10 @@ export function App() {
     realtimeLatestFrameRef.current = null;
     realtimeRenderSignatureRef.current = "";
     setRealtimeStatus("playing");
-    void pianoSampler.prepare()
+    const routeLayers = Array.from(new Set(
+      route.notes.map((note) => pianoLayerForDynamic(playbackPiano, note.dynamic)),
+    ));
+    void Promise.all([pianoSampler.prepare(), pianoSampler.preload(routeLayers)])
       .then(() => {
         if (generation !== realtimeStartGenerationRef.current) return;
         const controller = realtimeControllerRef.current;
@@ -497,7 +508,7 @@ export function App() {
         stopRealtime();
         setPlaybackAudioError(`Piano audio could not start: ${audioError instanceof Error ? audioError.message : String(audioError)}`);
       });
-  }, [routeForGroup, stopRealtime, tempoMultiplier]);
+  }, [playbackPiano, routeForGroup, stopRealtime, tempoMultiplier]);
   const seekRealtime = useCallback((group: VisualGroupRef, status: "playing" | "paused") => {
     try {
       const route = routeForGroup(group);
@@ -796,7 +807,7 @@ export function App() {
       }));
     }
     try {
-      await pianoSampler.audition(moment.pitches);
+      await pianoSampler.audition(moment.pitches, {}, moment.dynamic);
       setPlaybackAudioError(null);
     } catch (audioError) {
       const message = audioError instanceof Error ? audioError.message : String(audioError);
@@ -990,18 +1001,21 @@ export function App() {
 
   useEffect(() => {
     let disposed = false;
-    void pianoSampler.prepare().catch((audioError: unknown) => {
+    void pianoSampler.setPiano(playbackPiano).then(() => {
+      if (!disposed) setPlaybackAudioError(null);
+    }).catch((audioError: unknown) => {
       if (disposed) return;
       const message = audioError instanceof Error ? audioError.message : String(audioError);
       setPlaybackAudioError(`Piano audio could not start: ${message}`);
     });
-    return () => {
-      disposed = true;
+    return () => { disposed = true; };
+  }, [playbackPiano]);
+
+  useEffect(() => () => {
       recognizerRef.current?.stop();
       realtimeControllerRef.current?.stop();
-      pianoSampler.stop();
-    };
-  }, []);
+      pianoSampler.dispose();
+    }, []);
 
   useEffect(() => {
     recognizerRef.current?.stop();
@@ -1688,6 +1702,7 @@ export function App() {
       {activePage === "settings" ? (
         <SettingsPage
           shortcuts={shortcuts}
+          playbackPiano={playbackPiano}
           debugPanelEnabled={debugPanelEnabled}
           nativeAvailable={nativeAvailable}
           midiPorts={midiPorts}
@@ -1696,6 +1711,15 @@ export function App() {
           midiCaptureCommand={midiCaptureCommand}
           showStopPlayback
           onChangeShortcuts={setShortcuts}
+          onChangePlaybackPiano={(pianoId: PianoId) => {
+            recognizerRef.current?.stop();
+            stopRealtime();
+            pianoSampler.stop();
+            playbackStateRef.current = initialPlaybackState;
+            setPlaybackState(initialPlaybackState);
+            setPlaybackPiano(pianoId);
+            savePlaybackPiano(pianoId);
+          }}
           onChangeDebugPanelEnabled={(enabled) => {
             setDebugPanelEnabled(enabled);
             saveDebugPanelEnabled(enabled);
