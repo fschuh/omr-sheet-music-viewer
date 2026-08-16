@@ -28,10 +28,10 @@ test("parses natural, sharp, flat, and double-accidental pitches", () => {
 
 test("maps bundled sample roots to their concert pitches", () => {
   const urls = pianoSampleUrls();
-  assert.equal(urls[55], "/audio/piano/Mp-G2.ogg");
-  assert.equal(urls[56], "/audio/piano/Mp-Gs2.ogg");
-  assert.equal(urls[60], "/audio/piano/Mp-C3.ogg");
-  assert.equal(urls[106], "/audio/piano/Mp-As6.ogg");
+  assert.equal(urls[55], "/audio/piano/mp-G2.ogg");
+  assert.equal(urls[56], "/audio/piano/mp-Gs2.ogg");
+  assert.equal(urls[60], "/audio/piano/mp-C3.ogg");
+  assert.equal(urls[106], "/audio/piano/mp-As6.ogg");
 });
 
 test("attacks distinct Tone.js pitches and releases them on navigation", async () => {

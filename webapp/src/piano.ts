@@ -1,14 +1,14 @@
 import * as Tone from "tone";
 
 const SAMPLE_FILES = [
-  "Mp-B-1", "Mp-Ds0", "Mp-F0", "Mp-G0", "Mp-A0", "Mp-B0", "Mp-Cs1", "Mp-D1",
-  "Mp-E1", "Mp-F1", "Mp-G1", "Mp-A1", "Mp-B1", "Mp-C2", "Mp-D2", "Mp-E2",
-  "Mp-F2", "Mp-G2", "Mp-Gs2", "Mp-A2", "Mp-As2", "Mp-B2", "Mp-C3", "Mp-D3",
-  "Mp-E3", "Mp-F3", "Mp-G3", "Mp-A3", "Mp-B3", "Mp-C4", "Mp-D4", "Mp-E4",
-  "Mp-F4", "Mp-G4", "Mp-Gs4", "Mp-A4", "Mp-As4", "Mp-B4", "Mp-Cs5", "Mp-D5",
-  "Mp-Ds5", "Mp-E5", "Mp-F5", "Mp-Fs5", "Mp-G5", "Mp-Gs5", "Mp-A5", "Mp-As5",
-  "Mp-B5", "Mp-C6", "Mp-Cs6", "Mp-D6", "Mp-Ds6", "Mp-F6", "Mp-Fs6", "Mp-G6",
-  "Mp-Gs6", "Mp-A6", "Mp-As6",
+  "mp-B-1", "mp-Ds0", "mp-F0", "mp-G0", "mp-A0", "mp-B0", "mp-Cs1", "mp-D1",
+  "mp-E1", "mp-F1", "mp-G1", "mp-A1", "mp-B1", "mp-C2", "mp-D2", "mp-E2",
+  "mp-F2", "mp-G2", "mp-Gs2", "mp-A2", "mp-As2", "mp-B2", "mp-C3", "mp-D3",
+  "mp-E3", "mp-F3", "mp-G3", "mp-A3", "mp-B3", "mp-C4", "mp-D4", "mp-E4",
+  "mp-F4", "mp-G4", "mp-Gs4", "mp-A4", "mp-As4", "mp-B4", "mp-Cs5", "mp-D5",
+  "mp-Ds5", "mp-E5", "mp-F5", "mp-Fs5", "mp-G5", "mp-Gs5", "mp-A5", "mp-As5",
+  "mp-B5", "mp-C6", "mp-Cs6", "mp-D6", "mp-Ds6", "mp-F6", "mp-Fs6", "mp-G6",
+  "mp-Gs6", "mp-A6", "mp-As6",
 ] as const;
 
 export const PIANO_NOTE_RELEASE_SECONDS = 0.35;
