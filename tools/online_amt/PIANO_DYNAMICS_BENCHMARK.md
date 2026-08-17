@@ -47,12 +47,21 @@ milliseconds. Hashes are FNV-1a signatures of the complete Float32 PCM bytes.
 | Tone | Equal-piano aggregate | 40.6% | 89.2% | 3.1% | 353 | 1/0/0 | 228/228 | 0.6312 | 0.06421 | `ff` |
 
 The one safety event is deterministic in the measured reruns and belongs to
-Tone + Salamander `v05`. It is reported as a false advancement rather than
-folded into accuracy. There were no skipped or duplicate advances, and the
-carried-bass matcher configuration was unchanged. The low completion rates are
-mostly cascade loss after an early ordered stall: independent pitch evidence
-remains near 90% even where later correct recognitions cannot advance the
-ordered playhead.
+Tone + Salamander `v05`. It was diagnosed on August 17 and is **not** a false
+advancement: the matcher completed target 23 from the third repetition of the
+same `[62, 74, 82]` chord, accepting only that target's own pitches, so the
+playhead moved onto music the player had played and stayed one moment behind
+them. The corrected classification reports it as a late advance, and re-running
+the full matrix afterwards produced 0/0/0 for every renderer and piano with one
+late advance at Tone + Salamander `v05`. See the [safety diagnosis
+entry](LISTEN_BENCHMARK.md#tone-plus-salamander-v05-safety-diagnosis--august-17-2026)
+for the frame-level evidence and the committed regression. The table cells below
+are left as the August 16 harness reported them.
+
+There were no skipped or duplicate advances, and the carried-bass matcher
+configuration was unchanged. The low completion rates are mostly cascade loss
+after an early ordered stall: independent pitch evidence remains near 90% even
+where later correct recognitions cannot advance the ordered playhead.
 
 ### Splendid layers
 
@@ -110,6 +119,31 @@ v01 v02 v03 v04 v05 v06 v07 v08 v09 v10 v11 v12 v13 v14 v15 v16
 v15 v13 v12 v11 v09 v08 v06 v05 v04 v02 v01
 ```
 
+## Corrected safety classification — August 17, 2026
+
+The complete 40-run constant matrix was re-measured after the advance
+classification was corrected. Every per-layer independent, ordered, missed, P95,
+peak, and RMS value reproduced its August 16 result; only the safety column
+changed. PCM signatures differ because Chrome's `OfflineAudioContext` does not
+reproduce its last bits between browser processes, which is why the diagnosed
+case is pinned to its decoded-structure hash instead.
+
+| Renderer | Piano | Ordered | Independent | Complete | Misses | Safety | Late | P95 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Legacy | Splendid | 85/108 | 99/108 | 1/4 | 23 | 0/0/0 | 0 | 204/204 |
+| Legacy | Salamander | 53/432 | 389/432 | 0/16 | 379 | 0/0/0 | 0 | 212/212 |
+| Tone | Splendid | 55/108 | 93/108 | 0/4 | 53 | 0/0/0 | 0 | 220/220 |
+| Tone | Salamander | 131/432 | 399/432 | 1/16 | 300 | 0/0/0 | 1 | 228/228 |
+| Legacy | Equal-piano aggregate | 45.5% | 90.9% | 12.5% | 402 | 0/0/0 | 0 | 212/212 |
+| Tone | Equal-piano aggregate | 40.6% | 89.2% | 3.1% | 353 | 0/0/0 | 1 | 228/228 |
+
+A late advance is an advance caused by a physical attack that played exactly the
+advanced target's chord, so it can only leave the playhead behind the player. It
+is never counted as an ordered advance and never satisfies a safety gate on its
+own. Advances before a target's own attack, advances from deliberate wrong-note
+attacks, advances from any other chord, and second advances from one attack all
+remain false, skipped, or duplicate.
+
 ## Regression and smoke checks
 
 - Asset preparation validated 16 locked packages, 30 roots per layer, 480
@@ -139,6 +173,18 @@ node tools\online_amt\run_browser_benchmarks.mjs `
 node tools\online_amt\run_browser_benchmarks.mjs `
   http://127.0.0.1:5174/online-amt-benchmark.html listen-dynamics-mixed
 ```
+
+To reproduce a single constant-layer run with its complete advance forensics
+instead of the whole matrix, name the piano and layer:
+
+```powershell
+node tools\online_amt\run_browser_benchmarks.mjs `
+  http://127.0.0.1:5174/online-amt-benchmark.html listen-dynamics-case-tone salamander v05
+```
+
+That command also prints a ready-to-commit regression fixture for every
+advancement the run counted against a safety gate, and replays the already
+committed regressions against all three named matcher profiles.
 
 For a focused rerun, append `-legacy` or `-tone` to either dynamics suite name.
 The benchmark page also exposes manual controls and the automatic query

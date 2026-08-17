@@ -7,6 +7,216 @@
 Entries are kept newest first so renderer and recognition changes remain
 comparable over time.
 
+### Tone plus Salamander `v05` safety diagnosis — August 17, 2026
+
+The single deterministic false advancement in the August 16 constant-layer
+dynamics matrix was reproduced in isolation, explained, reclassified, and
+committed as a permanent regression. It was not a matcher failure. The matcher
+accepted only pitches the player had played, rejected nothing, skipped no target,
+advanced no target twice, and left the playhead behind the player rather than
+ahead of them. The count came from the benchmark's advance classification, not
+from the matcher.
+
+Measured on the development Windows machine at commit `26da7a5` with
+`bundled-piano-tone-v2` and `bundled-piano-web-audio-v1`, the unchanged
+`online_amt_streaming.onnx` model (71,955,821 bytes, SHA-256 `a77be8262d3742ce…`),
+and the frozen `baseline-v1` profile.
+
+#### Reproducing one run instead of forty
+
+`listen-dynamics-case` renders exactly one constant-layer Course Clear run and
+prints the complete forensic record of every advancement that run counted against
+a safety gate: target index, generation, advancement time and trace frame, source
+attack, attribution delay, accepted pitches, rejected extras, carried-over
+pitches, and the surrounding decoded frames.
+
+Three consecutive browser processes reproduced the case identically:
+
+| Quantity | Run 1 | Run 2 | Run 3 |
+| --- | --- | --- | --- |
+| Recognition structure hash | `b043076d` | `b043076d` | `b043076d` |
+| Peak | 0.3653072416782379 | 0.3653072416782379 | 0.3653072416782379 |
+| RMS | 0.04367413884457393 | 0.04367413882791928 | 0.04367413884435765 |
+| PCM hash | `89271f60` | `c3315734` | `2f7395ec` |
+| Independent / ordered | 25 / 23 of 27 | 25 / 23 of 27 | 25 / 23 of 27 |
+| P95 independent / ordered | 228 / 228 ms | 228 / 228 ms | 228 / 228 ms |
+| Advancement | target 23 at 25,440 ms | target 23 at 25,440 ms | target 23 at 25,440 ms |
+
+The August 16 matrix recorded this run's PCM as `aadb4ce2`. The FNV PCM hash is an
+identity within one browser process, not across processes: Chrome's
+`OfflineAudioContext` does not reproduce its last bits, the same limitation the
+August 17 parity entry measured. Peak, frame count, decoded structure,
+recognition, latency, and the advancement itself all reproduce exactly, so the
+regression is pinned to the decoded-structure hash `b043076d`.
+
+#### What actually happened
+
+Course Clear repeats measure 3 moment 8 three times: targets 23, 24, and 25 are
+all `[62, 74, 82]`, played at 23,220, 24,220, and 25,220 ms. Target 23 was armed
+at 22,432 ms while D5 and A#5 were still sounding from moment 7, so the matcher
+required a fresh decoder attack for each of the three pitches.
+
+| Attack | D4 (62) | D5 (74) | A#5 (82) | Result |
+| --- | --- | --- | --- | --- |
+| 23 at 23,220 ms | onset 0.9954 | no attack, max active 0.1935 | onset 0.9936 | incomplete |
+| 24 at 24,220 ms | onset 0.5968, below the 0.60 gate | no attack, max active 0.4587 | onset 0.8661 | incomplete |
+| 25 at 25,220 ms | onset 0.9999 | onset 0.8152 | onset 0.9980 | matched at 25,440 ms |
+
+The decoder produced no re-onset for the held D5 across the first two repetitions,
+the same retrigger limitation the August 14 score-rise experiment measured and
+could not fix safely. The attempt therefore completed only on the third
+repetition.
+
+| Field | Value |
+| --- | --- |
+| Target | 23, `[62, 74, 82]`, scheduled 23,220 ms |
+| Advanced | 25,440 ms, generation 24, trace frame 794 |
+| Attribution delay | 2,220 ms against a 464 ms window |
+| Source attack | 25, scheduled 25,220 ms, played `[62, 74, 82]` |
+| Pitches accepted | `[62, 74, 82]`, no rejected extras |
+| Carried into the target | `[65, 70, 74, 82]` |
+
+The same focused run under `bundled-piano-web-audio-v1` reproduced its August 16
+Direct result exactly — 23 independent, 3 ordered, 0/0/0, and no late advance —
+so the case belongs to the Tone signal path, not to the passage.
+
+The attribution itself is correct: attack 25's audio did cause the advancement.
+The classification was not. `falseAdvance` fired only because the causing attack
+belonged to a later target, which is unavoidable whenever a score repeats one
+chord and recognition lands on a later repetition.
+
+#### The corrected rule
+
+An advancement caused by an attack other than the target's own is now a
+`late-advance` when that attack played exactly the advanced target's chord and
+was not a deliberate wrong-note safety attack. Everything else stays unsafe:
+
+- An advance before the target's own scheduled attack is still `skipped`.
+- An advance from a deliberate wrong or extra-note attack is still false.
+- An advance from an attack that played any other chord is still false.
+- A second advance from one physical attack is still `duplicate`.
+
+A late advance can only leave the playhead behind the player, never ahead, which
+is the property the safety gate exists to protect. It is never counted as an
+ordered advance, and `lateAdvanceCount` is reported at run, per-speed, aggregate,
+dynamics, and safety-summary level so a profile cannot trade recognition for lag
+unnoticed.
+
+#### The committed regression
+
+`listenSafetyRegressionFixtures.ts` stores the case as 110 decoded frames from
+22,112 ms to 25,600 ms — moment 7 through the advancement — with no PCM and no
+model scores. Attack indices are preserved, so every stored timestamp is the
+measured one. Replaying the fixture reproduces the advancement at 25,440 ms from
+source attack 25, with carry-in `[65, 70, 74, 82]` and accepted pitches
+`[62, 74, 82]`.
+
+A fresh capture taken after the fixture was generated matched every stored frame
+time, onset, note event, active pitch, and evidence pitch, with confidences
+differing by at most 2.2e-05 — far below any threshold in the three named
+profiles.
+
+The committed frames are not the only thing checked. A focused rerun of a case a
+fixture was cut from re-verifies that run against the fixture: same decoded
+structure hash, same advancement time, same causing attack, same classification.
+A mismatch aborts the browser command, so a changed model, renderer, or decoder
+cannot silently stop producing the event while the frozen frames keep passing.
+The correct response to that failure is to re-diagnose the case and regenerate
+its fixture, not to relax the check.
+
+The fixture pins the advancement itself, not merely its category: the exact
+advancement time and the attack the replay credits it to. A repeated chord offers
+several attacks that could each legitimately complete the same target, so "still a
+late advance" would not be a meaningful pin — and the three registered profiles do
+not in fact agree on which repetition recovers it:
+
+| Profile | Advanced | From | Classification | False / skipped / duplicate | Pinned advance |
+| --- | --- | --- | --- | --- | --- |
+| `baseline-v1` | 25,440 ms | third repetition | late advance | 0 / 0 / 0 | reproduced |
+| `balanced-v1` | 24,448 ms | second repetition | late advance | 0 / 0 / 0 | deviates |
+| `sensitive-v1` | 24,448 ms | second repetition | late advance | 0 / 0 / 0 | deviates |
+
+Both more sensitive profiles complete the chord one repetition earlier, because
+D4's 0.5968 onset on the second repetition clears their 0.50 and 0.45 onset gates
+but not baseline's 0.60. That is a recognition gain on a case baseline stalls on,
+and neither profile becomes unsafe on it. It is a preview of the Task 06-08
+comparisons rather than a result of them, and it is visible only because the
+advancement is pinned.
+
+The sweep and retrigger benchmarks now summarize safety through
+`summarizeListenSafety`, which replays the committed regressions with the same
+profile as the runs it is summarizing, so no candidate can report a clean safety
+summary while regressing this domain. Deviating from the pinned advance is
+reported and never gates: only a result less safe than the fixture's own
+`baseline-v1` replay rejects a candidate.
+
+#### Re-measured results
+
+| Suite | Result | Change |
+| --- | --- | --- |
+| Constant-layer dynamics, Direct | 45.5% ordered, 90.9% independent, 0/0/0, 0 late | none |
+| Constant-layer dynamics, Tone | 40.6% ordered, 89.2% independent, 0/0/0, 1 late | safety 1/0/0 became 0/0/0 with one late advance |
+| Sequence corpus, both renderers | Per-speed completion, ordered advances, and P95 identical to August 17 | none |
+| Dedicated safety families, both renderers | 0/0/0 at every speed | none |
+| Next-onset buffer experiment | Direct −5 correct advances and −1 complete passage; Tone unchanged; still rejected | none |
+| 1,000-profile sweep, Direct | 680 rejected, 15-profile frontier, `o0p450-t0p500-a0p200-x0p990-b1` | none |
+| 1,000-profile sweep, Tone | 500 rejected, same 3-profile frontier and `o0p500-t0p500-a0p200-x0p970-b1` | 575 rejected became 500 |
+
+The Tone sweep's rejection count is the one number the corrected rule moved, and
+it moves for a fully accounted reason. Exactly 75 of the 1,000 Tone candidates
+have late advances and are otherwise clean — zero false, skipped, duplicate, and
+incomplete-carried-bass advances — so they are no longer rejected, and 575 minus
+75 is 500. All 75 occur at 333 ms in `carried-bass-safety`, whose targets 1 and 2
+are the same `[48, 60, 64]` triad played twice, and all 75 still require a fresh
+bass onset. The incomplete-carried-bass counter that suite exists for is unchanged
+and still gates. Under Direct, 90 candidates also show late advances but every one
+of them fails another safety counter as well, so its rejection count stays at 680,
+which is an independent check that the rule did not simply relax the gate. No
+candidate under either renderer was rejected by the committed regression, and
+both renderers still report `replayParityVerified` against the frozen
+`baseline-v1` entry.
+
+The pinned advancement is doing visible work in the sweep. 592 of the 1,000
+candidates deviate from it and 408 reproduce it exactly, identically under both
+renderers because the fixture replay depends only on the profile. Every one of
+the 592 deviates the same way — 24,448 ms from the second repetition instead of
+25,440 ms from the third — and not one of the 1,000 turns the case into anything
+other than a late advance. 156 deviating candidates remain eligible under Direct
+and 84 under Tone; 78 overlap, leaving 162 distinct candidates eligible under at
+least one renderer. That is the point of separating the pin from the gate:
+recovering a diagnosed case sooner is reported, not punished.
+
+Every per-layer cell of the 40-run constant matrix reproduced its August 16
+independent, ordered, missed, P95, peak, and RMS values. The only changed cell is
+Tone plus Salamander `v05`, and it changed because of the classification rather
+than because of recognition. The corrected rule is strictly subtractive — the new
+condition is the old one plus `and not a late advance` — so it can remove a false
+advance but never create one. The Tone per-speed summary still reports one false
+advance at 333 ms outside the dedicated safety families; that case is therefore
+not introduced here and remains separate and undiagnosed.
+
+Commands:
+
+```powershell
+npm --prefix webapp test
+npm --prefix webapp run build
+
+node tools\online_amt\run_browser_benchmarks.mjs `
+  http://127.0.0.1:5174/online-amt-benchmark.html listen-dynamics-case-tone salamander v05
+
+node tools\online_amt\run_browser_benchmarks.mjs `
+  http://127.0.0.1:5174/online-amt-benchmark.html listen-dynamics-case-legacy salamander v05
+
+node tools\online_amt\run_browser_benchmarks.mjs `
+  http://127.0.0.1:5174/online-amt-benchmark.html listen-sequence-summary
+
+node tools\online_amt\run_browser_benchmarks.mjs `
+  http://127.0.0.1:5174/online-amt-benchmark.html listen-dynamics-constant
+
+node tools\online_amt\run_browser_benchmarks.mjs `
+  http://127.0.0.1:5174/online-amt-benchmark.html listen-threshold-sweep
+```
+
 ### Matcher profile registry refactor parity — August 17, 2026
 
 This entry records a refactor verification, not a new measured baseline. The
@@ -639,7 +849,16 @@ node tools\online_amt\run_browser_benchmarks.mjs `
 
 node tools\online_amt\run_browser_benchmarks.mjs `
   http://127.0.0.1:5174/online-amt-benchmark.html listen-dynamics-mixed
+
+node tools\online_amt\run_browser_benchmarks.mjs `
+  http://127.0.0.1:5174/online-amt-benchmark.html listen-dynamics-case-tone salamander v05
 ```
+
+`listen-dynamics-case` renders one constant-layer run instead of the 40-run
+matrix and prints the complete forensics of every advancement counted against a
+safety gate, a ready-to-commit regression fixture for each one, and the replay of
+every already committed regression against all three named profiles. Name the
+piano and layer as the last two arguments.
 
 See the [piano dynamics benchmark](PIANO_DYNAMICS_BENCHMARK.md) for the
 velocity-layer methodology, asset smoke checks, and measured 40-run matrix.
