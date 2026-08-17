@@ -16,7 +16,7 @@ benchmark consumers onto one profile type and one option conversion were checked
 against the measured sections below. No recognition, safety, latency, PCM, or
 export value changed.
 
-Measured on the development Windows machine at commit `4db8cf7` with the
+Measured on the development Windows machine at commit `1ec55a1` with the
 `bundled-piano-web-audio-v1` and `bundled-piano-tone-v2` renderers and the
 unchanged `online_amt_streaming.onnx` model (71,955,821 bytes,
 SHA-256 `a77be8262d3742ce…`). Production still resolves `baseline-v1`, whose
