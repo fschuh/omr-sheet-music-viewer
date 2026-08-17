@@ -14,7 +14,7 @@ import {
   materializeListenSequence,
   productionListenMatcherProfile,
   replayListenSequenceTrace,
-  summarizeListenThresholdSafety,
+  summarizeListenSequenceSafety,
   type ListenArticulationMatrixResult,
   type ListenMatcherProfile,
   type ListenRecognitionFrame,
@@ -23,13 +23,13 @@ import {
   type ListenSequenceBenchmarkResult,
   type ListenSequenceFailureReason,
   type ListenSequenceRunResult,
-  type ListenThresholdSweepResult,
   type MaterializedListenSequence,
   type RecognizedAttackObservation,
   type RequiredAttackType,
   type ScheduledSequenceAttack,
   type ScheduledSequenceNote,
 } from "./listenSequenceBenchmark";
+import type { ListenThresholdSweepResult } from "./listenMatcherSweepBenchmark";
 
 const FIRST_PIANO_MIDI = 21;
 const STATE_COUNT = 5;
@@ -857,7 +857,7 @@ function matcherMetrics(
     profile,
   ));
   const nonSafetyRuns = runs.filter(({ family }) => family !== "safety");
-  const safety = summarizeListenThresholdSafety(runs);
+  const safety = summarizeListenSequenceSafety(runs);
   const reasons = (reason: ListenSequenceFailureReason) => nonSafetyRuns.reduce(
     (total, run) => total + run.events.filter((event) => event.failureReasons.includes(reason)).length,
     0,

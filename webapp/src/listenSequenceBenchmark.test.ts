@@ -21,16 +21,12 @@ import {
   courseClearArticulationDefinitions,
   diagnoseListenArticulationRun,
   evaluateTraceRecognitionLayers,
-  generateListenMatcherSweepProfiles,
   productionListenMatcherProfile,
   interpretListenArticulationMatrix,
-  listenThresholdSweepParetoFrontier,
   materializeListenSequence,
-  rankListenThresholdSweepCandidates,
   replayListenSequenceTrace,
-  runListenThresholdSweep,
   summarizeListenSequenceBenchmark,
-  summarizeListenThresholdSafety,
+  summarizeListenSequenceSafety,
   type ExpectedPitchDiagnostic,
   type ListenArticulationRunSummary,
   type ListenRecognitionFrame,
@@ -38,7 +34,6 @@ import {
   type ListenSequenceDefinition,
   type ListenSequenceBenchmarkResult,
   type ListenSequenceAggregateSummary,
-  type ListenThresholdSweepProfileResult,
   type MaterializedListenSequence,
   type SequenceInferenceSession,
   type SequenceOutputDecoder,
@@ -154,22 +149,6 @@ function pitchDiagnostic(update: Partial<ExpectedPitchDiagnostic> = {}): Expecte
   };
 }
 
-test("threshold sweep generates the complete stable 1,000-profile grid", () => {
-  const profiles = generateListenMatcherSweepProfiles();
-  assert.equal(profiles.length, 1_000);
-  assert.equal(new Set(profiles.map(({ id }) => id)).size, 1_000);
-  const production = profiles.find(({ onsetThreshold, targetNoteThreshold, activeTargetThreshold,
-    extraNoteThreshold, requireFreshBassOnset }) => (
-    onsetThreshold === productionListenMatcherProfile.onsetThreshold &&
-    targetNoteThreshold === productionListenMatcherProfile.targetNoteThreshold &&
-    activeTargetThreshold === productionListenMatcherProfile.activeTargetThreshold &&
-    extraNoteThreshold === productionListenMatcherProfile.extraNoteThreshold &&
-    requireFreshBassOnset === productionListenMatcherProfile.requireFreshBassOnset
-  ));
-  assert.ok(production);
-  assert.equal(production.distanceFromProduction, 0);
-});
-
 test("threshold-qualified diagnostics use the supplied profile boundary", () => {
   const sequence = materializeListenSequence(regularDefinition([[60]]), 1_000);
   const capturedAt = Math.ceil(sequence.targets[0].scheduledAttackTimeMs / 32) * 32;
@@ -275,8 +254,8 @@ test("disabling fresh bass is rejected when the carried bass completes the chord
   });
   assert.deepEqual(required.attacks[1].advancementTargetIndices, []);
   assert.deepEqual(relaxed.attacks[1].advancementTargetIndices, [1]);
-  assert.equal(summarizeListenThresholdSafety([required]).passed, true);
-  assert.equal(summarizeListenThresholdSafety([relaxed]).passed, false);
+  assert.equal(summarizeListenSequenceSafety([required]).passed, true);
+  assert.equal(summarizeListenSequenceSafety([relaxed]).passed, false);
 });
 
 test("safety aggregation covers every configured speed", () => {
@@ -293,123 +272,13 @@ test("safety aggregation covers every configured speed", () => {
       },
     };
   });
-  const safety = summarizeListenThresholdSafety(runs);
+  const safety = summarizeListenSequenceSafety(runs);
   assert.equal(safety.sequenceCount, LISTEN_SEQUENCE_INTERVALS_MS.length);
   assert.deepEqual(
     safety.speeds.map(({ intervalMs }) => intervalMs),
     [...LISTEN_SEQUENCE_INTERVALS_MS],
   );
   assert.equal(safety.passed, true);
-});
-
-function sweepCandidate(
-  id: string,
-  requireFreshBassOnset: boolean,
-  independentMatchCount: number,
-  fastIndependentCount: number,
-  orderedAdvanceCount: number,
-  latency: number,
-  distanceFromProduction: number,
-): ListenThresholdSweepProfileResult {
-  const speed = (intervalMs: number, count: number) => ({
-    intervalMs,
-    independentMatchCount: count,
-  } as ListenSequenceAggregateSummary);
-  return {
-    profile: {
-      ...productionListenMatcherProfile,
-      id,
-      requireFreshBassOnset,
-      distanceFromProduction,
-    },
-    eligible: true,
-    rejectedBySafety: false,
-    safety: {
-      sequenceCount: 0,
-      speeds: [],
-      falseAdvanceCount: 0,
-      skippedAdvanceCount: 0,
-      duplicateAdvanceCount: 0,
-      incompleteCarriedBassAdvances: 0,
-      passed: true,
-    },
-    independentMatchCount,
-    orderedAdvanceCount,
-    orderedPrefixCompleted: 0,
-    completePassageCount: 0,
-    p95OrderedAdvanceLatencyMs: latency,
-    speedSummaries: [speed(500, fastIndependentCount), speed(1_000, 0)],
-    familySpeedSummaries: [],
-    nonSafetyDeltasFromProduction: [],
-  };
-}
-
-test("threshold ranking and Pareto tie-breaking are deterministic", () => {
-  const relaxed = sweepCandidate("b-relaxed", false, 10, 5, 8, 200, 1);
-  const fresh = sweepCandidate("a-fresh", true, 10, 5, 8, 200, 1);
-  const higherRecall = sweepCandidate("z-recall", false, 11, 4, 7, 220, 2);
-  assert.deepEqual(
-    rankListenThresholdSweepCandidates([relaxed, higherRecall, fresh])
-      .map(({ profile }) => profile.id),
-    ["z-recall", "a-fresh", "b-relaxed"],
-  );
-  assert.deepEqual(
-    listenThresholdSweepParetoFrontier([relaxed, fresh]).map(({ profile }) => profile.id),
-    ["a-fresh", "b-relaxed"],
-  );
-});
-
-test("threshold sweep replays a retained trace without an inference session", async () => {
-  const definition = bundledListenSequences()[0];
-  const sequence = materializeListenSequence(definition, 1_000);
-  const frames = sequence.targets.flatMap((target) => {
-    const at = Math.ceil(target.scheduledAttackTimeMs / 32) * 32;
-    return [
-      recognitionFrame(sequence.relevantPitches, at, target.pitches.map((midi) => ({ midi }))),
-      recognitionFrame(sequence.relevantPitches, at + 32, [], target.pitches),
-    ];
-  });
-  const original = replayListenSequenceTrace(sequence, trace(sequence, frames));
-  const summary = summarizeListenSequenceBenchmark([original]);
-  const benchmark: ListenSequenceBenchmarkResult = {
-    policy: "current-matcher",
-    matcherProfile: { ...productionListenMatcherProfile },
-    runs: [original],
-    ...summary,
-    experimental: {
-      policy: "next-onset-buffer",
-      bufferMs: 192,
-      renderer: { ...LISTEN_BENCHMARK_RENDERER },
-      runs: [],
-      speedSummaries: [],
-      familySpeedSummaries: [],
-      comparison: {
-        currentCorrectAdvanceCount: 0,
-        bufferedCorrectAdvanceCount: 0,
-        correctAdvanceImprovement: 0,
-        currentOrderedPrefixCompleted: 0,
-        bufferedOrderedPrefixCompleted: 0,
-        orderedPrefixImprovement: 0,
-        currentCompletePassageCount: 0,
-        bufferedCompletePassageCount: 0,
-        completePassageImprovement: 0,
-        bufferedFalseAdvanceCount: 0,
-        bufferedSkippedAdvanceCount: 0,
-        bufferedDuplicateAdvanceCount: 0,
-        isolatedBenchmarkUnchanged: true,
-        rawAndIndependentMetricsIdentical: true,
-        accepted: false,
-      },
-    },
-  };
-  let progressCalls = 0;
-  const result = await runListenThresholdSweep(benchmark, () => { progressCalls += 1; }, 128);
-  assert.equal(result.gridSize, 1_000);
-  assert.equal(result.profilesEvaluated, 1_000);
-  assert.equal(result.replayParityVerified, true);
-  assert.ok(progressCalls > 0);
-  assert.equal(result.noSafeImprovement, true);
-  assert.deepEqual(result.recommendation.profile, result.productionBaseline.profile);
 });
 
 test("materializes fixed articulation into a chunk-aligned continuous schedule", () => {

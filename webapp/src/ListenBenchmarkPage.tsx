@@ -9,11 +9,13 @@ import {
 import {
   runBundledListenSequenceBenchmark,
   runCourseClearArticulationMatrix,
-  runListenThresholdSweep,
   type ListenArticulationMatrixResult,
   type ListenSequenceBenchmarkResult,
-  type ListenThresholdSweepResult,
 } from "./listenSequenceBenchmark";
+import {
+  runListenThresholdSweep,
+  type ListenThresholdSweepResult,
+} from "./listenMatcherSweepBenchmark";
 import {
   runListenInferenceResetBenchmark,
   type ListenInferenceResetBenchmarkResult,
