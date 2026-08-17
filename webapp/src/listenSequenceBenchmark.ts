@@ -6,6 +6,17 @@ import {
   matcherOptionsForListenMatcherProfile,
   type ListenMatcherThresholds,
 } from "./listenMatcherProfiles";
+import {
+  LISTEN_BASELINE_PROFILE,
+  assertListenSequenceRunParity,
+  assertRecognitionTraceUnmutated,
+  assertRenderedTraceAudioIdentity,
+  listenBaselineProfileMetadata,
+  listenRecognitionTraceHash,
+  listenTraceIdentity,
+  type ListenBaselineProfileMetadata,
+  type ListenTraceIdentity,
+} from "./listenBaselineParity";
 import { COURSE_CLEAR_BENCHMARK_MOMENTS } from "./listenBenchmarkFixtures";
 import {
   ONLINE_AMT_CHUNK_SIZE,
@@ -531,6 +542,7 @@ export interface ListenArticulationNormalDelta {
 export interface ListenArticulationRunResult {
   articulation: ListenSequenceArticulation;
   run: ListenSequenceRunResult;
+  traceIdentity: ListenTraceIdentity;
   events: ListenArticulationEventDiagnostic[];
   summary: ListenArticulationRunSummary;
   deltaFromNormal: ListenArticulationNormalDelta;
@@ -558,6 +570,7 @@ export interface ListenArticulationDiagnosticConclusion {
 export interface ListenArticulationMatrixResult {
   intervalMs: 1_000;
   eventCount: number;
+  baseline: ListenBaselineProfileMetadata;
   renderer: ListenBenchmarkRendererConfiguration;
   runs: ListenArticulationRunResult[];
   conclusion: ListenArticulationDiagnosticConclusion;
@@ -2319,11 +2332,13 @@ export function summarizeCourseClearArticulationMatrix(
     articulation: ListenSequenceArticulation;
     sequence: MaterializedListenSequence;
     run: ListenSequenceRunResult;
+    traceIdentity: ListenTraceIdentity;
   }[],
 ): ListenArticulationMatrixResult {
-  const diagnosed = capturedRuns.map(({ articulation, sequence, run }) => ({
+  const diagnosed = capturedRuns.map(({ articulation, sequence, run, traceIdentity }) => ({
     articulation,
     run,
+    traceIdentity,
     ...diagnoseListenArticulationRun(articulation, sequence, run),
   }));
   const normal = diagnosed.find(({ articulation }) => articulation === "normal")?.summary;
@@ -2335,6 +2350,7 @@ export function summarizeCourseClearArticulationMatrix(
   return {
     intervalMs: COURSE_CLEAR_ARTICULATION_INTERVAL_MS,
     eventCount: COURSE_CLEAR_BENCHMARK_MOMENTS.length,
+    baseline: listenBaselineProfileMetadata(),
     renderer: { ...(runs[0]?.run.renderer ?? LISTEN_BENCHMARK_RENDERER) },
     runs,
     conclusion: interpretListenArticulationMatrix(runs),
@@ -2662,6 +2678,7 @@ export async function captureCourseClearArticulationMatrix(
     articulation: ListenSequenceArticulation;
     sequence: MaterializedListenSequence;
     run: ListenSequenceRunResult;
+    traceIdentity: ListenTraceIdentity;
   }> = [];
   for (let index = 0; index < definitions.length; index += 1) {
     const definition = definitions[index];
@@ -2672,6 +2689,8 @@ export async function captureCourseClearArticulationMatrix(
       COURSE_CLEAR_ARTICULATION_INTERVAL_MS,
     );
     const rendered = await (options.render ?? renderListenSequenceAudio)(sequence);
+    const label = `${definition.id} articulation`;
+    const renderedSignature = signatureForBenchmarkPcm(rendered.pcm);
     const trace = await captureListenSequenceTrace({
       sequenceId: definition.id,
       intervalMs: COURSE_CLEAR_ARTICULATION_INTERVAL_MS,
@@ -2682,11 +2701,19 @@ export async function captureCourseClearArticulationMatrix(
       renderer: rendered.renderer,
       audioDiagnostics: rendered.diagnostics,
     });
-    capturedRuns.push({
-      articulation,
+    assertRenderedTraceAudioIdentity(label, trace, renderedSignature);
+    const capturedRecognitionHash = listenRecognitionTraceHash(trace);
+    const run = replayListenSequenceTrace(sequence, trace, "current-matcher");
+    assertRecognitionTraceUnmutated(`${label} current-matcher replay`, trace, capturedRecognitionHash);
+    const baselineRun = replayListenSequenceTrace(
       sequence,
-      run: replayListenSequenceTrace(sequence, trace, "current-matcher"),
-    });
+      trace,
+      "current-matcher",
+      LISTEN_BASELINE_PROFILE,
+    );
+    assertRecognitionTraceUnmutated(`${label} baseline replay`, trace, capturedRecognitionHash);
+    assertListenSequenceRunParity(label, run, baselineRun);
+    capturedRuns.push({ articulation, sequence, run, traceIdentity: listenTraceIdentity(trace) });
     options.onProgress?.(
       index + 1,
       definitions.length,
@@ -2747,6 +2774,8 @@ export async function runBundledListenSequenceBenchmark(
       const { definition, intervalMs } = cases[index];
       const sequence = materializeListenSequence(definition, intervalMs);
       const rendered = await renderListenSequenceAudio(sequence, renderer);
+      const label = `${definition.id} at ${intervalMs} ms`;
+      const renderedSignature = signatureForBenchmarkPcm(rendered.pcm);
       const trace = await captureListenSequenceTrace({
         sequenceId: definition.id,
         intervalMs,
@@ -2756,8 +2785,22 @@ export async function runBundledListenSequenceBenchmark(
         renderer: rendered.renderer,
         audioDiagnostics: rendered.diagnostics,
       });
-      runs.push(replayListenSequenceTrace(sequence, trace, "current-matcher"));
-      experimentalRuns.push(replayListenSequenceTrace(sequence, trace, "next-onset-buffer"));
+      assertRenderedTraceAudioIdentity(label, trace, renderedSignature);
+      const capturedRecognitionHash = listenRecognitionTraceHash(trace);
+      const run = replayListenSequenceTrace(sequence, trace, "current-matcher");
+      assertRecognitionTraceUnmutated(`${label} current-matcher replay`, trace, capturedRecognitionHash);
+      const baselineRun = replayListenSequenceTrace(
+        sequence,
+        trace,
+        "current-matcher",
+        LISTEN_BASELINE_PROFILE,
+      );
+      assertRecognitionTraceUnmutated(`${label} baseline replay`, trace, capturedRecognitionHash);
+      assertListenSequenceRunParity(label, run, baselineRun);
+      const experimentalRun = replayListenSequenceTrace(sequence, trace, "next-onset-buffer");
+      assertRecognitionTraceUnmutated(`${label} buffered replay`, trace, capturedRecognitionHash);
+      runs.push(run);
+      experimentalRuns.push(experimentalRun);
       onProgress(index + 1, cases.length, `${definition.label} at ${intervalMs} ms`);
     }
     const summary = summarizeListenSequenceBenchmark(runs);

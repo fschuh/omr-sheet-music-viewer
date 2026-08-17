@@ -37,6 +37,7 @@ function run(layer: "pp" | "mp", update: Partial<ListenSequenceRunSummary>): Cou
       sampleRate: 16_000, chunkSize: 512, frameCount: 512, pcmByteLength: 2_048,
       pcmHash: layer, chunkHashes: [layer],
     },
+    traceIdentity: { pcmHash: layer, recognitionHash: layer, frameCount: 1 },
     recognition: { events: [], summary: summary(update) } as unknown as ListenSequenceRunResult,
   };
 }

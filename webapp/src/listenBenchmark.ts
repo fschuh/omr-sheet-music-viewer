@@ -1,7 +1,18 @@
 import { ExactChordMatcher } from "./chordMatcher";
 import { ONLINE_AMT_CHUNK_SIZE } from "./onlineAmtProtocol";
 import { OnlineAmtSession } from "./onlineAmtSession";
-import { matcherOptionsForListenMatcherProfile } from "./listenMatcherProfiles";
+import {
+  matcherOptionsForListenMatcherProfile,
+  type ListenMatcherThresholds,
+} from "./listenMatcherProfiles";
+import {
+  LISTEN_BASELINE_PROFILE,
+  assertIsolatedListenTrialParity,
+  assertRecognitionTraceUnmutated,
+  assertRenderedTraceAudioIdentity,
+  listenRecognitionTraceHash,
+  type IsolatedListenTrialSignature,
+} from "./listenBaselineParity";
 import { SpectralPitchDetector } from "./spectralPitchDetector";
 import type { RecognizedOnset, RecognizerResult } from "./noteRecognizer";
 import {
@@ -13,6 +24,7 @@ import {
   type ListenBenchmarkPianoConfiguration,
   type ListenBenchmarkRendererConfiguration,
   renderBenchmarkAudio,
+  signatureForBenchmarkPcm,
 } from "./listenBenchmarkAudio";
 import {
   COURSE_CLEAR_BENCHMARK_MOMENTS,
@@ -374,6 +386,8 @@ export async function captureIsolatedOnlineAmtBenchmark(options: {
     ...options.targetPitches,
     ...options.playedPitches,
   ])].sort((left, right) => left - right);
+  const label = `isolated ${options.playedPitches.join("+")} on ${rendered.renderer.version}`;
+  const renderedSignature = signatureForBenchmarkPcm(rendered.pcm);
   const trace = await captureListenSequenceTrace({
     sequenceId: "isolated-one-event",
     intervalMs: 0,
@@ -383,8 +397,50 @@ export async function captureIsolatedOnlineAmtBenchmark(options: {
     renderer: rendered.renderer,
     audioDiagnostics: rendered.diagnostics,
   });
-  const matcher = new ExactChordMatcher(matcherOptionsForListenMatcherProfile());
-  matcher.setTarget(options.targetPitches, options.generation, 0);
+  assertRenderedTraceAudioIdentity(label, trace, renderedSignature);
+  const capturedRecognitionHash = listenRecognitionTraceHash(trace);
+  const evaluation = replayIsolatedListenTrace({
+    trace,
+    targetPitches: options.targetPitches,
+    generation: options.generation,
+  });
+  assertRecognitionTraceUnmutated(`${label} current-matcher replay`, trace, capturedRecognitionHash);
+  const baselineEvaluation = replayIsolatedListenTrace({
+    trace,
+    targetPitches: options.targetPitches,
+    generation: options.generation,
+    profile: LISTEN_BASELINE_PROFILE,
+  });
+  assertRecognitionTraceUnmutated(`${label} baseline replay`, trace, capturedRecognitionHash);
+  assertIsolatedListenTrialParity(label, evaluation, baselineEvaluation);
+  return {
+    advanced: evaluation.advanced,
+    onsetToAdvanceMs: evaluation.onsetToAdvanceMs,
+    recognizedOnsets: [...evaluation.recognizedOnsets],
+    analysisMs: trace.maximumInferenceMs,
+    renderer: rendered.renderer,
+    audioDiagnostics: rendered.diagnostics,
+    trace,
+    piano: rendered.piano,
+  };
+}
+
+/**
+ * Replays one retained isolated trace through the matcher. Keeping this separate
+ * from capture lets a trial be re-evaluated under another profile without
+ * rerendering audio or rerunning inference.
+ */
+export function replayIsolatedListenTrace(options: {
+  trace: ListenRecognitionTrace;
+  targetPitches: readonly number[];
+  generation?: number;
+  profile?: ListenMatcherThresholds;
+}): IsolatedListenTrialSignature {
+  const generation = options.generation ?? 1;
+  const matcher = new ExactChordMatcher(
+    matcherOptionsForListenMatcherProfile(options.profile),
+  );
+  matcher.setTarget(options.targetPitches, generation, 0);
   const recognized = new Map<number, {
     midi: number;
     confidence: number;
@@ -392,7 +448,7 @@ export async function captureIsolatedOnlineAmtBenchmark(options: {
     onsetAfterAttackMs: number;
   }>();
   let matchedAtMs: number | null = null;
-  for (const frame of trace.frames) {
+  for (const frame of options.trace.frames) {
     for (const onset of frame.onsets) {
       if (!recognized.has(onset.midi)) {
         recognized.set(onset.midi, {
@@ -404,7 +460,7 @@ export async function captureIsolatedOnlineAmtBenchmark(options: {
       }
     }
     if (matchedAtMs === null && matcher.consume({
-      generation: options.generation,
+      generation,
       onsets: frame.onsets,
       noteEvents: frame.noteEvents,
       recognizedActivePitches: frame.activePitches,
@@ -418,12 +474,7 @@ export async function captureIsolatedOnlineAmtBenchmark(options: {
   return {
     advanced: matchedAtMs !== null,
     onsetToAdvanceMs: matchedAtMs === null ? null : Math.max(0, matchedAtMs - PRE_ROLL_MS),
-    analysisMs: trace.maximumInferenceMs,
     recognizedOnsets: Array.from(recognized.values()),
-    renderer: rendered.renderer,
-    audioDiagnostics: rendered.diagnostics,
-    trace,
-    piano: rendered.piano,
   };
 }
 

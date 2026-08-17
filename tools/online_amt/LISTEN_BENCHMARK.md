@@ -7,6 +7,117 @@
 Entries are kept newest first so renderer and recognition changes remain
 comparable over time.
 
+### Matcher profile registry refactor parity — August 17, 2026
+
+This entry records a refactor verification, not a new measured baseline. The
+matcher profile registry (`listenMatcherProfiles.ts`), the extracted 1,000-profile
+sweep (`listenMatcherSweepBenchmark.ts`), and the migration of production and
+benchmark consumers onto one profile type and one option conversion were checked
+against the measured sections below. No recognition, safety, latency, PCM, or
+export value changed.
+
+Measured on the development Windows machine at commit `4db8cf7` with the
+`bundled-piano-web-audio-v1` and `bundled-piano-tone-v2` renderers and the
+unchanged `online_amt_streaming.onnx` model (71,955,821 bytes,
+SHA-256 `a77be8262d3742ce…`). Production still resolves `baseline-v1`, whose
+converted options equal the former `onlineAmtChordMatcherOptions` field for
+field: onset 0.60, target-note 0.50, active-target 0.35, extra-note 0.97, fresh
+bass required, 32 ms settle, and `noteEvents` refractory counting.
+
+Baseline parity is now asserted by the harness itself rather than by inspection.
+Every captured continuous run, articulation run, dynamics run, and isolated trial
+is replayed with the explicitly named `baseline-v1` profile and compared event for
+event. Every capture path also signs the rendered waveform before inference runs
+and requires the trace's audio signature to match that snapshot chunk hash for
+chunk hash, and re-hashes the retained trace immediately after each individual
+replay — current, baseline, and buffered alike — so a mutation is attributed to
+the replay that caused it and cannot be masked by a later replay restoring the
+value. A mismatch aborts the benchmark with the differing field path. The
+canonical Splendid `mp` smoke is additionally compared against constants recorded
+before the refactor, so shared-code drift cannot update both sides of a
+self-comparison.
+
+What can be frozen across runs is bounded by the platform. Rendering the same
+isolated C-major chord three times in one browser process produced three
+different waveform hashes (`4981972c`, `678237b9`, `1cdd544c`) with an identical
+peak and RMS differing by 3e-10, and inference over those waveforms produced
+first-onset confidences spanning 0.9997449028 to 0.9997449116. Chrome's
+`OfflineAudioContext` and ONNX Runtime therefore do not reproduce their last bits,
+so a fixed waveform or raw-score hash would fail roughly two runs in three. The
+decoded structure does reproduce: a hash over per-frame argmax states, the silence
+gate, and every decoded onset, note event, active pitch, and evidence pitch with
+its timestamp was identical across five captures in each of three browser
+processes.
+
+The canonical comparison therefore requires exact equality for sample counts,
+advancement, onset timing, recognized pitches, and the decoded structure hash
+(`83fbd243` Direct, `5c164339` Tone), and allows continuous values — renderer
+amplitudes and model confidences — to differ by at most one representable Float32
+step. That step is 5.96e-8 near unit confidence and 7.45e-9 near the measured RMS,
+between 20× and 25× the observed run-to-run spread. Within a single run no
+tolerance applies: rendered-versus-recognized PCM, replayed runs, and full
+recognition hashes are compared exactly.
+
+| Regression | Result | Compared against |
+| --- | --- | --- |
+| Paired isolated smoke | `matched-recorded-baseline`, both renderers, three consecutive browser processes | Paired renderer baseline, August 15 |
+| Sequence corpus, 13 families × 6 speeds | Identical per-speed completion, ordered advances, and P95 latency | Paired renderer baseline, August 15 |
+| Course Clear articulation matrix | `no-detached-benefit`, identical four-profile table | Corrected articulation matrix, August 13 |
+| Dynamics smoke, Splendid and Salamander | Unchanged advancement and PCM identities | Paired renderer baseline, August 15 |
+| 1,000-profile threshold sweep | 680 rejected, 15-profile frontier, `o0p450-t0p500-a0p200-x0p990-b1` | Threshold replay sweep, August 13 |
+
+The canonical isolated smoke reproduced its recorded identities exactly:
+
+| Renderer | Advanced | Onset to advance | Peak | RMS | Trace frames |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Direct v1 | Yes | 196 ms | 0.603168 | 0.100907 | 35 |
+| Tone v2 | Yes | 196 ms | 0.432499 | 0.078035 | 35 |
+
+The continuous corpus reproduced both renderers row for row, with all
+safety-family false, skipped, and duplicate advances at zero and the next-onset
+buffer experiment still rejected (Direct −5 correct advances and −1 complete
+passage; Tone unchanged):
+
+| Interval | Complete passages, Direct / Tone | Ordered advances, Direct / Tone | P95 ordered latency, Direct / Tone |
+| --- | ---: | ---: | ---: |
+| 1000 ms | 8 / 13 · 9 / 13 | 66 / 85 · 63 / 85 | 220 ms · 228 ms |
+| 500 ms | 9 / 13 · 9 / 13 | 73 / 85 · 70 / 85 | 208 ms · 224 ms |
+| 333.33 ms | 7 / 13 · 9 / 13 | 43 / 85 · 56 / 85 | 228 ms · 228 ms |
+| 250 ms | 9 / 13 · 10 / 13 | 53 / 85 · 63 / 85 | 214 ms · 234 ms |
+| 167 ms | 7 / 13 · 8 / 13 | 45 / 85 · 52 / 85 | 221 ms · 228 ms |
+| 125 ms | 9 / 13 · 8 / 13 | 51 / 85 · 51 / 85 | 231 ms · 234 ms |
+
+The sweep reproduced its discovery result under both renderers. Direct kept the
+production baseline at 291 independent matches, 283 ordered advances, 199 prefix
+completions, 33 complete passages, and 214.67 ms P95, and recommended
+`o0p450-t0p500-a0p200-x0p990-b1` at 308 / 365 / 268 / 43 and 209.33 ms with all
+four dedicated safety counters at zero. Tone rejected 575 profiles and kept its
+three-profile frontier led by `o0p500-t0p500-a0p200-x0p970-b1`. Both runs report
+`replayParityVerified`, which now means the frozen `baseline-v1` entry rather than
+a mutable production pointer.
+
+Commands, run on a clean local Vite server:
+
+```powershell
+npm --prefix webapp test
+npm --prefix webapp run build
+
+node tools\online_amt\run_browser_benchmarks.mjs `
+  http://127.0.0.1:5174/online-amt-benchmark.html listen-smoke
+
+node tools\online_amt\run_browser_benchmarks.mjs `
+  http://127.0.0.1:5174/online-amt-benchmark.html listen-dynamics-smoke
+
+node tools\online_amt\run_browser_benchmarks.mjs `
+  http://127.0.0.1:5174/online-amt-benchmark.html listen-sequence-summary
+
+node tools\online_amt\run_browser_benchmarks.mjs `
+  http://127.0.0.1:5174/online-amt-benchmark.html listen-articulation-summary
+
+node tools\online_amt\run_browser_benchmarks.mjs `
+  http://127.0.0.1:5174/online-amt-benchmark.html listen-threshold-sweep
+```
+
 ### Paired renderer baseline — August 15, 2026
 
 Measured with Chrome 152.0.7977.42 on the 10-logical-processor development

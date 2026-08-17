@@ -9,11 +9,11 @@
  */
 
 import type { ListenBenchmarkRendererConfiguration } from "./listenBenchmarkAudio";
+import type { ListenMatcherThresholds } from "./listenMatcherProfiles";
 import {
-  LISTEN_MATCHER_PROFILES,
-  listenMatcherThresholds,
-  type ListenMatcherThresholds,
-} from "./listenMatcherProfiles";
+  LISTEN_BASELINE_PROFILE,
+  assertListenSequenceRunParity,
+} from "./listenBaselineParity";
 import {
   aggregateListenSequenceRuns,
   bundledListenSequences,
@@ -29,7 +29,7 @@ import {
 
 /** The frozen reference profile for discovery parity, distance, and deltas. */
 export const LISTEN_SWEEP_DISCOVERY_BASELINE_PROFILE: ListenMatcherThresholds =
-  listenMatcherThresholds(LISTEN_MATCHER_PROFILES["baseline-v1"]);
+  LISTEN_BASELINE_PROFILE;
 
 function sortedUnique(values: Iterable<number>): number[] {
   return [...new Set(values)].sort((left, right) => left - right);
@@ -134,14 +134,6 @@ export interface ListenThresholdSweepResult {
   replayParityVerified: true;
 }
 
-function thresholdRunSignature(run: ListenSequenceRunResult): string {
-  return JSON.stringify({
-    events: run.events,
-    attacks: run.attacks,
-    summary: run.summary,
-  });
-}
-
 function sequenceForRun(run: ListenSequenceRunResult): MaterializedListenSequence {
   const definition = bundledListenSequences().find(({ id }) => id === run.sequenceId);
   if (!definition) throw new Error(`Cannot reconstruct benchmark sequence ${run.sequenceId}.`);
@@ -159,11 +151,11 @@ function assertDiscoveryBaselineReplayParity(
       originalRun.policy,
       LISTEN_SWEEP_DISCOVERY_BASELINE_PROFILE,
     );
-    if (thresholdRunSignature(originalRun) !== thresholdRunSignature(replayed)) {
-      throw new Error(
-        `Discovery baseline replay parity failed for ${originalRun.sequenceId} at ${originalRun.intervalMs} ms.`,
-      );
-    }
+    assertListenSequenceRunParity(
+      `${originalRun.sequenceId} at ${originalRun.intervalMs} ms`,
+      originalRun,
+      replayed,
+    );
   }
 }
 

@@ -201,11 +201,12 @@ async function runConfiguration(configuration) {
     if (LISTEN_SMOKE_MODE || LISTEN_DYNAMICS_SMOKE_MODE) {
       return await evaluate(client, `(async () => {
         const startedAt = performance.now();
-        const [{ captureIsolatedOnlineAmtBenchmark }, { OnlineAmtSession }, audio] =
+        const [{ captureIsolatedOnlineAmtBenchmark }, { OnlineAmtSession }, audio, parity] =
           await Promise.all([
             import("/src/listenBenchmark.ts"),
             import("/src/onlineAmtSession.ts"),
             import("/src/listenBenchmarkAudio.ts"),
+            import("/src/listenBaselineParity.ts"),
           ]);
         const renderer = new URLSearchParams(location.search).get("benchmark-renderer") === "tone"
           ? audio.LISTEN_BENCHMARK_TONE_RENDERER
@@ -252,8 +253,38 @@ async function runConfiguration(configuration) {
               \`\${result.piano?.id}/\${result.piano?.layer}.\`,
             );
           }
+          const canonicalSmoke = piano === "splendid" && layer === "mp"
+            ? {
+                rendererVersion: result.renderer?.version,
+                piano: result.piano?.id,
+                layer: result.piano?.layer,
+                targetPitches: [60, 64, 67],
+                advanced: result.advanced,
+                onsetToAdvanceMs: result.onsetToAdvanceMs,
+                pcmFrameCount: result.audioDiagnostics.frameCount,
+                pcmDurationMs: result.audioDiagnostics.durationMs,
+                recognitionStructureHash: result.trace
+                  ? parity.listenRecognitionStructureHash(result.trace)
+                  : "untraced",
+                peak: result.audioDiagnostics.peak,
+                rms: result.audioDiagnostics.rms,
+                traceFrameCount: result.trace?.frames.length ?? 0,
+                recognizedOnsets: result.recognizedOnsets ?? [],
+              }
+            : null;
+          if (canonicalSmoke && !${LISTEN_DYNAMICS_SMOKE_MODE}) {
+            parity.assertCanonicalIsolatedSmokeBaseline(canonicalSmoke);
+          }
           return {
             passed: true,
+            baselineParity: canonicalSmoke === null || ${LISTEN_DYNAMICS_SMOKE_MODE}
+              ? "not-applicable"
+              : "matched-recorded-baseline",
+            traceIdentity: result.trace === undefined ? null : {
+              pcmHash: result.trace.audioSignature?.pcmHash ?? "unsigned",
+              recognitionHash: parity.listenRecognitionTraceHash(result.trace),
+              recognitionStructureHash: parity.listenRecognitionStructureHash(result.trace),
+            },
             renderer: result.renderer,
             piano: result.piano,
             targetPitches: [60, 64, 67],

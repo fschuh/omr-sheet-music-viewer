@@ -19,6 +19,17 @@ import {
   type MaterializedListenSequence,
   type SequenceInferenceSession,
 } from "./listenSequenceBenchmark";
+import {
+  LISTEN_BASELINE_PROFILE,
+  assertListenSequenceRunParity,
+  assertRecognitionTraceUnmutated,
+  assertRenderedTraceAudioIdentity,
+  listenBaselineProfileMetadata,
+  listenRecognitionTraceHash,
+  listenTraceIdentity,
+  type ListenBaselineProfileMetadata,
+  type ListenTraceIdentity,
+} from "./listenBaselineParity";
 import { OnlineAmtSession } from "./onlineAmtSession";
 import {
   PIANO_IDS,
@@ -41,6 +52,7 @@ export interface CourseClearDynamicsRunResult {
   peak: number;
   rms: number;
   pcmSignature: ListenBenchmarkAudioSignature;
+  traceIdentity: ListenTraceIdentity;
   recognition: ListenSequenceRunResult;
 }
 
@@ -71,6 +83,7 @@ export interface CourseClearPianoDynamicsSummary extends CourseClearDynamicsSumm
 
 export interface CourseClearDynamicsSuiteResult {
   suite: "constant-layer";
+  baseline: ListenBaselineProfileMetadata;
   renderer: ListenBenchmarkRendererConfiguration;
   runs: CourseClearDynamicsRunResult[];
   pianos: CourseClearPianoDynamicsSummary[];
@@ -80,6 +93,7 @@ export interface CourseClearDynamicsSuiteResult {
 
 export interface CourseClearMixedDynamicsSuiteResult {
   suite: "crescendo-decrescendo";
+  baseline: ListenBaselineProfileMetadata;
   renderer: ListenBenchmarkRendererConfiguration;
   runs: CourseClearDynamicsRunResult[];
   crossPiano: CourseClearDynamicsSummary;
@@ -285,9 +299,19 @@ async function captureRun(
     renderer: rendered.renderer,
     audioDiagnostics: rendered.diagnostics,
   });
-  if (trace.audioSignature?.pcmHash !== pcmSignature.pcmHash) {
-    throw new Error("Rendered and recognized PCM signatures differ.");
-  }
+  const label = `${sequence.definition.id} ${piano} ${profile}`;
+  assertRenderedTraceAudioIdentity(label, trace, pcmSignature);
+  const capturedRecognitionHash = listenRecognitionTraceHash(trace);
+  const recognition = replayListenSequenceTrace(sequence, trace, "current-matcher");
+  assertRecognitionTraceUnmutated(`${label} current-matcher replay`, trace, capturedRecognitionHash);
+  const baselineRecognition = replayListenSequenceTrace(
+    sequence,
+    trace,
+    "current-matcher",
+    LISTEN_BASELINE_PROFILE,
+  );
+  assertRecognitionTraceUnmutated(`${label} baseline replay`, trace, capturedRecognitionHash);
+  assertListenSequenceRunParity(label, recognition, baselineRecognition);
   return {
     renderer: { ...rendered.renderer },
     piano,
@@ -299,7 +323,8 @@ async function captureRun(
     peak: rendered.diagnostics.peak,
     rms: rendered.diagnostics.rms,
     pcmSignature,
-    recognition: replayListenSequenceTrace(sequence, trace, "current-matcher"),
+    traceIdentity: listenTraceIdentity(trace),
+    recognition,
   };
 }
 
@@ -337,6 +362,7 @@ export async function captureCourseClearConstantLayerDynamics(
   }));
   return {
     suite: "constant-layer",
+    baseline: listenBaselineProfileMetadata(),
     renderer: { ...(options.renderer ?? LISTEN_BENCHMARK_RENDERER) },
     runs,
     pianos,
@@ -371,6 +397,7 @@ export async function captureCourseClearMixedDynamics(
   }));
   return {
     suite: "crescendo-decrescendo",
+    baseline: listenBaselineProfileMetadata(),
     renderer: { ...(options.renderer ?? LISTEN_BENCHMARK_RENDERER) },
     runs,
     crossPiano: equalPianoAggregate(pianos, runs),
