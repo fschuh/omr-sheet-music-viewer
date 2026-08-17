@@ -1,4 +1,4 @@
-import { ExactChordMatcher } from "./chordMatcher";
+import { ExactChordMatcher, type ChordMatchUpdate } from "./chordMatcher";
 import {
   DEFAULT_LISTEN_MATCHER_PROFILE_ID,
   LISTEN_MATCHER_PROFILES,
@@ -223,6 +223,7 @@ export type ListenSequenceFailureReason =
   | "blocked-by-prior-stall"
   | "duplicate-or-held-attack"
   | "skipped-target"
+  | "late-advance"
   | "stale-generation";
 
 export type RequiredAttackType = "onset" | "reOnset";
@@ -276,6 +277,12 @@ export interface ListenSequenceEventDiagnostic {
   duplicate: boolean;
   skipped: boolean;
   falseAdvance: boolean;
+  /**
+   * The target advanced from a later physical attack that played exactly this
+   * target's chord. The playhead moved onto music the player did in fact play,
+   * one moment behind them, so this is a lag rather than a safety failure.
+   */
+  lateAdvance: boolean;
   timedOut: boolean;
   rawFailureReasons: ListenSequenceFailureReason[];
   independentFailureReasons: ListenSequenceFailureReason[];
@@ -317,6 +324,8 @@ export interface ListenSequenceRunSummary {
   duplicateAdvanceCount: number;
   skippedAdvanceCount: number;
   falseAdvanceCount: number;
+  /** Correct-content advances credited to a later repetition of the same chord. */
+  lateAdvanceCount: number;
   p50OnsetToAdvanceMs: number | null;
   p95OnsetToAdvanceMs: number | null;
   p50IndependentMatchLatencyMs: number | null;
@@ -345,6 +354,33 @@ export interface ListenSequenceRunResult {
 }
 
 export type ListenSequenceReplayPolicy = "current-matcher" | "next-onset-buffer";
+
+/**
+ * Matcher state at the exact frame an advancement was emitted. Replay is
+ * otherwise a closed loop, so a safety investigation cannot reconstruct the
+ * generation, the carried-over pitches, or which pitches the matcher actually
+ * accumulated. Observation is passive: nothing here feeds back into replay, so a
+ * run captured with an observer is identical to one captured without it.
+ */
+export interface ListenSequenceAdvancementObservation {
+  targetIndex: number;
+  generation: number;
+  atMs: number;
+  frameIndex: number;
+  sourceAttackIndex: number | null;
+  targetPitches: number[];
+  /** Pitches the matcher accepted as fresh evidence for this target. */
+  detectedTargetPitches: number[];
+  extraPitches: number[];
+  /** Pitches still sounding when this target was armed. */
+  carryOverPitchesAtTargetStart: number[];
+  /** Pitches still sounding when the following target was armed. */
+  carryOverPitchesForNextTarget: number[];
+}
+
+export type ListenSequenceReplayObserver = (
+  observation: ListenSequenceAdvancementObservation,
+) => void;
 
 export interface ListenSequencePolicyComparison {
   currentCorrectAdvanceCount: number;
@@ -409,6 +445,8 @@ export interface ListenSequenceAggregateSummary {
   duplicateAdvanceCount: number;
   skippedAdvanceCount: number;
   falseAdvanceCount: number;
+  /** Correct-content advances credited to a later repetition of the same chord. */
+  lateAdvanceCount: number;
   p50OnsetToAdvanceMs: number | null;
   p95OnsetToAdvanceMs: number | null;
   p50IndependentMatchLatencyMs: number | null;
@@ -452,11 +490,18 @@ export interface ListenSequenceSafetySummary {
     falseAdvanceCount: number;
     skippedAdvanceCount: number;
     duplicateAdvanceCount: number;
+    lateAdvanceCount: number;
     incompleteCarriedBassAdvances: number;
   }>;
   falseAdvanceCount: number;
   skippedAdvanceCount: number;
   duplicateAdvanceCount: number;
+  /**
+   * Reported, never gating. A late advance is correct content one moment behind
+   * the player; it is surfaced so a profile cannot trade recognition for lag
+   * without that showing up somewhere.
+   */
+  lateAdvanceCount: number;
   incompleteCarriedBassAdvances: number;
   passed: boolean;
 }
@@ -1476,6 +1521,7 @@ export interface SequenceFailureInput {
   duplicate: boolean;
   skipped: boolean;
   falseAdvance: boolean;
+  lateAdvance?: boolean;
   nextAttackBeforeAdvance: boolean;
   unexpectedPitches: readonly number[];
   targetPitches: readonly number[];
@@ -1507,6 +1553,7 @@ export function classifyListenSequenceFailure(
       "blocked-by-prior-stall",
       "duplicate-or-held-attack",
       "skipped-target",
+      "late-advance",
       "stale-generation",
       "rejected-extra-pitch",
       "carry-over",
@@ -1528,6 +1575,7 @@ export function classifyListenSequenceFailure(
     reasons.push("duplicate-or-held-attack");
   }
   if (input.skipped) reasons.push("skipped-target");
+  if (input.lateAdvance) reasons.push("late-advance");
   if (input.blockedByPriorStall) reasons.push("blocked-by-prior-stall");
   if (input.staleGeneration) reasons.push("stale-generation");
   if (input.nextAttackBeforeAdvance) reasons.push("next-attack-before-advance");
@@ -1571,6 +1619,7 @@ export function classifyListenSequenceFailure(
     "blocked-by-prior-stall",
     "duplicate-or-held-attack",
     "skipped-target",
+    "late-advance",
     "stale-generation",
     "rejected-extra-pitch",
     "carry-over",
@@ -1593,6 +1642,7 @@ export function replayListenSequenceTrace(
   trace: ListenRecognitionTrace,
   policyOrProfile: ListenSequenceReplayPolicy | ListenMatcherThresholds = "current-matcher",
   profileArgument: ListenMatcherThresholds = productionListenMatcherProfile,
+  observer?: ListenSequenceReplayObserver,
 ): ListenSequenceRunResult {
   const policy = typeof policyOrProfile === "string" ? policyOrProfile : "current-matcher";
   const profile = typeof policyOrProfile === "string" ? profileArgument : policyOrProfile;
@@ -1613,6 +1663,8 @@ export function replayListenSequenceTrace(
   let maximumTargetEvidence = new Map<number, number>();
   let bufferedFrames: ListenRecognitionFrame[] = [];
   let nextAttackIndex = 0;
+  // The first target is armed on a fresh matcher, so nothing is carried into it.
+  let carryOverPitchesAtTargetStart: number[] = [];
 
   const rememberTargetEvidence = (
     frame: ListenRecognitionFrame,
@@ -1659,7 +1711,12 @@ export function replayListenSequenceTrace(
     extraPitchesByTarget.set(index, extras);
   };
 
-  const recordAdvancement = (atMs: number) => {
+  const recordAdvancement = (
+    atMs: number,
+    frameIndex: number,
+    activePitchesAtAdvance: readonly RecognizedPitchEvidence[],
+    update: ChordMatchUpdate,
+  ) => {
     const target = sequence.targets[targetIndex];
     if (!target) return;
     // Safety targets may begin with an intentionally invalid attack. Attribute
@@ -1680,6 +1737,25 @@ export function replayListenSequenceTrace(
       atMs,
       sourceAttackIndex: sourceAttack?.index ?? null,
     });
+    // setTarget carries whatever was sounding on the last consumed frame into
+    // the next target, so the observed carry-over set is that frame's active
+    // pitches. Read it before advancing so both sides of the handover are known.
+    const carryOverPitchesForNextTarget = sortedUnique(
+      activePitchesAtAdvance.map(({ midi }) => midi),
+    );
+    observer?.({
+      targetIndex,
+      generation,
+      atMs,
+      frameIndex,
+      sourceAttackIndex: sourceAttack?.index ?? null,
+      targetPitches: [...target.pitches],
+      detectedTargetPitches: [...update.detectedTargetPitches],
+      extraPitches: [...update.extraPitches],
+      carryOverPitchesAtTargetStart: [...carryOverPitchesAtTargetStart],
+      carryOverPitchesForNextTarget,
+    });
+    carryOverPitchesAtTargetStart = carryOverPitchesForNextTarget;
     targetIndex += 1;
     generation += 1;
     matcher.setTarget(
@@ -1691,7 +1767,7 @@ export function replayListenSequenceTrace(
     maximumTargetEvidence = new Map<number, number>();
   };
 
-  for (const frame of trace.frames) {
+  for (const [frameIndex, frame] of trace.frames.entries()) {
     while (
       nextAttackIndex < sequence.attacks.length &&
       sequence.attacks[nextAttackIndex].scheduledAtMs <= frame.capturedAtMs
@@ -1758,7 +1834,7 @@ export function replayListenSequenceTrace(
     if (update.stale) staleGenerationTargets.add(targetIndex);
     rememberExtras(targetIndex, update.extraPitches);
     if (!update.matched) continue;
-    recordAdvancement(frame.capturedAtMs);
+    recordAdvancement(frame.capturedAtMs, frameIndex, frame.activePitches, update);
 
     // A buffer is scoped to exactly the generation that just ended. Replay it
     // once into the immediate following target, then discard it even if that
@@ -1784,7 +1860,9 @@ export function replayListenSequenceTrace(
       });
       if (bufferedUpdate.stale) staleGenerationTargets.add(targetIndex);
       rememberExtras(targetIndex, bufferedUpdate.extraPitches);
-      if (bufferedUpdate.matched) recordAdvancement(frame.capturedAtMs);
+      if (bufferedUpdate.matched) {
+        recordAdvancement(frame.capturedAtMs, frameIndex, frame.activePitches, bufferedUpdate);
+      }
     }
   }
   while (nextAttackIndex < sequence.attacks.length) {
@@ -1819,9 +1897,25 @@ export function replayListenSequenceTrace(
     const skipped = advancement !== undefined &&
       advancement.atMs + 0.001 < target.scheduledAttackTimeMs;
     const duplicate = duplicateAdvancementTargets.has(index);
+    // The advancement came from this target's own valid physical attack.
+    const advancedByOwnAttack = sourceAttack !== null &&
+      sourceAttack.targetIndex === index &&
+      sourceAttack.expectedAdvance;
+    // A repeated score moment can only be recognized once the decoder produces a
+    // fresh attack for every one of its pitches, which may not happen until a
+    // later repetition. Such an advancement consumed exactly this target's chord
+    // from an attack that genuinely played it, and leaves the playhead behind the
+    // player rather than ahead of them, so it is a lag, not a wrong advance.
+    // Anything else — an unplayed chord, a deliberate wrong-note attack, an
+    // out-of-order advance, or a second advance from one attack — stays unsafe.
+    const lateAdvance = advancement !== undefined &&
+      !skipped &&
+      !advancedByOwnAttack &&
+      sourceAttack !== null &&
+      sourceAttack.expectedAdvance &&
+      sameChord(sourceAttack.playedPitches, target.pitches);
     const falseAdvance = advancement !== undefined && (
-      skipped || sourceAttack === null ||
-      sourceAttack.targetIndex !== index || !sourceAttack.expectedAdvance
+      skipped || sourceAttack === null || (!advancedByOwnAttack && !lateAdvance)
     );
     const nextAttackBeforeAdvance = nextTarget !== undefined && (
       advancement === undefined || nextTarget.scheduledAttackTimeMs < advancement.atMs
@@ -1842,8 +1936,10 @@ export function replayListenSequenceTrace(
     const orderedFailureReasons: ListenSequenceFailureReason[] = [];
     if (nextAttackBeforeAdvance) orderedFailureReasons.push("next-attack-before-advance");
     if (duplicate) orderedFailureReasons.push("duplicate-or-held-attack");
-    if (skipped || (advancement !== undefined && sourceAttack?.index !== target.attackIndex)) {
+    if (skipped) {
       orderedFailureReasons.push("skipped-target");
+    } else if (advancement !== undefined && sourceAttack?.index !== target.attackIndex) {
+      orderedFailureReasons.push(lateAdvance ? "late-advance" : "skipped-target");
     }
     if (staleGenerationTargets.has(index)) orderedFailureReasons.push("stale-generation");
     return {
@@ -1881,6 +1977,7 @@ export function replayListenSequenceTrace(
       duplicate,
       skipped,
       falseAdvance,
+      lateAdvance,
       timedOut: !recognition.independentlyMatched,
       rawFailureReasons: recognition.rawFailureReasons,
       independentFailureReasons: recognition.independentFailureReasons,
@@ -1907,6 +2004,7 @@ export function replayListenSequenceTrace(
       duplicate: event.duplicate,
       skipped: event.skipped,
       falseAdvance: event.falseAdvance,
+      lateAdvance: event.lateAdvance,
       nextAttackBeforeAdvance: event.nextAttackBeforeAdvance,
       unexpectedPitches: event.unexpectedPitches,
       targetPitches: event.targetPitches,
@@ -1974,6 +2072,7 @@ export function replayListenSequenceTrace(
     duplicateAdvanceCount: events.filter(({ duplicate }) => duplicate).length,
     skippedAdvanceCount: events.filter(({ skipped }) => skipped).length,
     falseAdvanceCount: events.filter(({ falseAdvance }) => falseAdvance).length,
+    lateAdvanceCount: events.filter(({ lateAdvance }) => lateAdvance).length,
     p50OnsetToAdvanceMs: percentile(orderedLatencies, 0.5),
     p95OnsetToAdvanceMs: percentile(orderedLatencies, 0.95),
     p50IndependentMatchLatencyMs: percentile(independentLatencies, 0.5),
@@ -2472,6 +2571,10 @@ export function aggregateListenSequenceRuns(
       (total, run) => total + run.summary.falseAdvanceCount,
       0,
     ),
+    lateAdvanceCount: runs.reduce(
+      (total, run) => total + run.summary.lateAdvanceCount,
+      0,
+    ),
     p50OnsetToAdvanceMs: percentile(orderedLatencies, 0.5),
     p95OnsetToAdvanceMs: percentile(orderedLatencies, 0.95),
     p50IndependentMatchLatencyMs: percentile(independentLatencies, 0.5),
@@ -2850,12 +2953,14 @@ export function summarizeListenSequenceSafety(
         falseAdvanceCount: selected.reduce((total, run) => total + run.summary.falseAdvanceCount, 0),
         skippedAdvanceCount: selected.reduce((total, run) => total + run.summary.skippedAdvanceCount, 0),
         duplicateAdvanceCount: selected.reduce((total, run) => total + run.summary.duplicateAdvanceCount, 0),
+        lateAdvanceCount: selected.reduce((total, run) => total + run.summary.lateAdvanceCount, 0),
         incompleteCarriedBassAdvances,
       };
     });
   const falseAdvanceCount = speeds.reduce((total, speed) => total + speed.falseAdvanceCount, 0);
   const skippedAdvanceCount = speeds.reduce((total, speed) => total + speed.skippedAdvanceCount, 0);
   const duplicateAdvanceCount = speeds.reduce((total, speed) => total + speed.duplicateAdvanceCount, 0);
+  const lateAdvanceCount = speeds.reduce((total, speed) => total + speed.lateAdvanceCount, 0);
   const incompleteCarriedBassAdvances = speeds.reduce(
     (total, speed) => total + speed.incompleteCarriedBassAdvances,
     0,
@@ -2866,6 +2971,7 @@ export function summarizeListenSequenceSafety(
     falseAdvanceCount,
     skippedAdvanceCount,
     duplicateAdvanceCount,
+    lateAdvanceCount,
     incompleteCarriedBassAdvances,
     passed: falseAdvanceCount === 0 &&
       skippedAdvanceCount === 0 &&

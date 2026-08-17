@@ -14,7 +14,6 @@ import {
   materializeListenSequence,
   productionListenMatcherProfile,
   replayListenSequenceTrace,
-  summarizeListenSequenceSafety,
   type ListenArticulationMatrixResult,
   type ListenRecognitionFrame,
   type ListenRecognitionTrace,
@@ -28,6 +27,7 @@ import {
   type ScheduledSequenceAttack,
   type ScheduledSequenceNote,
 } from "./listenSequenceBenchmark";
+import { summarizeListenSafety } from "./listenSafetyRegression";
 import type { ListenThresholdSweepResult } from "./listenMatcherSweepBenchmark";
 import {
   LISTEN_MATCHER_PROFILES,
@@ -859,7 +859,7 @@ function matcherMetrics(
     profile,
   ));
   const nonSafetyRuns = runs.filter(({ family }) => family !== "safety");
-  const safety = summarizeListenSequenceSafety(runs);
+  const safety = summarizeListenSafety(runs, profile);
   const reasons = (reason: ListenSequenceFailureReason) => nonSafetyRuns.reduce(
     (total, run) => total + run.events.filter((event) => event.failureReasons.includes(reason)).length,
     0,

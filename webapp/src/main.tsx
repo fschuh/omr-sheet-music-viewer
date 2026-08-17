@@ -13,7 +13,8 @@ if (
   query.has("listen-articulation") ||
   query.has("listen-inference-reset") ||
   query.has("listen-dynamics-constant") ||
-  query.has("listen-dynamics-mixed")
+  query.has("listen-dynamics-mixed") ||
+  query.has("listen-dynamics-case")
 ) {
   void import("./ListenBenchmarkPage").then(({ ListenBenchmarkPage }) => {
     root.render(<StrictMode><ListenBenchmarkPage /></StrictMode>);

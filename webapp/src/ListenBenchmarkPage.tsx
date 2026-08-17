@@ -31,14 +31,39 @@ import {
   type ListenBenchmarkRendererConfiguration,
 } from "./listenBenchmarkAudio";
 import {
+  conciseCourseClearDynamicsCaseResult,
   conciseCourseClearDynamicsResult,
   runCourseClearConstantLayerDynamics,
+  runCourseClearDynamicsCase,
   runCourseClearMixedDynamics,
+  type CourseClearDynamicsCaseResult,
   type CourseClearDynamicsSuiteResult,
   type CourseClearMixedDynamicsSuiteResult,
 } from "./listenDynamicsBenchmark";
+import {
+  isPianoId,
+  isPianoLayerFor,
+  type PianoId,
+  type PianoLayerId,
+} from "./pianoRegistry";
 
 let automaticBenchmarkStarted = false;
+
+/**
+ * The single constant-layer run a focused safety investigation reproduces.
+ * Defaults to the diagnosed Salamander `v05` case so the documented command
+ * stays short, while still accepting any bundled piano and layer.
+ */
+function requestedDynamicsCase(): { piano: PianoId; layer: PianoLayerId } {
+  const query = new URLSearchParams(window.location.search);
+  const piano = query.get("benchmark-piano") ?? "salamander";
+  const layer = query.get("benchmark-layer") ?? "v05";
+  if (!isPianoId(piano)) throw new Error(`Unknown benchmark piano ${piano}.`);
+  if (!isPianoLayerFor(piano, layer)) {
+    throw new Error(`Piano layer ${layer} does not belong to ${piano}.`);
+  }
+  return { piano, layer };
+}
 
 function requestedRenderer(): ListenBenchmarkRendererConfiguration {
   const query = new URLSearchParams(window.location.search);
@@ -52,14 +77,14 @@ export function ListenBenchmarkPage() {
   const [runningTask, setRunningTask] = useState<
     "online_amt" | "spectral" | "sequence" | "threshold-sweep" | "retrigger-sweep" |
       "articulation" | "reset-comparison" | null
-      | "dynamics-constant" | "dynamics-mixed"
+      | "dynamics-constant" | "dynamics-mixed" | "dynamics-case"
   >(null);
   const running = runningTask !== null;
   const [progress, setProgress] = useState("");
   const [progressTask, setProgressTask] = useState<
     "isolated" | "sequence" | "threshold-sweep" | "retrigger-sweep" | "articulation" |
       "reset-comparison"
-      | "dynamics-constant" | "dynamics-mixed"
+      | "dynamics-constant" | "dynamics-mixed" | "dynamics-case"
   >("isolated");
   const [error, setError] = useState<string | null>(null);
   const [automated, setAutomated] = useState<ListenBenchmarkSummary | null>(null);
@@ -76,6 +101,8 @@ export function ListenBenchmarkPage() {
     useState<CourseClearDynamicsSuiteResult | null>(null);
   const [mixedDynamicsResult, setMixedDynamicsResult] =
     useState<CourseClearMixedDynamicsSuiteResult | null>(null);
+  const [dynamicsCaseResult, setDynamicsCaseResult] =
+    useState<CourseClearDynamicsCaseResult | null>(null);
   const [manual, setManual] = useState<ListenBenchmarkTrial[]>([]);
   const [manualSource, setManualSource] = useState<"acoustic" | "digital">("acoustic");
   const [manualCorrect, setManualCorrect] = useState(true);
@@ -86,7 +113,10 @@ export function ListenBenchmarkPage() {
   useEffect(() => {
     if (automaticBenchmarkStarted) return;
     const query = new URLSearchParams(window.location.search);
-    if (query.get("listen-dynamics-constant") === "auto") {
+    if (query.get("listen-dynamics-case") === "auto") {
+      automaticBenchmarkStarted = true;
+      void runDynamicsCase();
+    } else if (query.get("listen-dynamics-constant") === "auto") {
       automaticBenchmarkStarted = true;
       void runDynamicsConstant();
     } else if (query.get("listen-dynamics-mixed") === "auto") {
@@ -322,6 +352,33 @@ export function ListenBenchmarkPage() {
       (window as typeof window & {
         listenMixedDynamicsBenchmarkResult?: CourseClearMixedDynamicsSuiteResult;
       }).listenMixedDynamicsBenchmarkResult = result;
+      document.body.dataset.status = "complete";
+    } catch (benchmarkError) {
+      setError(benchmarkError instanceof Error ? benchmarkError.message : String(benchmarkError));
+      document.body.dataset.status = "error";
+    } finally {
+      setRunningTask(null);
+    }
+  }
+
+  async function runDynamicsCase() {
+    setRunningTask("dynamics-case");
+    setProgressTask("dynamics-case");
+    setError(null);
+    setProgress("Reproducing one constant-layer safety case…");
+    document.body.dataset.status = "running";
+    try {
+      const { piano, layer } = requestedDynamicsCase();
+      const result = await runCourseClearDynamicsCase(
+        piano,
+        layer,
+        (complete, total, label) => setProgress(`${complete} / ${total} runs · ${label}`),
+        benchmarkRenderer,
+      );
+      setDynamicsCaseResult(result);
+      (window as typeof window & {
+        listenDynamicsCaseResult?: CourseClearDynamicsCaseResult;
+      }).listenDynamicsCaseResult = result;
       document.body.dataset.status = "complete";
     } catch (benchmarkError) {
       setError(benchmarkError instanceof Error ? benchmarkError.message : String(benchmarkError));
@@ -1021,8 +1078,15 @@ export function ListenBenchmarkPage() {
         </button>{" "}
         <button type="button" disabled={running} onClick={() => void runDynamicsMixed()}>
           {runningTask === "dynamics-mixed" ? "Running…" : "Run mixed dynamics"}
+        </button>{" "}
+        <button type="button" disabled={running} onClick={() => void runDynamicsCase()}>
+          {runningTask === "dynamics-case" ? "Running…" : "Reproduce one safety case"}
         </button>
-        {progress && (progressTask === "dynamics-constant" || progressTask === "dynamics-mixed")
+        {progress && (
+          progressTask === "dynamics-constant" ||
+          progressTask === "dynamics-mixed" ||
+          progressTask === "dynamics-case"
+        )
           ? <span className="benchmark-progress">{progress}</span>
           : null}
         {dynamicsResult ? (
@@ -1115,6 +1179,30 @@ export function ListenBenchmarkPage() {
               </table>
             </div>
             <pre>{JSON.stringify(conciseCourseClearDynamicsResult(mixedDynamicsResult), null, 2)}</pre>
+          </>
+        ) : null}
+        {dynamicsCaseResult ? (
+          <>
+            <h3>
+              Focused safety case · {dynamicsCaseResult.run.pianoName} {dynamicsCaseResult.layer}
+            </h3>
+            <p>
+              {dynamicsCaseResult.forensics.length === 0
+                ? "No advancement in this run was counted against the safety gates."
+                : `${dynamicsCaseResult.forensics.length} advancement(s) counted against the safety gates.`}
+              {" "}Committed regressions: {dynamicsCaseResult.regressions.fixtureCount}, replayed
+              across {dynamicsCaseResult.regressions.outcomes.length} profile runs
+              ({dynamicsCaseResult.regressions.passed ? "none less safe than baseline" : "SAFETY REGRESSION"},
+              {" "}{dynamicsCaseResult.regressions.deviationCount} behavior deviation(s)).
+              {dynamicsCaseResult.verifications.length > 0
+                ? ` This run re-verified ${dynamicsCaseResult.verifications.length} committed case(s) against its own decoded structure.`
+                : " This run is not a committed case, so nothing was re-verified against it."}
+            </p>
+            <pre>{JSON.stringify(
+              conciseCourseClearDynamicsCaseResult(dynamicsCaseResult),
+              null,
+              2,
+            )}</pre>
           </>
         ) : null}
       </section>

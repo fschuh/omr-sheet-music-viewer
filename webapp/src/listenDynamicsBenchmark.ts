@@ -25,11 +25,22 @@ import {
   assertRecognitionTraceUnmutated,
   assertRenderedTraceAudioIdentity,
   listenBaselineProfileMetadata,
+  listenRecognitionStructureHash,
   listenRecognitionTraceHash,
   listenTraceIdentity,
   type ListenBaselineProfileMetadata,
   type ListenTraceIdentity,
 } from "./listenBaselineParity";
+import {
+  assertFocusedCaseMatchesRegressions,
+  buildListenSafetyRegressionFixture,
+  diagnoseListenSequenceSafety,
+  summarizeListenSafetyRegressions,
+  type ListenAdvanceForensics,
+  type ListenFocusedCaseVerification,
+  type ListenSafetyRegressionFixture,
+  type ListenSafetyRegressionSummary,
+} from "./listenSafetyRegression";
 import { OnlineAmtSession } from "./onlineAmtSession";
 import {
   PIANO_IDS,
@@ -69,6 +80,8 @@ export interface CourseClearDynamicsSummary {
   falseAdvanceCount: number;
   skippedAdvanceCount: number;
   duplicateAdvanceCount: number;
+  /** Correct-content advances credited to a later repetition of the same chord. */
+  lateAdvanceCount: number;
   p95IndependentMatchLatencyMs: number | null;
   p95OrderedAdvanceLatencyMs: number | null;
   peak: number;
@@ -200,6 +213,10 @@ export function summarizeCourseClearDynamicsRuns(
       (total, run) => total + run.recognition.summary.duplicateAdvanceCount,
       0,
     ),
+    lateAdvanceCount: runs.reduce(
+      (total, run) => total + run.recognition.summary.lateAdvanceCount,
+      0,
+    ),
     p95IndependentMatchLatencyMs: percentile(latencyValues(runs, "independentMatchLatencyMs"), 0.95),
     p95OrderedAdvanceLatencyMs: percentile(latencyValues(runs, "orderedAdvanceLatencyMs"), 0.95),
     peak: Math.max(0, ...runs.map(({ peak }) => peak)),
@@ -326,6 +343,116 @@ async function captureRun(
     traceIdentity: listenTraceIdentity(trace),
     recognition,
   };
+}
+
+/**
+ * One constant-layer run plus forensics for every advancement it counted as
+ * unsafe. Used to reproduce a single diagnosed case without rendering the other
+ * 39 runs of the constant-layer matrix.
+ */
+export interface CourseClearDynamicsCaseResult {
+  suite: "focused-case";
+  baseline: ListenBaselineProfileMetadata;
+  renderer: ListenBenchmarkRendererConfiguration;
+  piano: PianoId;
+  layer: PianoLayerId;
+  run: CourseClearDynamicsRunResult;
+  /**
+   * Structural identity of the decoded stream. The FNV PCM hash is only an
+   * identity within one browser process, because Chrome's offline rendering does
+   * not reproduce its last bits; this hash does survive across runs.
+   */
+  recognitionStructureHash: string;
+  forensics: ListenAdvanceForensics[];
+  /** Ready-to-commit regressions, one per advancement counted against a gate. */
+  fixtures: ListenSafetyRegressionFixture[];
+  /** Already-committed regressions, replayed against all three named profiles. */
+  regressions: ListenSafetyRegressionSummary;
+  /**
+   * Committed fixtures cut from this exact renderer, piano, layer, and passage,
+   * re-verified against this capture. Empty when the run is not a committed case.
+   */
+  verifications: ListenFocusedCaseVerification[];
+}
+
+export async function captureCourseClearDynamicsCase(
+  options: CaptureCourseClearDynamicsOptions,
+  piano: PianoId,
+  layer: PianoLayerId,
+): Promise<CourseClearDynamicsCaseResult> {
+  const sequence = courseClearSequence();
+  const run = await captureRun(
+    options,
+    sequence,
+    piano,
+    Array.from({ length: sequence.attacks.length }, () => layer),
+    "constant",
+  );
+  const { forensics } = diagnoseListenSequenceSafety(
+    sequence,
+    run.recognition.trace,
+    LISTEN_BASELINE_PROFILE,
+  );
+  const recognitionStructureHash = listenRecognitionStructureHash(run.recognition.trace);
+  const fixtures = forensics.map((forensic, index) => buildListenSafetyRegressionFixture(
+    sequence,
+    run.recognition.trace,
+    forensic,
+    {
+      id: `${run.renderer.version}-${piano}-${layer}-target-${forensic.targetIndex}`,
+      label: `${pianoDefinition(piano).displayName} ${layer} · target ${forensic.targetIndex}`,
+      renderer: run.renderer.version,
+      piano,
+      layer,
+      sourcePcmHash: run.pcmSignature.pcmHash,
+      sourceRecognitionStructureHash: recognitionStructureHash,
+      expectation: forensic.classification.includes("late-advance")
+        ? "late-advance"
+        : "reported-unsafe-advance",
+      // A generated fixture carries no explanation. Replace this before
+      // committing it: a regression whose reason is undocumented is a
+      // fossilized behavior, not a diagnosed one.
+      conclusion: `Undiagnosed: case ${index + 1} of ${forensics.length} from this run.`,
+    },
+  ));
+  // Re-verifying here rather than in the caller means the browser command that
+  // documents this case fails when the case stops reproducing, instead of
+  // succeeding on frozen frames that no longer describe anything real.
+  const verifications = assertFocusedCaseMatchesRegressions({
+    renderer: run.renderer.version,
+    piano,
+    layer,
+    sequenceId: sequence.definition.id,
+    recognitionStructureHash,
+    forensics,
+  });
+  options.onProgress?.(1, 1, `${pianoDefinition(piano).displayName} ${layer}`);
+  return {
+    suite: "focused-case",
+    baseline: listenBaselineProfileMetadata(),
+    renderer: { ...(options.renderer ?? LISTEN_BENCHMARK_RENDERER) },
+    piano,
+    layer,
+    run,
+    recognitionStructureHash,
+    forensics,
+    fixtures,
+    regressions: summarizeListenSafetyRegressions(),
+    verifications,
+  };
+}
+
+export function runCourseClearDynamicsCase(
+  piano: PianoId,
+  layer: PianoLayerId,
+  onProgress: CaptureCourseClearDynamicsOptions["onProgress"] = () => undefined,
+  renderer: ListenBenchmarkRendererConfiguration = LISTEN_BENCHMARK_RENDERER,
+): Promise<CourseClearDynamicsCaseResult> {
+  return withOnlineAmtSession((session) => captureCourseClearDynamicsCase(
+    { session, renderer, onProgress },
+    piano,
+    layer,
+  ));
 }
 
 export async function captureCourseClearConstantLayerDynamics(
@@ -482,6 +609,7 @@ export function conciseCourseClearDynamicsResult(
         falseAdvanceCount: run.recognition.summary.falseAdvanceCount,
         skippedAdvanceCount: run.recognition.summary.skippedAdvanceCount,
         duplicateAdvanceCount: run.recognition.summary.duplicateAdvanceCount,
+        lateAdvanceCount: run.recognition.summary.lateAdvanceCount,
         firstStallIndex: run.recognition.summary.firstStallIndex,
         p95IndependentMatchLatencyMs:
           run.recognition.summary.p95IndependentMatchLatencyMs,
@@ -494,8 +622,44 @@ export function conciseCourseClearDynamicsResult(
       falseAdvanceCount: result.crossPiano.falseAdvanceCount,
       skippedAdvanceCount: result.crossPiano.skippedAdvanceCount,
       duplicateAdvanceCount: result.crossPiano.duplicateAdvanceCount,
+      lateAdvanceCount: result.crossPiano.lateAdvanceCount,
       carriedBassMatcherConfigurationChanged: false,
     },
+  };
+}
+
+/**
+ * Machine-readable focused-case export. It carries the run identity the report
+ * cites plus the complete forensic record of each unsafe advancement.
+ */
+export function conciseCourseClearDynamicsCaseResult(
+  result: CourseClearDynamicsCaseResult,
+): unknown {
+  return {
+    suite: result.suite,
+    baseline: result.baseline,
+    renderer: result.renderer,
+    piano: result.piano,
+    layer: result.layer,
+    sampleLibraryVersion: result.run.sampleLibraryVersion,
+    peak: result.run.peak,
+    rms: result.run.rms,
+    pcmSignature: {
+      sampleRate: result.run.pcmSignature.sampleRate,
+      frameCount: result.run.pcmSignature.frameCount,
+      pcmByteLength: result.run.pcmSignature.pcmByteLength,
+      chunkSize: result.run.pcmSignature.chunkSize,
+      pcmHash: result.run.pcmSignature.pcmHash,
+    },
+    traceIdentity: result.run.traceIdentity,
+    recognitionStructureHash: result.recognitionStructureHash,
+    summary: result.run.recognition.summary,
+    events: result.run.recognition.events,
+    attacks: result.run.recognition.attacks,
+    forensics: result.forensics,
+    fixtures: result.fixtures,
+    regressions: result.regressions,
+    verifications: result.verifications,
   };
 }
 

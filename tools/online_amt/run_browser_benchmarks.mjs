@@ -36,6 +36,13 @@ const LISTEN_DYNAMICS_MIXED_MODE = [
   "listen-dynamics-mixed-legacy",
   "listen-dynamics-mixed-tone",
 ].includes(CONFIGURATION_FILTER);
+const LISTEN_DYNAMICS_CASE_MODE = [
+  "listen-dynamics-case",
+  "listen-dynamics-case-legacy",
+  "listen-dynamics-case-tone",
+].includes(CONFIGURATION_FILTER);
+const DYNAMICS_CASE_PIANO = process.argv[4] ?? "salamander";
+const DYNAMICS_CASE_LAYER = process.argv[5] ?? "v05";
 const LISTEN_PARITY_MODE = CONFIGURATION_FILTER === "listen-parity";
 const FINGERING_SMOKE_MODE = CONFIGURATION_FILTER === "fingering-smoke";
 const CONFIGURATIONS = [
@@ -190,7 +197,7 @@ async function runConfiguration(configuration) {
         LISTEN_THRESHOLD_SWEEP_MODE ||
         LISTEN_RETRIGGER_SWEEP_MODE || LISTEN_ARTICULATION_MODE ||
         LISTEN_INFERENCE_RESET_MODE || LISTEN_DYNAMICS_CONSTANT_MODE ||
-        LISTEN_DYNAMICS_MIXED_MODE) &&
+        LISTEN_DYNAMICS_MIXED_MODE || LISTEN_DYNAMICS_CASE_MODE) &&
         /online-amt-benchmark\.html(?:\?|$)/.test(BASE_URL)
       ? BASE_URL.replace(/online-amt-benchmark\.html/, "index.html")
       : BASE_URL;
@@ -340,7 +347,7 @@ async function runConfiguration(configuration) {
       (LISTEN_RETRIGGER_SWEEP_MODE || LISTEN_DYNAMICS_CONSTANT_MODE)
         ? 1_200_000
         : (LISTEN_ACCURACY_MODE || LISTEN_SEQUENCE_MODE || LISTEN_THRESHOLD_SWEEP_MODE ||
-          LISTEN_ARTICULATION_MODE)
+          LISTEN_ARTICULATION_MODE || LISTEN_DYNAMICS_CASE_MODE)
         ? 600_000
         : LISTEN_PARITY_MODE ? 180_000 : 120_000
     );
@@ -365,7 +372,14 @@ async function runConfiguration(configuration) {
     }
     return await evaluate(
       client,
-      (LISTEN_DYNAMICS_CONSTANT_MODE || LISTEN_DYNAMICS_MIXED_MODE)
+      LISTEN_DYNAMICS_CASE_MODE
+        ? `(async () => {
+            const result = window.listenDynamicsCaseResult;
+            const { conciseCourseClearDynamicsCaseResult } =
+              await import("/src/listenDynamicsBenchmark.ts");
+            return conciseCourseClearDynamicsCaseResult(result);
+          })()`
+        : (LISTEN_DYNAMICS_CONSTANT_MODE || LISTEN_DYNAMICS_MIXED_MODE)
         ? `(() => {
             const constant = ${LISTEN_DYNAMICS_CONSTANT_MODE};
             const result = constant
@@ -380,6 +394,7 @@ async function runConfiguration(configuration) {
                 falseAdvanceCount: result.crossPiano.falseAdvanceCount,
                 skippedAdvanceCount: result.crossPiano.skippedAdvanceCount,
                 duplicateAdvanceCount: result.crossPiano.duplicateAdvanceCount,
+                lateAdvanceCount: result.crossPiano.lateAdvanceCount,
                 carriedBassMatcherConfigurationChanged: false,
               },
               runs: result.runs.map((run) => ({
@@ -411,6 +426,7 @@ async function runConfiguration(configuration) {
                   falseAdvanceCount: run.recognition.summary.falseAdvanceCount,
                   skippedAdvanceCount: run.recognition.summary.skippedAdvanceCount,
                   duplicateAdvanceCount: run.recognition.summary.duplicateAdvanceCount,
+                  lateAdvanceCount: run.recognition.summary.lateAdvanceCount,
                   firstStallIndex: run.recognition.summary.firstStallIndex,
                   p95IndependentMatchLatencyMs:
                     run.recognition.summary.p95IndependentMatchLatencyMs,
@@ -644,6 +660,7 @@ async function runConfiguration(configuration) {
               primaryFailure: event.primaryFailure,
               unexpectedPitches: event.unexpectedPitches,
               falseAdvance: event.falseAdvance,
+              lateAdvance: event.lateAdvance,
               skipped: event.skipped,
               duplicate: event.duplicate,
             });
@@ -667,6 +684,7 @@ async function runConfiguration(configuration) {
                 falseAdvanceCount: run.summary.falseAdvanceCount,
                 skippedAdvanceCount: run.summary.skippedAdvanceCount,
                 duplicateAdvanceCount: run.summary.duplicateAdvanceCount,
+                lateAdvanceCount: run.summary.lateAdvanceCount,
               };
             };
             return {
@@ -849,6 +867,12 @@ const selectedConfigurations = FINGERING_SMOKE_MODE
       "listen-dynamics-mixed",
       "listen-dynamics-mixed=auto",
     )
+  : LISTEN_DYNAMICS_CASE_MODE
+  ? pairedRendererConfigurations(
+      "listen-dynamics-case",
+      `listen-dynamics-case=auto&benchmark-piano=${DYNAMICS_CASE_PIANO}` +
+        `&benchmark-layer=${DYNAMICS_CASE_LAYER}`,
+    )
   : LISTEN_PARITY_MODE
   ? [{ name: "listen-parity", query: "" }]
   : LISTEN_ACCURACY_MODE
@@ -883,6 +907,7 @@ for (let index = 0; index < selectedConfigurations.length; index += 1) {
     falseAdvanceCount: summary.falseAdvanceCount,
     skippedAdvanceCount: summary.skippedAdvanceCount,
     duplicateAdvanceCount: summary.duplicateAdvanceCount,
+    lateAdvanceCount: summary.lateAdvanceCount,
     p95IndependentMatchLatencyMs: summary.p95IndependentMatchLatencyMs,
     p95OrderedAdvanceLatencyMs: summary.p95OrderedAdvanceLatencyMs,
   });
@@ -890,6 +915,7 @@ for (let index = 0; index < selectedConfigurations.length; index += 1) {
     falseAdvanceCount: runs.reduce((total, run) => total + run.falseAdvanceCount, 0),
     skippedAdvanceCount: runs.reduce((total, run) => total + run.skippedAdvanceCount, 0),
     duplicateAdvanceCount: runs.reduce((total, run) => total + run.duplicateAdvanceCount, 0),
+    lateAdvanceCount: runs.reduce((total, run) => total + (run.lateAdvanceCount ?? 0), 0),
     runs: runs.map((run) => ({
       sequenceId: run.sequenceId,
       intervalMs: run.intervalMs,
@@ -897,6 +923,7 @@ for (let index = 0; index < selectedConfigurations.length; index += 1) {
       falseAdvanceCount: run.falseAdvanceCount,
       skippedAdvanceCount: run.skippedAdvanceCount,
       duplicateAdvanceCount: run.duplicateAdvanceCount,
+      lateAdvanceCount: run.lateAdvanceCount ?? 0,
     })),
   });
   const exportedResult = LISTEN_RETRIGGER_SWEEP_SUMMARY_MODE
@@ -1044,6 +1071,49 @@ for (let index = 0; index < selectedConfigurations.length; index += 1) {
     );
   } else if (LISTEN_PARITY_MODE) {
     console.error(`${configuration.name}: ${result.checks.length} parity checks passed`);
+  } else if (LISTEN_DYNAMICS_CASE_MODE) {
+    console.error(
+      `${configuration.name}: ${result.piano}/${result.layer} ` +
+      `pcm=${result.pcmSignature.pcmHash} trace=${result.traceIdentity.recognitionHash} ` +
+      `independent=${result.summary.independentMatchCount}/27 ` +
+      `ordered=${result.summary.orderedAdvanceCount}/27 ` +
+      `safety=${result.summary.falseAdvanceCount}/${result.summary.skippedAdvanceCount}/` +
+      `${result.summary.duplicateAdvanceCount}`,
+    );
+    console.error(
+      `${configuration.name}: committed regressions=${result.regressions.fixtureCount} ` +
+      `outcomes=${result.regressions.outcomes.length} ` +
+      `deviations=${result.regressions.deviationCount} ` +
+      `passed=${result.regressions.passed}`,
+    );
+    for (const outcome of result.regressions.outcomes) {
+      console.error(
+        `${configuration.name}: regression ${outcome.fixtureId} ${outcome.profileId} ` +
+        `expected=${outcome.expectation} advanced=${outcome.advancedAtMs}ms ` +
+        `source-attack=${outcome.sourceAttackIndex} ` +
+        `late=${outcome.lateAdvance} false=${outcome.falseAdvance} ` +
+        `satisfied=${outcome.satisfied}` +
+        (outcome.deviations.length > 0 ? ` deviations="${outcome.deviations.join("; ")}"` : ""),
+      );
+    }
+    for (const verification of result.verifications) {
+      console.error(
+        `${configuration.name}: verified ${verification.fixtureId} ` +
+        `structure=${verification.actualRecognitionStructureHash} ` +
+        `expected=${verification.expectedRecognitionStructureHash}`,
+      );
+    }
+    for (const forensic of result.forensics) {
+      console.error(
+        `${configuration.name}: ${forensic.classification.join("+")} ` +
+        `target=${forensic.targetIndex} [${forensic.targetPitches.join(" ")}] ` +
+        `at=${forensic.advancedAtMs}ms delay=${forensic.attributionDelayMs}ms ` +
+        `source-attack=${forensic.sourceAttackIndex} ` +
+        `detected=[${forensic.detectedTargetPitches.join(" ")}] ` +
+        `extras=[${forensic.extraPitches.join(" ")}] ` +
+        `carry-in=[${forensic.carryOverPitchesAtTargetStart.join(" ")}]`,
+      );
+    }
   } else if (LISTEN_DYNAMICS_CONSTANT_MODE || LISTEN_DYNAMICS_MIXED_MODE) {
     const unsafeRuns = result.runs.filter(({ summary }) => (
       summary.falseAdvanceCount > 0 ||
@@ -1055,13 +1125,20 @@ for (let index = 0; index < selectedConfigurations.length; index += 1) {
       `ordered=${(result.crossPiano.orderedAdvanceRate * 100).toFixed(1)}% ` +
       `independent=${(result.crossPiano.independentMatchRate * 100).toFixed(1)}% ` +
       `safety=${result.crossPiano.falseAdvanceCount}/` +
-      `${result.crossPiano.skippedAdvanceCount}/${result.crossPiano.duplicateAdvanceCount}`,
+      `${result.crossPiano.skippedAdvanceCount}/${result.crossPiano.duplicateAdvanceCount} ` +
+      `late=${result.crossPiano.lateAdvanceCount}`,
     );
     for (const run of unsafeRuns) {
       console.error(
         `${configuration.name}: unsafe ${run.piano}/${run.layer ?? run.dynamicProfile} ` +
         `${run.summary.falseAdvanceCount}/${run.summary.skippedAdvanceCount}/` +
         `${run.summary.duplicateAdvanceCount}`,
+      );
+    }
+    for (const run of result.runs.filter(({ summary }) => summary.lateAdvanceCount > 0)) {
+      console.error(
+        `${configuration.name}: late ${run.piano}/${run.layer ?? run.dynamicProfile} ` +
+        `${run.summary.lateAdvanceCount}`,
       );
     }
   } else if (LISTEN_RETRIGGER_SWEEP_MODE) {

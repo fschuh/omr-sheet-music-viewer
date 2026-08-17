@@ -19,13 +19,15 @@ import {
   bundledListenSequences,
   materializeListenSequence,
   replayListenSequenceTrace,
-  summarizeListenSequenceSafety,
   type ListenSequenceAggregateSummary,
   type ListenSequenceBenchmarkResult,
   type ListenSequenceRunResult,
-  type ListenSequenceSafetySummary,
   type MaterializedListenSequence,
 } from "./listenSequenceBenchmark";
+import {
+  summarizeListenSafety,
+  type ListenSafetySummary,
+} from "./listenSafetyRegression";
 
 /** The frozen reference profile for discovery parity, distance, and deltas. */
 export const LISTEN_SWEEP_DISCOVERY_BASELINE_PROFILE: ListenMatcherThresholds =
@@ -101,7 +103,7 @@ export interface ListenThresholdSweepProfileResult {
   profile: ListenMatcherSweepProfile;
   eligible: boolean;
   rejectedBySafety: boolean;
-  safety: ListenSequenceSafetySummary;
+  safety: ListenSafetySummary;
   independentMatchCount: number;
   orderedAdvanceCount: number;
   orderedPrefixCompleted: number;
@@ -201,7 +203,7 @@ function thresholdProfileResult(
     profile,
     eligible: false,
     rejectedBySafety: false,
-    safety: summarizeListenSequenceSafety(runs),
+    safety: summarizeListenSafety(runs, profile),
     independentMatchCount,
     orderedAdvanceCount,
     orderedPrefixCompleted,
