@@ -9,14 +9,17 @@
  */
 
 import type { ListenBenchmarkRendererConfiguration } from "./listenBenchmarkAudio";
-import { LISTEN_MATCHER_PROFILES } from "./listenMatcherProfiles";
+import {
+  LISTEN_MATCHER_PROFILES,
+  listenMatcherThresholds,
+  type ListenMatcherThresholds,
+} from "./listenMatcherProfiles";
 import {
   aggregateListenSequenceRuns,
   bundledListenSequences,
   materializeListenSequence,
   replayListenSequenceTrace,
   summarizeListenSequenceSafety,
-  type ListenMatcherProfile,
   type ListenSequenceAggregateSummary,
   type ListenSequenceBenchmarkResult,
   type ListenSequenceRunResult,
@@ -24,16 +27,9 @@ import {
   type MaterializedListenSequence,
 } from "./listenSequenceBenchmark";
 
-const discoveryBaseline = LISTEN_MATCHER_PROFILES["baseline-v1"];
-
 /** The frozen reference profile for discovery parity, distance, and deltas. */
-export const LISTEN_SWEEP_DISCOVERY_BASELINE_PROFILE: ListenMatcherProfile = Object.freeze({
-  onsetThreshold: discoveryBaseline.onsetThreshold,
-  targetNoteThreshold: discoveryBaseline.targetNoteThreshold,
-  activeTargetThreshold: discoveryBaseline.activeTargetThreshold,
-  extraNoteThreshold: discoveryBaseline.extraNoteThreshold,
-  requireFreshBassOnset: discoveryBaseline.requireFreshBassOnset,
-});
+export const LISTEN_SWEEP_DISCOVERY_BASELINE_PROFILE: ListenMatcherThresholds =
+  listenMatcherThresholds(LISTEN_MATCHER_PROFILES["baseline-v1"]);
 
 function sortedUnique(values: Iterable<number>): number[] {
   return [...new Set(values)].sort((left, right) => left - right);
@@ -45,7 +41,7 @@ function percentile(values: readonly number[], proportion: number): number | nul
   return ordered[Math.ceil(ordered.length * proportion) - 1];
 }
 
-function profileDistanceFromBaseline(profile: ListenMatcherProfile): number {
+function profileDistanceFromBaseline(profile: ListenMatcherThresholds): number {
   return Math.abs(profile.onsetThreshold - LISTEN_SWEEP_DISCOVERY_BASELINE_PROFILE.onsetThreshold) +
     Math.abs(profile.targetNoteThreshold - LISTEN_SWEEP_DISCOVERY_BASELINE_PROFILE.targetNoteThreshold) +
     Math.abs(profile.activeTargetThreshold - LISTEN_SWEEP_DISCOVERY_BASELINE_PROFILE.activeTargetThreshold) +
@@ -53,7 +49,7 @@ function profileDistanceFromBaseline(profile: ListenMatcherProfile): number {
     (profile.requireFreshBassOnset === LISTEN_SWEEP_DISCOVERY_BASELINE_PROFILE.requireFreshBassOnset ? 0 : 1);
 }
 
-export interface ListenMatcherSweepProfile extends ListenMatcherProfile {
+export interface ListenMatcherSweepProfile extends ListenMatcherThresholds {
   id: string;
   /** Threshold distance from the frozen discovery baseline. */
   distanceFromProduction: number;
@@ -70,7 +66,7 @@ function stableThresholdId(value: number): string {
 }
 
 /** Stable historical sweep identifier. Existing reports depend on this format. */
-function sweepProfileId(profile: ListenMatcherProfile): string {
+function sweepProfileId(profile: ListenMatcherThresholds): string {
   return `o${stableThresholdId(profile.onsetThreshold)}-t${stableThresholdId(profile.targetNoteThreshold)}-a${stableThresholdId(profile.activeTargetThreshold)}-x${stableThresholdId(profile.extraNoteThreshold)}-b${profile.requireFreshBassOnset ? "1" : "0"}`;
 }
 
@@ -126,7 +122,7 @@ export interface ListenThresholdSweepProfileResult {
 
 export interface ListenThresholdSweepResult {
   renderer: ListenBenchmarkRendererConfiguration;
-  productionProfile: ListenMatcherProfile;
+  productionProfile: ListenMatcherThresholds;
   gridSize: number;
   profilesEvaluated: number;
   profilesRejectedBySafety: number;

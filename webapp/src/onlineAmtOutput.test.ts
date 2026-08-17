@@ -209,6 +209,23 @@ test("online_amt matcher profile ignores a weak extra while matching a confident
   assert.deepEqual(settled.extraPitches, []);
 });
 
+test("online_amt matcher options keep the historical production values", () => {
+  assert.deepEqual(onlineAmtChordMatcherOptions, {
+    onsetThreshold: 0.6,
+    targetNoteThreshold: 0.5,
+    activeTargetThreshold: 0.35,
+    noteThreshold: 0.97,
+    requireFreshBassOnset: true,
+    preTargetExtraLookbackMs: 30,
+    collectionWindowMs: 400,
+    settleMs: 32,
+    duplicateOnsetMs: 120,
+    wrongAttemptResetMs: 180,
+    refractoryMs: 180,
+    refractoryMode: "noteEvents",
+  });
+});
+
 test("online_amt matcher profile settles after one 32 ms audio frame", () => {
   assert.equal(onlineAmtChordMatcherOptions.refractoryMode, "noteEvents");
   assert.equal(onlineAmtChordMatcherOptions.settleMs, 32);

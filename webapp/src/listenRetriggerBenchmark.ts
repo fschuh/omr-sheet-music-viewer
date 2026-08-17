@@ -16,7 +16,6 @@ import {
   replayListenSequenceTrace,
   summarizeListenSequenceSafety,
   type ListenArticulationMatrixResult,
-  type ListenMatcherProfile,
   type ListenRecognitionFrame,
   type ListenRecognitionTrace,
   type ListenSequenceArticulation,
@@ -30,6 +29,11 @@ import {
   type ScheduledSequenceNote,
 } from "./listenSequenceBenchmark";
 import type { ListenThresholdSweepResult } from "./listenMatcherSweepBenchmark";
+import {
+  LISTEN_MATCHER_PROFILES,
+  listenMatcherThresholds,
+  type ListenMatcherThresholds,
+} from "./listenMatcherProfiles";
 
 const FIRST_PIANO_MIDI = 21;
 const STATE_COUNT = 5;
@@ -45,15 +49,13 @@ export const LISTEN_RETRIGGER_REARM_THRESHOLDS = [0.10, 0.20, 0.30] as const;
 export const LISTEN_RETRIGGER_LOOKBACK_FRAMES = [3, 5, 8] as const;
 export const LISTEN_RETRIGGER_REFRACTORY_FRAMES = [2, 3, 4] as const;
 
-/** Newest safe threshold-sweep recommendation recorded in LISTEN_BENCHMARK.md. */
-export const thresholdSweepRecommendedListenMatcherProfile: Readonly<ListenMatcherProfile> =
-  Object.freeze({
-    onsetThreshold: 0.45,
-    targetNoteThreshold: 0.50,
-    activeTargetThreshold: 0.20,
-    extraNoteThreshold: 0.99,
-    requireFreshBassOnset: true,
-  });
+/**
+ * Newest safe threshold-sweep recommendation recorded in LISTEN_BENCHMARK.md.
+ * It is the registry's sensitive candidate, named explicitly so this historical
+ * reference cannot follow a later change to the production default.
+ */
+export const thresholdSweepRecommendedListenMatcherProfile: Readonly<ListenMatcherThresholds> =
+  listenMatcherThresholds(LISTEN_MATCHER_PROFILES["sensitive-v1"]);
 
 export interface ListenRetriggerCandidateOptions extends OnlineAmtRetriggerOptions {
   id: string;
@@ -213,7 +215,7 @@ export interface ListenRetriggerGroupMetrics {
 
 export interface ListenRetriggerMatcherProfileEvaluation {
   label: "production" | "threshold-recommendation";
-  profile: ListenMatcherProfile;
+  profile: ListenMatcherThresholds;
   baseline: ListenRetriggerMatcherMetrics;
   candidate: ListenRetriggerMatcherMetrics;
   independentMatchDelta: number;
@@ -261,7 +263,7 @@ export interface ListenRetriggerSweepResult {
   candidatesRejectedByMatcherSafety: number;
   matcherProfiles: Array<{
     label: "production" | "threshold-recommendation";
-    profile: ListenMatcherProfile;
+    profile: ListenMatcherThresholds;
     baseline: ListenRetriggerMatcherMetrics;
   }>;
   candidates: ListenRetriggerCandidateResult[];
@@ -848,7 +850,7 @@ function groupMetrics(label: string, runs: readonly ListenSequenceRunResult[]): 
 function matcherMetrics(
   entries: readonly ListenRetriggerCorpusEntry[],
   traces: readonly ListenRecognitionTrace[],
-  profile: ListenMatcherProfile,
+  profile: ListenMatcherThresholds,
 ): ListenRetriggerMatcherMetrics {
   const runs = entries.map((entry, index) => replayListenSequenceTrace(
     entry.sequence,
@@ -914,7 +916,7 @@ function matcherMetrics(
 
 function profileEvaluation(
   label: ListenRetriggerMatcherProfileEvaluation["label"],
-  profile: ListenMatcherProfile,
+  profile: ListenMatcherThresholds,
   baseline: ListenRetriggerMatcherMetrics,
   candidate: ListenRetriggerMatcherMetrics,
 ): ListenRetriggerMatcherProfileEvaluation {
@@ -1024,7 +1026,7 @@ function traceIdentity(entry: ListenRetriggerCorpusEntry): ListenRetriggerTraceI
 export async function runListenRetriggerSweep(
   sequenceResult: ListenSequenceBenchmarkResult,
   articulationResult: ListenArticulationMatrixResult,
-  thresholdRecommendation: ListenThresholdSweepResult | ListenMatcherProfile,
+  thresholdRecommendation: ListenThresholdSweepResult | ListenMatcherThresholds,
   onProgress: (complete: number, total: number, label: string) => void = () => undefined,
   batchSize = 4,
 ): Promise<ListenRetriggerSweepResult> {

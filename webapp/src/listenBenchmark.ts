@@ -1,9 +1,7 @@
 import { ExactChordMatcher } from "./chordMatcher";
 import { ONLINE_AMT_CHUNK_SIZE } from "./onlineAmtProtocol";
 import { OnlineAmtSession } from "./onlineAmtSession";
-import {
-  onlineAmtChordMatcherOptions,
-} from "./onlineAmtOutput";
+import { matcherOptionsForListenMatcherProfile } from "./listenMatcherProfiles";
 import { SpectralPitchDetector } from "./spectralPitchDetector";
 import type { RecognizedOnset, RecognizerResult } from "./noteRecognizer";
 import {
@@ -385,7 +383,7 @@ export async function captureIsolatedOnlineAmtBenchmark(options: {
     renderer: rendered.renderer,
     audioDiagnostics: rendered.diagnostics,
   });
-  const matcher = new ExactChordMatcher(onlineAmtChordMatcherOptions);
+  const matcher = new ExactChordMatcher(matcherOptionsForListenMatcherProfile());
   matcher.setTarget(options.targetPitches, options.generation, 0);
   const recognized = new Map<number, {
     midi: number;

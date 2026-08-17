@@ -1,7 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { defaultChordMatcherOptions } from "./chordMatcher";
-import { onlineAmtChordMatcherOptions } from "./onlineAmtOutput";
 import {
   DEFAULT_LISTEN_MATCHER_PROFILE_ID,
   FIXED_LISTEN_MATCHER_POLICY,
@@ -143,11 +141,4 @@ test("rejects a structurally invalid profile object at conversion time", () => {
     onsetThreshold: 2,
   } as unknown as ListenMatcherProfile;
   assert.throws(() => matcherOptionsForListenMatcherProfile(invalid), /Invalid listen matcher profile/);
-});
-
-test("reproduces the current production matcher options exactly", () => {
-  assert.deepEqual(matcherOptionsForListenMatcherProfile(DEFAULT_LISTEN_MATCHER_PROFILE_ID), {
-    ...defaultChordMatcherOptions,
-    ...onlineAmtChordMatcherOptions,
-  });
 });

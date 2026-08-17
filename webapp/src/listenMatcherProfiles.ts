@@ -17,13 +17,22 @@ export type ListenMatcherProfileId =
   | "balanced-v1"
   | "sensitive-v1";
 
-/** The five confidence controls a production-eligible profile may set. */
-export interface ListenMatcherProfile {
-  id: ListenMatcherProfileId;
+/**
+ * The five confidence controls a matcher profile may set. Benchmarks explore
+ * arbitrary threshold sets, including ones that relax the fresh-bass rule, so
+ * this is the shared shape every replay and conversion accepts.
+ */
+export interface ListenMatcherThresholds {
   onsetThreshold: number;
   targetNoteThreshold: number;
   activeTargetThreshold: number;
   extraNoteThreshold: number;
+  requireFreshBassOnset: boolean;
+}
+
+/** A named, production-eligible profile. Fresh bass onsets are always required. */
+export interface ListenMatcherProfile extends ListenMatcherThresholds {
+  id: ListenMatcherProfileId;
   requireFreshBassOnset: true;
 }
 
@@ -75,19 +84,25 @@ const PROFILE_THRESHOLD_KEYS = [
   "targetNoteThreshold",
   "activeTargetThreshold",
   "extraNoteThreshold",
-] as const satisfies readonly (keyof ListenMatcherProfile)[];
+] as const satisfies readonly (keyof ListenMatcherThresholds)[];
 
 function isThreshold(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1;
 }
 
+/** True when the value is a usable threshold set for matcher conversion. */
+export function isListenMatcherThresholds(value: unknown): value is ListenMatcherThresholds {
+  if (typeof value !== "object" || value === null) return false;
+  const candidate = value as Partial<ListenMatcherThresholds>;
+  if (typeof candidate.requireFreshBassOnset !== "boolean") return false;
+  return PROFILE_THRESHOLD_KEYS.every((key) => isThreshold(candidate[key]));
+}
+
 /** True when the value is a structurally valid, production-eligible profile. */
 export function isListenMatcherProfile(value: unknown): value is ListenMatcherProfile {
-  if (typeof value !== "object" || value === null) return false;
+  if (!isListenMatcherThresholds(value)) return false;
   const candidate = value as Partial<ListenMatcherProfile>;
-  if (!isListenMatcherProfileId(candidate.id)) return false;
-  if (candidate.requireFreshBassOnset !== true) return false;
-  return PROFILE_THRESHOLD_KEYS.every((key) => isThreshold(candidate[key]));
+  return isListenMatcherProfileId(candidate.id) && candidate.requireFreshBassOnset === true;
 }
 
 function frozenProfile(profile: ListenMatcherProfile): ListenMatcherProfile {
@@ -148,16 +163,38 @@ export function getListenMatcherProfile(id: unknown): ListenMatcherProfile {
     LISTEN_MATCHER_PROFILES[DEFAULT_LISTEN_MATCHER_PROFILE_ID];
 }
 
+/** The bare threshold set of a profile, without its registry identity. */
+export function listenMatcherThresholds(
+  profile: ListenMatcherThresholds,
+): ListenMatcherThresholds {
+  return Object.freeze({
+    onsetThreshold: profile.onsetThreshold,
+    targetNoteThreshold: profile.targetNoteThreshold,
+    activeTargetThreshold: profile.activeTargetThreshold,
+    extraNoteThreshold: profile.extraNoteThreshold,
+    requireFreshBassOnset: profile.requireFreshBassOnset,
+  });
+}
+
 /**
- * The single conversion from a named profile to complete matcher options.
- * Production, trace replay, and every benchmark must use this function so the
- * fixed policy cannot drift between them.
+ * Resolves the profile listen mode should run with. Calibration will later add a
+ * stored selection ahead of the default; production must never accept arbitrary
+ * thresholds from a URL parameter or a stored JSON object.
+ */
+export function resolveEffectiveListenMatcherProfile(): ListenMatcherProfile {
+  return LISTEN_MATCHER_PROFILES[DEFAULT_LISTEN_MATCHER_PROFILE_ID];
+}
+
+/**
+ * The single conversion from a profile, a registry identifier, or a benchmark
+ * threshold set to complete matcher options. Production, trace replay, and every
+ * benchmark must use this function so the fixed policy cannot drift between them.
  */
 export function matcherOptionsForListenMatcherProfile(
-  profile: ListenMatcherProfile | ListenMatcherProfileId = DEFAULT_LISTEN_MATCHER_PROFILE_ID,
+  profile: ListenMatcherThresholds | ListenMatcherProfileId = DEFAULT_LISTEN_MATCHER_PROFILE_ID,
 ): ChordMatcherOptions {
   const resolved = typeof profile === "string" ? getListenMatcherProfile(profile) : profile;
-  if (!isListenMatcherProfile(resolved)) {
+  if (!isListenMatcherThresholds(resolved)) {
     throw new Error(`Invalid listen matcher profile: ${JSON.stringify(resolved)}`);
   }
   return {

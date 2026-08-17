@@ -20,7 +20,10 @@ import {
 } from "./playback";
 import { pianoSampler, pitchToMidi } from "./piano";
 import { BrowserOnlineAmtRecognizer } from "./onlineAmtRecognizer";
-import { onlineAmtChordMatcherOptions } from "./onlineAmtOutput";
+import {
+  matcherOptionsForListenMatcherProfile,
+  resolveEffectiveListenMatcherProfile,
+} from "./listenMatcherProfiles";
 import { ExactChordMatcher } from "./chordMatcher";
 import { KeyboardRecognitionTracker } from "./keyboardRecognition";
 import {
@@ -413,7 +416,10 @@ export function App() {
     );
   }
   const recognizerRef = useRef<NoteRecognizer | null>(null);
-  const chordMatcherRef = useRef(new ExactChordMatcher(onlineAmtChordMatcherOptions));
+  const listenMatcherProfile = resolveEffectiveListenMatcherProfile();
+  const chordMatcherRef = useRef(new ExactChordMatcher(
+    matcherOptionsForListenMatcherProfile(listenMatcherProfile),
+  ));
   const keyboardRecognitionRef = useRef(new KeyboardRecognitionTracker());
   const playheadGenerationRef = useRef(0);
   const listenOperationRef = useRef(0);
@@ -1826,6 +1832,7 @@ export function App() {
               </button>
               <dl className="diagnostics-data">
                 <RefreshRateDiagnostic />
+                <dt>Listen matcher profile</dt><dd>{listenMatcherProfile.id}</dd>
               </dl>
               <h2>Highlighting</h2>
               <button

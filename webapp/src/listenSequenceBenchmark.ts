@@ -1,8 +1,11 @@
+import { ExactChordMatcher } from "./chordMatcher";
 import {
-  ExactChordMatcher,
-  defaultChordMatcherOptions,
-  type ChordMatcherOptions,
-} from "./chordMatcher";
+  DEFAULT_LISTEN_MATCHER_PROFILE_ID,
+  LISTEN_MATCHER_PROFILES,
+  listenMatcherThresholds,
+  matcherOptionsForListenMatcherProfile,
+  type ListenMatcherThresholds,
+} from "./listenMatcherProfiles";
 import { COURSE_CLEAR_BENCHMARK_MOMENTS } from "./listenBenchmarkFixtures";
 import {
   ONLINE_AMT_CHUNK_SIZE,
@@ -10,7 +13,6 @@ import {
 } from "./onlineAmtProtocol";
 import {
   OnlineAmtOutputDecoder,
-  onlineAmtChordMatcherOptions,
   type DecodedOnlineAmtOutput,
 } from "./onlineAmtOutput";
 import {
@@ -74,40 +76,13 @@ export const LISTEN_ARTICULATION_HOLD_MS = Object.freeze({
   legato: 900,
 });
 
-const matcherOptions = {
-  ...defaultChordMatcherOptions,
-  ...onlineAmtChordMatcherOptions,
-};
-
-/** The five tunable matcher controls used by the inference-free replay sweep. */
-export interface ListenMatcherProfile {
-  onsetThreshold: number;
-  targetNoteThreshold: number;
-  activeTargetThreshold: number;
-  extraNoteThreshold: number;
-  requireFreshBassOnset: boolean;
-}
-
-export const productionListenMatcherProfile: ListenMatcherProfile = Object.freeze({
-  onsetThreshold: matcherOptions.onsetThreshold,
-  targetNoteThreshold: matcherOptions.targetNoteThreshold,
-  activeTargetThreshold: matcherOptions.activeTargetThreshold,
-  extraNoteThreshold: matcherOptions.noteThreshold,
-  requireFreshBassOnset: matcherOptions.requireFreshBassOnset,
-});
-
-export function matcherOptionsForProfile(
-  profile: ListenMatcherProfile = productionListenMatcherProfile,
-): ChordMatcherOptions {
-  return {
-    ...matcherOptions,
-    onsetThreshold: profile.onsetThreshold,
-    targetNoteThreshold: profile.targetNoteThreshold,
-    activeTargetThreshold: profile.activeTargetThreshold,
-    noteThreshold: profile.extraNoteThreshold,
-    requireFreshBassOnset: profile.requireFreshBassOnset,
-  };
-}
+/**
+ * The thresholds listen mode currently runs with. Replays that need a fixed
+ * historical reference must name their profile explicitly instead of following
+ * this pointer.
+ */
+export const productionListenMatcherProfile: ListenMatcherThresholds =
+  listenMatcherThresholds(LISTEN_MATCHER_PROFILES[DEFAULT_LISTEN_MATCHER_PROFILE_ID]);
 
 export interface ListenSequenceNote {
   midi: number;
@@ -345,7 +320,7 @@ export interface ListenSequenceRunSummary {
 
 export interface ListenSequenceRunResult {
   policy: ListenSequenceReplayPolicy;
-  matcherProfile?: ListenMatcherProfile;
+  matcherProfile?: ListenMatcherThresholds;
   sequenceId: string;
   sequenceLabel: string;
   family: string;
@@ -450,7 +425,7 @@ export interface ListenSequenceBaselineObservations {
 
 export interface ListenSequenceBenchmarkResult {
   policy: "current-matcher";
-  matcherProfile: ListenMatcherProfile;
+  matcherProfile: ListenMatcherThresholds;
   renderer: ListenBenchmarkRendererConfiguration;
   runs: ListenSequenceRunResult[];
   speedSummaries: ListenSequenceAggregateSummary[];
@@ -1220,7 +1195,7 @@ function evidenceInWindow(
   midi: number,
   startMs: number,
   endMs: number,
-  profile: ListenMatcherProfile = productionListenMatcherProfile,
+  profile: ListenMatcherThresholds = productionListenMatcherProfile,
 ): {
   maximum: number;
   firstRawAtMs: number | null;
@@ -1287,9 +1262,9 @@ export interface TraceEventRecognitionDiagnostic {
 export function evaluateTraceRecognitionLayers(
   sequence: MaterializedListenSequence,
   trace: ListenRecognitionTrace,
-  profile: ListenMatcherProfile = productionListenMatcherProfile,
+  profile: ListenMatcherThresholds = productionListenMatcherProfile,
 ): TraceEventRecognitionDiagnostic[] {
-  const profileOptions = matcherOptionsForProfile(profile);
+  const profileOptions = matcherOptionsForListenMatcherProfile(profile);
   const observations = recognizedAttacks(trace);
   const scheduledNotes = sequence.attacks.flatMap(({ notes }) => notes);
   const assignments = assignRecognitionEventsToAttacks(scheduledNotes, observations);
@@ -1503,7 +1478,7 @@ export interface SequenceFailureInput {
 
 export function classifyListenSequenceFailure(
   input: SequenceFailureInput,
-  profile: ListenMatcherProfile = productionListenMatcherProfile,
+  profile: ListenMatcherThresholds = productionListenMatcherProfile,
 ): { reasons: ListenSequenceFailureReason[]; primary: ListenSequenceFailureReason | null } {
   if (
     input.rawFailureReasons !== undefined ||
@@ -1603,12 +1578,12 @@ export function classifyListenSequenceFailure(
 export function replayListenSequenceTrace(
   sequence: MaterializedListenSequence,
   trace: ListenRecognitionTrace,
-  policyOrProfile: ListenSequenceReplayPolicy | ListenMatcherProfile = "current-matcher",
-  profileArgument: ListenMatcherProfile = productionListenMatcherProfile,
+  policyOrProfile: ListenSequenceReplayPolicy | ListenMatcherThresholds = "current-matcher",
+  profileArgument: ListenMatcherThresholds = productionListenMatcherProfile,
 ): ListenSequenceRunResult {
   const policy = typeof policyOrProfile === "string" ? policyOrProfile : "current-matcher";
   const profile = typeof policyOrProfile === "string" ? profileArgument : policyOrProfile;
-  const profileOptions = matcherOptionsForProfile(profile);
+  const profileOptions = matcherOptionsForListenMatcherProfile(profile);
   const matcher = new ExactChordMatcher(profileOptions);
   let targetIndex = 0;
   let generation = 1;
@@ -2043,7 +2018,7 @@ function activeBeforeAttack(
   trace: ListenRecognitionTrace,
   midi: number,
   attackTimeMs: number,
-  profile: ListenMatcherProfile = productionListenMatcherProfile,
+  profile: ListenMatcherThresholds = productionListenMatcherProfile,
 ): boolean {
   const frame = lastFrameBefore(trace.frames, attackTimeMs);
   return frame?.activePitches.some((pitch) => (
@@ -2072,7 +2047,7 @@ export function diagnoseListenArticulationRun(
   articulation: ListenSequenceArticulation,
   sequence: MaterializedListenSequence,
   run: ListenSequenceRunResult,
-  profile: ListenMatcherProfile = productionListenMatcherProfile,
+  profile: ListenMatcherThresholds = productionListenMatcherProfile,
 ): { events: ListenArticulationEventDiagnostic[]; summary: ListenArticulationRunSummary } {
   const events = run.events.map((event, index): ListenArticulationEventDiagnostic => {
     const previousTarget = sequence.targets[index - 1];

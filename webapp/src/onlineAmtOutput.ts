@@ -5,6 +5,10 @@ import type {
   RecognizedPitchEvidence,
 } from "./noteRecognizer";
 import type { ChordMatcherOptions } from "./chordMatcher";
+import {
+  DEFAULT_LISTEN_MATCHER_PROFILE_ID,
+  matcherOptionsForListenMatcherProfile,
+} from "./listenMatcherProfiles";
 
 const STATE_COUNT = 5;
 const FIRST_PIANO_MIDI = 21;
@@ -27,18 +31,12 @@ export interface DecodedOnlineAmtOutput {
 }
 
 /**
- * Preliminary digital-fixture profile. These cutoffs preserve very strong true
- * model onsets while rejecting the lower-confidence octave/subharmonic states
- * that the original hard argmax treats as equally certain.
+ * Compatibility export for callers that still expect one online-AMT matcher
+ * option object. The values come from the production-default registry profile,
+ * so `listenMatcherProfiles.ts` remains the only place thresholds are defined.
  */
-export const onlineAmtChordMatcherOptions: Partial<ChordMatcherOptions> = {
-  onsetThreshold: 0.6,
-  targetNoteThreshold: 0.5,
-  activeTargetThreshold: 0.35,
-  noteThreshold: 0.97,
-  settleMs: 32,
-  refractoryMode: "noteEvents",
-};
+export const onlineAmtChordMatcherOptions: ChordMatcherOptions =
+  matcherOptionsForListenMatcherProfile(DEFAULT_LISTEN_MATCHER_PROFILE_ID);
 
 function normalizedGroupScore(
   scores: Float32Array,
