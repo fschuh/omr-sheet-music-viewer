@@ -288,6 +288,11 @@ export interface ListenSafetyRegressionFixture {
     piano: string;
     layer: string;
     sourceSequenceId: string;
+    /**
+     * Speed the originating run was rendered at. The same passage at another
+     * speed is a different run, not a failed reproduction of this one.
+     */
+    sourceIntervalMs: number;
     /** FNV PCM identity of the originating run; unique to that browser process. */
     sourcePcmHash: string;
     /** Decoded-structure identity, which does reproduce across runs. */
@@ -433,6 +438,7 @@ export function buildListenSafetyRegressionFixture(
       piano: identity.piano,
       layer: identity.layer,
       sourceSequenceId: sequence.definition.id,
+      sourceIntervalMs: sequence.intervalMs,
       sourcePcmHash: identity.sourcePcmHash,
       sourceRecognitionStructureHash: identity.sourceRecognitionStructureHash,
       sourceTargetIndex: forensics.targetIndex,
@@ -525,6 +531,16 @@ export interface ListenSafetyRegressionOutcome {
    * unsafe, so only `worseThanBaseline` may reject a candidate.
    */
   satisfied: boolean;
+  /**
+   * Targets that are unsafe under this profile in a way they were not under the
+   * profile the fixture was measured with, with the classifications that are new.
+   * This is what `worseThanBaseline` reports, and it is listed per target because
+   * a failure that moves is still a failure.
+   */
+  newlyUnsafeTargets: Array<{
+    targetIndex: number;
+    classifications: ListenAdvanceSafetyClassification[];
+  }>;
   /** True when this profile is less safe here than the profile it was measured with. */
   worseThanBaseline: boolean;
 }
@@ -532,12 +548,26 @@ export interface ListenSafetyRegressionOutcome {
 export interface ListenSafetyRegressionSummary {
   fixtureCount: number;
   outcomes: ListenSafetyRegressionOutcome[];
+  /**
+   * Raw sums over every replay. These are not "regressions found": a fixture cut
+   * from a genuine false advance reproduces that advance by design, so a
+   * diagnosed corpus has a nonzero total on purpose. `worseThanBaselineCount` is
+   * the number that means something went wrong.
+   */
   falseAdvanceCount: number;
   skippedAdvanceCount: number;
   duplicateAdvanceCount: number;
   /** Replays that no longer reproduce their pinned behavior. Reported, not gating. */
   deviationCount: number;
-  /** False as soon as any profile makes a diagnosed case less safe than baseline. */
+  /**
+   * Replays that made some target unsafe which the reference profile did not.
+   * Counted per replay, not per target; each outcome lists the targets involved.
+   */
+  worseThanBaselineCount: number;
+  /**
+   * False as soon as any profile introduces a safety event at any target of a
+   * diagnosed case, including one that replaces a baseline event elsewhere.
+   */
   passed: boolean;
 }
 
@@ -589,6 +619,47 @@ function expectationDeviations(
   return deviations;
 }
 
+/**
+ * Every target a run advanced unsafely, with the classifications that made it
+ * unsafe. Late advances are excluded: they are a lag diagnostic, not a safety
+ * event, and are compared through the fixture's pinned advancement instead.
+ */
+function unsafeTargets(
+  run: ListenSequenceRunResult,
+): Map<number, ListenAdvanceSafetyClassification[]> {
+  const unsafe = new Map<number, ListenAdvanceSafetyClassification[]>();
+  for (const event of run.events) {
+    const classifications: ListenAdvanceSafetyClassification[] = [];
+    if (event.falseAdvance) classifications.push("false-advance");
+    if (event.skipped) classifications.push("skipped-advance");
+    if (event.duplicate) classifications.push("duplicate-advance");
+    if (classifications.length > 0) unsafe.set(event.index, classifications);
+  }
+  return unsafe;
+}
+
+/**
+ * Safety events this profile introduces that the reference profile did not have
+ * at the same target.
+ *
+ * Comparing totals would let a candidate that fixes the pinned target and breaks
+ * a different one look unchanged, because the counts net out. Losing a baseline
+ * safety event is an improvement and stays allowed; gaining one anywhere is not.
+ */
+export function listenSafetyRegressionsIntroduced(
+  run: ListenSequenceRunResult,
+  baseline: ListenSequenceRunResult,
+): ListenSafetyRegressionOutcome["newlyUnsafeTargets"] {
+  const before = unsafeTargets(baseline);
+  return [...unsafeTargets(run)]
+    .flatMap(([targetIndex, classifications]) => {
+      const known = before.get(targetIndex) ?? [];
+      const added = classifications.filter((entry) => !known.includes(entry));
+      return added.length === 0 ? [] : [{ targetIndex, classifications: added }];
+    })
+    .sort((left, right) => left.targetIndex - right.targetIndex);
+}
+
 function outcomeFor(
   fixture: ListenSafetyRegressionFixture,
   profileId: string,
@@ -596,6 +667,7 @@ function outcomeFor(
   baseline: ListenSequenceRunResult,
 ): ListenSafetyRegressionOutcome {
   const { run, observations } = replayFixture(fixture, profile);
+  const introduced = listenSafetyRegressionsIntroduced(run, baseline);
   const event = run.events[fixture.targetIndex];
   const observation = observations.find(({ targetIndex }) => targetIndex === fixture.targetIndex);
   const advancedAtMs = event?.advancedAtMs ?? null;
@@ -632,9 +704,8 @@ function outcomeFor(
     skippedAdvanceCount: run.summary.skippedAdvanceCount,
     duplicateAdvanceCount: run.summary.duplicateAdvanceCount,
     satisfied: deviations.length === 0,
-    worseThanBaseline: run.summary.falseAdvanceCount > baseline.summary.falseAdvanceCount ||
-      run.summary.skippedAdvanceCount > baseline.summary.skippedAdvanceCount ||
-      run.summary.duplicateAdvanceCount > baseline.summary.duplicateAdvanceCount,
+    newlyUnsafeTargets: introduced,
+    worseThanBaseline: introduced.length > 0,
   };
 }
 
@@ -687,6 +758,7 @@ function summarizeOutcomes(
       0,
     ),
     deviationCount: outcomes.filter(({ satisfied }) => !satisfied).length,
+    worseThanBaselineCount: outcomes.filter(({ worseThanBaseline }) => worseThanBaseline).length,
     passed: outcomes.every(({ worseThanBaseline }) => !worseThanBaseline),
   };
 }
@@ -721,6 +793,7 @@ export interface ListenFocusedCaseIdentity {
   piano: string;
   layer: string;
   sequenceId: string;
+  intervalMs: number;
   recognitionStructureHash: string;
   forensics: readonly ListenAdvanceForensics[];
 }
@@ -736,7 +809,7 @@ export interface ListenFocusedCaseVerification {
 
 /**
  * Re-verifies a freshly captured run against every committed fixture generated
- * from the same renderer, piano, layer, and passage.
+ * from the same renderer, piano, layer, passage, and speed.
  *
  * Without this the committed frames would be the only thing ever checked, and a
  * changed model, renderer, or decoder could silently stop producing the event
@@ -754,7 +827,8 @@ export function verifyFocusedCaseAgainstRegressions(
       origin.renderer === identity.renderer &&
       origin.piano === identity.piano &&
       origin.layer === identity.layer &&
-      origin.sourceSequenceId === identity.sequenceId
+      origin.sourceSequenceId === identity.sequenceId &&
+      origin.sourceIntervalMs === identity.intervalMs
     ))
     .map((fixture): ListenFocusedCaseVerification => {
       const differences: string[] = [];

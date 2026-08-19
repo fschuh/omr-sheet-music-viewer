@@ -2826,10 +2826,15 @@ export async function captureCourseClearArticulationMatrix(
   return summarizeCourseClearArticulationMatrix(capturedRuns);
 }
 
-export async function runCourseClearArticulationMatrix(
-  onProgress: (completed: number, total: number, label: string) => void = () => undefined,
-  renderer: ListenBenchmarkRendererConfiguration = LISTEN_BENCHMARK_RENDERER,
-): Promise<ListenArticulationMatrixResult> {
+/**
+ * Runs one benchmark against a freshly created inference session and disposes it
+ * afterwards. Every listening benchmark uses the same single-thread, fully
+ * optimized configuration, so the session options stay in one place and cannot
+ * drift between suites that are meant to be compared.
+ */
+export async function withOnlineAmtBenchmarkSession<T>(
+  run: (session: OnlineAmtSession) => Promise<T>,
+): Promise<T> {
   const pendingSession = OnlineAmtSession.create({
     modelUrl: new URL("models/online_amt_streaming.onnx", document.baseURI).href,
     numThreads: 1,
@@ -2841,18 +2846,77 @@ export async function runCourseClearArticulationMatrix(
   let session: OnlineAmtSession | null = null;
   try {
     session = await pendingSession;
-    return await captureCourseClearArticulationMatrix({
-      session,
-      onProgress,
-      render: (sequence) => renderListenSequenceAudio(sequence, renderer),
-    });
+    return await run(session);
   } finally {
     if (session) await session.dispose();
     else await pendingSession.then((created) => created.dispose()).catch(() => undefined);
   }
 }
 
-export async function runBundledListenSequenceBenchmark(
+export function runCourseClearArticulationMatrix(
+  onProgress: (completed: number, total: number, label: string) => void = () => undefined,
+  renderer: ListenBenchmarkRendererConfiguration = LISTEN_BENCHMARK_RENDERER,
+): Promise<ListenArticulationMatrixResult> {
+  return withOnlineAmtBenchmarkSession((session) => captureCourseClearArticulationMatrix({
+    session,
+    onProgress,
+    render: (sequence) => renderListenSequenceAudio(sequence, renderer),
+  }));
+}
+
+/** One rendered, recognized, and replayed passage, kept for further replay. */
+export interface ListenSequenceCapture {
+  sequence: MaterializedListenSequence;
+  trace: ListenRecognitionTrace;
+  run: ListenSequenceRunResult;
+  /** Hash of the decoded trace after capture, so later replays can prove it is unmutated. */
+  recognitionHash: string;
+}
+
+/**
+ * Renders one passage, recognizes it, and replays it under the production
+ * policy. The focused-case command and the full corpus share this so a
+ * reproduction of a single run cannot diverge from the run it reproduces.
+ */
+export async function captureListenSequenceRun(options: {
+  definition: ListenSequenceDefinition;
+  intervalMs: number;
+  session: SequenceInferenceSession;
+  renderer?: ListenBenchmarkRendererConfiguration;
+}): Promise<ListenSequenceCapture> {
+  const { definition, intervalMs } = options;
+  const sequence = materializeListenSequence(definition, intervalMs);
+  const rendered = await renderListenSequenceAudio(
+    sequence,
+    options.renderer ?? LISTEN_BENCHMARK_RENDERER,
+  );
+  const label = `${definition.id} at ${intervalMs} ms`;
+  const renderedSignature = signatureForBenchmarkPcm(rendered.pcm);
+  const trace = await captureListenSequenceTrace({
+    sequenceId: definition.id,
+    intervalMs,
+    audio: rendered.pcm,
+    relevantPitches: sequence.relevantPitches,
+    session: options.session,
+    renderer: rendered.renderer,
+    audioDiagnostics: rendered.diagnostics,
+  });
+  assertRenderedTraceAudioIdentity(label, trace, renderedSignature);
+  const recognitionHash = listenRecognitionTraceHash(trace);
+  const run = replayListenSequenceTrace(sequence, trace, "current-matcher");
+  assertRecognitionTraceUnmutated(`${label} current-matcher replay`, trace, recognitionHash);
+  const baselineRun = replayListenSequenceTrace(
+    sequence,
+    trace,
+    "current-matcher",
+    LISTEN_BASELINE_PROFILE,
+  );
+  assertRecognitionTraceUnmutated(`${label} baseline replay`, trace, recognitionHash);
+  assertListenSequenceRunParity(label, run, baselineRun);
+  return { sequence, trace, run, recognitionHash };
+}
+
+export function runBundledListenSequenceBenchmark(
   onProgress: (completed: number, total: number, label: string) => void = () => undefined,
   renderer: ListenBenchmarkRendererConfiguration = LISTEN_BENCHMARK_RENDERER,
 ): Promise<ListenSequenceBenchmarkResult> {
@@ -2860,49 +2924,29 @@ export async function runBundledListenSequenceBenchmark(
   const cases = LISTEN_SEQUENCE_INTERVALS_MS.flatMap((intervalMs) => (
     definitions.map((definition) => ({ definition, intervalMs }))
   ));
-  const pendingSession = OnlineAmtSession.create({
-    modelUrl: new URL("models/online_amt_streaming.onnx", document.baseURI).href,
-    numThreads: 1,
-    graphOptimizationLevel: "all",
-    enableCpuMemArena: true,
-    enableMemPattern: true,
-    executionMode: "sequential",
-  });
-  let session: OnlineAmtSession | null = null;
-  const runs: ListenSequenceRunResult[] = [];
-  const experimentalRuns: ListenSequenceRunResult[] = [];
-  try {
-    session = await pendingSession;
+  return withOnlineAmtBenchmarkSession(async (session) => {
+    const runs: ListenSequenceRunResult[] = [];
+    const experimentalRuns: ListenSequenceRunResult[] = [];
     for (let index = 0; index < cases.length; index += 1) {
       const { definition, intervalMs } = cases[index];
-      const sequence = materializeListenSequence(definition, intervalMs);
-      const rendered = await renderListenSequenceAudio(sequence, renderer);
-      const label = `${definition.id} at ${intervalMs} ms`;
-      const renderedSignature = signatureForBenchmarkPcm(rendered.pcm);
-      const trace = await captureListenSequenceTrace({
-        sequenceId: definition.id,
+      const captured = await captureListenSequenceRun({
+        definition,
         intervalMs,
-        audio: rendered.pcm,
-        relevantPitches: sequence.relevantPitches,
         session,
-        renderer: rendered.renderer,
-        audioDiagnostics: rendered.diagnostics,
+        renderer,
       });
-      assertRenderedTraceAudioIdentity(label, trace, renderedSignature);
-      const capturedRecognitionHash = listenRecognitionTraceHash(trace);
-      const run = replayListenSequenceTrace(sequence, trace, "current-matcher");
-      assertRecognitionTraceUnmutated(`${label} current-matcher replay`, trace, capturedRecognitionHash);
-      const baselineRun = replayListenSequenceTrace(
-        sequence,
-        trace,
-        "current-matcher",
-        LISTEN_BASELINE_PROFILE,
+      const label = `${definition.id} at ${intervalMs} ms`;
+      const experimentalRun = replayListenSequenceTrace(
+        captured.sequence,
+        captured.trace,
+        "next-onset-buffer",
       );
-      assertRecognitionTraceUnmutated(`${label} baseline replay`, trace, capturedRecognitionHash);
-      assertListenSequenceRunParity(label, run, baselineRun);
-      const experimentalRun = replayListenSequenceTrace(sequence, trace, "next-onset-buffer");
-      assertRecognitionTraceUnmutated(`${label} buffered replay`, trace, capturedRecognitionHash);
-      runs.push(run);
+      assertRecognitionTraceUnmutated(
+        `${label} buffered replay`,
+        captured.trace,
+        captured.recognitionHash,
+      );
+      runs.push(captured.run);
       experimentalRuns.push(experimentalRun);
       onProgress(index + 1, cases.length, `${definition.label} at ${intervalMs} ms`);
     }
@@ -2923,10 +2967,7 @@ export async function runBundledListenSequenceBenchmark(
         comparison: compareListenSequencePolicies(runs, experimentalRuns),
       },
     };
-  } finally {
-    if (session) await session.dispose();
-    else await pendingSession.then((created) => created.dispose()).catch(() => undefined);
-  }
+  });
 }
 
 /**

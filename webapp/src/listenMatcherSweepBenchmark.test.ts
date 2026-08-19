@@ -13,6 +13,14 @@ import {
   type MaterializedListenSequence,
 } from "./listenSequenceBenchmark";
 import {
+  LISTEN_SAFETY_REGRESSION_FIXTURES,
+  replayListenSafetyRegressions,
+} from "./listenSafetyRegression";
+import {
+  TONE_COURSE_CLEAR_333_SHARED_PITCH_FALSE_ADVANCE,
+  TONE_SALAMANDER_V05_LATE_ADVANCE,
+} from "./listenSafetyRegressionFixtures";
+import {
   LISTEN_SWEEP_DISCOVERY_BASELINE_PROFILE,
   generateListenMatcherSweepProfiles,
   listenThresholdSweepParetoFrontier,
@@ -98,6 +106,79 @@ test("threshold sweep generates the complete stable 1,000-profile grid", () => {
   assert.equal(production.distanceFromProduction, 0);
 });
 
+/**
+ * Every exploratory profile is assessed against every diagnosed case, because a
+ * committed regression only protects the search if the search actually replays
+ * it. The distribution below is measured, not asserted for its own sake: it says
+ * which parameter regions each diagnosed failure separates.
+ */
+test("every grid profile is assessed against every committed regression", () => {
+  const profiles = generateListenMatcherSweepProfiles();
+  const outcomes = profiles.map((profile) => ({
+    profile,
+    byFixture: new Map(LISTEN_SAFETY_REGRESSION_FIXTURES.map((fixture) => [
+      fixture.id,
+      replayListenSafetyRegressions(profile, profile.id, [fixture]).outcomes[0],
+    ])),
+  }));
+  assert.equal(outcomes.length, 1_000);
+  assert.ok(outcomes.every(({ byFixture }) => (
+    byFixture.size === LISTEN_SAFETY_REGRESSION_FIXTURES.length
+  )));
+
+  // The v05 case is a late advance for every profile in the grid. 592 recover
+  // the correct chord one repetition earlier than baseline, which deviates from
+  // the pinned advancement without being unsafe.
+  const v05 = outcomes.map(({ byFixture }) => byFixture.get(TONE_SALAMANDER_V05_LATE_ADVANCE.id)!);
+  assert.ok(v05.every((outcome) => outcome.lateAdvance && !outcome.falseAdvance));
+  assert.equal(v05.filter(({ advancedAtMs }) => advancedAtMs === 24_448).length, 592);
+  assert.equal(v05.filter(({ advancedAtMs }) => advancedAtMs === 25_440).length, 408);
+  assert.equal(v05.filter(({ worseThanBaseline }) => worseThanBaseline).length, 0);
+
+  // The shared-pitch case separates the grid into four measured regions.
+  const shared = outcomes.map(({ profile, byFixture }) => ({
+    profile,
+    outcome: byFixture.get(TONE_COURSE_CLEAR_333_SHARED_PITCH_FALSE_ADVANCE.id)!,
+  }));
+  const region = (advancedAtMs: number, falseAdvanceCount: number) => shared.filter((entry) => (
+    entry.outcome.advancedAtMs === advancedAtMs &&
+    entry.outcome.falseAdvanceCount === falseAdvanceCount
+  ));
+  // Reproduce the pinned advance: the target's own 0.531 onset is below either
+  // their onset or their target-note gate, and their extra-note gate refuses the
+  // 0.983 extra in [56, 63].
+  const pinned = region(4_768, 1);
+  assert.equal(pinned.length, 570);
+  assert.ok(pinned.every(({ outcome }) => outcome.satisfied && outcome.falseAdvance));
+  // Never stall: both gates sit below 0.531, so the target advances in order
+  // from its own attack and the false advance never happens.
+  const ordered = region(3_072, 0);
+  assert.equal(ordered.length, 240);
+  assert.ok(ordered.every(({ profile }) => (
+    profile.onsetThreshold <= 0.5 && profile.targetNoteThreshold <= 0.5
+  )));
+  assert.ok(ordered.every(({ outcome }) => outcome.orderedAdvanced && !outcome.falseAdvance));
+  // A 0.99 extra-note gate no longer treats the 0.983 extra as unexpected, so
+  // the same target is falsely advanced by the earlier [56, 63] instead.
+  const earlier = region(3_744, 1);
+  assert.equal(earlier.length, 114);
+  assert.ok(earlier.every(({ profile }) => profile.extraNoteThreshold === 0.99));
+  // The same relaxed extra-note gate combined with a permissive active-target
+  // gate cascades into three false advances, which is strictly less safe than
+  // baseline and is the only region this regression rejects.
+  const cascading = region(3_744, 3);
+  assert.equal(cascading.length, 76);
+  assert.ok(cascading.every(({ profile }) => (
+    profile.extraNoteThreshold === 0.99 && profile.activeTargetThreshold <= 0.275
+  )));
+  assert.ok(cascading.every(({ outcome }) => outcome.worseThanBaseline));
+  assert.equal(pinned.length + ordered.length + earlier.length + cascading.length, 1_000);
+  assert.equal(
+    shared.filter(({ outcome }) => outcome.worseThanBaseline).length,
+    cascading.length,
+  );
+});
+
 function sweepCandidate(
   id: string,
   requireFreshBassOnset: boolean,
@@ -135,6 +216,7 @@ function sweepCandidate(
         skippedAdvanceCount: 0,
         duplicateAdvanceCount: 0,
         deviationCount: 0,
+        worseThanBaselineCount: 0,
         passed: true,
       },
       passed: true,

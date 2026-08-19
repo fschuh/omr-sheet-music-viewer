@@ -13,6 +13,12 @@ import {
   type ListenSequenceBenchmarkResult,
 } from "./listenSequenceBenchmark";
 import {
+  conciseListenSequenceCaseResult,
+  listenSequenceCaseInterval,
+  runListenSequenceCase,
+  type ListenSequenceCaseResult,
+} from "./listenSequenceCaseBenchmark";
+import {
   runListenThresholdSweep,
   type ListenThresholdSweepResult,
 } from "./listenMatcherSweepBenchmark";
@@ -65,6 +71,19 @@ function requestedDynamicsCase(): { piano: PianoId; layer: PianoLayerId } {
   return { piano, layer };
 }
 
+/**
+ * The passage and speed a focused sequence case reproduces. Defaults to the one
+ * Tone false advancement the sequence corpus reports outside the dedicated
+ * safety families, so the diagnosed case is one command away.
+ */
+function requestedSequenceCase(): { sequenceId: string; intervalMs: number } {
+  const query = new URLSearchParams(window.location.search);
+  return {
+    sequenceId: query.get("benchmark-sequence") ?? "course-clear-27",
+    intervalMs: listenSequenceCaseInterval(Number(query.get("benchmark-interval") ?? "333.33")),
+  };
+}
+
 function requestedRenderer(): ListenBenchmarkRendererConfiguration {
   const query = new URLSearchParams(window.location.search);
   return query.get("benchmark-renderer") === "tone"
@@ -77,14 +96,14 @@ export function ListenBenchmarkPage() {
   const [runningTask, setRunningTask] = useState<
     "online_amt" | "spectral" | "sequence" | "threshold-sweep" | "retrigger-sweep" |
       "articulation" | "reset-comparison" | null
-      | "dynamics-constant" | "dynamics-mixed" | "dynamics-case"
+      | "dynamics-constant" | "dynamics-mixed" | "dynamics-case" | "sequence-case"
   >(null);
   const running = runningTask !== null;
   const [progress, setProgress] = useState("");
   const [progressTask, setProgressTask] = useState<
     "isolated" | "sequence" | "threshold-sweep" | "retrigger-sweep" | "articulation" |
       "reset-comparison"
-      | "dynamics-constant" | "dynamics-mixed" | "dynamics-case"
+      | "dynamics-constant" | "dynamics-mixed" | "dynamics-case" | "sequence-case"
   >("isolated");
   const [error, setError] = useState<string | null>(null);
   const [automated, setAutomated] = useState<ListenBenchmarkSummary | null>(null);
@@ -103,6 +122,8 @@ export function ListenBenchmarkPage() {
     useState<CourseClearMixedDynamicsSuiteResult | null>(null);
   const [dynamicsCaseResult, setDynamicsCaseResult] =
     useState<CourseClearDynamicsCaseResult | null>(null);
+  const [sequenceCaseResult, setSequenceCaseResult] =
+    useState<ListenSequenceCaseResult | null>(null);
   const [manual, setManual] = useState<ListenBenchmarkTrial[]>([]);
   const [manualSource, setManualSource] = useState<"acoustic" | "digital">("acoustic");
   const [manualCorrect, setManualCorrect] = useState(true);
@@ -113,7 +134,10 @@ export function ListenBenchmarkPage() {
   useEffect(() => {
     if (automaticBenchmarkStarted) return;
     const query = new URLSearchParams(window.location.search);
-    if (query.get("listen-dynamics-case") === "auto") {
+    if (query.get("listen-sequence-case") === "auto") {
+      automaticBenchmarkStarted = true;
+      void runSequenceCase();
+    } else if (query.get("listen-dynamics-case") === "auto") {
       automaticBenchmarkStarted = true;
       void runDynamicsCase();
     } else if (query.get("listen-dynamics-constant") === "auto") {
@@ -379,6 +403,33 @@ export function ListenBenchmarkPage() {
       (window as typeof window & {
         listenDynamicsCaseResult?: CourseClearDynamicsCaseResult;
       }).listenDynamicsCaseResult = result;
+      document.body.dataset.status = "complete";
+    } catch (benchmarkError) {
+      setError(benchmarkError instanceof Error ? benchmarkError.message : String(benchmarkError));
+      document.body.dataset.status = "error";
+    } finally {
+      setRunningTask(null);
+    }
+  }
+
+  async function runSequenceCase() {
+    setRunningTask("sequence-case");
+    setProgressTask("sequence-case");
+    setError(null);
+    setProgress("Reproducing one continuous-sequence safety case…");
+    document.body.dataset.status = "running";
+    try {
+      const { sequenceId, intervalMs } = requestedSequenceCase();
+      const result = await runListenSequenceCase(
+        sequenceId,
+        intervalMs,
+        (complete, total, label) => setProgress(`${complete} / ${total} runs · ${label}`),
+        benchmarkRenderer,
+      );
+      setSequenceCaseResult(result);
+      (window as typeof window & {
+        listenSequenceCaseResult?: ListenSequenceCaseResult;
+      }).listenSequenceCaseResult = result;
       document.body.dataset.status = "complete";
     } catch (benchmarkError) {
       setError(benchmarkError instanceof Error ? benchmarkError.message : String(benchmarkError));
@@ -703,10 +754,34 @@ export function ListenBenchmarkPage() {
         </p>
         <button type="button" disabled={running} onClick={() => void runSequence()}>
           {runningTask === "sequence" ? "Running…" : "Run continuous-sequence benchmark"}
+        </button>{" "}
+        <button type="button" disabled={running} onClick={() => void runSequenceCase()}>
+          {runningTask === "sequence-case" ? "Running…" : "Reproduce one sequence case"}
         </button>
-        {progress && progressTask === "sequence"
+        {progress && (progressTask === "sequence" || progressTask === "sequence-case")
           ? <span className="benchmark-progress">{progress}</span>
           : null}
+        {sequenceCaseResult ? (
+          <>
+            <h3>
+              Focused safety case · {sequenceCaseResult.label} at{" "}
+              {sequenceCaseResult.intervalMs.toFixed(2)} ms
+            </h3>
+            <p>
+              {sequenceCaseResult.forensics.length === 0
+                ? "No advancement in this run was counted against the safety gates."
+                : `${sequenceCaseResult.forensics.length} advancement(s) counted against the safety gates.`}
+              {" "}Committed regressions: {sequenceCaseResult.regressions.fixtureCount}, replayed
+              across {sequenceCaseResult.regressions.outcomes.length} profile runs
+              ({sequenceCaseResult.regressions.passed ? "none less safe than baseline" : "SAFETY REGRESSION"},
+              {" "}{sequenceCaseResult.regressions.deviationCount} behavior deviation(s)).
+              {sequenceCaseResult.verifications.length > 0
+                ? ` This run re-verified ${sequenceCaseResult.verifications.length} committed case(s) against its own decoded structure.`
+                : " This run is not a committed case, so nothing was re-verified against it."}
+            </p>
+            <pre>{JSON.stringify(conciseListenSequenceCaseResult(sequenceCaseResult), null, 2)}</pre>
+          </>
+        ) : null}
         {sequenceResult ? (
           <>
             <p>

@@ -6,13 +6,18 @@ import {
   diagnoseListenSequenceSafety,
   listenSafetyRegressionSequence,
   listenSafetyRegressionTrace,
+  listenSafetyRegressionsIntroduced,
   replayListenSafetyRegressions,
   summarizeListenSafetyRegressions,
   verifyFocusedCaseAgainstRegressions,
   type ListenAdvanceForensics,
+  type ListenAdvanceSafetyClassification,
   type ListenSafetyRegressionFixture,
 } from "./listenSafetyRegression";
-import { TONE_SALAMANDER_V05_LATE_ADVANCE } from "./listenSafetyRegressionFixtures";
+import {
+  TONE_COURSE_CLEAR_333_SHARED_PITCH_FALSE_ADVANCE,
+  TONE_SALAMANDER_V05_LATE_ADVANCE,
+} from "./listenSafetyRegressionFixtures";
 import {
   LISTEN_MATCHER_PROFILES,
   LISTEN_MATCHER_PROFILE_IDS,
@@ -23,10 +28,12 @@ import {
   materializeListenSequence,
   replayListenSequenceTrace,
   type ListenSequenceDefinition,
+  type ListenSequenceRunResult,
 } from "./listenSequenceBenchmark";
 import { listenRecognitionTraceHash } from "./listenBaselineParity";
 
 const V05 = TONE_SALAMANDER_V05_LATE_ADVANCE;
+const SHARED_PITCH = TONE_COURSE_CLEAR_333_SHARED_PITCH_FALSE_ADVANCE;
 
 function replay(fixture: ListenSafetyRegressionFixture, profileId: ListenMatcherProfileId) {
   return replayListenSequenceTrace(
@@ -138,6 +145,7 @@ test("every named profile is replayed against every committed regression", () =>
       // Deviating from the pinned advancement is reported; only becoming less
       // safe than the profile the case was measured with is a failure.
       assert.equal(outcome.worseThanBaseline, false, `${fixture.id} under ${profileId}`);
+      assert.deepEqual(outcome.newlyUnsafeTargets, [], `${fixture.id} under ${profileId}`);
     }
   }
   // The fixture was cut from a baseline-v1 run, so baseline-v1 must still land on it.
@@ -145,9 +153,12 @@ test("every named profile is replayed against every committed regression", () =>
     assert.deepEqual(outcome.deviations, [], outcome.fixtureId);
     assert.equal(outcome.satisfied, true);
   }
-  assert.equal(summary.falseAdvanceCount, 0);
+  // One committed fixture pins a genuine false advance, so the raw total is
+  // nonzero by design. Only `worseThanBaselineCount` says a profile regressed.
+  assert.equal(summary.falseAdvanceCount, 1);
   assert.equal(summary.skippedAdvanceCount, 0);
   assert.equal(summary.duplicateAdvanceCount, 0);
+  assert.equal(summary.worseThanBaselineCount, 0);
   assert.equal(summary.passed, true);
 });
 
@@ -193,6 +204,170 @@ test("no profile advances the v05 target before it was played", () => {
       `${profileId} advanced target ${V05.targetIndex} before it was played`,
     );
   }
+});
+
+test("the shared-pitch fixture keeps the measured schedule and decoded frames", () => {
+  assert.equal(SHARED_PITCH.origin.renderer, "bundled-piano-tone-v2");
+  assert.equal(SHARED_PITCH.origin.piano, "splendid");
+  assert.equal(SHARED_PITCH.origin.layer, "mp");
+  assert.equal(SHARED_PITCH.origin.sourceSequenceId, "course-clear-27");
+  assert.equal(SHARED_PITCH.origin.sourceTargetIndex, 8);
+  // Course Clear moments 8-14: the moment before the stalled single note,
+  // through the chord whose shared 56 completed it.
+  assert.deepEqual(SHARED_PITCH.definition.targets, [
+    [60, 67, 76], [56], [51, 60], [56, 63], [48, 60, 68], [51, 63, 72], [56, 68, 75],
+  ]);
+  assert.deepEqual(SHARED_PITCH.definition.attacks.map(({ at }) => at), [7, 8, 9, 10, 11, 12, 13]);
+  const trace = listenSafetyRegressionTrace(SHARED_PITCH);
+  assert.equal(trace.pcm.length, 0);
+  assert.ok(trace.frames.every(({ modelScores }) => modelScores.length === 0));
+  assert.equal(trace.frames.length, SHARED_PITCH.frames.length);
+  assert.equal(trace.frames[0].capturedAtMs, 2_432);
+  assert.equal(trace.frames.at(-1)?.capturedAtMs, 4_928);
+});
+
+test("the shared-pitch fixture reproduces the measured false advance under baseline-v1", () => {
+  const { run, forensics } = diagnoseListenSequenceSafety(
+    listenSafetyRegressionSequence(SHARED_PITCH),
+    listenSafetyRegressionTrace(SHARED_PITCH),
+    listenMatcherThresholds(LISTEN_MATCHER_PROFILES["baseline-v1"]),
+  );
+  const event = run.events[SHARED_PITCH.targetIndex];
+  assert.equal(event.advanced, true);
+  assert.equal(event.advancedAtMs, 4_768);
+  assert.equal(event.orderedAdvanced, false);
+  assert.equal(event.falseAdvance, true);
+  assert.equal(event.lateAdvance, false);
+  assert.equal(event.skipped, false);
+  assert.equal(event.duplicate, false);
+  assert.deepEqual(SHARED_PITCH.pinnedAdvance, { advancedAtMs: 4_768, sourceAttackIndex: 6 });
+  assert.equal(SHARED_PITCH.origin.sourceAdvancedAtMs, 4_768);
+  assert.equal(SHARED_PITCH.origin.sourceAttackIndex, 13);
+  assert.equal(run.summary.falseAdvanceCount, 1);
+  assert.equal(run.summary.lateAdvanceCount, 0);
+  assert.equal(run.summary.skippedAdvanceCount, 0);
+  assert.equal(run.summary.duplicateAdvanceCount, 0);
+
+  assert.equal(forensics.length, 1);
+  const [forensic] = forensics;
+  assert.deepEqual(forensic.classification, ["false-advance"]);
+  assert.equal(forensic.targetIndex, SHARED_PITCH.targetIndex);
+  assert.equal(forensic.advancedAtMs, 4_768);
+  // 1881 ms after this target's own attack, far outside the attribution window,
+  // so the advance is credited to the chord that was actually sounding.
+  assert.equal(Math.round(forensic.attributionDelayMs), 1_881);
+  assert.ok(forensic.attributionDelayMs > forensic.attributionWindowMs);
+  assert.equal(forensic.sourceAttackIndex, 6);
+  assert.deepEqual(forensic.soundingAttackIndices, [6]);
+  // The causing attack played a different chord, which is what separates this
+  // from a late advance: only its shared pitch reached the matcher.
+  assert.deepEqual(forensic.sourceAttackPlayedPitches, [56, 68, 75]);
+  assert.deepEqual(forensic.detectedTargetPitches, [56]);
+  assert.deepEqual(forensic.extraPitches, []);
+  assert.deepEqual(forensic.carryOverPitchesAtTargetStart, [60, 67, 76]);
+});
+
+/**
+ * The decoded evidence behind the diagnosis. The target's own attack produced an
+ * onset below `baseline-v1`'s gate; the first later chord containing 56 also
+ * contained a confidently unexpected 63 and was refused; the chord that did
+ * advance it contributed no second fresh onset at all, because 68 was already
+ * sounding and 75 — the weak upper note of this Tone fixture — never onset.
+ */
+test("the shared-pitch fixture stores the evidence its diagnosis rests on", () => {
+  const onsetAt = (capturedAtMs: number) => SHARED_PITCH.frames
+    .find((frame) => frame.capturedAtMs === capturedAtMs)
+    ?.onsets.map(({ midi, confidence }) => [midi, Number(confidence.toFixed(3))]);
+  assert.deepEqual(onsetAt(3_040), [[56, 0.531]]);
+  assert.deepEqual(onsetAt(3_712), [[56, 0.975], [63, 0.983]]);
+  assert.deepEqual(onsetAt(4_736), [[56, 0.995]]);
+  const advancingFrame = SHARED_PITCH.frames.find(({ capturedAtMs }) => capturedAtMs === 4_736);
+  assert.ok(advancingFrame);
+  // 68 is active without a fresh onset, so the extra-note gate never sees it.
+  assert.ok(advancingFrame.activePitches.some(({ midi }) => midi === 68));
+  assert.ok(!advancingFrame.onsets.some(({ midi }) => midi === 68));
+  assert.ok(!advancingFrame.activePitches.some(({ midi }) => midi === 75));
+});
+
+/**
+ * Both first-generation candidates accept the 0.531 onset the target's own
+ * attack produced, so the stall that led to the false advance never starts and
+ * the passage advances in order instead. That is a preview of the Task 08
+ * comparison, and it is visible only because the advancement is pinned.
+ */
+test("the more sensitive profiles never enter the shared-pitch stall", () => {
+  const summary = summarizeListenSafetyRegressions([SHARED_PITCH]);
+  assert.equal(summary.worseThanBaselineCount, 0);
+  assert.equal(summary.passed, true);
+  assert.equal(summary.deviationCount, 2);
+  const outcomeFor = (profileId: ListenMatcherProfileId) => {
+    const outcome = summary.outcomes.find((candidate) => candidate.profileId === profileId);
+    assert.ok(outcome, profileId);
+    return outcome;
+  };
+  const baseline = outcomeFor("baseline-v1");
+  assert.equal(baseline.advancedAtMs, 4_768);
+  assert.equal(baseline.sourceAttackIndex, 6);
+  assert.equal(baseline.falseAdvance, true);
+  assert.equal(baseline.satisfied, true);
+  for (const profileId of ["balanced-v1", "sensitive-v1"] as const) {
+    const outcome = outcomeFor(profileId);
+    assert.equal(outcome.advancedAtMs, 3_072, profileId);
+    assert.equal(outcome.sourceAttackIndex, 1, profileId);
+    assert.equal(outcome.orderedAdvanced, true, profileId);
+    assert.equal(outcome.falseAdvance, false, profileId);
+    assert.equal(outcome.falseAdvanceCount, 0, profileId);
+    assert.equal(outcome.satisfied, false, profileId);
+    assert.equal(outcome.worseThanBaseline, false, profileId);
+  }
+  // Six ordered advances instead of one, from the same decoded frames.
+  for (const profileId of ["balanced-v1", "sensitive-v1"] as const) {
+    assert.equal(replay(SHARED_PITCH, profileId).summary.orderedAdvanceCount, 6, profileId);
+  }
+  assert.equal(replay(SHARED_PITCH, "baseline-v1").summary.orderedAdvanceCount, 1);
+});
+
+/**
+ * A safety failure that moves is still a safety failure. Comparing totals would
+ * let a profile that fixes the pinned target and breaks a different one look
+ * unchanged, because one false advance replaces another, so the comparison is
+ * per target.
+ */
+test("a safety event relocated to another target is still rejected", () => {
+  // Only the fields the comparison reads; a full replay cannot produce equal
+  // totals at different targets from any committed fixture, which is precisely
+  // why the case needs stating directly.
+  const run = (
+    classified: Partial<Record<number, ListenAdvanceSafetyClassification[]>>,
+  ) => ({
+    events: [0, 1, 2].map((index) => ({
+      index,
+      falseAdvance: classified[index]?.includes("false-advance") ?? false,
+      skipped: classified[index]?.includes("skipped-advance") ?? false,
+      duplicate: classified[index]?.includes("duplicate-advance") ?? false,
+      lateAdvance: classified[index]?.includes("late-advance") ?? false,
+    })),
+  } as ListenSequenceRunResult);
+
+  const baseline = run({ 1: ["false-advance"] });
+  // Identical totals, different target.
+  assert.deepEqual(
+    listenSafetyRegressionsIntroduced(run({ 2: ["false-advance"] }), baseline),
+    [{ targetIndex: 2, classifications: ["false-advance"] }],
+  );
+  // Same target, a kind of failure baseline did not have there.
+  assert.deepEqual(
+    listenSafetyRegressionsIntroduced(
+      run({ 1: ["false-advance", "duplicate-advance"] }),
+      baseline,
+    ),
+    [{ targetIndex: 1, classifications: ["duplicate-advance"] }],
+  );
+  // Reproducing the baseline event, and losing it entirely, both stay allowed.
+  assert.deepEqual(listenSafetyRegressionsIntroduced(baseline, baseline), []);
+  assert.deepEqual(listenSafetyRegressionsIntroduced(run({}), baseline), []);
+  // A late advance is a lag diagnostic, not a safety event, so it never counts.
+  assert.deepEqual(listenSafetyRegressionsIntroduced(run({ 0: ["late-advance"] }), run({})), []);
 });
 
 /**
@@ -356,6 +531,7 @@ function v05Identity(update: Partial<ListenAdvanceForensics> = {}) {
     piano: V05.origin.piano,
     layer: V05.origin.layer,
     sequenceId: V05.origin.sourceSequenceId,
+    intervalMs: V05.origin.sourceIntervalMs,
     recognitionStructureHash: V05.origin.sourceRecognitionStructureHash,
     forensics: [{
       ...forensics[0],
@@ -375,6 +551,11 @@ test("a focused rerun of a committed case must still reproduce it", () => {
   // A run of a different layer is simply not this case, and is not checked.
   assert.deepEqual(
     verifyFocusedCaseAgainstRegressions({ ...v05Identity(), layer: "v06" }),
+    [],
+  );
+  // Neither is the same passage rendered at a different speed.
+  assert.deepEqual(
+    verifyFocusedCaseAgainstRegressions({ ...v05Identity(), intervalMs: 500 }),
     [],
   );
 });

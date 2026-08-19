@@ -122,9 +122,11 @@ The later Tone and dynamics work adds the following constraints:
   regression has zero false, skipped, and duplicate advances. Its
   `lateAdvanceCount` measures playhead lag and must be reported separately from
   safety.
-- One Tone false advancement at 333 ms remains outside the dedicated safety
-  families. It must be forensically diagnosed and, when reproducible, pinned as a
-  compact regression before another candidate set is frozen.
+- The one Tone false advancement at 333 ms outside the dedicated safety families
+  is diagnosed and pinned. It is a genuine matcher false advance: a single-note
+  target that stalled on its own below-gate onset was completed by a later
+  chord's shared pitch. It rejects 76 of the 1,000 grid profiles, all of which
+  combine a 0.99 extra-note gate with a permissive active-target gate.
 - Recognition changes non-monotonically across velocity layers. Calibration
   cannot be reduced to one microphone-gain adjustment.
 - Browser inference already stays comfortably below the 32 ms input cadence, so
@@ -315,9 +317,12 @@ it must not be rejected merely because it differs from the baseline attribution.
 Any future change to which played attack caused the advance still requires an
 explicit reviewed explanation.
 
-One separate Tone false advance at 333 ms remains outside the dedicated safety
-families. It is not explained by the `v05` correction and must be diagnosed in
-Task 06 before multi-domain candidate discovery.
+Task 06 separately diagnosed the one Tone false advance at 333 ms. It is not
+explained by the `v05` correction and is not the same mechanism: `course-clear-27`
+target 8, the single note `[56]`, stalled on a 0.531 onset below `baseline-v1`'s
+gate and was then completed at 4,768 ms by the shared 56 of `[56, 68, 75]`, whose
+other two pitches were invisible to the extra-note gate. It is a genuine false
+advance, its classification is unchanged, and it is a permanent regression.
 
 ## Multi-domain discovery and validation partition
 
@@ -685,7 +690,7 @@ safe subset of it is convenient. When a task changes a measured browser result,
 record the command, commit, renderer/model identity, result hashes, and concise
 summary in the appropriate benchmark report before closing the pass.
 
-Tasks 01-05 are complete. Tasks 18-20 are conditional: execute them only if Task
+Tasks 01-06 are complete. Tasks 18-20 are conditional: execute them only if Task
 17 concludes `calibration-justified`. If Task 17 concludes
 `fixed-profile-sufficient`, mark Tasks 18-20 skipped with that decision as their
 completion evidence. Task 21 is a separate later research branch and is not
@@ -893,7 +898,7 @@ second at 24,448 ms. All keep false/skipped/duplicate counts at zero.
 
 ### Task 06 — Diagnose the remaining Tone 333 ms false advancement
 
-**Status:** Required. **Prerequisites:** Task 05 complete.
+**Status:** Completed August 19, 2026. **Prerequisites:** Task 05 complete.
 
 **Objective:** Explain and pin the one Tone sequence false advance at 333 ms that
 remains outside the dedicated safety families, so the next threshold search
@@ -932,6 +937,31 @@ change in historical safety, ordered, or independent metrics.
 **Complete when:** The event has a documented classification and causal attack,
 the minimized fixture reproduces it, every grid profile is assessed against it,
 and no future safe-candidate claim can omit it.
+
+**Completion evidence:** The event is `course-clear-27` target 8, the single note
+`[56]`, at 333.33 ms under `bundled-piano-tone-v2`. It is a genuine matcher false
+advance and its classification is unchanged. The target's own attack produced an
+onset of 0.531, below `baseline-v1`'s 0.60 gate, so a one-note target stayed
+armed across five following attacks. The extra-note gate refused every attack
+that offered pitch 56 alongside a confident fresh extra, including `[56, 63]`
+whose 63 arrived at 0.983. It could not refuse `[56, 68, 75]`, where 68 was
+carry-over from the previous chord and 75 produced no onset at all, leaving 56 as
+the only fresh evidence; the target advanced at 4,768 ms, 1,881 ms late, from an
+attack that played a different chord. Attribution is correct and no rule changed.
+
+`listen-sequence-case` was added as the sequence counterpart of
+`listen-dynamics-case`, and the case is committed as
+`tone-course-clear-333-shared-pitch-false-advance`: 79 decoded frames covering
+targets 7-13, pinned to decoded-structure hash `ab28401f` and to the exact
+advancement and causing attack. Fixture matching now includes the speed a case
+was measured at. All 1,000 grid profiles were replayed against it: 570 reproduce
+the pinned advance, 240 never stall and advance in order, 114 falsely advance the
+same target one chord earlier under a 0.99 extra-note gate, and 76 cascade into
+three false advances and are rejected as less safe than baseline. Both
+first-generation candidates fall in the 240 region. The Direct sweep moves from
+680 to 700 rejections and its frontier from 15 to 14; the Tone sweep moves from
+500 to 538 rejections with an unchanged frontier; both recommendations are
+unchanged. `tools/online_amt/LISTEN_BENCHMARK.md` records the full diagnosis.
 
 ### Task 07 — Freeze the multi-domain discovery and confirmation protocol
 

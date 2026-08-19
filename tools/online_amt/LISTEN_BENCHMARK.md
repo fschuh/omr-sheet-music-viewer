@@ -7,6 +7,215 @@
 Entries are kept newest first so renderer and recognition changes remain
 comparable over time.
 
+### Tone Course Clear 333 ms false-advance diagnosis — August 19, 2026
+
+The one advancement the sequence corpus reported as false outside the dedicated
+safety families was reproduced in isolation, explained, and committed as a
+permanent regression. Unlike the `v05` case, it is a genuine matcher false
+advance and its classification is unchanged: a stalled single-note target was
+completed by a later chord's shared pitch, from an attack that played a
+different chord.
+
+Measured on this development machine at commit `2701153` plus this change, with
+Chrome 151.0.7922.137, `bundled-piano-tone-v2` and `bundled-piano-web-audio-v1`,
+the unchanged `online_amt_streaming.onnx` model (71,955,821 bytes, SHA-256
+`a77be8262d3742ce…`), and the frozen `baseline-v1` profile.
+
+#### Reproducing one run instead of seventy-eight
+
+`listen-sequence-case` renders exactly one bundled passage at one corpus speed
+and prints the complete forensic record of every advancement that run counted
+against a safety gate — the sequence counterpart of `listen-dynamics-case`. It
+resolves a typed interval to the exact corpus value, so `333.33` renders the
+same `1000 / 3` passage the corpus renders rather than a slightly different one.
+
+Three consecutive browser processes reproduced the case identically:
+
+| Quantity | Run 1 | Run 2 | Run 3 |
+| --- | --- | --- | --- |
+| Recognition structure hash | `ab28401f` | `ab28401f` | `ab28401f` |
+| PCM hash | `a4bdc702` | `b35d1ef8` | `2533072c` |
+| Independent / ordered | 23 / 8 of 27 | 23 / 8 of 27 | 23 / 8 of 27 |
+| Safety false / skipped / duplicate / late | 1 / 0 / 0 / 0 | 1 / 0 / 0 / 0 | 1 / 0 / 0 / 0 |
+| Advancement | target 8 at 4,768 ms | target 8 at 4,768 ms | target 8 at 4,768 ms |
+
+As with `v05`, the FNV PCM hash is an identity within one browser process only;
+the decoded structure, recognition, and the advancement itself reproduce exactly,
+so the regression is pinned to the decoded-structure hash `ab28401f`.
+
+The same passage under `bundled-piano-web-audio-v1` reproduces its corpus result
+— 26 independent, 4 ordered, 0/0/0, no late advance, structure hash `b9ff48f2` —
+so this case, like `v05`, belongs to the Tone signal path rather than to the
+passage.
+
+#### What actually happened
+
+Course Clear target 8 is measure 2 moment 1, the single note `[56]`, played at
+2,886.67 ms. The matcher advanced it 1,881 ms later, at 4,768 ms, from the
+physical attack of target 13.
+
+| Field | Value |
+| --- | --- |
+| Target | 8, `[56]`, scheduled 2,886.67 ms |
+| Advanced | 4,768 ms, generation 9, trace frame 148 |
+| Attribution delay | 1,881 ms against a 464 ms window |
+| Source attack | 13, scheduled 4,553.33 ms, played `[56, 68, 75]` |
+| Pitches accepted | `[56]`, no rejected extras |
+| Carried into the target | `[60, 67, 76]` |
+
+The decoded evidence explains every step:
+
+| Frame | Attack | Fresh onsets | Effect on target 8 |
+| --- | --- | --- | --- |
+| 3,040 ms | 8, `[56]` | 56 @ 0.531 | Below the 0.60 onset gate; the target stays armed |
+| 3,392 ms | 9, `[51, 60]` | 51 @ 1.000, 60 @ 1.000 | Confidently unexpected; refused |
+| 3,712 ms | 10, `[56, 63]` | 56 @ 0.975, 63 @ 0.983 | 63 is above the 0.97 extra-note gate; refused |
+| 4,064 ms | 11, `[48, 60, 68]` | 48, 60, 68 ≥ 0.994 | No 56; refused |
+| 4,384 ms | 12, `[51, 63, 72]` | 51, 63, 72 ≥ 0.972 | No 56; refused |
+| 4,736 ms | 13, `[56, 68, 75]` | 56 @ 0.995 only | Nothing unexpected is fresh; advanced at 4,768 ms |
+
+The target's own attack produced an onset of 0.531 — active confidence for 56
+reached 0.9999, but the onset never qualified — so `baseline-v1`'s 0.60 gate left
+a one-note target armed across five following attacks. The extra-note gate then
+did its job on every attack that could otherwise have completed it, including
+`[56, 63]`, whose 63 arrived at 0.983. It could not do its job on
+`[56, 68, 75]`: 68 was already sounding from attack 11 and so was carry-over
+rather than fresh evidence, and 75 — the weak upper note this Tone fixture is
+already documented to miss in isolated trials — produced no onset at all. That
+left 56 as the only fresh pitch in the frame, which is exactly what the
+single-note target was waiting for.
+
+The attribution is correct: attack 13's audio did cause the advancement, and the
+1,881 ms delay is far outside the 464 ms window, so the replay credits the chord
+that was actually sounding. The classification is also correct and is preserved.
+This is not a late advance: `late-advance` requires an attack that played exactly
+the advanced target's chord, and `[56, 68, 75]` is not `[56]`. The matcher
+accepted a subset of a different chord, and the two pitches that would have
+identified it as a different chord were invisible to the gate.
+
+The playhead moved forward while the player was five moments ahead of it, so this
+advance leaves the playhead behind rather than ahead. That is what keeps it out
+of the `skipped` family, not what makes it safe. A target completed by unrelated
+later content is the failure the exact-chord policy exists to prevent, and it is
+counted as a false advance in every profile comparison.
+
+#### The committed regression
+
+`listenSafetyRegressionFixtures.ts` stores the case as 79 decoded frames from
+2,432 ms to 4,928 ms — moment 7 through the advancement — with no PCM and no
+model scores. Attack indices are preserved, so every stored timestamp is the
+measured one. Replaying the fixture reproduces the advancement at 4,768 ms from
+the local source attack 6, with carry-in `[60, 67, 76]` and accepted pitch
+`[56]`.
+
+The fixture pins the advancement itself, not merely its category, and a focused
+rerun re-verifies the live run against it: same decoded-structure hash, same
+advancement time, same causing attack, same classification. A mismatch aborts the
+browser command. Fixture matching now includes the speed the case was measured
+at, so the same passage rendered at another interval is correctly treated as a
+different run rather than a failed reproduction.
+
+The three registered profiles do not agree on this case, and the disagreement is
+the whole point of pinning it:
+
+| Profile | Advanced | From | Classification | False / skipped / duplicate | Ordered advances |
+| --- | --- | --- | --- | --- | ---: |
+| `baseline-v1` | 4,768 ms | attack 13, `[56, 68, 75]` | false advance | 1 / 0 / 0 | 1 of 7 |
+| `balanced-v1` | 3,072 ms | attack 8, `[56]` | ordered advance | 0 / 0 / 0 | 6 of 7 |
+| `sensitive-v1` | 3,072 ms | attack 8, `[56]` | ordered advance | 0 / 0 / 0 | 6 of 7 |
+
+Both first-generation candidates accept the 0.531 onset that baseline rejects, so
+the stall never begins, the false advance never happens, and the passage advances
+in order instead. Like the `v05` result, this is a preview of the Task 08
+comparison rather than a result of it.
+
+#### Every grid profile assessed against the case
+
+All 1,000 exploratory profiles were replayed against the fixture. The case
+separates the grid into four measured regions:
+
+| Profiles | Advanced | Safety | Why |
+| ---: | --- | --- | --- |
+| 570 | 4,768 ms from attack 13 | 1 false | Reproduce the pinned advance: 0.531 is below their onset or target-note gate, and their extra-note gate ≤ 0.97 refuses the 0.983 extra in `[56, 63]` |
+| 240 | 3,072 ms from attack 8 | 0 false, ordered | Onset ≤ 0.50 and target-note ≤ 0.50, both below 0.531, so the stall never starts |
+| 114 | 3,744 ms from attack 10 | 1 false | A 0.99 extra-note gate no longer treats the 0.983 extra as unexpected, so the earlier `[56, 63]` falsely completes the target instead |
+| 76 | 3,744 ms from attack 10 | **3 false** | The same 0.99 extra-note gate with an active-target gate of 0.20 or 0.275 cascades into three false advances |
+
+Only the last region is less safe than the profile the case was measured with, so
+the regression rejects those 76 profiles and reports the remaining 354 deviations
+without penalising them — including the 240 that are strictly better here.
+`worseThanBaselineCount` was added to the regression summary because a corpus
+that pins a genuine false advance no longer has a raw total of zero; the raw
+totals stay visible, but only that count gates.
+
+The comparison behind it is per target, not per total. Once a fixture pins a real
+false advance, a candidate that fixes the pinned target and breaks a different
+one has the same total as baseline, and comparing sums would report it as
+unchanged. Each replay is therefore compared target by target against the
+reference run: losing a baseline safety event is allowed, and so is the pinned
+event reappearing where it was measured, but any target that becomes unsafe when
+it was not is listed in `newlyUnsafeTargets` and rejects the profile.
+
+The 76 rejected profiles are a real result rather than bookkeeping: a relaxed
+extra-note gate combined with a permissive active-target gate is exactly the
+region a recognition-driven search is drawn to, and this case is where it becomes
+unsafe.
+
+#### Sweep rejection counts
+
+Adding a regression that rejects profiles changes both exploratory sweeps, and
+the change is fully accounted for. The same 76 profiles are flagged under both
+renderers, because fixture replay depends only on the profile; they differ only
+in how many were already rejected by the sequence safety families.
+
+| Sweep | Rejected before | Already rejected | Newly rejected | Rejected now | Frontier | Recommendation |
+| --- | ---: | ---: | ---: | ---: | --- | --- |
+| Direct, 1,000 profiles | 680 | 56 of 76 | 20 | 700 | 15 → 14 | `o0p450-t0p500-a0p200-x0p990-b1`, unchanged |
+| Tone, 1,000 profiles | 500 | 38 of 76 | 38 | 538 | 3 → 3 | `o0p500-t0p500-a0p200-x0p970-b1`, unchanged |
+
+Neither recommendation is in the rejected region: both have an onset gate at or
+below 0.50 and a target-note gate at 0.50, so the target never stalls for them
+and their extra-note gates never face the shared pitch. One profile left the
+Direct frontier because it is among the 20 the regression newly rejects; the
+Tone frontier is unchanged. Both renderers still report `replayParityVerified`,
+and `baseline-v1` reproduces both committed advancements with zero deviations in
+both sweeps.
+
+#### Re-measured results
+
+| Suite | Result | Change |
+| --- | --- | --- |
+| Sequence corpus, Direct | 0/0/0 with 8 late advances; per-speed completion, ordered advances, and P95 as recorded | none |
+| Sequence corpus, Tone | 1 false advance at 333 ms in `course-clear-27`, now diagnosed and pinned | none |
+| Dedicated safety families, both renderers | 0/0/0 at every speed | none |
+| Committed regressions | 2 fixtures × 3 named profiles, 4 reported deviations, none less safe than baseline | `v05` alone became `v05` plus this case |
+| Unit suite | 280 main-suite tests, plus 2 in the dynamics pretest | +9 |
+
+Commands:
+
+```bash
+npm --prefix webapp test
+npm --prefix webapp run build
+
+node tools/online_amt/run_browser_benchmarks.mjs \
+  http://127.0.0.1:5174/online-amt-benchmark.html \
+  listen-sequence-case-tone course-clear-27 333.33
+
+node tools/online_amt/run_browser_benchmarks.mjs \
+  http://127.0.0.1:5174/online-amt-benchmark.html \
+  listen-sequence-case-legacy course-clear-27 333.33
+
+node tools/online_amt/run_browser_benchmarks.mjs \
+  http://127.0.0.1:5174/online-amt-benchmark.html listen-sequence
+
+node tools/online_amt/run_browser_benchmarks.mjs \
+  http://127.0.0.1:5174/online-amt-benchmark.html listen-threshold-sweep
+```
+
+`CHROME_PATH` selects the browser on machines where the Windows development
+install is not the one running the benchmark; measured results remain comparable
+only within one browser build.
+
 ### Tone plus Salamander `v05` safety diagnosis — August 17, 2026
 
 The single deterministic false advancement in the August 16 constant-layer

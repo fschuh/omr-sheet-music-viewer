@@ -4,7 +4,13 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { basename, join, resolve, sep } from "node:path";
 
-const CHROME = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
+// Measured results are only comparable within one browser build, so the browser
+// stays explicit rather than discovered. CHROME_PATH names it on machines where
+// the Windows development install is not the one running the benchmark.
+const CHROME = process.env.CHROME_PATH ??
+  (process.platform === "win32"
+    ? "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+    : "google-chrome");
 const BASE_URL = process.argv[2] ?? "http://127.0.0.1:5173/online-amt-benchmark.html";
 const CONFIGURATION_FILTER = process.argv[3];
 const LISTEN_SMOKE_MODE = CONFIGURATION_FILTER === "listen-smoke";
@@ -43,6 +49,13 @@ const LISTEN_DYNAMICS_CASE_MODE = [
 ].includes(CONFIGURATION_FILTER);
 const DYNAMICS_CASE_PIANO = process.argv[4] ?? "salamander";
 const DYNAMICS_CASE_LAYER = process.argv[5] ?? "v05";
+const LISTEN_SEQUENCE_CASE_MODE = [
+  "listen-sequence-case",
+  "listen-sequence-case-legacy",
+  "listen-sequence-case-tone",
+].includes(CONFIGURATION_FILTER);
+const SEQUENCE_CASE_SEQUENCE = process.argv[4] ?? "course-clear-27";
+const SEQUENCE_CASE_INTERVAL_MS = process.argv[5] ?? "333.33";
 const LISTEN_PARITY_MODE = CONFIGURATION_FILTER === "listen-parity";
 const FINGERING_SMOKE_MODE = CONFIGURATION_FILTER === "fingering-smoke";
 const CONFIGURATIONS = [
@@ -197,7 +210,8 @@ async function runConfiguration(configuration) {
         LISTEN_THRESHOLD_SWEEP_MODE ||
         LISTEN_RETRIGGER_SWEEP_MODE || LISTEN_ARTICULATION_MODE ||
         LISTEN_INFERENCE_RESET_MODE || LISTEN_DYNAMICS_CONSTANT_MODE ||
-        LISTEN_DYNAMICS_MIXED_MODE || LISTEN_DYNAMICS_CASE_MODE) &&
+        LISTEN_DYNAMICS_MIXED_MODE || LISTEN_DYNAMICS_CASE_MODE ||
+        LISTEN_SEQUENCE_CASE_MODE) &&
         /online-amt-benchmark\.html(?:\?|$)/.test(BASE_URL)
       ? BASE_URL.replace(/online-amt-benchmark\.html/, "index.html")
       : BASE_URL;
@@ -347,7 +361,8 @@ async function runConfiguration(configuration) {
       (LISTEN_RETRIGGER_SWEEP_MODE || LISTEN_DYNAMICS_CONSTANT_MODE)
         ? 1_200_000
         : (LISTEN_ACCURACY_MODE || LISTEN_SEQUENCE_MODE || LISTEN_THRESHOLD_SWEEP_MODE ||
-          LISTEN_ARTICULATION_MODE || LISTEN_DYNAMICS_CASE_MODE)
+          LISTEN_ARTICULATION_MODE || LISTEN_DYNAMICS_CASE_MODE ||
+          LISTEN_SEQUENCE_CASE_MODE)
         ? 600_000
         : LISTEN_PARITY_MODE ? 180_000 : 120_000
     );
@@ -372,7 +387,14 @@ async function runConfiguration(configuration) {
     }
     return await evaluate(
       client,
-      LISTEN_DYNAMICS_CASE_MODE
+      LISTEN_SEQUENCE_CASE_MODE
+        ? `(async () => {
+            const result = window.listenSequenceCaseResult;
+            const { conciseListenSequenceCaseResult } =
+              await import("/src/listenSequenceCaseBenchmark.ts");
+            return conciseListenSequenceCaseResult(result);
+          })()`
+        : LISTEN_DYNAMICS_CASE_MODE
         ? `(async () => {
             const result = window.listenDynamicsCaseResult;
             const { conciseCourseClearDynamicsCaseResult } =
@@ -789,6 +811,53 @@ async function runConfiguration(configuration) {
   }
 }
 
+/**
+ * The committed-regression, re-verification, and forensic detail every focused
+ * case prints. Both the dynamics and the sequence case report it identically, so
+ * one diagnosed advancement reads the same however it was reproduced.
+ */
+function reportFocusedCase(configuration, result) {
+  console.error(
+    `${configuration.name}: committed regressions=${result.regressions.fixtureCount} ` +
+    `outcomes=${result.regressions.outcomes.length} ` +
+    `deviations=${result.regressions.deviationCount} ` +
+    `passed=${result.regressions.passed}`,
+  );
+  for (const outcome of result.regressions.outcomes) {
+    console.error(
+      `${configuration.name}: regression ${outcome.fixtureId} ${outcome.profileId} ` +
+      `expected=${outcome.expectation} advanced=${outcome.advancedAtMs}ms ` +
+      `source-attack=${outcome.sourceAttackIndex} ` +
+      `late=${outcome.lateAdvance} false=${outcome.falseAdvance} ` +
+      `satisfied=${outcome.satisfied}` +
+      (outcome.deviations.length > 0 ? ` deviations="${outcome.deviations.join("; ")}"` : "") +
+      (outcome.newlyUnsafeTargets.length > 0
+        ? ` NEWLY-UNSAFE=${outcome.newlyUnsafeTargets
+            .map(({ targetIndex, classifications }) => `${targetIndex}:${classifications.join("+")}`)
+            .join(",")}`
+        : ""),
+    );
+  }
+  for (const verification of result.verifications) {
+    console.error(
+      `${configuration.name}: verified ${verification.fixtureId} ` +
+      `structure=${verification.actualRecognitionStructureHash} ` +
+      `expected=${verification.expectedRecognitionStructureHash}`,
+    );
+  }
+  for (const forensic of result.forensics) {
+    console.error(
+      `${configuration.name}: ${forensic.classification.join("+")} ` +
+      `target=${forensic.targetIndex} [${forensic.targetPitches.join(" ")}] ` +
+      `at=${forensic.advancedAtMs}ms delay=${forensic.attributionDelayMs}ms ` +
+      `source-attack=${forensic.sourceAttackIndex} ` +
+      `detected=[${forensic.detectedTargetPitches.join(" ")}] ` +
+      `extras=[${forensic.extraPitches.join(" ")}] ` +
+      `carry-in=[${forensic.carryOverPitchesAtTargetStart.join(" ")}]`,
+    );
+  }
+}
+
 function pairedRendererConfigurations(name, query) {
   const configurations = [
     {
@@ -866,6 +935,12 @@ const selectedConfigurations = FINGERING_SMOKE_MODE
   ? pairedRendererConfigurations(
       "listen-dynamics-mixed",
       "listen-dynamics-mixed=auto",
+    )
+  : LISTEN_SEQUENCE_CASE_MODE
+  ? pairedRendererConfigurations(
+      "listen-sequence-case",
+      `listen-sequence-case=auto&benchmark-sequence=${SEQUENCE_CASE_SEQUENCE}` +
+        `&benchmark-interval=${SEQUENCE_CASE_INTERVAL_MS}`,
     )
   : LISTEN_DYNAMICS_CASE_MODE
   ? pairedRendererConfigurations(
@@ -1071,6 +1146,17 @@ for (let index = 0; index < selectedConfigurations.length; index += 1) {
     );
   } else if (LISTEN_PARITY_MODE) {
     console.error(`${configuration.name}: ${result.checks.length} parity checks passed`);
+  } else if (LISTEN_SEQUENCE_CASE_MODE) {
+    console.error(
+      `${configuration.name}: ${result.sequenceId} at ${result.intervalMs.toFixed(2)}ms ` +
+      `pcm=${result.traceIdentity.pcmHash} trace=${result.traceIdentity.recognitionHash} ` +
+      `structure=${result.recognitionStructureHash} ` +
+      `independent=${result.summary.independentMatchCount}/${result.summary.expectedEventCount} ` +
+      `ordered=${result.summary.orderedAdvanceCount}/${result.summary.expectedEventCount} ` +
+      `safety=${result.summary.falseAdvanceCount}/${result.summary.skippedAdvanceCount}/` +
+      `${result.summary.duplicateAdvanceCount} late=${result.summary.lateAdvanceCount}`,
+    );
+    reportFocusedCase(configuration, result);
   } else if (LISTEN_DYNAMICS_CASE_MODE) {
     console.error(
       `${configuration.name}: ${result.piano}/${result.layer} ` +
@@ -1080,40 +1166,7 @@ for (let index = 0; index < selectedConfigurations.length; index += 1) {
       `safety=${result.summary.falseAdvanceCount}/${result.summary.skippedAdvanceCount}/` +
       `${result.summary.duplicateAdvanceCount}`,
     );
-    console.error(
-      `${configuration.name}: committed regressions=${result.regressions.fixtureCount} ` +
-      `outcomes=${result.regressions.outcomes.length} ` +
-      `deviations=${result.regressions.deviationCount} ` +
-      `passed=${result.regressions.passed}`,
-    );
-    for (const outcome of result.regressions.outcomes) {
-      console.error(
-        `${configuration.name}: regression ${outcome.fixtureId} ${outcome.profileId} ` +
-        `expected=${outcome.expectation} advanced=${outcome.advancedAtMs}ms ` +
-        `source-attack=${outcome.sourceAttackIndex} ` +
-        `late=${outcome.lateAdvance} false=${outcome.falseAdvance} ` +
-        `satisfied=${outcome.satisfied}` +
-        (outcome.deviations.length > 0 ? ` deviations="${outcome.deviations.join("; ")}"` : ""),
-      );
-    }
-    for (const verification of result.verifications) {
-      console.error(
-        `${configuration.name}: verified ${verification.fixtureId} ` +
-        `structure=${verification.actualRecognitionStructureHash} ` +
-        `expected=${verification.expectedRecognitionStructureHash}`,
-      );
-    }
-    for (const forensic of result.forensics) {
-      console.error(
-        `${configuration.name}: ${forensic.classification.join("+")} ` +
-        `target=${forensic.targetIndex} [${forensic.targetPitches.join(" ")}] ` +
-        `at=${forensic.advancedAtMs}ms delay=${forensic.attributionDelayMs}ms ` +
-        `source-attack=${forensic.sourceAttackIndex} ` +
-        `detected=[${forensic.detectedTargetPitches.join(" ")}] ` +
-        `extras=[${forensic.extraPitches.join(" ")}] ` +
-        `carry-in=[${forensic.carryOverPitchesAtTargetStart.join(" ")}]`,
-      );
-    }
+    reportFocusedCase(configuration, result);
   } else if (LISTEN_DYNAMICS_CONSTANT_MODE || LISTEN_DYNAMICS_MIXED_MODE) {
     const unsafeRuns = result.runs.filter(({ summary }) => (
       summary.falseAdvanceCount > 0 ||

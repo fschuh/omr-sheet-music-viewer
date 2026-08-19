@@ -14,6 +14,7 @@ import {
   courseClearArticulationDefinitions,
   materializeListenSequence,
   replayListenSequenceTrace,
+  withOnlineAmtBenchmarkSession,
   type ListenSequenceRunResult,
   type ListenSequenceRunSummary,
   type MaterializedListenSequence,
@@ -41,7 +42,6 @@ import {
   type ListenSafetyRegressionFixture,
   type ListenSafetyRegressionSummary,
 } from "./listenSafetyRegression";
-import { OnlineAmtSession } from "./onlineAmtSession";
 import {
   PIANO_IDS,
   crescendoDecrescendoLayers,
@@ -423,6 +423,7 @@ export async function captureCourseClearDynamicsCase(
     piano,
     layer,
     sequenceId: sequence.definition.id,
+    intervalMs: sequence.intervalMs,
     recognitionStructureHash,
     forensics,
   });
@@ -448,7 +449,7 @@ export function runCourseClearDynamicsCase(
   onProgress: CaptureCourseClearDynamicsOptions["onProgress"] = () => undefined,
   renderer: ListenBenchmarkRendererConfiguration = LISTEN_BENCHMARK_RENDERER,
 ): Promise<CourseClearDynamicsCaseResult> {
-  return withOnlineAmtSession((session) => captureCourseClearDynamicsCase(
+  return withOnlineAmtBenchmarkSession((session) => captureCourseClearDynamicsCase(
     { session, renderer, onProgress },
     piano,
     layer,
@@ -531,32 +532,11 @@ export async function captureCourseClearMixedDynamics(
   };
 }
 
-async function withOnlineAmtSession<T>(
-  run: (session: OnlineAmtSession) => Promise<T>,
-): Promise<T> {
-  const pending = OnlineAmtSession.create({
-    modelUrl: new URL("models/online_amt_streaming.onnx", document.baseURI).href,
-    numThreads: 1,
-    graphOptimizationLevel: "all",
-    enableCpuMemArena: true,
-    enableMemPattern: true,
-    executionMode: "sequential",
-  });
-  let session: OnlineAmtSession | null = null;
-  try {
-    session = await pending;
-    return await run(session);
-  } finally {
-    if (session) await session.dispose();
-    else await pending.then((created) => created.dispose()).catch(() => undefined);
-  }
-}
-
 export function runCourseClearConstantLayerDynamics(
   onProgress: CaptureCourseClearDynamicsOptions["onProgress"] = () => undefined,
   renderer: ListenBenchmarkRendererConfiguration = LISTEN_BENCHMARK_RENDERER,
 ): Promise<CourseClearDynamicsSuiteResult> {
-  return withOnlineAmtSession((session) => captureCourseClearConstantLayerDynamics({
+  return withOnlineAmtBenchmarkSession((session) => captureCourseClearConstantLayerDynamics({
     session,
     renderer,
     onProgress,
@@ -567,7 +547,7 @@ export function runCourseClearMixedDynamics(
   onProgress: CaptureCourseClearDynamicsOptions["onProgress"] = () => undefined,
   renderer: ListenBenchmarkRendererConfiguration = LISTEN_BENCHMARK_RENDERER,
 ): Promise<CourseClearMixedDynamicsSuiteResult> {
-  return withOnlineAmtSession((session) => captureCourseClearMixedDynamics({
+  return withOnlineAmtBenchmarkSession((session) => captureCourseClearMixedDynamics({
     session,
     renderer,
     onProgress,
