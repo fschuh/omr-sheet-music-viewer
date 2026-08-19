@@ -1177,7 +1177,7 @@ processes follow the Task 04 decoded-structure and Float32 identity rules.
 isolated results under both renderers, the data remains tagged `confirmation`,
 and no candidate value or discovery choice has changed from those results.
 
-**Completion evidence:** Commit `TASK09_COMMIT`. `listenProfileValidationBenchmark.ts` now
+**Completion evidence:** Commit `fffae2f`. `listenProfileValidationBenchmark.ts` now
 owns the isolated portion of frozen-candidate validation. It joins the manifest's
 268 isolated `confirmation` descriptors to the fixture corpus they name, captures
 each fixture once through the historical isolated capture path, and replays that

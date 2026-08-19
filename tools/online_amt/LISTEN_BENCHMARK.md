@@ -21,7 +21,7 @@ node tools/online_amt/run_browser_benchmarks.mjs \
   http://127.0.0.1:5174/online-amt-benchmark.html listen-isolated-profile-validation
 ```
 
-Measured at commit `TASK09_COMMIT`, Chrome 151.0.7922.169 on Linux, model
+Measured at commit `fffae2f`, Chrome 151.0.7922.169 on Linux, model
 `online_amt_streaming.onnx`, renderers `bundled-piano-web-audio-v1` and
 `bundled-piano-tone-v2`. Manifest version 1, hash `0ed1e71d`; 268 isolated
 traces captured, one capture per fixture and five profile columns replayed from
