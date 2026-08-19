@@ -4,11 +4,21 @@
 
 The next production improvement should come from a validated matcher profile, not
 from more runtime tuning, recurrent-state resets, onset buffering, or score-rise
-retrigger detection. The existing threshold sweep identified two credible
-candidates, but the winning profile was selected on the same direct-renderer
-corpus used to measure it. Before changing the production default, replay the
-candidates against the newer Tone, dynamics, articulation, isolated-wrong-note,
-and live-input data as a held-out validation set.
+retrigger detection. Tasks 01-05 established the shared registry, separated the
+exploratory sweep, migrated consumers, proved baseline parity, and corrected the
+Tone plus Salamander `v05` classification. They also changed the interpretation
+of the original candidates: `balanced-v1` and `sensitive-v1` were selected from a
+Direct-only sequence sweep before the Tone renderer and dynamics benchmarks
+existed. They are useful immutable historical references, but they are not a
+complete search over the domains now known to matter.
+
+Do not merely add the Tone sweep winner as a fourth hand-picked candidate.
+Instead, diagnose the one remaining Tone false advancement, freeze a
+representative multi-domain discovery/validation split, and rerun the full
+1,000-profile search over discovery data that spans renderer, piano, dynamics,
+speed, sequence family, and articulation. Select a small safe Pareto set from
+that search, give newly selected profiles new versioned IDs, then validate that
+frozen set on untouched automated and live data before changing production.
 
 Instrument calibration is a separate layer above the matcher profile. Production
 must always have a safe, validated default profile. Initial calibration should
@@ -34,13 +44,14 @@ without weakening any safety gate.
 
 ## Goals
 
-- Replace the current measurement-only threshold recommendation with a
-  production-ready profile decision backed by held-out automated and live-input
-  validation.
+- Replace the current Direct-only threshold recommendation with a production-ready
+  profile decision backed by weighted multi-domain discovery, untouched automated
+  confirmation, and live-input validation.
 - Keep one safe global default for uncalibrated users, changed devices, invalid
   calibration records, and rollback.
-- Define a small versioned registry containing the current, balanced, and
-  sensitive matcher profiles so production and benchmarks cannot drift.
+- Preserve the versioned `baseline-v1`, `balanced-v1`, and `sensitive-v1`
+  profiles as immutable first-generation references, then add a separately
+  versioned safe Pareto candidate set derived from all discovery domains.
 - Evaluate every candidate against identical recognition traces; matcher changes
   must never require different inference input or hidden fixture changes.
 - Determine whether instrument-specific selection has enough repeatable value to
@@ -71,8 +82,9 @@ without weakening any safety gate.
 
 ## Existing evidence and constraints
 
-The production matcher options currently live in `webapp/src/onlineAmtOutput.ts`
-and are passed to `ExactChordMatcher` by `webapp/src/App.tsx`:
+The registry now lives in `webapp/src/listenMatcherProfiles.ts`, and production
+and benchmark consumers share its conversion to `ExactChordMatcher` options.
+The first-generation profiles are:
 
 | Profile | Onset | Target note | Active target | Unexpected note | Fresh bass |
 | --- | ---: | ---: | ---: | ---: | --- |
@@ -91,17 +103,28 @@ advances to 365, and complete passages to 43, also with all four dedicated safet
 counters at zero. It is the measured winner but has the largest distance from the
 current profile.
 
-These numbers are selection-set results, not held-out evidence. The later paired
-renderer and dynamics runs used only the production profile. They therefore form
-the most useful existing validation domains:
+These numbers are Direct sequence discovery results, not multi-domain evidence.
+The later Tone and dynamics work adds the following constraints:
 
 - Direct isolated recognition passes at 104/106; Tone reaches only 100/106 and
   fails the fixed 95% gate.
 - Dynamics independent recognition remains near 90%, while ordered advancement
   falls to approximately 41-46%, confirming substantial matcher/playhead cascade.
-- Tone plus Salamander `v05` produces one deterministic false advancement under
-  the current profile. This must be understood and preserved as a regression case
-  before a more sensitive profile is selected.
+- The full Tone sequence sweep has now been run. It rejects 500 profiles, retains
+  a three-profile frontier, and is led by
+  `o0p500-t0p500-a0p200-x0p970-b1`. Its different optimum confirms that renderer
+  choice affects threshold selection. Because this result has been observed,
+  Tone sequence data is discovery data rather than held-out confirmation.
+- Tone plus Salamander `v05` is not a false or unsafe advance. All profiles
+  advance the correct repeated chord `[62, 74, 82]`; `baseline-v1` advances
+  target 23 at 25,440 ms from the third repetition, while `balanced-v1` and
+  `sensitive-v1` advance it at 24,448 ms from the second repetition. The pinned
+  regression has zero false, skipped, and duplicate advances. Its
+  `lateAdvanceCount` measures playhead lag and must be reported separately from
+  safety.
+- One Tone false advancement at 333 ms remains outside the dedicated safety
+  families. It must be forensically diagnosed and, when reproducible, pinned as a
+  compact regression before another candidate set is frozen.
 - Recognition changes non-monotonically across velocity layers. Calibration
   cannot be reduced to one microphone-gain adjustment.
 - Browser inference already stays comfortably below the 32 ms input cadence, so
@@ -109,10 +132,10 @@ the most useful existing validation domains:
 
 ## Matcher profile ownership
 
-Create a production-neutral module such as
-`webapp/src/listenMatcherProfiles.ts`. Move the `ListenMatcherProfile` type and
-the named production candidates there so benchmark code no longer owns the
-profile contract.
+`webapp/src/listenMatcherProfiles.ts` is the production-neutral owner of the
+`ListenMatcherProfile` type, immutable named profiles, registry version, default
+pointer, validation, and conversion. Benchmark code must not own or duplicate
+that contract.
 
 The module should define:
 
@@ -132,14 +155,21 @@ interface ListenMatcherProfile {
 }
 ```
 
-The exact names may change, but they must be stable, versioned identifiers rather
-than UI labels. Keep the registry immutable and validate every numeric value as a
-finite number in the range 0-1. `requireFreshBassOnset` remains structurally true
-for every production-eligible profile; arbitrary benchmark sweep profiles may
-still test false without becoming registry entries.
+This snippet describes the implemented first-generation registry. Task 08 may
+extend the ID union with newly measured candidates, but it must do so by adding
+new IDs rather than changing these entries.
 
-Add one explicit `DEFAULT_LISTEN_MATCHER_PROFILE_ID`. It remains `baseline-v1`
-until the held-out and live gates pass. Changing the default is then one reviewed
+These three IDs and values are now historical contracts and must not be edited in
+place. Any profile selected by the multi-domain search receives a new ID and a
+new registry version, even if it resembles an existing entry. The eventual
+candidate count is determined by the safe Pareto frontier, not fixed in advance.
+Keep the registry immutable and validate every numeric value as a finite number
+in the range 0-1. `requireFreshBassOnset` remains structurally true for every
+production-eligible profile; arbitrary benchmark sweep profiles may still test
+false without becoming registry entries.
+
+`DEFAULT_LISTEN_MATCHER_PROFILE_ID` remains `baseline-v1` until the frozen
+automated and live gates pass. Changing the default is then one reviewed
 production decision rather than an unrelated edit to five constants.
 
 Keep the timing and state-machine properties in the fixed matcher policy:
@@ -233,17 +263,15 @@ Refactor the benchmark entry points as follows:
   as the reference for discovery-corpus parity and deltas, while the
   production-default ID remains a separate pointer to whichever named profile the
   app currently uses.
-- `listenProfileValidationBenchmark.ts`: evaluate only the three preselected
-  candidates on the held-out Tone, dynamics, and live-input data. Running another
-  1,000-way search and selecting a new winner on that data would turn the
-  validation set into another tuning set rather than providing independent
-  confirmation.
+- `listenProfileValidationBenchmark.ts`: evaluate the frozen candidate registry
+  produced by the multi-domain discovery pass. It must not generate grid profiles
+  or change candidate values after any confirmation result is observed.
 - `listenDynamicsBenchmark.ts`: replace the hardcoded
   `replayListenSequenceTrace(..., "current-matcher")` result with a profile matrix
   or retain the trace once and produce an adjacent result for each requested
   profile.
 - Articulation and inference-reset reports: add profile metadata. Replay the
-  three candidates where matcher output is relevant; do not rerun the rejected
+  frozen candidate set where matcher output is relevant; do not rerun the rejected
   inference-reset experiment once trace parity is established.
 - `ListenBenchmarkPage.tsx` and the browser automation runner: add a dedicated
   production-candidate validation command. Do not silently apply a profile query
@@ -257,57 +285,91 @@ Every result must include:
 - Independent, ordered, prefix, complete-passage, and latency metrics.
 - False, skipped, duplicate, incomplete-bass, carry-over, and wrong/extra-note
   safety diagnostics.
+- Late-advance count, source-to-target distance, causing attack, and attribution
+  delay. A late advance is never an ordered advance, but is not a safety failure
+  unless the causing content is wrong, skipped, or duplicated.
 - Per-speed, per-family, per-piano, and per-layer breakdowns rather than only a
   combined score.
 
-Before comparing candidates, replay `baseline-v1` and require exact parity with
-the stored/current production result for every event and summary field. A parity
-failure blocks the comparison because it means the harness, not the profile,
-changed.
+Before comparing candidates, replay `baseline-v1` and require parity with the
+stored/current production result. Within one capture/replay process, require exact
+PCM, trace, event, and summary identity. Across fresh browser processes,
+`OfflineAudioContext` PCM last bits and raw FNV PCM hashes are not stable; require
+exact sample/frame counts, discrete events, decoded-structure hashes, and summary
+outcomes, while allowing continuous renderer/model values to differ by at most
+one representable Float32 ULP. A parity failure blocks comparison because it
+means the harness, not the profile, changed.
 
-## Tone plus Salamander `v05` safety investigation
+## Completed Tone plus Salamander `v05` diagnosis
 
-Treat the current deterministic false advancement as the first implementation
-task, not as an aggregate footnote.
+Task 05 established that the reported `v05` event is a late recovery of correct
+pitch content, not a false advancement. Target 23 is the repeated exact chord
+`[62, 74, 82]`. `baseline-v1` advances at 25,440 ms from its third repetition;
+`balanced-v1` and `sensitive-v1` advance at 24,448 ms from its second repetition.
+Every replay keeps false, skipped, and duplicate counts at zero.
 
-1. Rerun the exact Tone plus Salamander `v05` constant-layer trace and identify
-   the target index, source attack, advancement timestamp, generation, relevant
-   onsets, active evidence, note events, carry-over set, and confidence values.
-2. Decide whether it is a genuine matcher false advancement or a benchmark
-   attribution error. Do not change classification windows merely to make the
-   counter disappear.
-3. If it is a matcher error, minimize the relevant recognition frames into a
-   compact deterministic regression fixture. If it is attribution-only, add a
-   regression for the corrected attribution rule and retain the original trace
-   explanation in the report.
-4. Replay all three registered profiles against the minimized case.
-5. Add the case to the production-candidate safety summary so future sweeps cannot
-   report zero safety while omitting this known domain.
+The minimized decoded trace and decoded-structure hash are permanent regressions.
+Keep `lateAdvanceCount` visible at run, per-speed, aggregate, and candidate levels.
+Earlier recovery of the same correct repetition may be a performance improvement;
+it must not be rejected merely because it differs from the baseline attribution.
+Any future change to which played attack caused the advance still requires an
+explicit reviewed explanation.
 
-The full piano PCM does not need to become a new committed fixture if a compact
-decoded recognition trace reproduces the behavior exactly.
+One separate Tone false advance at 333 ms remains outside the dedicated safety
+families. It is not explained by the `v05` correction and must be diagnosed in
+Task 06 before multi-domain candidate discovery.
 
-## Held-out automated validation matrix
+## Multi-domain discovery and validation partition
 
-Freeze the candidates, fixtures, metrics, and gates before running this matrix.
-Do not change candidate values after seeing a subset of the results; a changed
-candidate starts a new validation round.
+The original Direct and completed Tone sequence sweeps are discovery evidence.
+Do not describe Tone sequence data as held out. Dynamics and articulation contain
+many traces, so freeze a stratified discovery subset before searching and reserve
+the remainder for confirmation. Discovery must cover every known variable, but
+it must not consume every trace.
 
-Run `baseline-v1`, `balanced-v1`, and `sensitive-v1` against:
+The discovery corpus must include:
 
-1. The complete isolated correct, distinguishable-wrong, ambiguous, omitted-bass,
-   and Course Clear fixture corpus under Direct and Tone.
-2. All 13 continuous sequence families at all six speeds under Direct and Tone.
-3. The four Splendid and 16 Salamander constant layers under Direct and Tone.
-4. The four mixed-dynamics runs.
-5. Detached, normal, legato, and sustained-shared articulation traces.
-6. The known `v05` safety regression.
-7. Existing carried-bass, wrong-note, extra-note, skip, duplicate, and stale
-   carry-over safety families.
+1. Direct and Tone sequence traces covering all 13 sequence families and six
+   speeds, including the already observed sweep results.
+2. Both Splendid and Salamander under Direct and Tone, with stratified quiet,
+   medium, and loud constant layers rather than every layer.
+3. Representative mixed-dynamics and detached, normal, legato, and
+   sustained-shared articulation traces.
+4. The diagnosed `v05` late-advance regression, the remaining Tone 333 ms false
+   regression after Task 06, and all carried-bass, wrong-note, extra-note, skip,
+   duplicate, and stale-carry safety families.
 
-The newer Tone and dynamics domains are held out relative to the August 13
-threshold selection. Keep them out of any new parameter search until the
-production-candidate decision is complete.
+Freeze untouched confirmation data before the search. At minimum reserve the
+complete isolated correct/wrong/ambiguous/omitted-bass corpus, held-back velocity
+layers for both pianos and renderers, held-back articulation/mixed-dynamics cases,
+and every later live acoustic/digital trial. A trace cannot move from confirmation
+to discovery after its candidate result is observed; changing the split starts a
+new discovery and validation round.
+
+Do not weight raw runs equally. Sixteen Salamander layers must not swamp four
+Splendid layers, and cascade-heavy sequence families must not swamp isolated or
+safety evidence. Compute hierarchical equal weights in this order:
+
+```text
+renderer -> suite -> piano/articulation/sequence family -> run
+```
+
+Safety is a hard constraint, not a weighted score. Among safe profiles rank, in
+order, worst-domain independent recognition, equal-domain average independent
+recognition, ordered prefix/complete-passage behavior, late-advance burden and
+attribution delay, latency, and distance from `baseline-v1`. Independent
+recognition precedes ordered advancement so one early recovery cannot win only by
+cascade amplification. Freeze a small Pareto set; do not predetermine whether it
+contains two, three, or four candidates.
+
+## Frozen automated candidate validation matrix
+
+After multi-domain discovery adds new versioned candidate IDs to the registry,
+freeze that registry version, fixtures, metrics, and gates. Replay `baseline-v1`
+and every frozen candidate against the untouched confirmation corpus. The old
+`balanced-v1` and `sensitive-v1` rows may remain for historical comparison, but
+they need not remain release candidates unless the new discovery independently
+retains them.
 
 ## Automated acceptance gates
 
@@ -317,9 +379,13 @@ trade a safety regression for a higher aggregate recognition rate.
 ### Replay integrity
 
 - Baseline replay is event-for-event identical to current production output.
-- All compared profiles use identical trace/PCM hashes, frame counts, renderer,
-  model, target schedule, and decoder output.
-- Two complete repetitions produce identical summaries and failure identities.
+- Within each captured run, all compared profiles use the identical PCM and
+  decoded trace object, frame count, renderer, model, target schedule, and decoder
+  output.
+- Across fresh browser processes, two complete repetitions have identical
+  decoded-structure hashes, discrete events, summaries, gate codes, and failure
+  identities. Raw PCM/FNV hashes may differ because browser rendering is not
+  bit-stable; continuous values may differ by at most one Float32 ULP.
 
 ### Safety
 
@@ -327,7 +393,9 @@ trade a safety regression for a higher aggregate recognition rate.
   incomplete-carried-bass counts remain zero at every speed under both renderers.
 - No candidate adds a false, skipped, or duplicate advance to any dynamics or
   articulation run relative to baseline.
-- The diagnosed `v05` case does not worsen.
+- The diagnosed `v05` case keeps zero false/skipped/duplicate advances and remains
+  reported as a late-advance/recovery case.
+- The diagnosed Tone 333 ms false case from Task 06 does not worsen.
 - Fresh bass remains required.
 - Ambiguous harmonic cases remain separately reported and never used to hide a
   distinguishable false advance.
@@ -351,13 +419,16 @@ trade a safety regression for a higher aggregate recognition rate.
   reviewed explanation. All layer-level losses remain visible.
 - Improvement is present in more than one sequence family and is not solely a
   cascade amplification following one recovered early event.
+- Late-advance counts, source-to-target distance, and attribution delay are
+  reviewed per domain. They are performance diagnostics, not automatic safety
+  failures; earlier recovery of the correct repeated chord can be beneficial.
 - Latency distributions and processing backlog remain within existing limits.
 
 ## Candidate selection rule
 
 Apply the gates first. Rank only eligible profiles.
 
-Use this decision order:
+Use this decision order for the frozen safe Pareto candidates:
 
 1. Fewer live distinguishable false advances and safety failures.
 2. Higher held-out live correct advancement.
@@ -366,10 +437,9 @@ Use this decision order:
 5. Lower latency.
 6. Smaller distance from the current production profile.
 
-Prefer `balanced-v1` when its held-out result is effectively tied with
-`sensitive-v1`. The sensitive profile should become the default only when its
-additional independent/live improvement is repeatable across domains and not
-merely a larger ordered-cascade gain.
+When candidates are effectively tied, prefer the smaller distance from
+`baseline-v1`. Do not prefer an existing historical ID merely because it already
+exists, and do not select a profile solely for a larger ordered-cascade gain.
 
 Record both the selected profile and rejected candidate with the exact reason.
 Do not simply copy the sweep's top-ranked ID into production.
@@ -389,7 +459,7 @@ For each trial record:
 - Target pitches, deliberately played pitches, score position, chord size,
   register band, dynamic, articulation, and tempo.
 - The target-independent decoded recognition trace needed for matcher replay.
-- Results for every registered profile.
+- Results for `baseline-v1` and every profile in the frozen candidate matrix.
 - Expected correctness, mathematical ambiguity classification, and safety reason.
 - Advancement and latency metrics calculated from trace clocks rather than typed
   manually when possible.
@@ -415,7 +485,7 @@ conditions:
   an omitted bass.
 - A short silence/noise segment before each setup.
 
-Use one captured performance per trial and replay every candidate against it.
+Use one captured performance per trial and replay every frozen candidate against it.
 Do not ask the player to repeat the same passage separately for each profile.
 
 The release decision must report source/setup results separately. A large digital
@@ -468,9 +538,10 @@ The wizard should contain:
 5. Explicit wrong, extra-note, and omitted-bass confirmation trials.
 6. A confirmation block not used to select the profile.
 
-The wizard may choose `baseline-v1`, `balanced-v1`, or `sensitive-v1`. If no
-candidate beats the default on confirmation data, if a negative case advances, or
-if too few trials are completed, save the default or no calibration.
+The wizard may choose only from the registry version approved by the automated
+and live release decision, including the global default. If no approved candidate
+beats the default on confirmation data, if a negative case advances, or if too
+few trials are completed, save the default or no calibration.
 
 Use user-facing language such as `Standard`, `Adjusted for this setup`, and
 `Recalibration recommended`; do not label profiles `aggressive` or show raw
@@ -531,7 +602,7 @@ wizard's safety cases.
 
 Profile selection is the initial calibration mechanism. Consider a more
 principled confidence-normalization layer only if live results show a stable
-instrument-dependent domain shift that the three approved profiles cannot cover.
+instrument-dependent domain shift that the approved candidate matrix cannot cover.
 
 A later phase may evaluate:
 
@@ -560,21 +631,28 @@ Add tests for:
 - Calibration persistence, migration/fallback, reset, and export redaction.
 - Matcher reconstruction when calibration changes.
 - Baseline replay parity for isolated, sequence, dynamics, and articulation data.
-- Adjacent profile results using one identical trace.
+- Adjacent candidate-matrix results using one identical trace.
 - The minimized `v05` regression.
+- The minimized Tone 333 ms false-advance regression from Task 06.
+- Discovery/confirmation partition immutability, hierarchical weighting, safety
+  filtering, Pareto selection, and new candidate registry versioning.
 - Candidate safety summaries and per-domain acceptance gates.
 - Calibration-block selection and untouched confirmation-block evaluation.
 - Correct-only calibration being rejected when no negative safety trials exist.
 - Settings rendering and calibration lifecycle behavior if the UI phase ships.
 
-Keep tests deterministic. Unit tests may use compact decoded frames; browser tests
-must assert PCM/trace hashes before comparing profile results.
+Keep tests deterministic. Unit tests may use compact decoded frames. Browser tests
+must assert within-run trace identity before comparing profiles and use
+decoded-structure/discrete identity plus the documented Float32 tolerance across
+fresh processes rather than requiring cross-process raw PCM hash equality.
 
 ## Browser automation and reports
 
 Add explicit automation modes rather than changing historical commands in place:
 
 ```text
+listen-matcher-multidomain-sweep
+listen-matcher-multidomain-sweep-summary
 listen-profile-validation
 listen-profile-validation-summary
 listen-live-calibration-export       # manual capture, explicit export only
@@ -588,7 +666,8 @@ The profile-validation summary should contain:
 - Sequence totals and per-speed deltas.
 - Dynamics results by renderer, piano, layer, and mixed profile.
 - Articulation results.
-- Complete safety counts including `v05`.
+- Complete safety counts including the `v05` late recovery and the diagnosed Tone
+  333 ms false regression.
 - The selected global profile or `no-safe-candidate`.
 
 Update `tools/online_amt/LISTEN_BENCHMARK.md` with the measured decision and link
@@ -606,15 +685,16 @@ safe subset of it is convenient. When a task changes a measured browser result,
 record the command, commit, renderer/model identity, result hashes, and concise
 summary in the appropriate benchmark report before closing the pass.
 
-Tasks 15-17 are conditional. Execute them only if Task 14 concludes
-`calibration-justified`. If Task 14 concludes `fixed-profile-sufficient`, mark
-Tasks 15-17 skipped with that decision as their completion evidence. Task 18 is a
-separate later research branch and is not required to ship the validated global
-profile or the approved-profile calibration selector.
+Tasks 01-05 are complete. Tasks 18-20 are conditional: execute them only if Task
+17 concludes `calibration-justified`. If Task 17 concludes
+`fixed-profile-sufficient`, mark Tasks 18-20 skipped with that decision as their
+completion evidence. Task 21 is a separate later research branch and is not
+required to ship the validated global profile or the approved-profile calibration
+selector.
 
 ### Task 01 — Create the production-neutral matcher profile registry
 
-**Status:** Required. **Prerequisites:** None.
+**Status:** Completed August 17, 2026. **Prerequisites:** None.
 
 **Objective:** Establish one non-benchmark owner for matcher profile types, named
 profiles, the production-default pointer, validation, and conversion to complete
@@ -645,9 +725,13 @@ and the unchanged fixed timing/state-machine values.
 named profiles, its default points to `baseline-v1`, all tests/build pass, and no
 production or benchmark result has changed.
 
+**Completion evidence:** Commit `3530a82` created the immutable registry,
+validation, default pointer, conversion, and tests. `baseline-v1` remained the
+default and its converted options preserve the former production values.
+
 ### Task 02 — Extract the exhaustive sweep into its own benchmark module
 
-**Status:** Required. **Prerequisites:** Task 01 complete.
+**Status:** Completed August 17, 2026. **Prerequisites:** Task 01 complete.
 
 **Objective:** Separate exploratory parameter search from reusable sequence
 capture/replay and from frozen production-candidate validation without changing
@@ -687,9 +771,13 @@ IDs, and concise JSON with the pre-extraction result.
 sweep-ranking logic, the new module owns the search, tests are split by
 responsibility, and every measured/exported sweep result is identical.
 
+**Completion evidence:** Commit `7afe957` extracted the exhaustive grid and sweep
+ranking to `listenMatcherSweepBenchmark.ts`, split the tests, retained the browser
+contract, and reproduced the existing Direct sweep result.
+
 ### Task 03 — Migrate production and benchmark consumers to the registry
 
-**Status:** Required. **Prerequisites:** Tasks 01-02 complete.
+**Status:** Completed August 17, 2026. **Prerequisites:** Tasks 01-02 complete.
 
 **Objective:** Make production, trace replay, and all benchmarks consume the same
 profile representation while keeping `baseline-v1` active everywhere that
@@ -714,15 +802,19 @@ previously meant current production.
 **Verification:** Run the full unit suite and production build. Start listen mode
 in a local smoke test and confirm the effective options equal the former
 `onlineAmtChordMatcherOptions`. Run canonical Direct and Tone isolated smokes and
-confirm their PCM, recognition, and latency identities are unchanged.
+confirm their decoded structure, discrete recognition, and latency identities are
+unchanged under the Task 04 Float32/process-local PCM rules.
 
 **Complete when:** There is one profile type and conversion path, production still
 uses `baseline-v1`, historical operations explicitly identify their reference
 profile, and no behavior or measured baseline changes.
 
+**Completion evidence:** Commit `4db8cf7` migrated production and benchmark
+consumers to the shared registry while preserving `baseline-v1` behavior.
+
 ### Task 04 — Establish exact baseline replay and build parity
 
-**Status:** Required. **Prerequisites:** Task 03 complete.
+**Status:** Completed August 17, 2026. **Prerequisites:** Task 03 complete.
 
 **Objective:** Create the invariant that later candidate results differ only
 because of profile values, not because Tasks 01-03 changed rendering, inference,
@@ -735,7 +827,8 @@ decoding, replay, or reporting.
 - Add baseline profile metadata and parity assertions to dynamics and articulation
   trace replay.
 - Compare events, attacks, classifications, advancement timestamps, safety
-  counters, latency values, trace/PCM hashes, and summary fields.
+  counters, latency values, decoded-structure identity, within-capture PCM/trace
+  identity, and summary fields.
 - Retain explicit expected constants for the canonical Splendid `mp` Direct/Tone
   smoke so shared-code drift cannot update both sides of a self-comparison.
 - Record a post-refactor parity entry in the listening benchmark report; do not
@@ -743,25 +836,35 @@ decoding, replay, or reporting.
 
 **Verification:** Run the full unit suite, production build, canonical paired
 isolated smoke, sequence regression, dynamics smoke, articulation regression, and
-the extracted 1,000-profile sweep. Every baseline comparison must be exact except
-where the existing renderer tolerance explicitly permits one Float32 ULP.
+the extracted 1,000-profile sweep. Within one capture/replay comparison is exact.
+Across fresh browser processes, require identical discrete events,
+decoded-structure hashes, and outcomes while permitting continuous values to
+differ by at most one Float32 ULP; raw PCM hashes are diagnostic, not a
+cross-process gate.
 
 **Complete when:** All baseline parity assertions pass and the report records that
-the registry/extraction refactor produced no recognition, safety, latency, PCM, or
-export changes.
+the registry/extraction refactor produced no recognition, safety, latency,
+within-capture PCM, decoded-structure, or export changes.
 
-### Task 05 — Diagnose and preserve the Tone plus Salamander `v05` safety case
+**Completion evidence:** Commit `1ec55a1` added baseline parity coverage and
+commit `b476432` pinned the recorded reference identity. The work proved exact
+within-capture replay and established decoded-structure/discrete identity plus a
+one-Float32-ULP continuous tolerance for fresh browser processes, whose raw PCM
+last bits and FNV hashes can vary.
 
-**Status:** Required. **Prerequisites:** Task 04 complete.
+### Task 05 — Diagnose and preserve the Tone plus Salamander `v05` case
 
-**Objective:** Determine whether the deterministic `v05` false advancement is a
-real matcher failure or an attribution error, then make it a permanent safety
+**Status:** Completed August 17, 2026. **Prerequisites:** Task 04 complete.
+
+**Objective:** Determine whether the reported deterministic `v05` advancement is
+a real matcher failure or an attribution error, then make the result a permanent
 regression before comparing more sensitive profiles.
 
 **Work:**
 
 - Reproduce only the Tone plus Salamander `v05` constant-layer run with
-  `baseline-v1` and verify its PCM/trace hash against the measured dynamics report.
+  `baseline-v1`, verify its decoded-structure/discrete identity against the
+  measured dynamics report, and record its process-local PCM hash diagnostically.
 - Identify the target index, source attack, generation, advancement time, target
   and played pitches, note events, active evidence, carry-over state, and relevant
   confidence values.
@@ -780,21 +883,165 @@ minimal fixture reproduces the same classification, all relevant unit tests pass
 and the safety summary exposes the case for every named profile.
 
 **Complete when:** The event is explained, minimized, regression-tested, and can
-no longer be omitted from a zero-safety claim.
+no longer be omitted from candidate performance reporting.
 
-### Task 06 — Add isolated A/B/C profile replay
+**Completion evidence:** Commit `26da7a5` diagnosed the case and added the compact
+regression; commit `7e88e38` documented it. It is a late advance of the correct
+repeated `[62, 74, 82]` target, not a false advance. `baseline-v1` recovers on the
+third repetition at 25,440 ms; `balanced-v1` and `sensitive-v1` recover on the
+second at 24,448 ms. All keep false/skipped/duplicate counts at zero.
+
+### Task 06 — Diagnose the remaining Tone 333 ms false advancement
 
 **Status:** Required. **Prerequisites:** Task 05 complete.
 
-**Objective:** Compare `baseline-v1`, `balanced-v1`, and `sensitive-v1` on exactly
-the same isolated correct and wrong-note evidence under both renderers.
+**Objective:** Explain and pin the one Tone sequence false advance at 333 ms that
+remains outside the dedicated safety families, so the next threshold search
+cannot optimize around an unknown safety event.
+
+**Inputs:** Use the exact measured Tone sequence corpus, `baseline-v1`, the
+current attribution implementation, and the benchmark commit/hash recorded in
+`tools/online_amt/LISTEN_BENCHMARK.md`. Do not reuse the `v05` explanation unless
+the forensic evidence independently proves the same mechanism.
+
+**Work:**
+
+- Reproduce the focused run and identify its renderer, sequence family, speed,
+  target index, causing attack, advancement timestamp, source-to-target distance,
+  target and played pitches, generation, note/onset/active evidence, carry-over,
+  and confidence values.
+- Determine whether the event is a genuine matcher false advance, a skipped or
+  duplicate advance mislabeled as false, a late advance of correct content, or an
+  attribution defect. Preserve the original classification until the evidence
+  justifies a change.
+- Minimize the necessary decoded frames and target schedule into a deterministic
+  regression fixture. Pin the decoded-structure identity and discrete outcome;
+  do not require cross-process raw PCM hash equality.
+- Replay `baseline-v1`, `balanced-v1`, `sensitive-v1`, and all 1,000 grid profiles
+  against the fixture. Record which safety counter and source attribution each
+  profile produces.
+- Add the regression to reusable safety summarization and update the listening
+  report. If the event exposes an attribution bug, correct the rule in this task,
+  rerun every affected historical suite, and document all changed counts.
+
+**Verification:** Run the focused browser case twice in fresh processes, the
+minimal fixture tests, sequence/sweep tests, full unit suite, and production
+build. Require stable decoded-structure/discrete identity and no unexplained
+change in historical safety, ordered, or independent metrics.
+
+**Complete when:** The event has a documented classification and causal attack,
+the minimized fixture reproduces it, every grid profile is assessed against it,
+and no future safe-candidate claim can omit it.
+
+### Task 07 — Freeze the multi-domain discovery and confirmation protocol
+
+**Status:** Required. **Prerequisites:** Task 06 complete.
+
+**Objective:** Predeclare exactly which existing traces may tune thresholds, which
+remain untouched for confirmation, how domains are weighted, and how safe Pareto
+candidates are selected.
+
+**Inputs:** Inventory all Direct/Tone sequence traces, isolated corpora, Splendid
+and Salamander constant layers, mixed-dynamics runs, articulation traces,
+dedicated safety families, the `v05` late fixture, and the Task 06 regression.
+
+**Work:**
+
+- Add a versioned machine-readable manifest, owned by the benchmark layer, that
+  assigns every automated trace ID to `discovery`, `confirmation`, or
+  `regression-only`. Record renderer, suite, piano, layer/dynamic, articulation,
+  sequence family, speed, and fixture version.
+- Classify all previously swept Direct and Tone sequence traces as discovery.
+  Choose a stratified discovery subset of constant dynamics covering both
+  renderers, both pianos, and quiet/medium/loud regions. Include representative
+  mixed-dynamics and every articulation category.
+- Reserve untouched confirmation traces: the complete isolated correct/wrong/
+  ambiguous/omitted-bass corpus, unselected constant layers under each
+  renderer/piano, held-back mixed/articulation traces, and all future live trials.
+- Put all dedicated safety traces, `v05`, and the Task 06 fixture in
+  `regression-only`. They gate every profile but add no positive score.
+- Encode hierarchical equal weights
+  `renderer -> suite -> piano/articulation/sequence family -> run`. Assert that
+  16 Salamander layers do not outweigh four Splendid layers and that a suite with
+  more traces receives no extra top-level weight.
+- Freeze metric order: hard safety; worst-domain independent recognition;
+  equal-domain average independent recognition; ordered prefix and complete
+  passages; late-advance count/source distance/attribution delay; latency; then
+  distance from `baseline-v1`. Define deterministic ties and Pareto dominance.
+- Record the manifest hash, rationale, and the rule that any post-result split,
+  weighting, metric, or gate change starts a new discovery/confirmation version.
+
+**Verification:** Add tests for complete one-time trace assignment, required
+domain coverage, no discovery/confirmation overlap, hierarchical weight sums,
+regression-only zero score weight, deterministic ranking, and manifest hashing.
+Run the full unit suite and production build.
+
+**Complete when:** The repository can reject an incomplete, overlapping, or
+reweighted manifest, and candidate selection can run without making any new
+partition or metric choice after results are visible.
+
+### Task 08 — Recompute and freeze the multi-domain candidate registry
+
+**Status:** Required. **Prerequisites:** Task 07 complete.
+
+**Objective:** Search all 1,000 matcher profiles across the frozen discovery
+corpus, select a small safe multi-domain Pareto set, and add new immutable
+candidate IDs without changing the production default.
+
+**Inputs:** Use only Task 07 `discovery` traces for positive metrics and every
+`regression-only` trace for hard safety. Do not read confirmation outcomes while
+selecting profiles.
+
+**Work:**
+
+- Extend `listenMatcherSweepBenchmark.ts` to replay every grid profile over the
+  manifest and compute per-run, per-leaf-domain, per-suite, per-renderer, and
+  overall weighted metrics.
+- Reject a profile for any distinguishable false, skipped, duplicate,
+  incomplete-carried-bass, wrong/extra-note, or fresh-bass regression. Report
+  `v05` late deviations without rejecting unless safety is worse than its pinned
+  baseline. Apply the diagnosed Task 06 outcome exactly as its fixture requires.
+- Rank eligible profiles by the Task 07 metric order, with independent
+  recognition ahead of ordered results. Emit worst-domain values, equal-domain
+  averages, cascade-independent deltas, late burden, latency, and baseline
+  distance for every frontier profile.
+- Select the smallest useful set representing materially different safe Pareto
+  tradeoffs. Do not force a predetermined candidate count and do not append only
+  the Tone winner. Keep `baseline-v1` in every later comparison.
+- Add selected profiles under new immutable versioned IDs and increment the
+  registry version. Preserve `balanced-v1` and `sensitive-v1` unchanged as
+  first-generation historical entries. Keep
+  `DEFAULT_LISTEN_MATCHER_PROFILE_ID = "baseline-v1"`.
+- Add dedicated `listen-matcher-multidomain-sweep` and summary browser-runner
+  modes. Preserve the original Direct/Tone single-renderer sweep commands and
+  results as historical discovery evidence.
+- Freeze the resulting candidate-ID list, registry version, manifest hash, sweep
+  commit, full result, and concise report before any confirmation replay.
+
+**Verification:** Run manifest/ranking tests, both original single-renderer sweep
+regressions, the new weighted multi-domain sweep twice, full unit tests, and the
+production build. Require identical frontier IDs, metrics, rejection codes, and
+candidate IDs across repetitions; use the Task 04 cross-process identity rules.
+
+**Complete when:** A reproducible safe Pareto candidate set derived from all known
+discovery variables exists under new registry IDs, historical IDs are unchanged,
+the default is still baseline, and the confirmation data remains unread by the
+selection path.
+
+### Task 09 — Add isolated candidate-matrix replay
+
+**Status:** Required. **Prerequisites:** Task 08 complete.
+
+**Objective:** Compare `baseline-v1` and the frozen Task 08 candidates on exactly
+the same untouched isolated correct and wrong-note evidence under both renderers,
+without feeding results back into threshold selection.
 
 **Work:**
 
 - Change `listenBenchmark.ts` so an isolated trial retains a compact decoded trace
   and can replay a supplied named profile without rerendering or rerunning
   inference.
-- Add an adjacent three-profile result for every correct, Course Clear,
+- Add an adjacent candidate-matrix result for every correct, Course Clear,
   distinguishable-wrong, ambiguous-harmonic, and omitted-bass case.
 - Preserve historical single-profile APIs by making their profile explicit rather
   than silently changing them.
@@ -806,31 +1053,33 @@ the same isolated correct and wrong-note evidence under both renderers.
 
 **Verification:** Run isolated profile validation twice under Direct and Tone.
 Baseline must reproduce 104/106 and 52/54 for Direct and 100/106 and 48/54 for
-Tone. Trace/PCM identities must match across profiles.
+Tone. Within each run every profile must share the same trace/PCM object; fresh
+processes follow the Task 04 decoded-structure and Float32 identity rules.
 
-**Complete when:** All three profiles have deterministic adjacent isolated results
-under both renderers, and no candidate has been selected or tuned from those
-results yet.
+**Complete when:** The full frozen candidate matrix has deterministic adjacent
+isolated results under both renderers, the data remains tagged `confirmation`,
+and no candidate value or discovery choice has changed from those results.
 
-### Task 07 — Add continuous-sequence A/B/C profile replay
+### Task 10 — Add continuous-sequence candidate-matrix replay
 
-**Status:** Required. **Prerequisites:** Tasks 05-06 complete.
+**Status:** Required. **Prerequisites:** Tasks 08-09 complete.
 
-**Objective:** Validate the frozen candidates across all sequence families and
-speeds without rerunning the 1,000-profile search on held-out data.
+**Objective:** Expose complete per-profile sequence diagnostics for the frozen
+candidates while honestly retaining the previously swept sequence corpus as
+discovery evidence.
 
 **Work:**
 
 - Create the sequence portion of
   `webapp/src/listenProfileValidationBenchmark.ts`.
 - Capture each of the 13 families at all six intervals once per renderer, then
-  replay the same trace through the three named profiles.
+  replay the same trace through `baseline-v1` and the frozen Task 08 candidates.
 - Preserve independent, ordered, prefix, complete-passage, failure-reason,
   carry-over, latency, backlog, and all safety diagnostics.
 - Report deltas from explicit `baseline-v1` per renderer, speed, and family.
-- Assert that the candidate list comes only from the registry and contains exactly
-  the three frozen IDs. Do not call grid generation or sweep ranking from this
-  module.
+- Assert that the candidate list equals the frozen Task 08 ID manifest, contains
+  no unknown or duplicate ID, and is independent of candidate count. Do not call
+  grid generation or sweep ranking from this module.
 - Add tests for trace reuse, per-domain aggregation, baseline delta calculation,
   and rejection of unknown/duplicate candidates.
 
@@ -838,13 +1087,13 @@ speeds without rerunning the 1,000-profile search on held-out data.
 unit suite. Confirm all profiles share each run's trace hash and the baseline row
 matches Task 04 exactly.
 
-**Complete when:** The full sequence corpus can produce deterministic adjacent
-A/B/C results without importing the sweep module or searching new parameter
-values.
+**Complete when:** The full sequence corpus produces deterministic adjacent
+candidate-matrix results, every row is labeled as discovery evidence, and the
+validation module neither imports the sweep nor searches new values.
 
-### Task 08 — Add dynamics and articulation A/B/C profile replay
+### Task 11 — Add dynamics and articulation candidate-matrix replay
 
-**Status:** Required. **Prerequisites:** Task 07 complete.
+**Status:** Required. **Prerequisites:** Task 10 complete.
 
 **Objective:** Extend frozen-candidate validation to the later domains that were
 not used to select the original sweep winner.
@@ -852,29 +1101,33 @@ not used to select the original sweep winner.
 **Work:**
 
 - Update `listenDynamicsBenchmark.ts` so each constant-layer and mixed-dynamics
-  trace is captured once and replayed under all three named profiles.
+  trace is captured once and replayed under `baseline-v1` and every frozen
+  candidate.
 - Cover four Splendid layers, 16 Salamander layers, both renderers, and all four
   mixed-dynamics runs.
 - Extend articulation validation to detached, normal, legato, and
   sustained-shared traces without rerunning inference for each profile.
 - Include per-renderer, per-piano, per-layer, mixed-profile, and articulation
   summaries plus baseline deltas.
-- Integrate the Task 05 `v05` regression and ensure it appears in both focused and
-  aggregate safety output.
+- Preserve Task 07 discovery/confirmation labels in all results. No aggregate may
+  combine the two partitions into a confirmatory metric.
+- Integrate the Task 05 `v05` late regression and Task 06 false-advance regression
+  into focused and aggregate diagnostics with their distinct semantics.
 - Add unit tests for equal-piano aggregation, trace reuse, layer-level regression
   visibility, and candidate metadata.
 
 **Verification:** Run dynamics smoke under both renderers, one complete mixed
 suite, articulation regression, full unit tests, and the production build. Every
-profile comparison must share PCM and trace identities.
+within-run profile comparison shares the captured trace, and each manifest ID is
+present exactly once.
 
-**Complete when:** All held-out dynamics/articulation domains produce deterministic
-A/B/C results and no aggregate can hide a renderer, piano, layer, or articulation
-regression.
+**Complete when:** All dynamics/articulation domains produce deterministic
+candidate-matrix results, held-back cases remain identifiable as confirmation,
+and no aggregate can hide a renderer, piano, layer, or articulation regression.
 
-### Task 09 — Build the unified production-candidate gate and automation
+### Task 12 — Build the unified production-candidate gate and automation
 
-**Status:** Required. **Prerequisites:** Tasks 06-08 complete.
+**Status:** Required. **Prerequisites:** Tasks 09-11 complete.
 
 **Objective:** Combine isolated, sequence, dynamics, articulation, and known
 safety results into one deterministic eligibility decision without selecting new
@@ -883,13 +1136,20 @@ parameter values.
 **Work:**
 
 - Complete `listenProfileValidationBenchmark.ts` with result types and gate
-  evaluation for the three named profiles.
+  evaluation for the frozen Task 08 candidate matrix.
 - Implement all gates in the Automated acceptance gates section: replay integrity,
   zero dedicated safety failures, no new dynamics/articulation safety event,
   Direct at least 104/106 and 52/54, Tone at least 101/106 and 52/54, p95 below
   400 ms, per-speed independent non-regression, per-renderer ordered/complete
   non-regression, per-renderer/piano dynamics non-regression, and visible
-  layer-level losses.
+  layer-level losses. Apply safety gates across every partition. Label sequence
+  and other discovery non-regression gates as discovery-consistency evidence;
+  apply isolated and held-back dynamics/articulation release gates only to Task 07
+  confirmation data so the report cannot present tuning data as generalization.
+- Gate false/skipped/duplicate/incomplete-bass regressions as safety failures.
+  Report `lateAdvanceCount`, source distance, and attribution delay separately;
+  do not reject an earlier correct recovery such as `v05` solely for deviating
+  from baseline.
 - Make each failed gate return a stable code, affected domain IDs, baseline value,
   candidate value, and explanatory text.
 - Add `listen-profile-validation` and
@@ -905,9 +1165,9 @@ profile values, all domain identities, safety counts, and gate reasons.
 automated domains and returns eligibility without performing a parameter search or
 mutating the production default.
 
-### Task 10 — Freeze and execute the held-out automated validation
+### Task 13 — Execute the frozen automated confirmation
 
-**Status:** Required. **Prerequisites:** Task 09 complete.
+**Status:** Required. **Prerequisites:** Task 12 complete.
 
 **Objective:** Produce the confirmatory automated evidence used in the production
 decision.
@@ -918,28 +1178,31 @@ decision.
   renderers, fixtures, gates, and expected historical baseline before running.
 - Run the complete `listen-profile-validation` matrix twice on a clean local
   benchmark server.
-- Compare repetition hashes, summaries, gate codes, failure identities, and
-  recommendation inputs.
+- Compare decoded-structure identities, discrete outcomes, summaries, gate codes,
+  failure identities, and recommendation inputs. Record raw PCM/FNV hashes as
+  diagnostics but do not require them to match across browser processes.
 - Do not alter candidate values, fixtures, attribution, or gates after viewing the
   first run. Any such change invalidates both repetitions and restarts this task.
 - Record Direct/Tone, speed/family, piano/layer, mixed-dynamics, articulation,
-  `v05`, latency, and safety results in the listening report.
+  `v05`, the Task 06 false regression, latency, late-advance, and safety results in
+  the listening report. Clearly label discovery versus confirmation evidence.
 - Mark each candidate automated-eligible or rejected with exact gate reasons. Do
   not change the production default in this task.
 
-**Verification:** Both repetitions are identical, baseline parity passes, the full
-unit suite/build pass on the measured commit, and the report contains enough
-metadata to reproduce the run.
+**Verification:** Both repetitions satisfy Task 04 cross-process parity, baseline
+parity passes, the full unit suite/build pass on the measured commit, and the
+report contains enough metadata to reproduce the run.
 
-**Complete when:** The held-out automated matrix is frozen, repeated, documented,
-and yields a stable eligibility set without any post-result retuning.
+**Complete when:** The frozen automated confirmation matrix is repeated,
+documented, and yields a stable eligibility set without any post-result retuning.
 
-### Task 11 — Build the structured developer live-input harness
+### Task 14 — Build the structured developer live-input harness
 
-**Status:** Required. **Prerequisites:** Task 10 complete.
+**Status:** Required. **Prerequisites:** Task 13 complete.
 
 **Objective:** Replace the under-specified manual counter with a privacy-preserving
-trace capture and A/B/C replay tool suitable for acoustic and digital validation.
+trace capture and candidate-matrix replay tool suitable for acoustic and digital
+validation.
 
 **Work:**
 
@@ -948,8 +1211,9 @@ trace capture and A/B/C replay tool suitable for acoustic and digital validation
 - Capture target pitches, deliberately played pitches, expected correctness,
   ambiguity, source/setup labels, register, chord size, dynamic, articulation,
   tempo, room/noise label, and trace-clock latency.
-- Capture target-independent decoded frames once and replay the three named
-  profiles; do not repeat a performance per profile.
+- Capture target-independent decoded frames once and replay `baseline-v1` and
+  every automated-eligible candidate from Task 13; do not repeat a performance
+  per profile.
 - Keep data in memory until an explicit export. Export decoded events/confidences
   and entered metadata only; exclude raw audio buffers, raw device IDs, and
   manufacturer/serial identity.
@@ -962,15 +1226,16 @@ trace capture and A/B/C replay tool suitable for acoustic and digital validation
 and one deliberate wrong note. Inspect the exported JSON and prove it contains no
 PCM/audio buffer or raw device identifier. Run unit tests and build.
 
-**Complete when:** A single real performance produces reproducible A/B/C matcher
-results and a complete redacted export suitable for the live release corpus.
+**Complete when:** A single real performance produces reproducible frozen-matrix
+matcher results and a complete redacted export suitable for the live release
+corpus.
 
-### Task 12 — Execute the acoustic and digital live validation corpus
+### Task 15 — Execute the acoustic and digital live validation corpus
 
 **Status:** Required; requires a person, instruments, and microphone setups.
-**Prerequisites:** Task 11 complete and at least one automated-eligible candidate
-from Task 10. If none is eligible, record `no-safe-candidate` and skip directly to
-Task 13 without changing the default.
+**Prerequisites:** Task 14 complete and at least one automated-eligible candidate
+from Task 13. If none is eligible, record `no-safe-candidate` and proceed directly
+to Task 16 without changing the default.
 
 **Objective:** Test whether automated-eligible candidates remain safe and useful
 under real instrument, microphone, room, register, dynamics, chord, articulation,
@@ -991,7 +1256,7 @@ and tempo variation.
   ordered behavior, latency, false/skipped/duplicate/incomplete-bass safety, and
   failure classifications.
 - Export and archive only the redacted decoded trace/metadata files approved in
-  Task 11. Document environmental limitations and incomplete trials.
+  Task 14. Document environmental limitations and incomplete trials.
 
 **Verification:** Validate every export against the schema, reproduce matcher
 summaries from each export, and independently review every safety event or
@@ -1001,9 +1266,9 @@ ambiguity. Confirm no source/setup is hidden by an aggregate.
 documented, each candidate has explicit live gate outcomes, and the evidence is
 ready for the selection rule.
 
-### Task 13 — Select and roll out the global production profile
+### Task 16 — Select and roll out the global production profile
 
-**Status:** Required. **Prerequisites:** Tasks 10 and 12 complete, or Task 10 has
+**Status:** Required. **Prerequisites:** Tasks 13 and 15 complete, or Task 13 has
 already produced `no-safe-candidate`.
 
 **Objective:** Make one auditable global-default decision and establish a rollback
@@ -1014,8 +1279,9 @@ baseline.
 - Apply the Candidate selection rule in this plan: live safety, live correctness,
   automated independent recognition, ordered/complete behavior, latency, then
   distance from baseline.
-- Prefer `balanced-v1` when effectively tied with `sensitive-v1`; do not select the
-  sensitive profile solely for cascade-amplified ordered gains.
+- For an effective tie, prefer the smaller distance from `baseline-v1`; do not
+  prefer a historical ID merely because it predates the multi-domain candidates,
+  and do not select any profile solely for cascade-amplified ordered gains.
 - If no profile passes every required automated and live gate, record
   `no-safe-candidate`, leave `DEFAULT_LISTEN_MATCHER_PROFILE_ID` at `baseline-v1`,
   document blockers, and finish this task without a threshold change.
@@ -1033,9 +1299,9 @@ regressions. Confirm ordinary listen mode reports and uses the selected ID.
 explicitly retains baseline with `no-safe-candidate`; the decision is documented,
 and rollback requires changing only the default ID.
 
-### Task 14 — Run the calibration feasibility experiment and make a go/no-go decision
+### Task 17 — Run the calibration feasibility experiment and make a go/no-go decision
 
-**Status:** Required research decision. **Prerequisites:** Tasks 12-13 complete.
+**Status:** Required research decision. **Prerequisites:** Tasks 15-16 complete.
 
 **Objective:** Determine whether selecting an approved profile per instrument/setup
 generalizes better than the global default on untouched live trials.
@@ -1063,13 +1329,13 @@ redacted live exports using a deterministic unit/CLI path. Confirm calibration a
 confirmation partitions never overlap.
 
 **Complete when:** The repository contains a reproducible go/no-go conclusion. A
-`fixed-profile-sufficient` result explicitly closes Tasks 15-17 as skipped; a
+`fixed-profile-sufficient` result explicitly closes Tasks 18-20 as skipped; a
 `calibration-justified` result authorizes them.
 
-### Task 15 — Implement compatible calibration persistence and profile resolution
+### Task 18 — Implement compatible calibration persistence and profile resolution
 
-**Status:** Conditional on Task 14 returning `calibration-justified`.
-**Prerequisites:** Task 14 complete with that exact conclusion.
+**Status:** Conditional on Task 17 returning `calibration-justified`.
+**Prerequisites:** Task 17 complete with that exact conclusion.
 
 **Objective:** Persist only an approved profile selection and safely resolve it at
 startup without changing matcher structure or storing sensitive audio/device data.
@@ -1096,11 +1362,11 @@ Inspect local storage and diagnostic exports for prohibited fields.
 
 **Complete when:** Compatible records select only registered profiles, every bad
 record falls back safely, no sensitive data is persisted, and the feature remains
-inaccessible to ordinary users pending Task 16.
+inaccessible to ordinary users pending Task 19.
 
-### Task 16 — Build the approved-profile calibration wizard and Settings lifecycle
+### Task 19 — Build the approved-profile calibration wizard and Settings lifecycle
 
-**Status:** Conditional on Tasks 14-15. **Prerequisites:** Task 15 complete.
+**Status:** Conditional on Tasks 17-18. **Prerequisites:** Task 18 complete.
 
 **Objective:** Expose the measured approved-profile selector as a guided,
 privacy-preserving workflow without exposing raw thresholds or sensitivity
@@ -1114,7 +1380,7 @@ sliders.
   notes at ordinary and soft dynamics; representative chords; repeated/shared
   transitions; explicit wrong/extra/omitted-bass trials; and an untouched
   confirmation block.
-- Reuse the exact selection algorithm and gates validated in Task 14. The wizard
+- Reuse the exact selection algorithm and gates validated in Task 17. The wizard
   may save only a registered profile and must save no calibration when trials are
   incomplete, a negative case advances, or confirmation does not beat the global
   default.
@@ -1134,9 +1400,9 @@ Confirm the stored record and effective diagnostic profile match expectations.
 workflow exactly reproduces the validated selector; and every failure returns to
 the global default.
 
-### Task 17 — Confirm the shipped calibration workflow on live instruments
+### Task 20 — Confirm the shipped calibration workflow on live instruments
 
-**Status:** Conditional on Tasks 14-16. **Prerequisites:** Task 16 complete.
+**Status:** Conditional on Tasks 17-19. **Prerequisites:** Task 19 complete.
 
 **Objective:** Verify that the actual Settings wizard and production matcher
 reproduce the offline calibration benefit rather than only passing simulated
@@ -1144,7 +1410,7 @@ tests.
 
 **Work:**
 
-- Repeat at least one acoustic and one digital setup used in Task 12 through the
+- Repeat at least one acoustic and one digital setup used in Task 15 through the
   real wizard.
 - Record the selected profile, wizard calibration/confirmation results, and a
   separate post-wizard held-out passage containing correct and negative cases.
@@ -1163,9 +1429,9 @@ remain green.
 confirmation, privacy/fallback behavior is verified, and calibration documentation
 matches the shipped implementation.
 
-### Task 18 — Evaluate confidence normalization only as a separate later branch
+### Task 21 — Evaluate confidence normalization only as a separate later branch
 
-**Status:** Optional future research. **Prerequisites:** Task 14 complete and a
+**Status:** Optional future research. **Prerequisites:** Task 17 complete and a
 documented residual instrument-dependent domain shift that approved-profile
 selection cannot safely address.
 
@@ -1175,7 +1441,7 @@ safety semantics.
 
 **Work:**
 
-- Define a new discovery/confirmation split; do not reuse Task 14 confirmation
+- Define a new discovery/confirmation split; do not reuse Task 17 confirmation
   data for fitting.
 - Evaluate bounded input gain, monotone onset-confidence normalization, monotone
   active-target normalization, and only well-supported broad register bands.
@@ -1194,7 +1460,7 @@ setup.
 **Complete when:** The experiment concludes either `normalization-justified` with
 repeatable held-out benefit and no safety loss, or `normalization-not-justified`
 with no production change. Implementation/rollout of a justified transformation
-requires a new plan rather than silently extending Tasks 15-17.
+requires a new plan rather than silently extending Tasks 18-20.
 
 ## Production rollout and rollback
 
@@ -1214,7 +1480,8 @@ For the first release with a changed default:
   changing values again.
 
 Do not silently retune the profile between releases. Any value change creates a
-new profile ID and repeats the held-out safety validation.
+new profile ID and repeats the frozen discovery/confirmation and live safety
+validation.
 
 ## Completion criteria
 
@@ -1222,9 +1489,14 @@ The global matcher-profile phase is complete when:
 
 - Production and every benchmark consume the same versioned profile registry.
 - `baseline-v1` replay exactly reproduces the previous production baseline.
-- The `v05` event is diagnosed and covered by a deterministic regression.
-- The A/B/C matrix has two identical full repetitions and reports all domains
-  separately.
+- The `v05` late recovery and the Tone 333 ms false advancement are diagnosed and
+  covered by deterministic regressions with their distinct semantics.
+- The multi-domain discovery/confirmation manifest, hierarchical weights, and
+  safe Pareto selection are frozen and reproducible.
+- Newly selected candidates have immutable versioned IDs; the first-generation
+  `balanced-v1` and `sensitive-v1` values remain unchanged historical references.
+- The frozen candidate matrix has two full repetitions satisfying the Task 04
+  identity rule and reports discovery versus confirmation domains separately.
 - The selected candidate passes every automated and live safety gate.
 - At least one acoustic and one digital setup have held-out live results.
 - The selected default and rejected alternatives are documented with exact
