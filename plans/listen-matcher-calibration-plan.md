@@ -1254,8 +1254,8 @@ matches Task 04 exactly.
 candidate-matrix results, every row is labeled as discovery evidence, and the
 validation module neither imports the sweep nor searches new values.
 
-**Completion evidence:** `listenProfileValidationBenchmark.ts` now owns the
-sequence portion beside the isolated one. It joins the manifest's 156 sequence
+**Completion evidence:** Commit `1b4bc36`. `listenProfileValidationBenchmark.ts`
+now owns the sequence portion beside the isolated one. It joins the manifest's 156 sequence
 descriptors to the passages they name, captures each once through the historical
 `captureListenSequenceRun` path, and replays that one retained trace through
 `baseline-v1` and the four frozen candidates. It refuses a sequence descriptor
