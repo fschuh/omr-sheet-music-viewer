@@ -487,7 +487,12 @@ interface BundledBenchmarkClient {
   dispose(): Promise<void>;
 }
 
-function bundledCases(): Array<{
+/**
+ * The isolated fixture corpus, in the fixed order the benchmark runs it. The
+ * trace manifest names each case by its position here, so cases are appended
+ * rather than reordered.
+ */
+export function bundledListenBenchmarkCases(): Array<{
   target: readonly number[];
   played: readonly number[];
   fixtureGroup?: ListenBenchmarkTrial["fixtureGroup"];
@@ -550,7 +555,7 @@ async function runBundledBenchmark(
   client: BundledBenchmarkClient,
   onProgress: (completed: number, total: number) => void = () => undefined,
 ): Promise<ListenBenchmarkSummary> {
-  const cases = bundledCases();
+  const cases = bundledListenBenchmarkCases();
   const trials: ListenBenchmarkTrial[] = [];
   try {
     for (let index = 0; index < cases.length; index += 1) {

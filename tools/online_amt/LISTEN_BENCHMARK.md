@@ -7,6 +7,86 @@
 Entries are kept newest first so renderer and recognition changes remain
 comparable over time.
 
+### Frozen discovery and confirmation partition — August 19, 2026
+
+Before the next threshold search runs, `webapp/src/listenTraceManifest.ts` names
+every automated listening trace the repository can produce and assigns it, once,
+to `discovery`, `confirmation`, or `regression-only`. It also freezes the domain
+weighting and the candidate metric order, so no partition, weight, or tie-break
+can be chosen after results are visible.
+
+Nothing was re-measured for this entry: no renderer, model, decoder, matcher, or
+benchmark result changed. The manifest is a protocol, not a run.
+
+| Partition | Traces | Contents |
+| --- | ---: | --- |
+| `discovery` | 139 | 120 sequence runs (10 scoring families × 6 speeds × 2 renderers), 5 articulation runs, 12 constant-layer runs, 2 mixed-dynamics runs |
+| `confirmation` | 300 | the complete 134-case isolated corpus under both renderers, 27 held-back constant layers, 3 held-back articulations, 2 held-back mixed runs |
+| `regression-only` | 39 | the 3 dedicated safety passages at 6 speeds under both renderers, the Tone Salamander `v05` source run, and the 2 committed regressions |
+
+Manifest version 1, hash `0ed1e71d`, 478 traces in total.
+
+Both single-renderer sweeps have been observed, so the entire sequence corpus is
+discovery and none of it may be described as held out. Dynamics and articulation
+were split before searching, not after: discovery takes one constant layer per
+piano, renderer, and loudness band — Splendid `pp`/`mp`/`ff`, Salamander
+`v03`/`v09`/`v14` — plus one mixed run per renderer and one articulation of each
+category, and everything else stays untouched. Splendid `mp` is discovery
+because the articulation matrix's `normal` row renders exactly that passage on
+exactly that instrument; the manifest records a content key for each trace and
+rejects any manifest that puts the same rendered content in two partitions, so
+this near-duplicate cannot be quietly reserved as confirmation. Salamander `v05`
+under Tone is `regression-only` rather than confirmation because the committed
+late-advance fixture was minimized from it; the same layer under Direct remains
+confirmation evidence.
+
+Weights are hierarchical and equal at every level — renderer, then suite, then
+piano/articulation/sequence family, then run — so 16 Salamander layers weigh
+exactly as much as four Splendid layers and the 268-trace isolated suite weighs
+no more than the 8-trace articulation suite. `regression-only` traces carry
+weight zero: they gate every profile and score none.
+
+The frozen ranking order after the hard safety gate is worst-domain independent
+recognition, equal-domain average independent recognition, ordered prefix,
+complete passages, late-advance count, source-to-target distance, attribution
+delay, P95 latency, and finally distance from `baseline-v1`, with the profile ID
+as the last tie-break. Independent recognition precedes ordered results so one
+early recovery cannot win by cascade amplification alone. Safety is carried by
+the comparator *and* by the dominance helper: an unsafe candidate never
+dominates anything and a safe one always dominates it, so a caller that skips
+the frontier's eligibility filter still cannot be told an unsafe profile is
+better.
+
+Metric values are quantized to a 1e-9 grid before they are compared, rather than
+compared with a pairwise tolerance. A tolerance is not transitive — three values
+a little under one tolerance apart give `a == b`, `b == c`, and `a < c`, and the
+ranking would then depend on the order the candidates arrived in — while a grid
+makes equality an equivalence relation and keeps replay noise far below the step
+comparing equal.
+
+The hash folds the version, every assignment, every derived weight, and the
+metric order, and `LISTEN_TRACE_MANIFEST_HASH` pins it. Validation enforces that
+pin together with the exact per-partition, per-suite census, so dropping one
+isolated case, promoting the `v05` run into the scoring corpus, or renaming a
+weighting domain is rejected even though each leaves every structural coverage
+rule satisfied. The declared version is the only known version: a manifest that
+labels itself anything else fails as `unknown-manifest-version` rather than
+slipping past the pin, because relabelling an object is not the new-round
+process. That process is a reviewed edit to this module — bump
+`LISTEN_TRACE_MANIFEST_VERSION`, restate the census, re-pin the hash — followed
+by a rerun discovery pass.
+
+| Suite | Result | Change |
+| --- | --- | --- |
+| Unit suite | 305 main-suite tests, plus 2 in the dynamics pretest | +25 |
+| Production build | passes | none |
+| Browser benchmarks | not rerun; no measured value depends on this change | none |
+
+```bash
+npm --prefix webapp test
+npm --prefix webapp run build
+```
+
 ### Tone Course Clear 333 ms false-advance diagnosis — August 19, 2026
 
 The one advancement the sequence corpus reported as false outside the dedicated

@@ -965,7 +965,7 @@ unchanged. `tools/online_amt/LISTEN_BENCHMARK.md` records the full diagnosis.
 
 ### Task 07 — Freeze the multi-domain discovery and confirmation protocol
 
-**Status:** Required. **Prerequisites:** Task 06 complete.
+**Status:** Completed August 19, 2026. **Prerequisites:** Task 06 complete.
 
 **Objective:** Predeclare exactly which existing traces may tune thresholds, which
 remain untouched for confirmation, how domains are weighted, and how safe Pareto
@@ -1009,6 +1009,47 @@ Run the full unit suite and production build.
 **Complete when:** The repository can reject an incomplete, overlapping, or
 reweighted manifest, and candidate selection can run without making any new
 partition or metric choice after results are visible.
+
+**Completion evidence:** `webapp/src/listenTraceManifest.ts` assigns all 478
+automated traces once each: 139 `discovery`, 300 `confirmation`, and 39
+`regression-only`, at manifest version 1 and hash `0ed1e71d`. The whole sequence
+corpus is discovery because both single-renderer sweeps were observed; discovery
+adds one constant layer per piano, renderer, and loudness band (Splendid
+`pp`/`mp`/`ff`, Salamander `v03`/`v09`/`v14`), one mixed run per renderer, and
+one trace of every articulation category. Confirmation keeps the complete
+isolated corpus under both renderers, 27 unselected constant layers, three
+held-back articulations, and two held-back mixed runs. The dedicated safety
+passages, the Tone Salamander `v05` source run, and both committed regressions
+are `regression-only` with weight zero.
+
+Each descriptor records a content key, so the manifest rejects any split that
+puts the same rendered passage/instrument/speed in two partitions — which is why
+Splendid `mp` is discovery: the articulation matrix's `normal` row renders it.
+A committed regression names the run it was minimized from, and a regression
+minimized from confirmation evidence is rejected. Weights are hierarchical and
+equal across renderer, suite, piano/articulation/family, and run, so 16
+Salamander layers equal four Splendid layers and the 268-trace isolated suite
+equals the 8-trace articulation suite.
+
+Validation enforces the pinned hash and the exact per-partition, per-suite
+census, so an amendment that leaves every structural coverage rule satisfied —
+dropping one isolated case, promoting the `v05` run into the scoring corpus,
+renaming a weighting domain — is still rejected. Relabelling the version does not
+escape those checks: any version other than the one this module declares fails as
+`unknown-manifest-version`, so a new round is a reviewed edit to the module's
+constants (bumped version, restated census, re-pinned hash) rather than a field
+change on a manifest object. The frozen metric order, Pareto dominance, and the profile-ID
+tie-break live beside the manifest. Metric values are quantized to a 1e-9 grid
+instead of compared with a pairwise tolerance, because a tolerance is
+intransitive and would make the ranking depend on candidate input order; safety
+is enforced inside the dominance helper as well as the comparator, so an unsafe
+candidate never dominates and a safe one always dominates it even when a caller
+skips the eligibility filter.
+
+`listenTraceManifest.test.ts` adds 25 tests to the package command, including the
+three amendments above, comparator transitivity under all permutations, and
+safety-aware dominance; the suite is 305 main-suite tests plus the dynamics
+pretest, and the production build passes. No measured browser result changed.
 
 ### Task 08 — Recompute and freeze the multi-domain candidate registry
 
