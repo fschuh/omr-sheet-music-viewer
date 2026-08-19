@@ -19,7 +19,10 @@ import {
   type ListenSequenceCaseResult,
 } from "./listenSequenceCaseBenchmark";
 import {
+  conciseListenMatcherMultiDomainSweepResult,
+  runListenMatcherMultiDomainSweep,
   runListenThresholdSweep,
+  type ListenMultiDomainSweepResult,
   type ListenThresholdSweepResult,
 } from "./listenMatcherSweepBenchmark";
 import {
@@ -97,6 +100,7 @@ export function ListenBenchmarkPage() {
     "online_amt" | "spectral" | "sequence" | "threshold-sweep" | "retrigger-sweep" |
       "articulation" | "reset-comparison" | null
       | "dynamics-constant" | "dynamics-mixed" | "dynamics-case" | "sequence-case"
+      | "multidomain-sweep"
   >(null);
   const running = runningTask !== null;
   const [progress, setProgress] = useState("");
@@ -104,12 +108,15 @@ export function ListenBenchmarkPage() {
     "isolated" | "sequence" | "threshold-sweep" | "retrigger-sweep" | "articulation" |
       "reset-comparison"
       | "dynamics-constant" | "dynamics-mixed" | "dynamics-case" | "sequence-case"
+      | "multidomain-sweep"
   >("isolated");
   const [error, setError] = useState<string | null>(null);
   const [automated, setAutomated] = useState<ListenBenchmarkSummary | null>(null);
   const [sequenceResult, setSequenceResult] = useState<ListenSequenceBenchmarkResult | null>(null);
   const [thresholdSweepResult, setThresholdSweepResult] =
     useState<ListenThresholdSweepResult | null>(null);
+  const [multiDomainSweepResult, setMultiDomainSweepResult] =
+    useState<ListenMultiDomainSweepResult | null>(null);
   const [articulationResult, setArticulationResult] =
     useState<ListenArticulationMatrixResult | null>(null);
   const [retriggerSweepResult, setRetriggerSweepResult] =
@@ -149,6 +156,9 @@ export function ListenBenchmarkPage() {
     } else if (query.get("listen-retrigger-sweep") === "auto") {
       automaticBenchmarkStarted = true;
       void runRetriggerSweep();
+    } else if (query.get("listen-matcher-multidomain-sweep") === "auto") {
+      automaticBenchmarkStarted = true;
+      void runMultiDomainSweep();
     } else if (query.get("listen-threshold-sweep") === "auto") {
       automaticBenchmarkStarted = true;
       void runThresholdSweep();
@@ -234,6 +244,33 @@ export function ListenBenchmarkPage() {
       (window as typeof window & {
         listenThresholdSweepResult?: ListenThresholdSweepResult;
       }).listenThresholdSweepResult = result;
+      document.body.dataset.status = "complete";
+    } catch (benchmarkError) {
+      setError(benchmarkError instanceof Error ? benchmarkError.message : String(benchmarkError));
+      document.body.dataset.status = "error";
+    } finally {
+      setRunningTask(null);
+    }
+  }
+
+  /**
+   * The multi-domain search captures its own corpus across both renderers, so it
+   * ignores the page's renderer selection instead of running once per renderer.
+   */
+  async function runMultiDomainSweep() {
+    setRunningTask("multidomain-sweep");
+    setProgressTask("multidomain-sweep");
+    setError(null);
+    setProgress("Preparing the frozen discovery corpus…");
+    document.body.dataset.status = "running";
+    try {
+      const result = await runListenMatcherMultiDomainSweep((complete, total, label) => {
+        setProgress(`${complete} / ${total} traces · ${label}`);
+      });
+      setMultiDomainSweepResult(result);
+      (window as typeof window & {
+        listenMatcherMultiDomainSweepResult?: ListenMultiDomainSweepResult;
+      }).listenMatcherMultiDomainSweepResult = result;
       document.body.dataset.status = "complete";
     } catch (benchmarkError) {
       setError(benchmarkError instanceof Error ? benchmarkError.message : String(benchmarkError));
@@ -631,6 +668,9 @@ export function ListenBenchmarkPage() {
   )).length ?? 0;
   const percentageDelta = (value: number) => (
     `${value >= 0 ? "+" : ""}${(value * 100).toFixed(1)} pp`
+  );
+  const percentageValue = (value: number | null) => (
+    value === null ? "—" : `${(value * 100).toFixed(1)}%`
   );
   const resetControlRows = resetComparisonResult ? [
     {
@@ -1063,6 +1103,88 @@ export function ListenBenchmarkPage() {
                 perSpeedDeltas: candidate.nonSafetyDeltasFromProduction,
               })),
             }, null, 2)}</pre>
+          </>
+        ) : null}
+      </section>
+
+      <section className="sequence-benchmark multidomain-sweep-benchmark">
+        <h2>Multi-domain matcher sweep</h2>
+        <p>
+          Captures the frozen <code>discovery</code> and <code>regression-only</code> partitions of
+          the trace manifest — both renderers, all sequence families and speeds, both pianos,
+          stratified dynamics, and one trace of every articulation — and replays all 1,000 grid
+          profiles against each captured trace. Confirmation traces are never captured here.
+          Ranking follows the manifest's frozen weighting and metric order; nothing about the
+          production profile changes.
+        </p>
+        <button type="button" disabled={running} onClick={() => void runMultiDomainSweep()}>
+          {runningTask === "multidomain-sweep" ? "Sweeping…" : "Run multi-domain sweep"}
+        </button>
+        {progress && progressTask === "multidomain-sweep"
+          ? <span className="benchmark-progress">{progress}</span>
+          : null}
+        {multiDomainSweepResult ? (
+          <>
+            <p>
+              Manifest version {multiDomainSweepResult.manifest.version}, hash{" "}
+              <code>{multiDomainSweepResult.manifest.hash}</code>:{" "}
+              {multiDomainSweepResult.manifest.capturedTraceCount} traces captured,{" "}
+              {multiDomainSweepResult.manifest.scoredTraceCount} scored.{" "}
+              {multiDomainSweepResult.profilesRejectedBySafety} /{" "}
+              {multiDomainSweepResult.gridSize} profiles rejected by safety;{" "}
+              {multiDomainSweepResult.paretoFrontier.length} on the safe Pareto frontier;{" "}
+              <strong>{multiDomainSweepResult.selected.length}</strong> selected.
+            </p>
+            <div className="benchmark-table-wrap">
+              <table className="benchmark-table">
+                <thead>
+                  <tr>
+                    <th>Profile</th>
+                    <th>Role</th>
+                    <th>Safe</th>
+                    <th>Worst domain independent</th>
+                    <th>Equal-domain independent</th>
+                    <th>Ordered prefix</th>
+                    <th>Complete passages</th>
+                    <th>Late advances</th>
+                    <th>p95 latency</th>
+                    <th>Distance</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[
+                    { role: "baseline", candidate: multiDomainSweepResult.baseline },
+                    ...multiDomainSweepResult.paretoFrontier.map((candidate) => ({
+                      role: multiDomainSweepResult.selected.includes(candidate)
+                        ? "selected"
+                        : "frontier",
+                      candidate,
+                    })),
+                  ].map(({ role, candidate }) => (
+                    <tr key={`${role}-${candidate.profile.id}`}>
+                      <td><code>{candidate.profile.id}</code></td>
+                      <td>{role}</td>
+                      <td>{candidate.safety.passed ? "Yes" : "No"}</td>
+                      <td>{percentageValue(candidate.metrics.worstDomainIndependentRate)}</td>
+                      <td>{percentageValue(candidate.metrics.equalDomainIndependentRate)}</td>
+                      <td>{percentageValue(candidate.metrics.orderedPrefixRate)}</td>
+                      <td>{percentageValue(candidate.metrics.completePassageRate)}</td>
+                      <td>{candidate.totals.lateAdvanceCount}</td>
+                      <td>{candidate.metrics.p95LatencyMs === null
+                        ? "—"
+                        : `${candidate.metrics.p95LatencyMs.toFixed(0)} ms`}</td>
+                      <td>{candidate.metrics.distanceFromBaseline?.toFixed(3) ?? "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <h3>Selection, frontier, and per-domain diagnostics</h3>
+            <pre>{JSON.stringify(
+              conciseListenMatcherMultiDomainSweepResult(multiDomainSweepResult),
+              null,
+              2,
+            )}</pre>
           </>
         ) : null}
       </section>

@@ -11,11 +11,30 @@ import type { ChordMatcherOptions } from "./chordMatcher";
  * This module must not import benchmark code; benchmarks consume it instead.
  */
 
-/** Stable, versioned identifiers. These are not UI labels. */
+/**
+ * Stable, versioned identifiers. These are not UI labels.
+ *
+ * The `v1` entries are the first generation, selected from a Direct-only
+ * sequence sweep before the Tone renderer and the dynamics corpora existed. They
+ * are immutable historical references and are never edited in place.
+ *
+ * The `v2` entries are the frozen safe Pareto set of the multi-domain search
+ * over the `discovery` partition of `listenTraceManifest`. `early`/`steady` name
+ * the fresh-onset gate (0.45 accepts a softer attack than 0.50) and
+ * `open`/`held` name the active-target gate (0.20 accepts weaker sustained
+ * evidence than 0.275); all four raise the unexpected-note gate to 0.99.
+ * `early-open-v2` repeats the values of `sensitive-v1`, and still receives its
+ * own identifier: it was selected by a different corpus under a different rule,
+ * and a later change to one generation must never silently move the other.
+ */
 export type ListenMatcherProfileId =
   | "baseline-v1"
   | "balanced-v1"
-  | "sensitive-v1";
+  | "sensitive-v1"
+  | "early-open-v2"
+  | "steady-open-v2"
+  | "early-held-v2"
+  | "steady-held-v2";
 
 /**
  * The five confidence controls a matcher profile may set. Benchmarks explore
@@ -50,8 +69,10 @@ export interface FixedListenMatcherPolicy {
 /**
  * Bumped whenever profile values or the fixed policy change. A stored
  * calibration record from a different registry version must be discarded.
+ *
+ * Version 2 added the frozen multi-domain candidates. No version-1 entry moved.
  */
-export const LISTEN_MATCHER_REGISTRY_VERSION = 1;
+export const LISTEN_MATCHER_REGISTRY_VERSION = 2;
 
 /**
  * The exact timing/state-machine values listen mode has always run with: the
@@ -72,7 +93,27 @@ export const LISTEN_MATCHER_PROFILE_IDS: readonly ListenMatcherProfileId[] = Obj
   "baseline-v1",
   "balanced-v1",
   "sensitive-v1",
+  "early-open-v2",
+  "steady-open-v2",
+  "early-held-v2",
+  "steady-held-v2",
 ] as const);
+
+/**
+ * The frozen multi-domain candidate set, in the search's ranked order.
+ *
+ * Confirmation replay evaluates exactly these identifiers beside `baseline-v1`.
+ * The list is frozen with the search that produced it: adding or removing an
+ * entry after any confirmation outcome has been observed starts a new discovery
+ * round rather than amending this one.
+ */
+export const LISTEN_MULTIDOMAIN_CANDIDATE_PROFILE_IDS: readonly ListenMatcherProfileId[] =
+  Object.freeze([
+    "early-open-v2",
+    "steady-open-v2",
+    "early-held-v2",
+    "steady-held-v2",
+  ] as const);
 
 export function isListenMatcherProfileId(value: unknown): value is ListenMatcherProfileId {
   return typeof value === "string" &&
@@ -113,9 +154,11 @@ function frozenProfile(profile: ListenMatcherProfile): ListenMatcherProfile {
 }
 
 /**
- * Current production values, the balanced sweep candidate
- * (`o0p500-t0p500-a0p350-x0p990-b1`), and the sensitive sweep candidate
- * (`o0p450-t0p500-a0p200-x0p990-b1`).
+ * Current production values, the two first-generation Direct sweep candidates
+ * (`o0p500-t0p500-a0p350-x0p990-b1` and `o0p450-t0p500-a0p200-x0p990-b1`), and
+ * the four multi-domain candidates, which are the sweep profiles
+ * `o0p450-t0p500-a0p200-x0p990-b1`, `o0p500-t0p500-a0p200-x0p990-b1`,
+ * `o0p450-t0p500-a0p275-x0p990-b1`, and `o0p500-t0p500-a0p275-x0p990-b1`.
  */
 export const LISTEN_MATCHER_PROFILES: Readonly<
   Record<ListenMatcherProfileId, ListenMatcherProfile>
@@ -144,11 +187,44 @@ export const LISTEN_MATCHER_PROFILES: Readonly<
     extraNoteThreshold: 0.99,
     requireFreshBassOnset: true,
   }),
+  "early-open-v2": frozenProfile({
+    id: "early-open-v2",
+    onsetThreshold: 0.45,
+    targetNoteThreshold: 0.5,
+    activeTargetThreshold: 0.2,
+    extraNoteThreshold: 0.99,
+    requireFreshBassOnset: true,
+  }),
+  "steady-open-v2": frozenProfile({
+    id: "steady-open-v2",
+    onsetThreshold: 0.5,
+    targetNoteThreshold: 0.5,
+    activeTargetThreshold: 0.2,
+    extraNoteThreshold: 0.99,
+    requireFreshBassOnset: true,
+  }),
+  "early-held-v2": frozenProfile({
+    id: "early-held-v2",
+    onsetThreshold: 0.45,
+    targetNoteThreshold: 0.5,
+    activeTargetThreshold: 0.275,
+    extraNoteThreshold: 0.99,
+    requireFreshBassOnset: true,
+  }),
+  "steady-held-v2": frozenProfile({
+    id: "steady-held-v2",
+    onsetThreshold: 0.5,
+    targetNoteThreshold: 0.5,
+    activeTargetThreshold: 0.275,
+    extraNoteThreshold: 0.99,
+    requireFreshBassOnset: true,
+  }),
 });
 
 /**
  * The profile uncalibrated users, changed devices, invalid calibration records,
- * and rollback fall back to. Changing it is one reviewed production decision.
+ * and rollback fall back to. Changing it is one reviewed production decision,
+ * taken only after the frozen candidates pass their confirmation and live gates.
  */
 export const DEFAULT_LISTEN_MATCHER_PROFILE_ID: ListenMatcherProfileId = "baseline-v1";
 

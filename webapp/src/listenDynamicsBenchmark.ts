@@ -443,6 +443,33 @@ export async function captureCourseClearDynamicsCase(
   };
 }
 
+/**
+ * One dynamics run together with the passage it played.
+ *
+ * The suites below only need the recognition result, but a caller that replays
+ * other matcher profiles against the same trace — the multi-domain sweep does —
+ * also needs the materialized passage. Exposing one run keeps that caller on the
+ * exact capture path the 40-run matrix uses instead of a parallel one.
+ */
+export async function captureCourseClearDynamicsRun(
+  options: CaptureCourseClearDynamicsOptions,
+  piano: PianoId,
+  layer: PianoLayerId | null,
+): Promise<{ sequence: MaterializedListenSequence; run: CourseClearDynamicsRunResult }> {
+  const sequence = courseClearSequence();
+  const attackLayers = layer === null
+    ? courseClearMixedLayerAssignments(piano, sequence.attacks.length)
+    : Array.from({ length: sequence.attacks.length }, () => layer);
+  const run = await captureRun(
+    options,
+    sequence,
+    piano,
+    attackLayers,
+    layer === null ? "crescendo-decrescendo" : "constant",
+  );
+  return { sequence, run };
+}
+
 export function runCourseClearDynamicsCase(
   piano: PianoId,
   layer: PianoLayerId,

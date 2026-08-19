@@ -20,6 +20,10 @@ const LISTEN_SEQUENCE_SUMMARY_MODE = CONFIGURATION_FILTER === "listen-sequence-s
 const LISTEN_SEQUENCE_MODE = CONFIGURATION_FILTER === "listen-sequence" ||
   LISTEN_SEQUENCE_SUMMARY_MODE;
 const LISTEN_THRESHOLD_SWEEP_MODE = CONFIGURATION_FILTER === "listen-threshold-sweep";
+const LISTEN_MULTIDOMAIN_SWEEP_SUMMARY_MODE = CONFIGURATION_FILTER ===
+  "listen-matcher-multidomain-sweep-summary";
+const LISTEN_MULTIDOMAIN_SWEEP_MODE = CONFIGURATION_FILTER ===
+  "listen-matcher-multidomain-sweep" || LISTEN_MULTIDOMAIN_SWEEP_SUMMARY_MODE;
 const LISTEN_RETRIGGER_SWEEP_SUMMARY_MODE = CONFIGURATION_FILTER ===
   "listen-retrigger-sweep-summary";
 const LISTEN_RETRIGGER_SWEEP_MODE = CONFIGURATION_FILTER === "listen-retrigger-sweep" ||
@@ -207,7 +211,7 @@ async function runConfiguration(configuration) {
     const pageUrl = LISTEN_PARITY_MODE
       ? BASE_URL.replace(/online-amt-benchmark\.html(?:\?.*)?$/, "listen-benchmark-parity.html")
       : (LISTEN_SMOKE_MODE || LISTEN_DYNAMICS_SMOKE_MODE || LISTEN_ACCURACY_MODE || LISTEN_SEQUENCE_MODE ||
-        LISTEN_THRESHOLD_SWEEP_MODE ||
+        LISTEN_THRESHOLD_SWEEP_MODE || LISTEN_MULTIDOMAIN_SWEEP_MODE ||
         LISTEN_RETRIGGER_SWEEP_MODE || LISTEN_ARTICULATION_MODE ||
         LISTEN_INFERENCE_RESET_MODE || LISTEN_DYNAMICS_CONSTANT_MODE ||
         LISTEN_DYNAMICS_MIXED_MODE || LISTEN_DYNAMICS_CASE_MODE ||
@@ -358,7 +362,11 @@ async function runConfiguration(configuration) {
       })()`);
     }
     const deadline = Date.now() + (
-      (LISTEN_RETRIGGER_SWEEP_MODE || LISTEN_DYNAMICS_CONSTANT_MODE)
+      // The multi-domain sweep renders and recognizes both renderers' discovery
+      // and regression corpora, then replays 1,000 profiles against each trace.
+      LISTEN_MULTIDOMAIN_SWEEP_MODE
+        ? 7_200_000
+        : (LISTEN_RETRIGGER_SWEEP_MODE || LISTEN_DYNAMICS_CONSTANT_MODE)
         ? 1_200_000
         : (LISTEN_ACCURACY_MODE || LISTEN_SEQUENCE_MODE || LISTEN_THRESHOLD_SWEEP_MODE ||
           LISTEN_ARTICULATION_MODE || LISTEN_DYNAMICS_CASE_MODE ||
@@ -601,6 +609,13 @@ async function runConfiguration(configuration) {
                   })),
               })),
             };
+          })()`
+        : LISTEN_MULTIDOMAIN_SWEEP_MODE
+        ? `(async () => {
+            const result = window.listenMatcherMultiDomainSweepResult;
+            const { conciseListenMatcherMultiDomainSweepResult } =
+              await import("/src/listenMatcherSweepBenchmark.ts");
+            return conciseListenMatcherMultiDomainSweepResult(result);
           })()`
         : LISTEN_THRESHOLD_SWEEP_MODE
         ? `(() => {
@@ -907,6 +922,15 @@ const selectedConfigurations = FINGERING_SMOKE_MODE
       LISTEN_SEQUENCE_SUMMARY_MODE ? "listen-sequence-summary" : "listen-sequence",
       "listen-sequence=auto",
     )
+  : LISTEN_MULTIDOMAIN_SWEEP_MODE
+  // One configuration, not a renderer pair: the multi-domain sweep captures both
+  // renderers itself because its worst-domain metric spans them.
+  ? [{
+      name: LISTEN_MULTIDOMAIN_SWEEP_SUMMARY_MODE
+        ? "listen-matcher-multidomain-sweep-summary"
+        : "listen-matcher-multidomain-sweep",
+      query: "listen-matcher-multidomain-sweep=auto",
+    }]
   : LISTEN_THRESHOLD_SWEEP_MODE
   ? pairedRendererConfigurations(
       "listen-threshold-sweep",
@@ -1074,6 +1098,27 @@ for (let index = 0; index < selectedConfigurations.length; index += 1) {
           deltaFromNormal: profile.deltaFromNormal,
         })),
       }
+    : LISTEN_MULTIDOMAIN_SWEEP_SUMMARY_MODE
+    ? {
+        manifest: result.manifest,
+        renderers: result.renderers,
+        baselineProfile: result.baselineProfile,
+        gridSize: result.gridSize,
+        profilesEvaluated: result.profilesEvaluated,
+        profilesRejectedBySafety: result.profilesRejectedBySafety,
+        rejectionCounts: result.rejectionCounts,
+        selectionRule: result.selectionRule,
+        noSafeImprovement: result.noSafeImprovement,
+        replayParityVerified: result.replayParityVerified,
+        baseline: { profile: result.baseline.profile, metrics: result.baseline.metrics,
+          totals: result.baseline.totals, safety: result.baseline.safety },
+        paretoFrontier: result.paretoFrontier.map((candidate) => ({
+          profile: candidate.profile,
+          metrics: candidate.metrics,
+          totals: candidate.totals,
+        })),
+        selected: result.selected,
+      }
     : LISTEN_THRESHOLD_SWEEP_MODE
     ? (() => {
         const exportCandidate = (candidate, detailed = false) => ({
@@ -1231,6 +1276,32 @@ for (let index = 0; index < selectedConfigurations.length; index += 1) {
       `raw-delta=${summary.rawEvidenceDelta} ` +
       `audio=${result.audioSignature.pcmHash}`,
     );
+  } else if (LISTEN_MULTIDOMAIN_SWEEP_MODE) {
+    console.error(
+      `${configuration.name}: manifest=${result.manifest.version}/${result.manifest.hash} ` +
+      `captured=${result.manifest.capturedTraceCount} ` +
+      `scored=${result.manifest.scoredTraceCount} ` +
+      `evaluated=${result.profilesEvaluated}/${result.gridSize} ` +
+      `rejected-safety=${result.profilesRejectedBySafety} ` +
+      `frontier=${result.paretoFrontier.length} ` +
+      `selected=${result.selected.map(({ profile }) => profile.id).join(",") || "none"} ` +
+      `no-safe-improvement=${result.noSafeImprovement}`,
+    );
+    for (const reason of result.rejectionCounts) {
+      console.error(`${configuration.name}: rejected ${reason.reason}=${reason.profileCount}`);
+    }
+    for (const candidate of [result.baseline, ...result.selected]) {
+      console.error(
+        `${configuration.name}: ${candidate.profile.id} ` +
+        `worst-domain=${candidate.metrics.worstDomainIndependentRate?.toFixed(4)} ` +
+        `equal-domain=${candidate.metrics.equalDomainIndependentRate?.toFixed(4)} ` +
+        `prefix=${candidate.metrics.orderedPrefixRate?.toFixed(4)} ` +
+        `complete=${candidate.metrics.completePassageRate?.toFixed(4)} ` +
+        `late=${candidate.totals.lateAdvanceCount} ` +
+        `p95=${candidate.metrics.p95LatencyMs?.toFixed(1)}ms ` +
+        `distance=${candidate.metrics.distanceFromBaseline}`,
+      );
+    }
   } else if (LISTEN_THRESHOLD_SWEEP_MODE) {
     console.error(
       `${configuration.name}: evaluated=${result.profilesEvaluated}/${result.gridSize} ` +

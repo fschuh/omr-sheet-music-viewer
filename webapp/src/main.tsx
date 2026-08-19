@@ -10,6 +10,7 @@ if (
   query.has("listen-sequence") ||
   query.has("listen-sequence-case") ||
   query.has("listen-threshold-sweep") ||
+  query.has("listen-matcher-multidomain-sweep") ||
   query.has("listen-retrigger-sweep") ||
   query.has("listen-articulation") ||
   query.has("listen-inference-reset") ||

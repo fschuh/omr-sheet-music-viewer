@@ -10,18 +10,57 @@ import {
   LISTEN_MATCHER_PROFILE_IDS,
   LISTEN_MATCHER_PROFILES,
   LISTEN_MATCHER_REGISTRY_VERSION,
+  LISTEN_MULTIDOMAIN_CANDIDATE_PROFILE_IDS,
   matcherOptionsForListenMatcherProfile,
   type ListenMatcherProfile,
 } from "./listenMatcherProfiles";
 
-test("registers exactly the three named production candidates", () => {
+test("registers the first-generation profiles and the frozen multi-domain candidates", () => {
   assert.deepEqual(LISTEN_MATCHER_PROFILE_IDS, [
     "baseline-v1",
     "balanced-v1",
     "sensitive-v1",
+    "early-open-v2",
+    "steady-open-v2",
+    "early-held-v2",
+    "steady-held-v2",
   ]);
   assert.deepEqual(Object.keys(LISTEN_MATCHER_PROFILES), [...LISTEN_MATCHER_PROFILE_IDS]);
-  assert.equal(LISTEN_MATCHER_REGISTRY_VERSION, 1);
+  assert.equal(LISTEN_MATCHER_REGISTRY_VERSION, 2);
+  assert.deepEqual(LISTEN_MULTIDOMAIN_CANDIDATE_PROFILE_IDS, [
+    "early-open-v2",
+    "steady-open-v2",
+    "early-held-v2",
+    "steady-held-v2",
+  ]);
+  // The candidate list is a subset of the registry and never contains the
+  // default, which is compared against the candidates rather than being one.
+  assert.ok(LISTEN_MULTIDOMAIN_CANDIDATE_PROFILE_IDS.every((id) => (
+    LISTEN_MATCHER_PROFILE_IDS.includes(id)
+  )));
+  assert.ok(!LISTEN_MULTIDOMAIN_CANDIDATE_PROFILE_IDS.includes(DEFAULT_LISTEN_MATCHER_PROFILE_ID));
+  assert.equal(
+    new Set(LISTEN_MULTIDOMAIN_CANDIDATE_PROFILE_IDS).size,
+    LISTEN_MULTIDOMAIN_CANDIDATE_PROFILE_IDS.length,
+  );
+  assert.ok(Object.isFrozen(LISTEN_MULTIDOMAIN_CANDIDATE_PROFILE_IDS));
+});
+
+/**
+ * The multi-domain search ranked one profile with exactly `sensitive-v1`'s
+ * values first. It is registered separately anyway: the two entries were chosen
+ * from different corpora under different rules, and a later edit to one
+ * generation must not silently move the other.
+ */
+test("keeps the two generations independent where their values coincide", () => {
+  const first = LISTEN_MATCHER_PROFILES["sensitive-v1"];
+  const second = LISTEN_MATCHER_PROFILES["early-open-v2"];
+  assert.notEqual(first, second);
+  assert.notEqual(first.id, second.id);
+  assert.deepEqual(
+    { ...matcherOptionsForListenMatcherProfile("sensitive-v1") },
+    { ...matcherOptionsForListenMatcherProfile("early-open-v2") },
+  );
 });
 
 test("encodes the planned profile values with a required fresh bass onset", () => {
@@ -49,6 +88,46 @@ test("encodes the planned profile values with a required fresh bass onset", () =
     extraNoteThreshold: 0.99,
     requireFreshBassOnset: true,
   });
+});
+
+test("encodes the measured multi-domain candidate values", () => {
+  assert.deepEqual(
+    LISTEN_MULTIDOMAIN_CANDIDATE_PROFILE_IDS.map((id) => LISTEN_MATCHER_PROFILES[id]),
+    [
+      {
+        id: "early-open-v2",
+        onsetThreshold: 0.45,
+        targetNoteThreshold: 0.5,
+        activeTargetThreshold: 0.2,
+        extraNoteThreshold: 0.99,
+        requireFreshBassOnset: true,
+      },
+      {
+        id: "steady-open-v2",
+        onsetThreshold: 0.5,
+        targetNoteThreshold: 0.5,
+        activeTargetThreshold: 0.2,
+        extraNoteThreshold: 0.99,
+        requireFreshBassOnset: true,
+      },
+      {
+        id: "early-held-v2",
+        onsetThreshold: 0.45,
+        targetNoteThreshold: 0.5,
+        activeTargetThreshold: 0.275,
+        extraNoteThreshold: 0.99,
+        requireFreshBassOnset: true,
+      },
+      {
+        id: "steady-held-v2",
+        onsetThreshold: 0.5,
+        targetNoteThreshold: 0.5,
+        activeTargetThreshold: 0.275,
+        extraNoteThreshold: 0.99,
+        requireFreshBassOnset: true,
+      },
+    ],
+  );
 });
 
 test("defaults to the current production profile", () => {

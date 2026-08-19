@@ -7,6 +7,178 @@
 Entries are kept newest first so renderer and recognition changes remain
 comparable over time.
 
+### Multi-domain matcher sweep and frozen candidate registry — August 19, 2026
+
+The first threshold search that spans every domain now known to matter. It
+captures the frozen `discovery` and `regression-only` partitions of
+`webapp/src/listenTraceManifest.ts` — 176 traces across both renderers, all 13
+sequence families at all six speeds, one constant layer per piano, renderer and
+loudness band, one mixed-dynamics run per renderer, and one trace of every
+articulation category — and replays all 1,000 grid profiles against each
+captured trace. The 300 `confirmation` traces are never captured by this
+command, so no selection decision can read one.
+
+```bash
+node tools/online_amt/run_browser_benchmarks.mjs \
+  http://127.0.0.1:5174/online-amt-benchmark.html listen-matcher-multidomain-sweep
+```
+
+Measured at commit `31e7a65`, model `online_amt_streaming.onnx`, renderers
+`bundled-piano-web-audio-v1` and `bundled-piano-tone-v2`. Manifest version 1,
+hash `0ed1e71d`; 176 traces captured, 139 scored, 37 gating runs plus the 2
+committed regressions. Grid size 1,000, unchanged.
+
+#### What the search rejected
+
+721 of the 1,000 profiles are rejected; 279 are safe. Safety is a hard
+constraint over three separate populations and a profile may fail several:
+
+| Rejection | Profiles | Meaning |
+| --- | ---: | --- |
+| `dedicated-false-advance` | 680 | a false advance in a dedicated safety passage |
+| `fresh-bass-not-required` | 500 | the whole `b0` half of the grid, refused structurally |
+| `dedicated-skipped-advance` | 500 | a skipped advance in a dedicated safety passage |
+| `dedicated-incomplete-carried-bass` | 500 | the carried-bass attack advanced its triad |
+| `discovery-safety-regression` | 436 | more false, skipped, or duplicate advances than `baseline-v1` on a scored trace |
+| `committed-regression` | 76 | less safe than `baseline-v1` on the Task 06 shared-pitch case |
+
+Scored traces are compared against `baseline-v1` on the same trace rather than
+required to be clean outright, because the corpus contains one already-diagnosed
+baseline false advance — `course-clear-27` at 333 ms under Tone. An absolute
+rule there would either reject `baseline-v1` itself or have to pretend that
+event does not exist. The dedicated families and the regression-only runs are
+required to be clean outright, and the `v05` source run's late advance is
+reported without gating.
+
+#### The safe Pareto frontier and the selected set
+
+30 profiles reach the safe Pareto frontier. The frozen selection rule — declared
+in `listenMatcherSweepBenchmark.ts` before the search ran — keeps the ranked
+leader and then a further frontier profile only when it beats every already-kept
+candidate on some frozen metric by at least that metric's declared material
+margin, up to four candidates. It selected four:
+
+| Profile | Sweep ID | Worst domain | Equal domain | Ordered prefix | Complete | Late | p95 | Distance |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `baseline-v1` | `o0p600-t0p500-a0p350-x0p970-b1` | 0.0% | 83.81% | 48.61% | 13.66% | 8 | 211.7 ms | 0 |
+| `early-open-v2` | `o0p450-t0p500-a0p200-x0p990-b1` | 16.7% | 86.91% | 63.24% | 20.37% | 2 | 212.6 ms | 0.320 |
+| `steady-open-v2` | `o0p500-t0p500-a0p200-x0p990-b1` | 16.7% | 86.83% | 62.94% | 19.91% | 7 | 212.6 ms | 0.270 |
+| `early-held-v2` | `o0p450-t0p500-a0p275-x0p990-b1` | 16.7% | 86.19% | 60.47% | 17.82% | 2 | 212.2 ms | 0.245 |
+| `steady-held-v2` | `o0p500-t0p500-a0p275-x0p990-b1` | 16.7% | 86.11% | 60.16% | 17.36% | 7 | 212.2 ms | 0.195 |
+
+Every rate above is the manifest's hierarchical equal-weighted mean, so sixteen
+Salamander layers weigh what four Splendid layers weigh and the 120-trace
+sequence suite weighs what the 2-trace mixed suite weighs. In raw counts over
+the 139 scored traces, the leader moves independent recognition from 1,048 to
+1,088 of 1,425 events, ordered advances from 833 to 988, ordered prefix from 658
+to 801, complete passages from 71 to 84, late advances from 8 down to 2, and
+false advances from 1 to 0.
+
+`baseline-v1`'s worst domain is 0.0%: `direct/sequence/shared-sustain` recognizes
+nothing at any of its six speeds. That is the passage whose bass is held across
+four intervals, and the fresh-bass rule refuses to advance a target whose bass
+never re-attacks. The number is a property of a deliberately adversarial passage
+under a fixed safety rule, not a decoding failure, and it is exactly why the
+frozen metric order takes the worst domain first: no candidate is allowed to buy
+an aggregate gain by writing that domain off.
+
+Why each candidate entered, using the metric that made it material against every
+already-kept candidate:
+
+| Profile | Entered on |
+| --- | --- |
+| `early-open-v2` | leader in the frozen metric order |
+| `steady-open-v2` | 409 ms less attribution delay on its late advances |
+| `early-held-v2` | 0.075 closer to `baseline-v1` than the leader; late advances land one target nearer their own attack than `steady-open-v2`'s |
+| `steady-held-v2` | closest to `baseline-v1` of the four, 0.075–0.125 nearer than the two ranked above it |
+
+The last two entered on the diagnostic metrics, not on recognition: they are
+worse than the leader on every rate metric and exist as the conservative end of
+the frontier, a smaller change to ship if the live trials favour caution. All
+four differ from `baseline-v1` in the same directions — a lower fresh-onset gate
+(0.45 or 0.50 against 0.60), a lower active-target gate (0.20 or 0.275 against
+0.35), and a *higher* unexpected-note gate (0.99 against 0.97).
+
+That last direction is the one place the candidates are more permissive about
+what may pass: a 0.98-confidence unexpected note no longer counts as confidently
+played, so it no longer blocks. The dedicated extra-note family stays at zero
+false, skipped, and duplicate advances for all four at every speed under both
+renderers, and the shared-pitch regression's 0.983 extra is covered explicitly by
+the Task 06 case, whose 76 unsafe profiles this search rejects.
+
+#### Per-domain effect of the leading candidate
+
+`early-open-v2` improves 16 of the 21 scored leaf domains and worsens none.
+
+| Suite | `baseline-v1` | `early-open-v2` | Change |
+| --- | ---: | ---: | ---: |
+| Direct sequence | 58.3% | 64.9% | +6.62 pp |
+| Direct articulation | 93.8% | 93.8% | none |
+| Direct constant layers | 90.1% | 94.4% | +4.32 pp |
+| Direct mixed dynamics | 96.3% | 96.3% | none |
+| Tone sequence | 61.5% | 63.1% | +1.53 pp |
+| Tone articulation | 88.9% | 92.6% | +3.70 pp |
+| Tone constant layers | 88.9% | 93.8% | +4.94 pp |
+| Tone mixed dynamics | 92.6% | 96.3% | +3.70 pp |
+
+The gain is present under both renderers, in three of the four suites, and in
+nine separate sequence families rather than in one cascade: the largest per-family
+moves are `direct/sequence/three-note-independent` at +25.0 pp,
+`direct/sequence/shared-sustain` at +16.7 pp, both renderers'
+`known-weak-chord` at +8.3 pp, and `tone/dynamics-constant/splendid` at +6.2 pp.
+
+#### Both diagnosed cases under the new candidates
+
+All four candidates recover the `v05` repeated chord on its second repetition at
+24,448 ms instead of baseline's third at 25,440 ms — an earlier recovery of
+correct content, reported as a deviation from the pinned advancement and not as
+a safety event. All four also clear the Task 06 shared-pitch case outright: the
+target's own 0.531 onset passes their gates, the stall never starts, and the
+false advance at 4,768 ms is replaced by an ordered advance at 3,072 ms. That is
+where the leader's single scored false advance disappears.
+
+#### Repetition and unchanged historical results
+
+The sweep was run three times in fresh browser processes: twice while measuring,
+and once more after the entry-point guards were added, on the code this entry
+describes. All three exported results are byte-identical — same manifest hash,
+same 176 decoded-structure hashes, same metrics for all 1,000 profiles, same
+rejection codes, same 30-profile frontier, and the same four selected
+candidates. The Task 04 Float32 tolerance was not needed. The
+`listen-matcher-multidomain-sweep-summary` mode was run once and reports the
+same selection in an 83 KB export.
+
+| Suite | Result | Change |
+| --- | --- | --- |
+| Multi-domain sweep, ×3 | 721 rejected, 30 on the frontier, 4 selected | new |
+| Direct threshold sweep | 700 rejected, frontier 14, `o0p450-t0p500-a0p200-x0p990-b1` | none |
+| Tone threshold sweep | 538 rejected, frontier 3, `o0p500-t0p500-a0p200-x0p970-b1` | none |
+| Committed regressions | 2 fixtures × 7 named profiles, 12 reported deviations, none less safe than baseline | +4 profiles replayed |
+| Unit suite | 313 main-suite tests, plus 2 in the dynamics pretest | +8 |
+| Production build | passes | none |
+
+The registry is now version 2. `baseline-v1`, `balanced-v1`, and `sensitive-v1`
+are untouched, and `DEFAULT_LISTEN_MATCHER_PROFILE_ID` remains `baseline-v1`:
+this entry selects candidates, it does not change production. `early-open-v2`
+repeats `sensitive-v1`'s values exactly and is still registered separately,
+because the two were chosen from different corpora under different rules and a
+later edit to one generation must not silently move the other.
+
+```bash
+npm --prefix webapp test
+npm --prefix webapp run build
+
+node tools/online_amt/run_browser_benchmarks.mjs \
+  http://127.0.0.1:5174/online-amt-benchmark.html listen-matcher-multidomain-sweep
+
+node tools/online_amt/run_browser_benchmarks.mjs \
+  http://127.0.0.1:5174/online-amt-benchmark.html listen-threshold-sweep
+
+node tools/online_amt/run_browser_benchmarks.mjs \
+  http://127.0.0.1:5174/online-amt-benchmark.html \
+  listen-sequence-case-tone course-clear-27 333.33
+```
+
 ### Frozen discovery and confirmation partition — August 19, 2026
 
 Before the next threshold search runs, `webapp/src/listenTraceManifest.ts` names
@@ -1128,6 +1300,12 @@ node tools\online_amt\run_browser_benchmarks.mjs `
   http://127.0.0.1:5174/online-amt-benchmark.html listen-threshold-sweep
 
 node tools\online_amt\run_browser_benchmarks.mjs `
+  http://127.0.0.1:5174/online-amt-benchmark.html listen-matcher-multidomain-sweep
+
+node tools\online_amt\run_browser_benchmarks.mjs `
+  http://127.0.0.1:5174/online-amt-benchmark.html listen-matcher-multidomain-sweep-summary
+
+node tools\online_amt\run_browser_benchmarks.mjs `
   http://127.0.0.1:5174/online-amt-benchmark.html listen-retrigger-sweep
 
 node tools\online_amt\run_browser_benchmarks.mjs `
@@ -1142,6 +1320,15 @@ node tools\online_amt\run_browser_benchmarks.mjs `
 node tools\online_amt\run_browser_benchmarks.mjs `
   http://127.0.0.1:5174/online-amt-benchmark.html listen-dynamics-case-tone salamander v05
 ```
+
+`listen-matcher-multidomain-sweep` is the only listening command that is not a
+renderer pair. It captures the frozen `discovery` and `regression-only`
+partitions of `webapp/src/listenTraceManifest.ts` under both renderers in one
+process and replays all 1,000 grid profiles against each captured trace, because
+its worst-domain metric is taken across renderers. It never captures a
+`confirmation` trace. The single-renderer `listen-threshold-sweep` command and
+its measured Direct and Tone results remain unchanged as historical discovery
+evidence.
 
 `listen-dynamics-case` renders one constant-layer run instead of the 40-run
 matrix and prints the complete forensics of every advancement counted against a

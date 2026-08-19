@@ -1053,7 +1053,7 @@ pretest, and the production build passes. No measured browser result changed.
 
 ### Task 08 — Recompute and freeze the multi-domain candidate registry
 
-**Status:** Required. **Prerequisites:** Task 07 complete.
+**Status:** Completed August 19, 2026. **Prerequisites:** Task 07 complete.
 
 **Objective:** Search all 1,000 matcher profiles across the frozen discovery
 corpus, select a small safe multi-domain Pareto set, and add new immutable
@@ -1098,6 +1098,52 @@ candidate IDs across repetitions; use the Task 04 cross-process identity rules.
 discovery variables exists under new registry IDs, historical IDs are unchanged,
 the default is still baseline, and the confirmation data remains unread by the
 selection path.
+
+**Completion evidence:** Commit `31e7a65`. `listenMatcherSweepBenchmark.ts` now owns a second
+search beside the historical single-renderer sweep. `listen-matcher-multidomain-sweep`
+captures the 176 `discovery` and `regression-only` traces of manifest version 1
+(hash `0ed1e71d`) across both renderers in one process and replays all 1,000 grid
+profiles against each captured trace, holding one trace at a time and keeping
+per-run metrics. It never captures a `confirmation` trace, and a unit test
+asserts that by failing the capture function if it is ever asked for one.
+
+721 profiles are rejected: 680 for a false advance in a dedicated safety family,
+500 for not requiring a fresh bass, 500 for a skipped advance, 500 for advancing
+the carried-bass triad, 436 for adding a false, skipped, or duplicate advance to
+a scored trace that `baseline-v1` handles safely, and 76 for the Task 06
+shared-pitch case. Scored traces are gated relative to `baseline-v1` on the same
+trace rather than absolutely, because the corpus contains one diagnosed baseline
+false advance and an absolute rule would have to reject `baseline-v1` itself.
+
+30 profiles reach the safe Pareto frontier. The materiality rule frozen in code
+before the run selected four, registered as `early-open-v2`
+(`o0p450-t0p500-a0p200-x0p990-b1`), `steady-open-v2`
+(`o0p500-t0p500-a0p200-x0p990-b1`), `early-held-v2`
+(`o0p450-t0p500-a0p275-x0p990-b1`), and `steady-held-v2`
+(`o0p500-t0p500-a0p275-x0p990-b1`). The leader moves equal-weighted independent
+recognition from 83.81% to 86.91%, ordered prefix from 48.61% to 63.24%,
+complete passages from 13.66% to 20.37%, late advances from 8 to 2 and the one
+scored false advance to 0; it improves 16 of 21 leaf domains and worsens none.
+The last two candidates entered on distance from `baseline-v1` and attribution
+delay rather than on recognition, and are the conservative end of the frontier.
+`early-open-v2` repeats `sensitive-v1`'s values and still received its own
+identifier, as this plan requires.
+
+Registry version 2 adds the four candidates and
+`LISTEN_MULTIDOMAIN_CANDIDATE_PROFILE_IDS` as the frozen Task 08 ID manifest.
+`baseline-v1`, `balanced-v1`, and `sensitive-v1` are unchanged and
+`DEFAULT_LISTEN_MATCHER_PROFILE_ID` remains `baseline-v1`. The sweep was run
+three times in fresh browser processes — twice while measuring and once more on
+the final code — and all three exported results are byte-identical, including
+all 176 decoded-structure hashes and every continuous metric, so the Float32
+tolerance was not needed. Both historical single-renderer sweeps
+reproduce their recorded results exactly (Direct 700 rejected, frontier 14,
+`o0p450-t0p500-a0p200-x0p990-b1`; Tone 538 rejected, frontier 3,
+`o0p500-t0p500-a0p200-x0p970-b1`), and the focused Tone 333 ms case still pins
+decoded-structure hash `ab28401f` and baseline's false advance at 4,768 ms while
+now replaying seven named profiles instead of three. The unit suite is 313
+main-suite tests plus the dynamics pretest, and the production build passes.
+`tools/online_amt/LISTEN_BENCHMARK.md` records the full result.
 
 ### Task 09 — Add isolated candidate-matrix replay
 

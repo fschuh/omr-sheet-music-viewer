@@ -163,20 +163,29 @@ test("every named profile is replayed against every committed regression", () =>
 });
 
 /**
- * Measured behavior of the three registered profiles on the diagnosed case. The
- * two more sensitive profiles complete the chord on the second repetition rather
- * than the third, because D4's 0.5968 onset there clears their 0.50 and 0.45
- * gates but not baseline's 0.60. That is a recognition gain, not a safety change,
- * and it is exactly the kind of movement the pinned advancement exists to show.
+ * Measured behavior of every registered profile on the diagnosed case. Each one
+ * whose onset gate sits below 0.5968 completes the chord on the second
+ * repetition rather than the third, because D4's onset there clears their gate
+ * but not baseline's 0.60. That is a recognition gain, not a safety change, and
+ * it is exactly the kind of movement the pinned advancement exists to show.
  */
 test("the named profiles recover the v05 case at different repetitions", () => {
-  const expected = {
+  const earlier = { advancedAtMs: 24_448, sourceAttackIndex: 2, deviates: true } as const;
+  const expected: Readonly<Record<ListenMatcherProfileId, {
+    advancedAtMs: number;
+    sourceAttackIndex: number;
+    deviates: boolean;
+  }>> = {
     "baseline-v1": { advancedAtMs: 25_440, sourceAttackIndex: 3, deviates: false },
-    "balanced-v1": { advancedAtMs: 24_448, sourceAttackIndex: 2, deviates: true },
-    "sensitive-v1": { advancedAtMs: 24_448, sourceAttackIndex: 2, deviates: true },
-  } as const;
+    "balanced-v1": earlier,
+    "sensitive-v1": earlier,
+    "early-open-v2": earlier,
+    "steady-open-v2": earlier,
+    "early-held-v2": earlier,
+    "steady-held-v2": earlier,
+  };
   const summary = summarizeListenSafetyRegressions([V05]);
-  assert.equal(summary.deviationCount, 2);
+  assert.equal(summary.deviationCount, LISTEN_MATCHER_PROFILE_IDS.length - 1);
   assert.equal(summary.passed, true);
   for (const profileId of LISTEN_MATCHER_PROFILE_IDS) {
     const outcome = summary.outcomes.find((candidate) => candidate.profileId === profileId);
@@ -290,16 +299,18 @@ test("the shared-pitch fixture stores the evidence its diagnosis rests on", () =
 });
 
 /**
- * Both first-generation candidates accept the 0.531 onset the target's own
- * attack produced, so the stall that led to the false advance never starts and
- * the passage advances in order instead. That is a preview of the Task 08
- * comparison, and it is visible only because the advancement is pinned.
+ * Every candidate profile — both first-generation ones and all four frozen
+ * multi-domain ones — accepts the 0.531 onset the target's own attack produced,
+ * so the stall that led to the false advance never starts and the passage
+ * advances in order instead. This is why the multi-domain search reports the
+ * diagnosed Tone false advance as removed rather than moved, and it is visible
+ * only because the advancement is pinned.
  */
 test("the more sensitive profiles never enter the shared-pitch stall", () => {
   const summary = summarizeListenSafetyRegressions([SHARED_PITCH]);
   assert.equal(summary.worseThanBaselineCount, 0);
   assert.equal(summary.passed, true);
-  assert.equal(summary.deviationCount, 2);
+  assert.equal(summary.deviationCount, LISTEN_MATCHER_PROFILE_IDS.length - 1);
   const outcomeFor = (profileId: ListenMatcherProfileId) => {
     const outcome = summary.outcomes.find((candidate) => candidate.profileId === profileId);
     assert.ok(outcome, profileId);
@@ -310,7 +321,8 @@ test("the more sensitive profiles never enter the shared-pitch stall", () => {
   assert.equal(baseline.sourceAttackIndex, 6);
   assert.equal(baseline.falseAdvance, true);
   assert.equal(baseline.satisfied, true);
-  for (const profileId of ["balanced-v1", "sensitive-v1"] as const) {
+  const candidates = LISTEN_MATCHER_PROFILE_IDS.filter((id) => id !== "baseline-v1");
+  for (const profileId of candidates) {
     const outcome = outcomeFor(profileId);
     assert.equal(outcome.advancedAtMs, 3_072, profileId);
     assert.equal(outcome.sourceAttackIndex, 1, profileId);
@@ -321,7 +333,7 @@ test("the more sensitive profiles never enter the shared-pitch stall", () => {
     assert.equal(outcome.worseThanBaseline, false, profileId);
   }
   // Six ordered advances instead of one, from the same decoded frames.
-  for (const profileId of ["balanced-v1", "sensitive-v1"] as const) {
+  for (const profileId of candidates) {
     assert.equal(replay(SHARED_PITCH, profileId).summary.orderedAdvanceCount, 6, profileId);
   }
   assert.equal(replay(SHARED_PITCH, "baseline-v1").summary.orderedAdvanceCount, 1);
