@@ -1334,7 +1334,7 @@ present exactly once.
 candidate-matrix results, held-back cases remain identifiable as confirmation,
 and no aggregate can hide a renderer, piano, layer, or articulation regression.
 
-**Completion evidence:** `listenProfileValidationBenchmark.ts` now owns the
+**Completion evidence:** Commit `f73a477`. `listenProfileValidationBenchmark.ts` now owns the
 dynamics and articulation portion beside the isolated and sequence ones. It joins
 the manifest's 52 `dynamics-constant`, `dynamics-mixed`, and `articulation`
 descriptors to the passage and instrument they render, captures each once through
