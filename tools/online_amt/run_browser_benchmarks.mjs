@@ -24,6 +24,13 @@ const LISTEN_MULTIDOMAIN_SWEEP_SUMMARY_MODE = CONFIGURATION_FILTER ===
   "listen-matcher-multidomain-sweep-summary";
 const LISTEN_MULTIDOMAIN_SWEEP_MODE = CONFIGURATION_FILTER ===
   "listen-matcher-multidomain-sweep" || LISTEN_MULTIDOMAIN_SWEEP_SUMMARY_MODE;
+const LISTEN_ISOLATED_VALIDATION_SUMMARY_MODE = CONFIGURATION_FILTER ===
+  "listen-isolated-profile-validation-summary";
+const LISTEN_ISOLATED_VALIDATION_MODE = [
+  "listen-isolated-profile-validation",
+  "listen-isolated-profile-validation-legacy",
+  "listen-isolated-profile-validation-tone",
+].includes(CONFIGURATION_FILTER) || LISTEN_ISOLATED_VALIDATION_SUMMARY_MODE;
 const LISTEN_RETRIGGER_SWEEP_SUMMARY_MODE = CONFIGURATION_FILTER ===
   "listen-retrigger-sweep-summary";
 const LISTEN_RETRIGGER_SWEEP_MODE = CONFIGURATION_FILTER === "listen-retrigger-sweep" ||
@@ -212,6 +219,7 @@ async function runConfiguration(configuration) {
       ? BASE_URL.replace(/online-amt-benchmark\.html(?:\?.*)?$/, "listen-benchmark-parity.html")
       : (LISTEN_SMOKE_MODE || LISTEN_DYNAMICS_SMOKE_MODE || LISTEN_ACCURACY_MODE || LISTEN_SEQUENCE_MODE ||
         LISTEN_THRESHOLD_SWEEP_MODE || LISTEN_MULTIDOMAIN_SWEEP_MODE ||
+        LISTEN_ISOLATED_VALIDATION_MODE ||
         LISTEN_RETRIGGER_SWEEP_MODE || LISTEN_ARTICULATION_MODE ||
         LISTEN_INFERENCE_RESET_MODE || LISTEN_DYNAMICS_CONSTANT_MODE ||
         LISTEN_DYNAMICS_MIXED_MODE || LISTEN_DYNAMICS_CASE_MODE ||
@@ -366,6 +374,10 @@ async function runConfiguration(configuration) {
       // and regression corpora, then replays 1,000 profiles against each trace.
       LISTEN_MULTIDOMAIN_SWEEP_MODE
         ? 7_200_000
+        // Both renderers' complete isolated corpus is rendered and recognized
+        // once per fixture, then replayed through every frozen profile.
+        : LISTEN_ISOLATED_VALIDATION_MODE
+        ? 3_600_000
         : (LISTEN_RETRIGGER_SWEEP_MODE || LISTEN_DYNAMICS_CONSTANT_MODE)
         ? 1_200_000
         : (LISTEN_ACCURACY_MODE || LISTEN_SEQUENCE_MODE || LISTEN_THRESHOLD_SWEEP_MODE ||
@@ -609,6 +621,13 @@ async function runConfiguration(configuration) {
                   })),
               })),
             };
+          })()`
+        : LISTEN_ISOLATED_VALIDATION_MODE
+        ? `(async () => {
+            const result = window.listenIsolatedProfileValidationResult;
+            const { conciseListenIsolatedProfileValidationResult } =
+              await import("/src/listenProfileValidationBenchmark.ts");
+            return conciseListenIsolatedProfileValidationResult(result);
           })()`
         : LISTEN_MULTIDOMAIN_SWEEP_MODE
         ? `(async () => {
@@ -922,6 +941,20 @@ const selectedConfigurations = FINGERING_SMOKE_MODE
       LISTEN_SEQUENCE_SUMMARY_MODE ? "listen-sequence-summary" : "listen-sequence",
       "listen-sequence=auto",
     )
+  : LISTEN_ISOLATED_VALIDATION_MODE
+  // One configuration by default: the isolated matrix captures both renderers
+  // itself, because its gates are stated per renderer against one manifest.
+  ? [{
+      name: LISTEN_ISOLATED_VALIDATION_SUMMARY_MODE
+        ? "listen-isolated-profile-validation-summary"
+        : CONFIGURATION_FILTER,
+      query: "listen-isolated-profile-validation=auto" +
+        (CONFIGURATION_FILTER === "listen-isolated-profile-validation-legacy"
+          ? "&benchmark-renderer=legacy"
+          : CONFIGURATION_FILTER === "listen-isolated-profile-validation-tone"
+          ? "&benchmark-renderer=tone"
+          : ""),
+    }]
   : LISTEN_MULTIDOMAIN_SWEEP_MODE
   // One configuration, not a renderer pair: the multi-domain sweep captures both
   // renderers itself because its worst-domain metric spans them.
@@ -1096,6 +1129,22 @@ for (let index = 0; index < selectedConfigurations.length; index += 1) {
           articulation: profile.articulation,
           summary: profile.summary,
           deltaFromNormal: profile.deltaFromNormal,
+        })),
+      }
+    : LISTEN_ISOLATED_VALIDATION_SUMMARY_MODE
+    ? {
+        manifest: result.manifest,
+        partitions: result.partitions,
+        baselineProfileId: result.baselineProfileId,
+        candidateProfileIds: result.candidateProfileIds,
+        traceReuseVerified: result.traceReuseVerified,
+        baselineParityVerified: result.baselineParityVerified,
+        renderers: result.renderers.map((renderer) => ({
+          rendererKey: renderer.rendererKey,
+          renderer: renderer.renderer,
+          caseCount: renderer.caseCount,
+          correctTrialCount: renderer.correctTrialCount,
+          profiles: renderer.profiles,
         })),
       }
     : LISTEN_MULTIDOMAIN_SWEEP_SUMMARY_MODE
@@ -1276,6 +1325,36 @@ for (let index = 0; index < selectedConfigurations.length; index += 1) {
       `raw-delta=${summary.rawEvidenceDelta} ` +
       `audio=${result.audioSignature.pcmHash}`,
     );
+  } else if (LISTEN_ISOLATED_VALIDATION_MODE) {
+    console.error(
+      `${configuration.name}: manifest=${result.manifest.version}/${result.manifest.hash} ` +
+      `captured=${result.manifest.capturedTraceCount} ` +
+      `partitions=${result.partitions.join(",")} ` +
+      `candidates=${result.candidateProfileIds.join(",")} ` +
+      `trace-reuse=${result.traceReuseVerified} baseline-parity=${result.baselineParityVerified}`,
+    );
+    for (const renderer of result.renderers) {
+      for (const profile of renderer.profiles) {
+        const delta = profile.deltaFromBaseline;
+        console.error(
+          `${configuration.name}: ${renderer.rendererKey} ${profile.profileId} ` +
+          `correct=${profile.correctAdvanceCount}/${profile.correctTrialCount} ` +
+          `course-clear=${profile.courseClearAdvanceCount}/` +
+          `${profile.courseClearCorrectTrialCount} ` +
+          `false=${profile.distinguishableFalseAdvanceCount} ` +
+          `ambiguous=${profile.ambiguousAdvanceCount} ` +
+          `p95=${profile.p95OnsetToAdvanceMs ?? "n/a"}ms ` +
+          `gate=${profile.acceptance.passed ? "pass" : "fail"}` +
+          (delta
+            ? ` delta-correct=${delta.correctAdvanceCount >= 0 ? "+" : ""}` +
+              `${delta.correctAdvanceCount} delta-false=${delta.distinguishableFalseAdvanceCount}` +
+              (delta.lostCorrectTraceIds.length > 0
+                ? ` LOST=${delta.lostCorrectTraceIds.join(",")}`
+                : "")
+            : ""),
+        );
+      }
+    }
   } else if (LISTEN_MULTIDOMAIN_SWEEP_MODE) {
     console.error(
       `${configuration.name}: manifest=${result.manifest.version}/${result.manifest.hash} ` +

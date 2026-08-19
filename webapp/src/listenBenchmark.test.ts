@@ -2,11 +2,19 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   COURSE_CLEAR_BENCHMARK_MOMENTS,
+  SPECTRAL_ISOLATED_MATCHER_IDENTITY,
   isMathematicallyAmbiguousCase,
+  listenBenchmarkMatcherIdentity,
   summarizeListenBenchmark,
+  type ListenBenchmarkMatcherIdentity,
   type ListenBenchmarkTrial,
 } from "./listenBenchmark";
 import { LISTEN_BENCHMARK_TONE_RENDERER } from "./listenBenchmarkAudio";
+import {
+  LISTEN_MATCHER_PROFILES,
+  listenMatcherThresholds,
+  type ListenMatcherProfileId,
+} from "./listenMatcherProfiles";
 
 function trial(update: Partial<ListenBenchmarkTrial> = {}): ListenBenchmarkTrial {
   return {
@@ -91,4 +99,48 @@ test("enforces a separate 95 percent Course Clear success gate", () => {
   assert.equal(eighteenOfTwenty.courseClear.successRate, 0.9);
   assert.equal(eighteenOfTwenty.acceptance.courseClearSuccessRate, false);
   assert.equal(eighteenOfTwenty.acceptance.passed, false);
+});
+
+test("every isolated summary names the matcher its trials ran under", () => {
+  // The historical online-AMT corpus belongs to baseline-v1 by name, not to
+  // whichever profile production happens to default to later.
+  const historical = summarizeListenBenchmark([trial()]);
+  assert.equal(historical.matcher.profileId, "baseline-v1");
+  assert.deepEqual(
+    historical.matcher.thresholds,
+    listenMatcherThresholds(LISTEN_MATCHER_PROFILES["baseline-v1"]),
+  );
+
+  const candidate = summarizeListenBenchmark(
+    [trial()],
+    listenBenchmarkMatcherIdentity("early-open-v2"),
+  );
+  assert.equal(candidate.matcher.profileId, "early-open-v2");
+  assert.equal(candidate.matcher.thresholds.onsetThreshold, 0.45);
+
+  // The spectral path predates the registry and records its own defaults.
+  assert.equal(SPECTRAL_ISOLATED_MATCHER_IDENTITY.profileId, "chord-matcher-defaults");
+  assert.equal(
+    summarizeListenBenchmark([trial()], SPECTRAL_ISOLATED_MATCHER_IDENTITY).matcher.profileId,
+    "chord-matcher-defaults",
+  );
+
+  assert.throws(
+    () => listenBenchmarkMatcherIdentity("balanced-v2" as ListenMatcherProfileId),
+    /Unknown listen matcher profile identifier/,
+  );
+  assert.throws(
+    () => summarizeListenBenchmark(
+      [trial()],
+      { profileId: "made-up", thresholds: listenMatcherThresholds(LISTEN_MATCHER_PROFILES["baseline-v1"]) } as unknown as ListenBenchmarkMatcherIdentity,
+    ),
+    /Invalid listen benchmark matcher identity/,
+  );
+  assert.throws(
+    () => summarizeListenBenchmark(
+      [trial()],
+      { profileId: "baseline-v1", thresholds: { onsetThreshold: 2 } } as unknown as ListenBenchmarkMatcherIdentity,
+    ),
+    /Invalid listen benchmark matcher identity/,
+  );
 });

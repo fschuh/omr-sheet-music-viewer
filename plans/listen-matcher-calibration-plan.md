@@ -1147,7 +1147,7 @@ main-suite tests plus the dynamics pretest, and the production build passes.
 
 ### Task 09 — Add isolated candidate-matrix replay
 
-**Status:** Required. **Prerequisites:** Task 08 complete.
+**Status:** Completed August 19, 2026. **Prerequisites:** Task 08 complete.
 
 **Objective:** Compare `baseline-v1` and the frozen Task 08 candidates on exactly
 the same untouched isolated correct and wrong-note evidence under both renderers,
@@ -1176,6 +1176,52 @@ processes follow the Task 04 decoded-structure and Float32 identity rules.
 **Complete when:** The full frozen candidate matrix has deterministic adjacent
 isolated results under both renderers, the data remains tagged `confirmation`,
 and no candidate value or discovery choice has changed from those results.
+
+**Completion evidence:** Commit `TASK09_COMMIT`. `listenProfileValidationBenchmark.ts` now
+owns the isolated portion of frozen-candidate validation. It joins the manifest's
+268 isolated `confirmation` descriptors to the fixture corpus they name, captures
+each fixture once through the historical isolated capture path, and replays that
+one retained trace through `baseline-v1` and the four frozen candidates. It
+imports neither the sweep nor grid generation, and its candidate column is
+`LISTEN_MULTIDOMAIN_CANDIDATE_PROFILE_IDS` unless a caller passes a list that is
+validated for unknown identifiers, duplicates, and the baseline appearing as a
+candidate.
+
+`listenBenchmark.ts` now names the profile of every isolated result instead of
+following the production default pointer: `captureIsolatedOnlineAmtBenchmark` and
+`runBundledOnlineAmtBenchmark` take an explicit profile that defaults to
+`baseline-v1`, `replayIsolatedListenTrace` accepts a registry identifier as well
+as bare thresholds, and every `ListenBenchmarkSummary` carries the matcher
+identity it was measured under. The legacy spectral path records the chord
+matcher's own defaults rather than borrowing a registry identifier it never ran.
+`matcherOptionsForListenMatcherProfile` now rejects an unknown identifier instead
+of silently converting the default, so a misspelled candidate fails the replay.
+
+Measured with `listen-isolated-profile-validation` at Chrome 151.0.7922.169 on
+Linux. `baseline-v1` reproduces the recorded paired baseline exactly — Direct
+104/106 and 52/54, Tone 100/106 and 48/54, zero distinguishable false advances,
+196 ms and 228 ms p95 — and every fixture's baseline column reproduces its own
+capture-time replay. No candidate loses a correct advance. `early-open-v2` and
+`steady-open-v2` recover both repetitions of Course Clear measure 3 moment 5
+(`[53, 65, 74]`) under both renderers, which the two `held` candidates do not, so
+the recovery comes from the 0.20 active-target gate rather than the fresh-onset
+gate. All four candidates add exactly one distinguishable false advance: the
+omitted-bass fixture `isolated/direct/122` (`[48, 60, 68]` played as `[60, 68]`)
+under Direct and `isolated/tone/124` (`[56, 68, 75]` played as `[68, 75]`) under
+Tone, each completed by a decoded onset on a bass pitch that was never sounded,
+whose confidence the `steady`/`baseline` split places in `[0.50, 0.60)`. Whether
+that disqualifies a candidate is Task 12's gate decision; nothing here changed a
+candidate value, and the default remains `baseline-v1`.
+
+Two complete runs in fresh browser processes produced byte-identical exports,
+including all 268 decoded-structure hashes and every continuous value, so the
+Float32 tolerance was not needed. Seven new unit tests cover the frozen column
+order and its rejections, the manifest/fixture join, one capture serving every
+profile column, refusal of a capture that answers with another fixture or
+renderer, per-case-kind and baseline-delta aggregation, and replay matching the
+ordinary matcher path's generation and timestamp behavior. The unit suite is 322
+main-suite tests plus the dynamics pretest, and the production build passes.
+`tools/online_amt/LISTEN_BENCHMARK.md` records the measured matrix.
 
 ### Task 10 — Add continuous-sequence candidate-matrix replay
 

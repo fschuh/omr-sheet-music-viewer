@@ -7,6 +7,117 @@
 Entries are kept newest first so renderer and recognition changes remain
 comparable over time.
 
+### Isolated candidate-matrix confirmation — August 19, 2026
+
+The first frozen-candidate result measured on evidence the multi-domain search
+was never allowed to read. The complete isolated corpus — 134 fixtures per
+renderer, all of it `confirmation` in manifest version 1 — is rendered and
+recognized once per fixture, and `baseline-v1` plus the four frozen candidates
+then replay that one retained decoded trace. No threshold was selected from
+these numbers, and none was changed after seeing them.
+
+```bash
+node tools/online_amt/run_browser_benchmarks.mjs \
+  http://127.0.0.1:5174/online-amt-benchmark.html listen-isolated-profile-validation
+```
+
+Measured at commit `TASK09_COMMIT`, Chrome 151.0.7922.169 on Linux, model
+`online_amt_streaming.onnx`, renderers `bundled-piano-web-audio-v1` and
+`bundled-piano-tone-v2`. Manifest version 1, hash `0ed1e71d`; 268 isolated
+traces captured, one capture per fixture and five profile columns replayed from
+each. Registry version 2, candidates `early-open-v2`, `steady-open-v2`,
+`early-held-v2`, `steady-held-v2`.
+
+#### Baseline parity
+
+`baseline-v1` reproduces the recorded August 15 paired renderer baseline exactly:
+104/106 overall and 52/54 on Course Clear under Direct, 100/106 and 48/54 under
+Tone, zero distinguishable false advances, 4 and 5 ambiguous advances, and 196 ms
+and 228 ms p95 onset-to-advance latency. Every fixture's baseline column also
+reproduces its own capture-time replay event for event, so the harness is fixed
+and the candidate columns differ only by the matcher.
+
+#### Direct `bundled-piano-web-audio-v1`
+
+| Profile | Correct | Course Clear | Distinguishable false | Ambiguous | p95 | Fixed gate |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| `baseline-v1` | 104 / 106 (98.1%) | 52 / 54 (96.3%) | 0 | 4 | 196 ms | Pass |
+| `early-open-v2` | 106 / 106 (100%) | 54 / 54 (100%) | 1 | 5 | 196 ms | Fail |
+| `steady-open-v2` | 106 / 106 (100%) | 54 / 54 (100%) | 1 | 5 | 196 ms | Fail |
+| `early-held-v2` | 104 / 106 (98.1%) | 52 / 54 (96.3%) | 1 | 5 | 196 ms | Fail |
+| `steady-held-v2` | 104 / 106 (98.1%) | 52 / 54 (96.3%) | 1 | 5 | 196 ms | Fail |
+
+#### Tone `bundled-piano-tone-v2`
+
+| Profile | Correct | Course Clear | Distinguishable false | Ambiguous | p95 | Fixed gate |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| `baseline-v1` | 100 / 106 (94.3%) | 48 / 54 (88.9%) | 0 | 5 | 228 ms | Fail |
+| `early-open-v2` | 102 / 106 (96.2%) | 50 / 54 (92.6%) | 1 | 5 | 228 ms | Fail |
+| `steady-open-v2` | 102 / 106 (96.2%) | 50 / 54 (92.6%) | 1 | 5 | 228 ms | Fail |
+| `early-held-v2` | 100 / 106 (94.3%) | 48 / 54 (88.9%) | 1 | 5 | 228 ms | Fail |
+| `steady-held-v2` | 100 / 106 (94.3%) | 48 / 54 (88.9%) | 1 | 5 | 228 ms | Fail |
+
+`baseline-v1` fails the fixed isolated gate under Tone for the already recorded
+reason — 94.3% is below the 95% overall requirement — not because of anything
+this matrix changed. The candidate `Fail` rows are all caused by the false
+advance below; latency and Course Clear are unaffected.
+
+#### What each candidate changed
+
+Every profile column comes from the same trace, so each difference is a matcher
+decision on identical recognition. No candidate lost a correct advance anywhere.
+
+| Renderer | Profile | Gained correct | New distinguishable false |
+| --- | --- | --- | --- |
+| Direct | `early-open-v2`, `steady-open-v2` | `isolated/direct/093`, `isolated/direct/094` | `isolated/direct/122` |
+| Direct | `early-held-v2`, `steady-held-v2` | none | `isolated/direct/122` |
+| Tone | `early-open-v2`, `steady-open-v2` | `isolated/tone/093`, `isolated/tone/094` | `isolated/tone/124` |
+| Tone | `early-held-v2`, `steady-held-v2` | none | `isolated/tone/124` |
+
+The two recovered fixtures are both repetitions of Course Clear measure 3,
+moment 5, the chord `[53, 65, 74]` whose 65 has been documented as a weak upper
+note since the August 15 paired baseline. It is recovered by the two `open`
+candidates and not by the two `held` candidates, so the recovery comes from the
+0.20 active-target gate rather than from the lower fresh-onset gate: the missing
+pitch is present as sustained evidence between 0.20 and 0.275, never as its own
+onset.
+
+#### The one new false advance
+
+All four candidates advance one omitted-bass fixture that `baseline-v1` refuses,
+and it is a different fixture under each renderer:
+
+| Fixture | Score moment | Target | Played | Advancing profiles |
+| --- | --- | --- | --- | --- |
+| `isolated/direct/122` | Measure 2, moment 4 | `[48, 60, 68]` | `[60, 68]` | all four candidates |
+| `isolated/tone/124` | Measure 2, moment 6 | `[56, 68, 75]` | `[68, 75]` | all four candidates |
+
+These are genuine distinguishable false advances, not harmonic ambiguity: the
+bass was never played, and the summary already classifies an octave-related
+omission as `ambiguous-harmonic` before it can reach this count. Every
+production-eligible profile requires a fresh bass onset, and for a three-note
+target the matcher refuses to complete the lowest pitch from sustained evidence,
+so the advance can only have come from a decoded onset on a bass pitch that was
+never sounded. Both `steady` candidates advance at a 0.50 fresh-onset gate while
+`baseline-v1` refuses at 0.60, which places that phantom onset's confidence in
+`[0.50, 0.60)`.
+
+This is exactly the trade the multi-domain search could not see: the isolated
+omitted-bass fixtures are confirmation data, so no rejection rule was fitted to
+them. Whether it disqualifies a candidate is Task 12's gate decision, taken with
+the sequence, dynamics, and articulation evidence beside it; nothing here
+changes a candidate value or the production default, which remains
+`baseline-v1`.
+
+#### Repeatability
+
+The matrix was run twice in fresh browser processes on the final code. Both
+exported results are byte-identical, including all 268 decoded-structure hashes,
+every frame count, every advancement, and every p95 latency, so the documented
+Float32 tolerance was not needed. The single-renderer
+`listen-isolated-profile-validation-tone` command reproduces the paired run's
+Tone rows exactly. A paired run takes about 80 seconds.
+
 ### Multi-domain matcher sweep and frozen candidate registry — August 19, 2026
 
 The first threshold search that spans every domain now known to matter. It
@@ -1306,6 +1417,15 @@ node tools\online_amt\run_browser_benchmarks.mjs `
   http://127.0.0.1:5174/online-amt-benchmark.html listen-matcher-multidomain-sweep-summary
 
 node tools\online_amt\run_browser_benchmarks.mjs `
+  http://127.0.0.1:5174/online-amt-benchmark.html listen-isolated-profile-validation
+
+node tools\online_amt\run_browser_benchmarks.mjs `
+  http://127.0.0.1:5174/online-amt-benchmark.html listen-isolated-profile-validation-summary
+
+node tools\online_amt\run_browser_benchmarks.mjs `
+  http://127.0.0.1:5174/online-amt-benchmark.html listen-isolated-profile-validation-tone
+
+node tools\online_amt\run_browser_benchmarks.mjs `
   http://127.0.0.1:5174/online-amt-benchmark.html listen-retrigger-sweep
 
 node tools\online_amt\run_browser_benchmarks.mjs `
@@ -1320,6 +1440,16 @@ node tools\online_amt\run_browser_benchmarks.mjs `
 node tools\online_amt\run_browser_benchmarks.mjs `
   http://127.0.0.1:5174/online-amt-benchmark.html listen-dynamics-case-tone salamander v05
 ```
+
+`listen-isolated-profile-validation` replays `baseline-v1` and the frozen
+multi-domain candidates over the complete isolated `confirmation` corpus. Like
+the multi-domain sweep it captures both renderers in one process, because its
+acceptance is stated per renderer against one manifest; append `-legacy` or
+`-tone` to restrict it to one. Each fixture is rendered and recognized once and
+every profile replays that same retained trace, so it neither reruns inference
+per profile nor searches new values. The historical single-profile
+`listen-accuracy` command is unchanged; its summary now records `baseline-v1` by
+name rather than following whichever profile production defaults to.
 
 `listen-matcher-multidomain-sweep` is the only listening command that is not a
 renderer pair. It captures the frozen `discovery` and `regression-only`

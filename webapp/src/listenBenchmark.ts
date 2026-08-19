@@ -1,12 +1,17 @@
-import { ExactChordMatcher } from "./chordMatcher";
+import { ExactChordMatcher, defaultChordMatcherOptions } from "./chordMatcher";
 import { ONLINE_AMT_CHUNK_SIZE } from "./onlineAmtProtocol";
 import { OnlineAmtSession } from "./onlineAmtSession";
 import {
+  findListenMatcherProfile,
+  isListenMatcherProfileId,
+  isListenMatcherThresholds,
+  listenMatcherThresholds,
   matcherOptionsForListenMatcherProfile,
+  type ListenMatcherProfileId,
   type ListenMatcherThresholds,
 } from "./listenMatcherProfiles";
 import {
-  LISTEN_BASELINE_PROFILE,
+  LISTEN_BASELINE_PROFILE_ID,
   assertIsolatedListenTrialParity,
   assertRecognitionTraceUnmutated,
   assertRenderedTraceAudioIdentity,
@@ -40,9 +45,70 @@ import type { PianoId, PianoLayerId } from "./pianoRegistry";
 export { COURSE_CLEAR_BENCHMARK_MOMENTS, type ScoreBenchmarkMoment };
 
 const FFT_SIZE = 16_384;
-const PRE_ROLL_MS = 220;
 const MAX_AFTER_ONSET_MS = 900;
+
+/**
+ * Silence before the single attack. Replay reports every latency relative to it,
+ * exactly as the live path reports latency relative to the moment the target was
+ * shown, so an isolated latency and a production latency mean the same thing.
+ */
+export const ISOLATED_LISTEN_BENCHMARK_PRE_ROLL_MS = 220;
+const PRE_ROLL_MS = ISOLATED_LISTEN_BENCHMARK_PRE_ROLL_MS;
 export const ISOLATED_LISTEN_BENCHMARK_DURATION_MS = PRE_ROLL_MS + MAX_AFTER_ONSET_MS;
+
+/**
+ * The matcher one set of isolated trials ran under.
+ *
+ * Every measured summary names it, so a historical result can never be reread as
+ * if it had been produced by whichever profile production happens to default to
+ * later. The spectral path predates the profile registry and still runs the
+ * chord matcher's own defaults, so it names those values rather than borrowing a
+ * registry identifier it never used.
+ */
+export type ListenBenchmarkMatcherId = ListenMatcherProfileId | "chord-matcher-defaults";
+
+export interface ListenBenchmarkMatcherIdentity {
+  profileId: ListenBenchmarkMatcherId;
+  thresholds: ListenMatcherThresholds;
+}
+
+/** The registry entry a run names, with the exact values it was measured at. */
+export function listenBenchmarkMatcherIdentity(
+  profileId: ListenMatcherProfileId,
+): ListenBenchmarkMatcherIdentity {
+  const profile = findListenMatcherProfile(profileId);
+  if (!profile) {
+    throw new Error(`Unknown listen matcher profile identifier: ${String(profileId)}`);
+  }
+  return Object.freeze({ profileId, thresholds: listenMatcherThresholds(profile) });
+}
+
+/**
+ * The legacy spectral isolated path's matcher, recorded rather than renamed. Its
+ * measured results predate the registry and must not be relabelled as a profile
+ * result they were never produced by.
+ */
+export const SPECTRAL_ISOLATED_MATCHER_IDENTITY: ListenBenchmarkMatcherIdentity = Object.freeze({
+  profileId: "chord-matcher-defaults",
+  thresholds: Object.freeze({
+    onsetThreshold: defaultChordMatcherOptions.onsetThreshold,
+    targetNoteThreshold: defaultChordMatcherOptions.targetNoteThreshold,
+    activeTargetThreshold: defaultChordMatcherOptions.activeTargetThreshold,
+    extraNoteThreshold: defaultChordMatcherOptions.noteThreshold,
+    requireFreshBassOnset: defaultChordMatcherOptions.requireFreshBassOnset,
+  }),
+});
+
+function assertListenBenchmarkMatcherIdentity(
+  matcher: ListenBenchmarkMatcherIdentity,
+): ListenBenchmarkMatcherIdentity {
+  const named = matcher.profileId === "chord-matcher-defaults" ||
+    isListenMatcherProfileId(matcher.profileId);
+  if (!named || !isListenMatcherThresholds(matcher.thresholds)) {
+    throw new Error(`Invalid listen benchmark matcher identity: ${JSON.stringify(matcher)}`);
+  }
+  return matcher;
+}
 
 export interface ListenBenchmarkTrial {
   source: "bundled" | "acoustic" | "digital";
@@ -73,6 +139,8 @@ export interface ListenBenchmarkTrial {
 
 export interface ListenBenchmarkSummary {
   renderer: ListenBenchmarkRendererConfiguration;
+  /** The named matcher every trial in this summary was evaluated under. */
+  matcher: ListenBenchmarkMatcherIdentity;
   trials: ListenBenchmarkTrial[];
   correctTrialCount: number;
   successRate: number;
@@ -99,7 +167,13 @@ function percentile95(values: number[]): number | null {
   return ordered[Math.ceil(ordered.length * 0.95) - 1];
 }
 
-export function summarizeListenBenchmark(trials: ListenBenchmarkTrial[]): ListenBenchmarkSummary {
+export function summarizeListenBenchmark(
+  trials: ListenBenchmarkTrial[],
+  matcher: ListenBenchmarkMatcherIdentity = listenBenchmarkMatcherIdentity(
+    LISTEN_BASELINE_PROFILE_ID,
+  ),
+): ListenBenchmarkSummary {
+  assertListenBenchmarkMatcherIdentity(matcher);
   const correct = trials.filter((trial) => trial.expectedCorrect);
   const successRate = correct.length === 0
     ? 0
@@ -135,6 +209,7 @@ export function summarizeListenBenchmark(trials: ListenBenchmarkTrial[]): Listen
     acceptance.courseClearSuccessRate && acceptance.falseAdvances;
   return {
     renderer: { ...(trials.find(({ renderer }) => renderer)?.renderer ?? LISTEN_BENCHMARK_RENDERER) },
+    matcher,
     trials,
     correctTrialCount: correct.length,
     successRate,
@@ -194,6 +269,9 @@ export function isMathematicallyAmbiguousCase(
 
 class SpectralBenchmarkClient {
   private readonly audioContext = new AudioContext({ latencyHint: "interactive" });
+
+  /** Named for the record only: this path constructs the chord matcher's defaults. */
+  readonly matcher = SPECTRAL_ISOLATED_MATCHER_IDENTITY;
 
   constructor(private readonly renderer: ListenBenchmarkRendererConfiguration) {}
 
@@ -335,7 +413,14 @@ class OnlineAmtBenchmarkClient {
     executionMode: "sequential",
   });
 
-  constructor(private readonly renderer: ListenBenchmarkRendererConfiguration) {}
+  readonly matcher: ListenBenchmarkMatcherIdentity;
+
+  constructor(
+    private readonly renderer: ListenBenchmarkRendererConfiguration,
+    private readonly profileId: ListenMatcherProfileId,
+  ) {
+    this.matcher = listenBenchmarkMatcherIdentity(profileId);
+  }
 
   async evaluate(
     generation: number,
@@ -348,6 +433,7 @@ class OnlineAmtBenchmarkClient {
       playedPitches,
       session: await this.session,
       renderer: this.renderer,
+      profileId: this.profileId,
     });
   }
 
@@ -368,6 +454,16 @@ type BundledBenchmarkEvaluation = Pick<
   | "piano"
 >;
 
+/**
+ * Renders, recognizes, and matcher-replays one isolated fixture.
+ *
+ * The profile is named explicitly and defaults to the frozen `baseline-v1`
+ * entry rather than to whichever profile production currently points at, so a
+ * later default change cannot silently redefine what a historical isolated
+ * result means. The retained trace is returned with the evaluation, so a
+ * candidate matrix can replay the identical decoded recognition without
+ * rerendering audio or rerunning inference.
+ */
 export async function captureIsolatedOnlineAmtBenchmark(options: {
   generation: number;
   targetPitches: readonly number[];
@@ -376,7 +472,10 @@ export async function captureIsolatedOnlineAmtBenchmark(options: {
   renderer?: ListenBenchmarkRendererConfiguration;
   piano?: PianoId;
   layer?: PianoLayerId;
+  profileId?: ListenMatcherProfileId;
 }): Promise<BundledBenchmarkEvaluation> {
+  const profileId: ListenMatcherProfileId = options.profileId ?? LISTEN_BASELINE_PROFILE_ID;
+  const matcher = listenBenchmarkMatcherIdentity(profileId);
   const rendered = await renderIsolatedListenBenchmarkAudio(
     options.playedPitches,
     options.renderer,
@@ -386,7 +485,8 @@ export async function captureIsolatedOnlineAmtBenchmark(options: {
     ...options.targetPitches,
     ...options.playedPitches,
   ])].sort((left, right) => left - right);
-  const label = `isolated ${options.playedPitches.join("+")} on ${rendered.renderer.version}`;
+  const label = `isolated ${options.playedPitches.join("+")} on ${rendered.renderer.version} ` +
+    `under ${profileId}`;
   const renderedSignature = signatureForBenchmarkPcm(rendered.pcm);
   const trace = await captureListenSequenceTrace({
     sequenceId: "isolated-one-event",
@@ -403,16 +503,23 @@ export async function captureIsolatedOnlineAmtBenchmark(options: {
     trace,
     targetPitches: options.targetPitches,
     generation: options.generation,
+    profile: profileId,
   });
-  assertRecognitionTraceUnmutated(`${label} current-matcher replay`, trace, capturedRecognitionHash);
-  const baselineEvaluation = replayIsolatedListenTrace({
+  assertRecognitionTraceUnmutated(`${label} named-profile replay`, trace, capturedRecognitionHash);
+  /**
+   * Replaying the retained trace a second time from the profile's bare threshold
+   * values must reproduce the first result exactly. That proves both that replay
+   * is a pure read of captured recognition and that naming a registry entry means
+   * the same thing as passing the values it is frozen at.
+   */
+  const repeatedEvaluation = replayIsolatedListenTrace({
     trace,
     targetPitches: options.targetPitches,
     generation: options.generation,
-    profile: LISTEN_BASELINE_PROFILE,
+    profile: matcher.thresholds,
   });
-  assertRecognitionTraceUnmutated(`${label} baseline replay`, trace, capturedRecognitionHash);
-  assertIsolatedListenTrialParity(label, evaluation, baselineEvaluation);
+  assertRecognitionTraceUnmutated(`${label} repeat replay`, trace, capturedRecognitionHash);
+  assertIsolatedListenTrialParity(label, evaluation, repeatedEvaluation);
   return {
     advanced: evaluation.advanced,
     onsetToAdvanceMs: evaluation.onsetToAdvanceMs,
@@ -434,7 +541,7 @@ export function replayIsolatedListenTrace(options: {
   trace: ListenRecognitionTrace;
   targetPitches: readonly number[];
   generation?: number;
-  profile?: ListenMatcherThresholds;
+  profile?: ListenMatcherThresholds | ListenMatcherProfileId;
 }): IsolatedListenTrialSignature {
   const generation = options.generation ?? 1;
   const matcher = new ExactChordMatcher(
@@ -479,6 +586,7 @@ export function replayIsolatedListenTrace(options: {
 }
 
 interface BundledBenchmarkClient {
+  readonly matcher: ListenBenchmarkMatcherIdentity;
   evaluate(
     generation: number,
     targetPitches: readonly number[],
@@ -555,6 +663,7 @@ async function runBundledBenchmark(
   client: BundledBenchmarkClient,
   onProgress: (completed: number, total: number) => void = () => undefined,
 ): Promise<ListenBenchmarkSummary> {
+  const matcher = assertListenBenchmarkMatcherIdentity(client.matcher);
   const cases = bundledListenBenchmarkCases();
   const trials: ListenBenchmarkTrial[] = [];
   try {
@@ -576,7 +685,7 @@ async function runBundledBenchmark(
       });
       onProgress(index + 1, cases.length);
     }
-    return summarizeListenBenchmark(trials);
+    return summarizeListenBenchmark(trials, matcher);
   } finally {
     await client.dispose();
   }
@@ -589,9 +698,15 @@ export function runBundledListenBenchmark(
   return runBundledBenchmark(new SpectralBenchmarkClient(renderer), onProgress);
 }
 
+/**
+ * The historical single-profile isolated corpus. Its profile is named rather
+ * than inherited: the recorded 104/106 and 100/106 results belong to
+ * `baseline-v1`, whatever production later defaults to.
+ */
 export function runBundledOnlineAmtBenchmark(
   onProgress: (completed: number, total: number) => void = () => undefined,
   renderer: ListenBenchmarkRendererConfiguration = LISTEN_BENCHMARK_RENDERER,
+  profileId: ListenMatcherProfileId = LISTEN_BASELINE_PROFILE_ID,
 ): Promise<ListenBenchmarkSummary> {
-  return runBundledBenchmark(new OnlineAmtBenchmarkClient(renderer), onProgress);
+  return runBundledBenchmark(new OnlineAmtBenchmarkClient(renderer, profileId), onProgress);
 }

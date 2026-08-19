@@ -269,6 +269,11 @@ export function resolveEffectiveListenMatcherProfile(): ListenMatcherProfile {
 export function matcherOptionsForListenMatcherProfile(
   profile: ListenMatcherThresholds | ListenMatcherProfileId = DEFAULT_LISTEN_MATCHER_PROFILE_ID,
 ): ChordMatcherOptions {
+  if (typeof profile === "string" && !isListenMatcherProfileId(profile)) {
+    // Replay names profiles by identifier, so a misspelled candidate must fail
+    // here rather than quietly become a second measurement of the default.
+    throw new Error(`Unknown listen matcher profile identifier: ${profile}`);
+  }
   const resolved = typeof profile === "string" ? getListenMatcherProfile(profile) : profile;
   if (!isListenMatcherThresholds(resolved)) {
     throw new Error(`Invalid listen matcher profile: ${JSON.stringify(resolved)}`);

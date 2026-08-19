@@ -25,6 +25,12 @@ import {
   type ListenMultiDomainSweepResult,
   type ListenThresholdSweepResult,
 } from "./listenMatcherSweepBenchmark";
+import type { ListenTraceRendererKey } from "./listenTraceManifest";
+import {
+  conciseListenIsolatedProfileValidationResult,
+  runListenIsolatedProfileValidation,
+  type ListenIsolatedProfileValidationResult,
+} from "./listenProfileValidationBenchmark";
 import {
   runListenInferenceResetBenchmark,
   type ListenInferenceResetBenchmarkResult,
@@ -94,13 +100,25 @@ function requestedRenderer(): ListenBenchmarkRendererConfiguration {
     : LISTEN_BENCHMARK_RENDERER;
 }
 
+/**
+ * Renderers a multi-renderer command covers. The historical single-renderer
+ * commands default to the direct mixer when the selector is absent; a matrix
+ * whose gates are stated per renderer instead runs both unless one is named.
+ */
+function requestedRendererKeys(): ListenTraceRendererKey[] {
+  const requested = new URLSearchParams(window.location.search).get("benchmark-renderer");
+  if (requested === "tone") return ["tone"];
+  if (requested === "legacy") return ["direct"];
+  return ["direct", "tone"];
+}
+
 export function ListenBenchmarkPage() {
   const benchmarkRenderer = useMemo(requestedRenderer, []);
   const [runningTask, setRunningTask] = useState<
     "online_amt" | "spectral" | "sequence" | "threshold-sweep" | "retrigger-sweep" |
       "articulation" | "reset-comparison" | null
       | "dynamics-constant" | "dynamics-mixed" | "dynamics-case" | "sequence-case"
-      | "multidomain-sweep"
+      | "multidomain-sweep" | "isolated-profile-validation"
   >(null);
   const running = runningTask !== null;
   const [progress, setProgress] = useState("");
@@ -108,7 +126,7 @@ export function ListenBenchmarkPage() {
     "isolated" | "sequence" | "threshold-sweep" | "retrigger-sweep" | "articulation" |
       "reset-comparison"
       | "dynamics-constant" | "dynamics-mixed" | "dynamics-case" | "sequence-case"
-      | "multidomain-sweep"
+      | "multidomain-sweep" | "isolated-profile-validation"
   >("isolated");
   const [error, setError] = useState<string | null>(null);
   const [automated, setAutomated] = useState<ListenBenchmarkSummary | null>(null);
@@ -117,6 +135,8 @@ export function ListenBenchmarkPage() {
     useState<ListenThresholdSweepResult | null>(null);
   const [multiDomainSweepResult, setMultiDomainSweepResult] =
     useState<ListenMultiDomainSweepResult | null>(null);
+  const [isolatedValidationResult, setIsolatedValidationResult] =
+    useState<ListenIsolatedProfileValidationResult | null>(null);
   const [articulationResult, setArticulationResult] =
     useState<ListenArticulationMatrixResult | null>(null);
   const [retriggerSweepResult, setRetriggerSweepResult] =
@@ -156,6 +176,9 @@ export function ListenBenchmarkPage() {
     } else if (query.get("listen-retrigger-sweep") === "auto") {
       automaticBenchmarkStarted = true;
       void runRetriggerSweep();
+    } else if (query.get("listen-isolated-profile-validation") === "auto") {
+      automaticBenchmarkStarted = true;
+      void runIsolatedProfileValidation();
     } else if (query.get("listen-matcher-multidomain-sweep") === "auto") {
       automaticBenchmarkStarted = true;
       void runMultiDomainSweep();
@@ -271,6 +294,34 @@ export function ListenBenchmarkPage() {
       (window as typeof window & {
         listenMatcherMultiDomainSweepResult?: ListenMultiDomainSweepResult;
       }).listenMatcherMultiDomainSweepResult = result;
+      document.body.dataset.status = "complete";
+    } catch (benchmarkError) {
+      setError(benchmarkError instanceof Error ? benchmarkError.message : String(benchmarkError));
+      document.body.dataset.status = "error";
+    } finally {
+      setRunningTask(null);
+    }
+  }
+
+  /**
+   * The isolated candidate matrix. The manifest holds the complete isolated
+   * corpus under both renderers, so an unfiltered command validates both; the
+   * historical `benchmark-renderer` selector still narrows it to one.
+   */
+  async function runIsolatedProfileValidation() {
+    setRunningTask("isolated-profile-validation");
+    setProgressTask("isolated-profile-validation");
+    setError(null);
+    setProgress("Preparing the untouched isolated confirmation corpus…");
+    document.body.dataset.status = "running";
+    try {
+      const result = await runListenIsolatedProfileValidation((complete, total, label) => {
+        setProgress(`${complete} / ${total} fixtures · ${label}`);
+      }, requestedRendererKeys());
+      setIsolatedValidationResult(result);
+      (window as typeof window & {
+        listenIsolatedProfileValidationResult?: ListenIsolatedProfileValidationResult;
+      }).listenIsolatedProfileValidationResult = result;
       document.body.dataset.status = "complete";
     } catch (benchmarkError) {
       setError(benchmarkError instanceof Error ? benchmarkError.message : String(benchmarkError));
@@ -714,8 +765,13 @@ export function ListenBenchmarkPage() {
       </button>
       <button type="button" disabled={running} onClick={() => void run("spectral")}>
         {runningTask === "spectral" ? "Running…" : "Run spectral benchmark"}
+      </button>{" "}
+      <button type="button" disabled={running} onClick={() => void runIsolatedProfileValidation()}>
+        {runningTask === "isolated-profile-validation"
+          ? "Running…"
+          : "Run isolated candidate matrix"}
       </button>
-      {progress && progressTask === "isolated"
+      {progress && (progressTask === "isolated" || progressTask === "isolated-profile-validation")
         ? <span className="benchmark-progress">{progress}</span>
         : null}
       {error ? <div className="error">{error}</div> : null}
@@ -782,6 +838,68 @@ export function ListenBenchmarkPage() {
           <h3>Detailed isolated diagnostics</h3>
           <pre>{summaryText(automated)}</pre>
         </>
+      ) : null}
+
+      {isolatedValidationResult ? (
+        <section className="benchmark-result-summary">
+          <h3>Isolated candidate matrix</h3>
+          <p>
+            Every fixture is rendered and recognized once; <code>baseline-v1</code> and the
+            frozen multi-domain candidates then replay that one retained decoded trace. The
+            complete isolated corpus is untouched <code>confirmation</code> evidence, so no
+            threshold was selected from these numbers. Manifest{" "}
+            {isolatedValidationResult.manifest.version}/{isolatedValidationResult.manifest.hash},{" "}
+            {isolatedValidationResult.manifest.capturedTraceCount} traces captured.
+          </p>
+          <div className="benchmark-table-wrap">
+            <table className="benchmark-table">
+              <thead>
+                <tr>
+                  <th>Renderer</th>
+                  <th>Profile</th>
+                  <th>Correct advanced</th>
+                  <th>Course Clear advanced</th>
+                  <th>Distinguishable false</th>
+                  <th>Ambiguous</th>
+                  <th>p95 latency</th>
+                  <th>Correct delta</th>
+                </tr>
+              </thead>
+              <tbody>
+                {isolatedValidationResult.renderers.flatMap((renderer) => (
+                  renderer.profiles.map((profile) => (
+                    <tr key={`${renderer.rendererKey}-${profile.profileId}`}>
+                      <td>{renderer.renderer.version}</td>
+                      <td><code>{profile.profileId}</code></td>
+                      <td>
+                        {profile.correctAdvanceCount} / {profile.summary.correctTrialCount}
+                        {" "}({percentageValue(profile.summary.successRate)})
+                      </td>
+                      <td>
+                        {profile.courseClearAdvanceCount} / {profile.courseClearCorrectTrialCount}
+                        {" "}({percentageValue(profile.summary.courseClear.successRate)})
+                      </td>
+                      <td>{profile.summary.falseAdvanceCount}</td>
+                      <td>{profile.summary.ambiguousAdvanceCount}</td>
+                      <td>{profile.summary.p95OnsetToAdvanceMs === null
+                        ? "—"
+                        : `${profile.summary.p95OnsetToAdvanceMs.toFixed(0)} ms`}</td>
+                      <td>{profile.deltaFromBaseline === null
+                        ? "baseline"
+                        : `${profile.deltaFromBaseline.correctAdvanceCount >= 0 ? "+" : ""}${profile.deltaFromBaseline.correctAdvanceCount}`}</td>
+                    </tr>
+                  ))
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <h3>Detailed isolated candidate diagnostics</h3>
+          <pre>{JSON.stringify(
+            conciseListenIsolatedProfileValidationResult(isolatedValidationResult),
+            null,
+            2,
+          )}</pre>
+        </section>
       ) : null}
 
       <section className="sequence-benchmark">

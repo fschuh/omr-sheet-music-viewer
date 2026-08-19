@@ -13,6 +13,7 @@ import {
   LISTEN_MULTIDOMAIN_CANDIDATE_PROFILE_IDS,
   matcherOptionsForListenMatcherProfile,
   type ListenMatcherProfile,
+  type ListenMatcherProfileId,
 } from "./listenMatcherProfiles";
 
 test("registers the first-generation profiles and the frozen multi-domain candidates", () => {
@@ -220,4 +221,17 @@ test("rejects a structurally invalid profile object at conversion time", () => {
     onsetThreshold: 2,
   } as unknown as ListenMatcherProfile;
   assert.throws(() => matcherOptionsForListenMatcherProfile(invalid), /Invalid listen matcher profile/);
+});
+
+test("conversion refuses an unknown profile identifier instead of silently defaulting", () => {
+  // A misspelled candidate must fail the replay rather than quietly become a
+  // second measurement of the production default.
+  assert.throws(
+    () => matcherOptionsForListenMatcherProfile("early-open-v3" as ListenMatcherProfileId),
+    /Unknown listen matcher profile identifier/,
+  );
+  assert.deepEqual(
+    matcherOptionsForListenMatcherProfile("early-open-v2"),
+    matcherOptionsForListenMatcherProfile(LISTEN_MATCHER_PROFILES["early-open-v2"]),
+  );
 });
