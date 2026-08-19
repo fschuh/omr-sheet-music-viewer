@@ -23,7 +23,7 @@ node tools/online_amt/run_browser_benchmarks.mjs \
   http://127.0.0.1:5174/online-amt-benchmark.html listen-matcher-multidomain-sweep
 ```
 
-Measured at commit `31e7a65`, model `online_amt_streaming.onnx`, renderers
+Measured at commit `da418d6`, model `online_amt_streaming.onnx`, renderers
 `bundled-piano-web-audio-v1` and `bundled-piano-tone-v2`. Manifest version 1,
 hash `0ed1e71d`; 176 traces captured, 139 scored, 37 gating runs plus the 2
 committed regressions. Grid size 1,000, unchanged.

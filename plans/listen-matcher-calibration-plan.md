@@ -1099,7 +1099,7 @@ discovery variables exists under new registry IDs, historical IDs are unchanged,
 the default is still baseline, and the confirmation data remains unread by the
 selection path.
 
-**Completion evidence:** Commit `31e7a65`. `listenMatcherSweepBenchmark.ts` now owns a second
+**Completion evidence:** Commit `da418d6`. `listenMatcherSweepBenchmark.ts` now owns a second
 search beside the historical single-renderer sweep. `listen-matcher-multidomain-sweep`
 captures the 176 `discovery` and `regression-only` traces of manifest version 1
 (hash `0ed1e71d`) across both renderers in one process and replays all 1,000 grid
