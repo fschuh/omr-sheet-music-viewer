@@ -7,6 +7,10 @@ import {
   type CourseClearDynamicsRunResult,
 } from "./listenDynamicsBenchmark";
 import { LISTEN_BENCHMARK_RENDERER } from "./listenBenchmarkAudio";
+import {
+  LISTEN_MATCHER_PROFILES,
+  listenMatcherThresholds,
+} from "./listenMatcherProfiles";
 import type { ListenSequenceRunResult, ListenSequenceRunSummary } from "./listenSequenceBenchmark";
 
 function summary(update: Partial<ListenSequenceRunSummary>): ListenSequenceRunSummary {
@@ -30,7 +34,10 @@ function summary(update: Partial<ListenSequenceRunSummary>): ListenSequenceRunSu
 
 function run(layer: "pp" | "mp", update: Partial<ListenSequenceRunSummary>): CourseClearDynamicsRunResult {
   return {
-    renderer: { ...LISTEN_BENCHMARK_RENDERER }, piano: "splendid",
+    renderer: { ...LISTEN_BENCHMARK_RENDERER },
+    profileId: "baseline-v1",
+    profile: listenMatcherThresholds(LISTEN_MATCHER_PROFILES["baseline-v1"]),
+    piano: "splendid",
     pianoName: "Splendid Grand Piano", layer, dynamicProfile: "constant",
     attackLayers: Array.from({ length: 27 }, () => layer), sampleLibraryVersion: "test",
     peak: layer === "pp" ? 0.2 : 0.4, rms: layer === "pp" ? 0.05 : 0.1,

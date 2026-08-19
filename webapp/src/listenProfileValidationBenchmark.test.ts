@@ -17,36 +17,53 @@ import {
   listenRecognitionTraceHash,
 } from "./listenBaselineParity";
 import {
+  LISTEN_MATCHER_PROFILES,
   LISTEN_MULTIDOMAIN_CANDIDATE_PROFILE_IDS,
+  listenMatcherThresholds,
   matcherOptionsForListenMatcherProfile,
   type ListenMatcherProfileId,
 } from "./listenMatcherProfiles";
 import {
   LISTEN_TRACE_MANIFEST,
   listenTracesInSuite,
+  type ListenTracePartition,
 } from "./listenTraceManifest";
 import {
+  COURSE_CLEAR_ARTICULATION_INTERVAL_MS,
   LISTEN_SEQUENCE_INTERVALS_MS,
   bundledListenSequences,
   materializeListenSequence,
   replayListenSequenceTrace,
   type ListenRecognitionFrame,
   type ListenRecognitionTrace,
+  type ListenSequenceArticulation,
+  type ListenSequenceRunResult,
+  type ListenSequenceRunSummary,
   type MaterializedListenSequence,
 } from "./listenSequenceBenchmark";
+import { pianoDefinition, type PianoId, type PianoLayerId } from "./pianoRegistry";
 import {
+  conciseListenDynamicsProfileValidationResult,
   conciseListenIsolatedProfileValidationResult,
   conciseListenSequenceProfileValidationResult,
+  evaluateListenDynamicsProfileValidation,
   evaluateListenIsolatedProfileValidation,
   evaluateListenSequenceProfileValidation,
+  listenDynamicsValidationCases,
   listenIsolatedValidationCases,
   listenSequenceValidationCases,
+  listenValidationEvidenceRole,
   replayListenIsolatedProfileMatrix,
   replayListenSequenceProfileMatrix,
   resolveListenValidationProfileIds,
   listenValidationProfileIdentities,
+  summarizeListenDynamicsProfileValidation,
   summarizeListenIsolatedProfileValidation,
   summarizeListenSequenceProfileValidation,
+  type ListenDynamicsValidationCapture,
+  type ListenDynamicsValidationCase,
+  type ListenDynamicsValidationCaseResult,
+  type ListenDynamicsValidationSuite,
   type ListenIsolatedValidationCapture,
   type ListenIsolatedValidationCase,
   type ListenSequenceValidationCapture,
@@ -732,5 +749,521 @@ test("a sequence capture that answers with another passage, renderer, or speed i
       },
     }),
     /but its capture recognized .* at 500 ms/,
+  );
+});
+
+/* ------------------------------------------------------------------------- *
+ * Dynamics and articulation candidate matrix
+ * ------------------------------------------------------------------------- */
+
+function dynamicsCapture(
+  validationCase: ListenDynamicsValidationCase,
+  confidence: (validationCase: ListenDynamicsValidationCase) => number = () => 0.55,
+  renderer = validationCase.renderer,
+): ListenDynamicsValidationCapture {
+  const sequence = materializeListenSequence(
+    validationCase.definition,
+    validationCase.intervalMs,
+  );
+  const trace = sequenceTrace(sequence, confidence(validationCase), renderer);
+  return {
+    validationCase,
+    sequence,
+    trace,
+    recognitionHash: listenRecognitionTraceHash(trace),
+    recognitionStructureHash: listenRecognitionStructureHash(trace),
+    baselineRun: replayListenSequenceTrace(sequence, trace, "current-matcher", BASELINE_THRESHOLDS),
+    captured: {
+      piano: validationCase.piano,
+      layer: validationCase.layer,
+      dynamicProfile: validationCase.dynamicProfile,
+    },
+  };
+}
+
+test("dynamics validation cases join the manifest to the dynamics and articulation corpora", () => {
+  const cases = listenDynamicsValidationCases();
+  const constant = listenTracesInSuite("dynamics-constant", LISTEN_TRACE_MANIFEST);
+  const mixed = listenTracesInSuite("dynamics-mixed", LISTEN_TRACE_MANIFEST);
+  const articulation = listenTracesInSuite("articulation", LISTEN_TRACE_MANIFEST);
+  assert.equal(cases.length, constant.length + mixed.length + articulation.length);
+  // Four Splendid layers, sixteen Salamander layers, two mixed runs, and four
+  // articulations, under both renderers.
+  assert.equal(constant.length, 40);
+  assert.equal(mixed.length, 4);
+  assert.equal(articulation.length, 8);
+  // These suites are exactly what the manifest split, so both partitions are here
+  // and the diagnosed Tone Salamander v05 row gates instead of scoring.
+  assert.deepEqual(
+    [...new Set(cases.map(({ descriptor }) => descriptor.partition))].sort(),
+    ["confirmation", "discovery", "regression-only"],
+  );
+  assert.deepEqual(
+    cases.filter(({ scoreEligible }) => !scoreEligible).map(({ descriptor }) => descriptor.id),
+    ["dynamics-constant/tone/salamander/v05"],
+  );
+  assert.ok(cases.every(({ definition }) => definition.family === "course-clear-articulation"));
+  assert.ok(cases.every(({ intervalMs }) => intervalMs === COURSE_CLEAR_ARTICULATION_INTERVAL_MS));
+  // A constant layer names its velocity layer; a mixed run plays all of them.
+  assert.ok(cases.every(({ suite, layer, dynamicProfile }) => (
+    suite === "dynamics-mixed"
+      ? layer === null && dynamicProfile === "crescendo-decrescendo"
+      : layer !== null && dynamicProfile === "constant"
+  )));
+  assert.ok(cases.every(({ suite, articulation: value, definition }) => (
+    suite === "articulation" ? value === definition.articulation : value === "normal"
+  )));
+  const direct = listenDynamicsValidationCases(LISTEN_TRACE_MANIFEST, ["direct"]);
+  assert.equal(direct.length, cases.length / 2);
+  assert.ok(direct.every(({ renderer }) => renderer.version === LISTEN_BENCHMARK_RENDERER.version));
+  // A focused smoke narrows the suites; the diagnosed row travels with its own.
+  const layers = listenDynamicsValidationCases(
+    LISTEN_TRACE_MANIFEST,
+    ["direct", "tone"],
+    ["dynamics-constant"],
+  );
+  assert.equal(layers.length, constant.length);
+  assert.ok(layers.every(({ suite }) => suite === "dynamics-constant"));
+  assert.equal(
+    listenDynamicsValidationCases(LISTEN_TRACE_MANIFEST, ["tone"], ["articulation"]).length,
+    articulation.length / 2,
+  );
+  assert.throws(() => listenDynamicsValidationCases(LISTEN_TRACE_MANIFEST, []), /at least one renderer/);
+  assert.throws(
+    () => listenDynamicsValidationCases(LISTEN_TRACE_MANIFEST, ["direct", "direct"]),
+    /duplicated renderer key/,
+  );
+  assert.throws(
+    () => listenDynamicsValidationCases(LISTEN_TRACE_MANIFEST, ["direct"], []),
+    /at least one suite/,
+  );
+  assert.throws(
+    () => listenDynamicsValidationCases(
+      LISTEN_TRACE_MANIFEST,
+      ["direct"],
+      ["articulation", "articulation"],
+    ),
+    /duplicated suite/,
+  );
+  assert.throws(
+    () => listenDynamicsValidationCases(
+      LISTEN_TRACE_MANIFEST,
+      ["direct"],
+      ["sequence" as ListenDynamicsValidationSuite],
+    ),
+    /unknown suite sequence/,
+  );
+});
+
+test("every dynamics profile column replays the identical retained trace", async () => {
+  const captureCounts = new Map<string, number>();
+  const traces = new Map<string, ListenRecognitionTrace>();
+  const result = await evaluateListenDynamicsProfileValidation({
+    capture: async (validationCase) => {
+      captureCounts.set(
+        validationCase.descriptor.id,
+        (captureCounts.get(validationCase.descriptor.id) ?? 0) + 1,
+      );
+      const captured = dynamicsCapture(validationCase);
+      traces.set(validationCase.descriptor.id, captured.trace);
+      return captured;
+    },
+  });
+  assert.equal(result.renderers.length, 2);
+  assert.equal(result.traceReuseVerified, true);
+  assert.equal(result.baselineParityVerified, true);
+  // The manifest splits these suites across both partitions, so the run as a
+  // whole is mixed evidence and can never be quoted as confirmation.
+  assert.equal(result.evidenceRole, "mixed");
+  assert.deepEqual(result.partitions.slice().sort(), ["confirmation", "discovery", "regression-only"]);
+  assert.equal(result.manifest.capturedTraceCount, 52);
+  assert.ok([...captureCounts.values()].every((count) => count === 1));
+  // Candidate metadata is the frozen registry manifest, values included.
+  assert.deepEqual([...result.candidateProfileIds], [...LISTEN_MULTIDOMAIN_CANDIDATE_PROFILE_IDS]);
+  assert.deepEqual(
+    result.profiles.map(({ profileId }) => profileId),
+    ["baseline-v1", ...LISTEN_MULTIDOMAIN_CANDIDATE_PROFILE_IDS],
+  );
+  for (const identity of result.profiles) {
+    assert.deepEqual(
+      identity.profile,
+      listenMatcherThresholds(LISTEN_MATCHER_PROFILES[identity.profileId]),
+    );
+  }
+  const tone = result.renderers.find(({ rendererKey }) => rendererKey === "tone");
+  assert.ok(tone);
+  assert.equal(tone.caseCount, 26);
+  assert.equal(tone.regressionCaseCount, 1);
+  assert.equal(tone.scoredCaseCount, 25);
+  assert.deepEqual(tone.suites, ["dynamics-constant", "dynamics-mixed", "articulation"]);
+  assert.deepEqual(tone.pianos, ["splendid", "salamander"]);
+  for (const caseResult of tone.cases) {
+    const trace = traces.get(caseResult.traceId);
+    assert.ok(trace);
+    assert.equal(caseResult.recognitionStructureHash, listenRecognitionStructureHash(trace));
+    assert.equal(caseResult.frameCount, trace.frames.length);
+    assert.equal(caseResult.pcmLength, trace.pcm.length);
+    assert.deepEqual(
+      caseResult.profiles.map(({ profileId }) => profileId),
+      ["baseline-v1", ...LISTEN_MULTIDOMAIN_CANDIDATE_PROFILE_IDS],
+    );
+  }
+  // A 0.55 onset is below baseline-v1's 0.60 gate and above every candidate's.
+  const baseline = tone.profiles[0];
+  const corpus = (profile: typeof baseline) => {
+    const group = profile.groups.find(({ kind }) => kind === "corpus");
+    assert.ok(group);
+    return group;
+  };
+  assert.equal(baseline.deltaFromBaseline, null);
+  assert.equal(corpus(baseline).deltaFromBaseline, null);
+  assert.equal(corpus(baseline).totals.orderedAdvanceCount, 0);
+  assert.equal(corpus(baseline).evidenceRole, "mixed");
+  assert.equal(corpus(baseline).traceIds.length, tone.scoredCaseCount);
+  for (const candidate of tone.profiles.slice(1)) {
+    assert.ok(corpus(candidate).totals.orderedAdvanceCount > 0);
+    assert.equal(
+      corpus(candidate).deltaFromBaseline?.orderedAdvanceCount,
+      corpus(candidate).totals.orderedAdvanceCount,
+    );
+    assert.deepEqual(corpus(candidate).deltaFromBaseline?.regressedOrderedAdvanceTraceIds, []);
+    // The diagnosed row gates the column and is absent from every scored group.
+    assert.ok(!corpus(candidate).traceIds.includes("dynamics-constant/tone/salamander/v05"));
+    assert.equal(candidate.regressionTotals.sequenceCount, 1);
+  }
+  // Each partition is reported on its own, so a gate can quote confirmation alone.
+  const partitionGroups = baseline.groups.filter(({ kind }) => kind === "partition");
+  assert.deepEqual(
+    partitionGroups.map(({ evidenceRole }) => evidenceRole),
+    ["confirmation", "discovery"],
+  );
+  assert.equal(
+    partitionGroups.reduce((total, { totals }) => total + totals.sequenceCount, 0),
+    tone.scoredCaseCount,
+  );
+  // Every leaf level exists: one group per layer, mixed run, and articulation.
+  assert.equal(baseline.groups.filter(({ kind }) => kind === "layer").length, 19);
+  assert.equal(baseline.groups.filter(({ kind }) => kind === "mixed-run").length, 2);
+  assert.equal(baseline.groups.filter(({ kind }) => kind === "articulation").length, 4);
+  assert.ok(baseline.groups
+    .filter(({ kind }) => kind === "layer" || kind === "articulation" || kind === "mixed-run")
+    .every(({ partitions }) => partitions.length === 1));
+  // The diagnosed row is reported apart from every score, with its own semantics.
+  assert.equal(tone.regressionCases.length, 1);
+  assert.equal(tone.regressionCases[0].traceId, "dynamics-constant/tone/salamander/v05");
+  assert.equal(tone.regressionCases[0].layer, "v05");
+  assert.equal(tone.regressionCases[0].profiles.length, 5);
+  // Both committed regressions are replayed under every column, and the
+  // late-advance case is not counted as a safety failure.
+  for (const profile of tone.profiles) {
+    assert.deepEqual(
+      profile.safety.regressions.outcomes.map(({ fixtureId }) => fixtureId).sort(),
+      [
+        "tone-course-clear-333-shared-pitch-false-advance",
+        "tone-salamander-v05-repeated-chord-late-advance",
+      ],
+    );
+    assert.deepEqual(
+      [...new Set(profile.safety.regressions.outcomes.map(({ expectation }) => expectation))].sort(),
+      ["late-advance", "reported-unsafe-advance"],
+    );
+    assert.equal(profile.safety.passed, true);
+  }
+  const concise = conciseListenDynamicsProfileValidationResult(result);
+  assert.equal(concise.evidenceRole, "mixed");
+  assert.equal(concise.renderers[1].traceIdentities.length, tone.caseCount);
+  assert.equal(concise.renderers[1].profiles[0].profileId, "baseline-v1");
+  assert.equal(concise.renderers[1].regressionCases.length, 1);
+});
+
+test("a dynamics capture that answers with another run, renderer, or instrument is refused", async () => {
+  const directCases = listenDynamicsValidationCases(
+    LISTEN_TRACE_MANIFEST,
+    ["direct"],
+    ["dynamics-constant"],
+  );
+  await assert.rejects(
+    () => evaluateListenDynamicsProfileValidation({
+      rendererKeys: ["direct"],
+      suites: ["dynamics-constant"],
+      capture: async () => dynamicsCapture(directCases[1]),
+    }),
+    /returned dynamics-constant\/direct\/splendid\//,
+  );
+  await assert.rejects(
+    () => evaluateListenDynamicsProfileValidation({
+      rendererKeys: ["direct"],
+      suites: ["dynamics-constant"],
+      capture: async (validationCase) => dynamicsCapture(
+        validationCase,
+        () => 0.99,
+        LISTEN_BENCHMARK_TONE_RENDERER,
+      ),
+    }),
+    /expects renderer bundled-piano-web-audio-v1/,
+  );
+  await assert.rejects(
+    () => evaluateListenDynamicsProfileValidation({
+      rendererKeys: ["direct"],
+      suites: ["dynamics-constant"],
+      capture: async (validationCase) => {
+        const captured = dynamicsCapture(validationCase);
+        return { ...captured, captured: { ...captured.captured, layer: "v01" as PianoLayerId } };
+      },
+    }),
+    /but its capture rendered/,
+  );
+});
+
+const DYNAMICS_COLUMN = listenValidationProfileIdentities(resolveListenValidationProfileIds());
+
+function fabricatedSummary(update: Partial<ListenSequenceRunSummary>): ListenSequenceRunSummary {
+  const expectedEventCount = update.expectedEventCount ?? 27;
+  const independentMatchCount = update.independentMatchCount ?? 0;
+  const orderedAdvanceCount = update.orderedAdvanceCount ?? 0;
+  return {
+    complete: orderedAdvanceCount === expectedEventCount,
+    rawCompleteEvidenceCount: 0, rawCompleteEvidenceRate: 0,
+    thresholdQualifiedEventCount: 0, thresholdQualifiedEventRate: 0,
+    independentMatchCount, independentMatchRate: independentMatchCount / expectedEventCount,
+    orderedAdvanceCount, orderedAdvanceRate: orderedAdvanceCount / expectedEventCount,
+    recognizedButBlockedCount: 0, cascadeLossCount: 0, blockedEventPositions: [],
+    firstCausalStallIndex: null, correctAdvanceCount: orderedAdvanceCount,
+    expectedEventCount, correctAdvanceRate: orderedAdvanceCount / expectedEventCount,
+    orderedPrefixCompleted: orderedAdvanceCount, firstStallIndex: null,
+    missedCount: expectedEventCount - independentMatchCount, duplicateAdvanceCount: 0,
+    skippedAdvanceCount: 0, falseAdvanceCount: 0, lateAdvanceCount: 0,
+    p50OnsetToAdvanceMs: null, p95OnsetToAdvanceMs: null,
+    p50IndependentMatchLatencyMs: null, p95IndependentMatchLatencyMs: null,
+    p50OrderedAdvanceLatencyMs: null, p95OrderedAdvanceLatencyMs: null,
+    reasonCounts: {}, maximumInferenceMs: 0, maximumProcessingBacklogMs: 0,
+    nextAttackBeforeAdvanceCount: 0,
+    ...update,
+  };
+}
+
+/**
+ * One measured row, built directly rather than replayed.
+ *
+ * The aggregation rules have to be provable on outcomes the synthetic traces
+ * cannot produce — every frozen candidate is strictly more permissive than
+ * `baseline-v1`, so a candidate losing advances on one velocity layer has to be
+ * stated rather than recognized into existence.
+ */
+function fabricatedDynamicsCase(options: {
+  traceId: string;
+  partition: ListenTracePartition;
+  suite: ListenDynamicsValidationSuite;
+  piano: PianoId;
+  layer?: PianoLayerId | null;
+  articulation?: ListenSequenceArticulation | null;
+  scoreEligible?: boolean;
+  counts: (profileId: ListenMatcherProfileId) => Partial<ListenSequenceRunSummary>;
+}): ListenDynamicsValidationCaseResult {
+  const layer = options.layer ?? null;
+  return {
+    traceId: options.traceId,
+    partition: options.partition,
+    scoreEligible: options.scoreEligible ?? options.partition !== "regression-only",
+    suite: options.suite,
+    sequenceId: "course-clear-articulation-normal",
+    sequenceLabel: "Course Clear · normal",
+    piano: options.piano,
+    pianoName: options.piano === "splendid" ? "Splendid Grand Piano" : "Salamander Grand Piano",
+    layer,
+    dynamicBand: layer === null ? null : "medium",
+    dynamicProfile: options.suite === "dynamics-mixed" ? "crescendo-decrescendo" : "constant",
+    articulation: options.articulation ?? "normal",
+    intervalMs: COURSE_CLEAR_ARTICULATION_INTERVAL_MS,
+    rendererKey: "direct",
+    renderer: LISTEN_BENCHMARK_RENDERER.version,
+    recognitionStructureHash: options.traceId,
+    frameCount: 54,
+    pcmLength: 512,
+    peak: 0.4,
+    rms: 0.1,
+    maximumInferenceMs: 4,
+    maximumProcessingBacklogMs: 0,
+    profiles: DYNAMICS_COLUMN.map(({ profileId, profile }) => ({
+      profileId,
+      profile,
+      run: {
+        events: [],
+        summary: fabricatedSummary(options.counts(profileId)),
+      } as unknown as ListenSequenceRunResult,
+    })),
+  };
+}
+
+test("equal-piano aggregation gives four Splendid layers the weight of sixteen Salamander ones", () => {
+  const cases = [
+    ...pianoDefinition("splendid").benchmarkLayers.map((layer) => fabricatedDynamicsCase({
+      traceId: `dynamics-constant/direct/splendid/${layer}`,
+      partition: layer === "mp" ? "discovery" : "confirmation",
+      suite: "dynamics-constant",
+      piano: "splendid",
+      layer,
+      counts: () => (layer === "pp"
+        ? { independentMatchCount: 27, orderedAdvanceCount: 20 }
+        : { independentMatchCount: 27, orderedAdvanceCount: 27 }),
+    })),
+    ...pianoDefinition("salamander").benchmarkLayers.map((layer) => fabricatedDynamicsCase({
+      traceId: `dynamics-constant/direct/salamander/${layer}`,
+      partition: layer === "v03" ? "discovery" : "confirmation",
+      suite: "dynamics-constant",
+      piano: "salamander",
+      layer,
+      counts: () => ({
+        independentMatchCount: layer === "v01" ? 0 : 9,
+        orderedAdvanceCount: layer === "v01" ? 0 : 3,
+      }),
+    })),
+  ];
+  const renderer = summarizeListenDynamicsProfileValidation(
+    "direct",
+    LISTEN_BENCHMARK_RENDERER,
+    cases,
+    DYNAMICS_COLUMN,
+  );
+  const baseline = renderer.profiles[0];
+  // Summing the runs would let Salamander's sixteen layers decide the corpus.
+  const corpus = baseline.groups.find(({ kind }) => kind === "corpus");
+  assert.ok(corpus);
+  assert.equal(corpus.totals.sequenceCount, 20);
+  assert.ok(Math.abs(corpus.totals.independentMatchRate - (4 * 27 + 15 * 9) / (20 * 27)) < 1e-12);
+  assert.ok(corpus.totals.independentMatchRate < 0.5);
+  // Weighting the two instruments equally does not. The aggregate is per suite,
+  // so it stays comparable with the constant-layer matrix's own cross-piano row.
+  assert.equal(baseline.equalPiano.length, 1);
+  const constantLayer = baseline.equalPiano[0];
+  assert.equal(constantLayer.suite, "dynamics-constant");
+  assert.equal(constantLayer.pianoCount, 2);
+  const splendid = constantLayer.pianos.find(({ piano }) => piano === "splendid");
+  const salamander = constantLayer.pianos.find(({ piano }) => piano === "salamander");
+  assert.ok(splendid && salamander);
+  assert.equal(splendid.independentMatchRate, 1);
+  assert.ok(Math.abs(salamander.independentMatchRate - (15 * 9) / (16 * 27)) < 1e-12);
+  assert.ok(Math.abs(
+    (constantLayer.independentMatchRate ?? 0) -
+      (splendid.independentMatchRate + salamander.independentMatchRate) / 2,
+  ) < 1e-12);
+  assert.equal(constantLayer.completePassageRate, (0.75 + 0) / 2);
+  assert.equal(constantLayer.worstPiano, "salamander");
+  // Each instrument names the layer that performed worst on it.
+  assert.equal(salamander.worstLayer, "v01");
+  assert.equal(salamander.worstLayerOrderedAdvanceRate, 0);
+  assert.equal(splendid.worstLayer, "pp");
+  // Per-piano rows still say which partitions they mix; neither is confirmation.
+  assert.equal(splendid.evidenceRole, "mixed");
+  assert.equal(constantLayer.evidenceRole, "mixed");
+  // Identical columns produce a zero delta rather than a missing one.
+  const candidate = renderer.profiles[1];
+  assert.equal(candidate.deltaFromBaseline?.equalPiano[0].suite, "dynamics-constant");
+  assert.equal(candidate.deltaFromBaseline?.equalPiano[0].independentMatchRate, 0);
+  assert.equal(candidate.deltaFromBaseline?.safety.falseAdvanceCount, 0);
+});
+
+test("no dynamics aggregate can hide a layer, articulation, or piano regression", () => {
+  const regressed = "dynamics-constant/direct/salamander/v05";
+  const cases = [
+    fabricatedDynamicsCase({
+      traceId: "dynamics-constant/direct/splendid/mp",
+      partition: "discovery",
+      suite: "dynamics-constant",
+      piano: "splendid",
+      layer: "mp",
+      counts: (profileId) => (profileId === "baseline-v1"
+        ? { independentMatchCount: 20, orderedAdvanceCount: 20 }
+        : { independentMatchCount: 27, orderedAdvanceCount: 27 }),
+    }),
+    fabricatedDynamicsCase({
+      traceId: regressed,
+      partition: "confirmation",
+      suite: "dynamics-constant",
+      piano: "salamander",
+      layer: "v05",
+      counts: (profileId) => (profileId === "baseline-v1"
+        ? { independentMatchCount: 27, orderedAdvanceCount: 27 }
+        : { independentMatchCount: 24, orderedAdvanceCount: 21 }),
+    }),
+    fabricatedDynamicsCase({
+      traceId: "articulation/direct/legato",
+      partition: "confirmation",
+      suite: "articulation",
+      piano: "splendid",
+      layer: "mp",
+      articulation: "legato",
+      counts: () => ({ independentMatchCount: 27, orderedAdvanceCount: 27 }),
+    }),
+  ];
+  const renderer = summarizeListenDynamicsProfileValidation(
+    "direct",
+    LISTEN_BENCHMARK_RENDERER,
+    cases,
+    DYNAMICS_COLUMN,
+  );
+  const candidate = renderer.profiles[1];
+  const group = (key: string) => {
+    const found = candidate.groups.find((entry) => entry.key === key);
+    assert.ok(found, `missing group ${key}`);
+    return found;
+  };
+  // The corpus improves overall: seven gained advances against six lost.
+  assert.equal(group("corpus").deltaFromBaseline?.orderedAdvanceCount, 1);
+  // It still names the regressed row rather than netting it out.
+  assert.deepEqual(
+    group("corpus").deltaFromBaseline?.regressedOrderedAdvanceTraceIds,
+    [regressed],
+  );
+  assert.deepEqual(group("corpus").deltaFromBaseline?.lostCompletePassageTraceIds, [regressed]);
+  assert.deepEqual(
+    group("corpus").deltaFromBaseline?.gainedCompletePassageTraceIds,
+    ["dynamics-constant/direct/splendid/mp"],
+  );
+  // The leaf layer group states the loss on its own.
+  assert.equal(group(`layer/salamander/v05`).deltaFromBaseline?.orderedAdvanceCount, -6);
+  assert.equal(group(`layer/salamander/v05`).evidenceRole, "confirmation");
+  assert.deepEqual(group(`layer/salamander/v05`).partitions, ["confirmation"]);
+  // So do the piano level and the piano's confirmation-only slice.
+  assert.equal(group("piano/salamander").deltaFromBaseline?.orderedAdvanceCount, -6);
+  assert.equal(group("piano/salamander/confirmation").deltaFromBaseline?.orderedAdvanceCount, -6);
+  assert.equal(group("partition/confirmation").deltaFromBaseline?.orderedAdvanceCount, -6);
+  assert.equal(group("partition/discovery").deltaFromBaseline?.orderedAdvanceCount, 7);
+  // Articulation rows are leaves too, and an unchanged one reads as unchanged.
+  assert.equal(group("articulation/legato").deltaFromBaseline?.orderedAdvanceCount, 0);
+  assert.equal(group("articulation/legato").evidenceRole, "confirmation");
+  // The equal-piano mean nets the two instruments out — which is exactly why the
+  // per-piano rows are listed beside it: Salamander's drop is visible there.
+  assert.equal(candidate.deltaFromBaseline?.equalPiano.length, 1);
+  assert.ok((candidate.deltaFromBaseline?.equalPiano[0].orderedAdvanceRate ?? 0) > 0);
+  const candidateSalamander = candidate.equalPiano[0].pianos
+    .find(({ piano }) => piano === "salamander");
+  const baselineSalamander = renderer.profiles[0].equalPiano[0].pianos
+    .find(({ piano }) => piano === "salamander");
+  assert.ok(candidateSalamander && baselineSalamander);
+  assert.ok(candidateSalamander.orderedAdvanceRate < baselineSalamander.orderedAdvanceRate);
+  assert.equal(candidateSalamander.worstLayer, "v05");
+  // A summary must still start from the baseline column and describe its renderer.
+  assert.throws(
+    () => summarizeListenDynamicsProfileValidation(
+      "direct",
+      LISTEN_BENCHMARK_RENDERER,
+      cases,
+      listenValidationProfileIdentities(["early-open-v2", "steady-open-v2"]),
+    ),
+    /must start from baseline-v1/,
+  );
+  assert.throws(
+    () => summarizeListenDynamicsProfileValidation(
+      "tone",
+      LISTEN_BENCHMARK_TONE_RENDERER,
+      cases,
+      DYNAMICS_COLUMN,
+    ),
+    /is not a tone trace/,
+  );
+  assert.throws(
+    () => listenValidationEvidenceRole(["confirmation", "regression-only"]),
+    /can never carry an evidence role/,
   );
 });

@@ -1302,7 +1302,7 @@ main-suite tests plus the dynamics pretest, and the production build passes.
 
 ### Task 11 — Add dynamics and articulation candidate-matrix replay
 
-**Status:** Required. **Prerequisites:** Task 10 complete.
+**Status:** Completed August 19, 2026. **Prerequisites:** Task 10 complete.
 
 **Objective:** Extend frozen-candidate validation to the later domains that were
 not used to select the original sweep winner.
@@ -1333,6 +1333,74 @@ present exactly once.
 **Complete when:** All dynamics/articulation domains produce deterministic
 candidate-matrix results, held-back cases remain identifiable as confirmation,
 and no aggregate can hide a renderer, piano, layer, or articulation regression.
+
+**Completion evidence:** `listenProfileValidationBenchmark.ts` now owns the
+dynamics and articulation portion beside the isolated and sequence ones. It joins
+the manifest's 52 `dynamics-constant`, `dynamics-mixed`, and `articulation`
+descriptors to the passage and instrument they render, captures each once through
+the suites' own capture paths — `captureCourseClearDynamicsRun` for the velocity
+layers and mixed runs, `captureListenSequenceRun` for the articulations — and
+replays that one retained trace through `baseline-v1` and the four frozen
+candidates. It refuses a descriptor whose piano, layer, dynamic profile, or
+articulation disagrees with the passage, and a capture that answers with another
+run, renderer, passage, speed, or instrument.
+
+`listenDynamicsBenchmark.ts` now names the profile of every dynamics run instead
+of following the production default pointer: `CaptureCourseClearDynamicsOptions`
+takes an explicit `profileId` defaulting to `baseline-v1`, each run result
+carries that identifier and its thresholds, and the historical check that the
+production default still equals the baseline entry is kept as its own assertion.
+
+Because manifest version 1 split these suites deliberately, no aggregate is
+allowed to read as confirmation on its own. Every reported group — whole corpus,
+partition, suite, piano, piano-and-partition, and one leaf per velocity layer,
+mixed run, and articulation — carries the partitions it spans and an
+`evidenceRole` of `discovery`, `confirmation`, or `mixed`, and
+`listenValidationEvidenceRole` refuses to give a `regression-only` row a role at
+all. Equal-piano aggregates are computed per suite so each stays comparable with
+the matrix that recorded it, and every piano lists its worst constant layer.
+Safety spans every partition — unsafe advances relative to `baseline-v1` on the
+identical trace, plus both committed regressions replayed under the same profile
+— while scores never include a gate row, and late advances are reported beside
+safety rather than as safety.
+
+Measured with `listen-dynamics-profile-validation` at Chrome 151.0.7922.169 on
+Linux; a paired 52-run matrix takes about six minutes. `baseline-v1` reproduces
+the recorded August 16/17 constant-layer matrix exactly once the Tone `v05` gate
+row is added back (Direct 488/540 independent and 138/540 ordered; Tone
+467+25 = 492/540 and 163+23 = 186/540, one complete passage and one late advance
+each), and the Direct equal-piano row reproduces the recorded cross-piano
+aggregate to the digit at 90.86% / 45.49% / 12.50%. On the untouched
+`confirmation` rows the candidates move Direct independent recognition from 90.5%
+to 94.2% and ordered advancement from 17.8% to 26.9%, and Tone from 90.7% to
+95.6% and 33.8% to 64.8%. No leaf, piano, partition, suite, or renderer row
+regresses under any candidate; three of Direct's 26 leaves and twelve of Tone's
+25 move, and four Tone leaves recover only under the 0.20 active-target gate,
+which is the only measured difference between the `open` and `held` candidates
+here. Every profile reports 0/0/0 false, skipped, and duplicate advances under
+both renderers with no introduced unsafe row and no committed regression worse
+than its baseline replay; the `v05` gate row reproduces its diagnosed behavior,
+with `baseline-v1` advancing target 23 at 25,440 ms and every candidate advancing
+it at 24,448 ms.
+
+The historical single-profile commands were re-run against the same code:
+`listen-dynamics-mixed` reproduces its recorded 94.4% / 42.6% and 90.7% / 31.5%
+with zero safety events, and `listen-dynamics-case-tone salamander v05` still
+reports 25/27 independent, 23/27 ordered, the pinned `baseline-v1` advance at
+25,440 ms, and decoded-structure hash `b043076d`.
+
+Two complete runs in fresh browser processes agree on all 52 decoded-structure
+hashes and every recognition, advancement, group total, delta, equal-piano rate,
+and safety value, with byte-identical console summaries; only the rendered
+peak/RMS diagnostics and the wall-clock `maximumInferenceMs` maxima differ. Each
+suite run on its own reproduces the corresponding 195, 20, and 40 leaf rows of
+the full run. Five new unit tests cover the manifest join and its rejections, one
+capture serving every profile column with frozen candidate metadata, refusal of a
+capture that answers with another run, renderer, or instrument, equal-piano
+aggregation weighting four Splendid layers like sixteen Salamander ones, and the
+leaf visibility of a layer regression that a corpus aggregate nets out. The unit
+suite is 332 main-suite tests plus the dynamics pretest, and the production build
+passes. `tools/online_amt/LISTEN_BENCHMARK.md` records the measured matrix.
 
 ### Task 12 — Build the unified production-candidate gate and automation
 

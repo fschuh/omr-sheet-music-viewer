@@ -27,10 +27,15 @@ import {
 } from "./listenMatcherSweepBenchmark";
 import type { ListenTraceRendererKey } from "./listenTraceManifest";
 import {
+  LISTEN_DYNAMICS_VALIDATION_SUITES,
+  conciseListenDynamicsProfileValidationResult,
   conciseListenIsolatedProfileValidationResult,
   conciseListenSequenceProfileValidationResult,
+  runListenDynamicsProfileValidation,
   runListenIsolatedProfileValidation,
   runListenSequenceProfileValidation,
+  type ListenDynamicsProfileValidationResult,
+  type ListenDynamicsValidationSuite,
   type ListenIsolatedProfileValidationResult,
   type ListenSequenceProfileValidationResult,
 } from "./listenProfileValidationBenchmark";
@@ -112,6 +117,26 @@ function requestedSequenceIntervalsMs(): number[] | undefined {
   return intervals.length === 0 ? undefined : [...new Set(intervals)];
 }
 
+/**
+ * Suites a dynamics-validation command covers. Absent, all three run; a focused
+ * smoke names one or more of them. A mistyped suite fails loudly in the join
+ * rather than quietly measuring a smaller corpus.
+ */
+function requestedDynamicsSuites(): ListenDynamicsValidationSuite[] | undefined {
+  const requested = new URLSearchParams(window.location.search).get("benchmark-suite");
+  if (requested === null) return undefined;
+  const suites = requested.split(",")
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0)
+    .map((value) => {
+      if (!(LISTEN_DYNAMICS_VALIDATION_SUITES as readonly string[]).includes(value)) {
+        throw new Error(`Unknown dynamics validation suite ${value}.`);
+      }
+      return value as ListenDynamicsValidationSuite;
+    });
+  return suites.length === 0 ? undefined : [...new Set(suites)];
+}
+
 function requestedRenderer(): ListenBenchmarkRendererConfiguration {
   const query = new URLSearchParams(window.location.search);
   return query.get("benchmark-renderer") === "tone"
@@ -138,7 +163,7 @@ export function ListenBenchmarkPage() {
       "articulation" | "reset-comparison" | null
       | "dynamics-constant" | "dynamics-mixed" | "dynamics-case" | "sequence-case"
       | "multidomain-sweep" | "isolated-profile-validation"
-      | "sequence-profile-validation"
+      | "sequence-profile-validation" | "dynamics-profile-validation"
   >(null);
   const running = runningTask !== null;
   const [progress, setProgress] = useState("");
@@ -147,7 +172,7 @@ export function ListenBenchmarkPage() {
       "reset-comparison"
       | "dynamics-constant" | "dynamics-mixed" | "dynamics-case" | "sequence-case"
       | "multidomain-sweep" | "isolated-profile-validation"
-      | "sequence-profile-validation"
+      | "sequence-profile-validation" | "dynamics-profile-validation"
   >("isolated");
   const [error, setError] = useState<string | null>(null);
   const [automated, setAutomated] = useState<ListenBenchmarkSummary | null>(null);
@@ -160,6 +185,8 @@ export function ListenBenchmarkPage() {
     useState<ListenIsolatedProfileValidationResult | null>(null);
   const [sequenceValidationResult, setSequenceValidationResult] =
     useState<ListenSequenceProfileValidationResult | null>(null);
+  const [dynamicsValidationResult, setDynamicsValidationResult] =
+    useState<ListenDynamicsProfileValidationResult | null>(null);
   const [articulationResult, setArticulationResult] =
     useState<ListenArticulationMatrixResult | null>(null);
   const [retriggerSweepResult, setRetriggerSweepResult] =
@@ -205,6 +232,9 @@ export function ListenBenchmarkPage() {
     } else if (query.get("listen-sequence-profile-validation") === "auto") {
       automaticBenchmarkStarted = true;
       void runSequenceProfileValidation();
+    } else if (query.get("listen-dynamics-profile-validation") === "auto") {
+      automaticBenchmarkStarted = true;
+      void runDynamicsProfileValidation();
     } else if (query.get("listen-matcher-multidomain-sweep") === "auto") {
       automaticBenchmarkStarted = true;
       void runMultiDomainSweep();
@@ -376,6 +406,34 @@ export function ListenBenchmarkPage() {
       (window as typeof window & {
         listenSequenceProfileValidationResult?: ListenSequenceProfileValidationResult;
       }).listenSequenceProfileValidationResult = result;
+      document.body.dataset.status = "complete";
+    } catch (benchmarkError) {
+      setError(benchmarkError instanceof Error ? benchmarkError.message : String(benchmarkError));
+      document.body.dataset.status = "error";
+    } finally {
+      setRunningTask(null);
+    }
+  }
+
+  /**
+   * The dynamics and articulation candidate matrix. The manifest splits these
+   * suites across both partitions, so the command reports every row under its
+   * own label rather than one corpus-wide verdict.
+   */
+  async function runDynamicsProfileValidation() {
+    setRunningTask("dynamics-profile-validation");
+    setProgressTask("dynamics-profile-validation");
+    setError(null);
+    setProgress("Preparing the dynamics and articulation corpora…");
+    document.body.dataset.status = "running";
+    try {
+      const result = await runListenDynamicsProfileValidation((complete, total, label) => {
+        setProgress(`${complete} / ${total} runs · ${label}`);
+      }, requestedRendererKeys(), requestedDynamicsSuites());
+      setDynamicsValidationResult(result);
+      (window as typeof window & {
+        listenDynamicsProfileValidationResult?: ListenDynamicsProfileValidationResult;
+      }).listenDynamicsProfileValidationResult = result;
       document.body.dataset.status = "complete";
     } catch (benchmarkError) {
       setError(benchmarkError instanceof Error ? benchmarkError.message : String(benchmarkError));
@@ -1528,14 +1586,100 @@ export function ListenBenchmarkPage() {
         </button>{" "}
         <button type="button" disabled={running} onClick={() => void runDynamicsCase()}>
           {runningTask === "dynamics-case" ? "Running…" : "Reproduce one safety case"}
+        </button>{" "}
+        <button type="button" disabled={running} onClick={() => void runDynamicsProfileValidation()}>
+          {runningTask === "dynamics-profile-validation"
+            ? "Running…"
+            : "Run dynamics candidate matrix"}
         </button>
         {progress && (
           progressTask === "dynamics-constant" ||
           progressTask === "dynamics-mixed" ||
-          progressTask === "dynamics-case"
+          progressTask === "dynamics-case" ||
+          progressTask === "dynamics-profile-validation"
         )
           ? <span className="benchmark-progress">{progress}</span>
           : null}
+        {dynamicsValidationResult ? (
+          <>
+            <h3>Dynamics and articulation candidate matrix</h3>
+            <p>
+              Each layer, mixed run, and articulation is rendered and recognized once;{" "}
+              <code>baseline-v1</code> and the frozen multi-domain candidates then replay that
+              one retained decoded trace. The manifest split these suites, so every row keeps
+              its own partition and each reported group states the partitions it spans: a{" "}
+              <code>mixed</code> group is never confirmation. The diagnosed rows gate each
+              column instead of scoring it, and late advances are reported apart from safety.
+              Manifest {dynamicsValidationResult.manifest.version}/
+              {dynamicsValidationResult.manifest.hash},{" "}
+              {dynamicsValidationResult.manifest.capturedTraceCount} runs captured across{" "}
+              {dynamicsValidationResult.suites.join(", ")}.
+            </p>
+            <div className="benchmark-table-wrap">
+              <table className="benchmark-table">
+                <thead>
+                  <tr>
+                    <th>Renderer</th>
+                    <th>Profile</th>
+                    <th>Group</th>
+                    <th>Evidence</th>
+                    <th>Independent</th>
+                    <th>Ordered</th>
+                    <th>Complete</th>
+                    <th>Late</th>
+                    <th>Safety (false / skip / duplicate)</th>
+                    <th>Ordered delta</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {dynamicsValidationResult.renderers.flatMap((renderer) => (
+                    renderer.profiles.flatMap((profile) => profile.groups
+                      .filter(({ kind }) => kind === "corpus" || kind === "partition" ||
+                        kind === "suite" || kind === "piano")
+                      .map((group) => (
+                        <tr key={`${renderer.rendererKey}-${profile.profileId}-${group.key}`}>
+                          <td>{renderer.renderer.version}</td>
+                          <td><code>{profile.profileId}</code></td>
+                          <td>{group.label}</td>
+                          <td>{group.evidenceRole}</td>
+                          <td>
+                            {group.totals.independentMatchCount} /{" "}
+                            {group.totals.expectedEventCount}{" "}
+                            ({percentageValue(group.totals.independentMatchRate)})
+                          </td>
+                          <td>
+                            {group.totals.orderedAdvanceCount} / {group.totals.expectedEventCount}
+                            {" "}({percentageValue(group.totals.orderedAdvanceRate)})
+                          </td>
+                          <td>
+                            {group.totals.completePassageCount} / {group.totals.sequenceCount}
+                          </td>
+                          <td>{group.totals.lateAdvanceCount}</td>
+                          <td>
+                            {group.kind === "corpus"
+                              ? `${profile.safety.falseAdvanceCount} / ` +
+                                `${profile.safety.skippedAdvanceCount} / ` +
+                                `${profile.safety.duplicateAdvanceCount}` +
+                                (profile.safety.passed ? "" : " (FAILED)")
+                              : "—"}
+                          </td>
+                          <td>{group.deltaFromBaseline === null
+                            ? "baseline"
+                            : `${group.deltaFromBaseline.orderedAdvanceCount >= 0 ? "+" : ""}${group.deltaFromBaseline.orderedAdvanceCount}`}</td>
+                        </tr>
+                      )))
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <h3>Detailed dynamics candidate diagnostics</h3>
+            <pre>{JSON.stringify(
+              conciseListenDynamicsProfileValidationResult(dynamicsValidationResult),
+              null,
+              2,
+            )}</pre>
+          </>
+        ) : null}
         {dynamicsResult ? (
           <>
             <h3>Constant-layer results</h3>

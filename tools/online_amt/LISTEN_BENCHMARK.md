@@ -7,6 +7,200 @@
 Entries are kept newest first so renderer and recognition changes remain
 comparable over time.
 
+### Dynamics and articulation candidate matrix — August 19, 2026
+
+The frozen candidates measured across the domains the original Direct-only
+sequence sweep never saw: 20 constant velocity layers, 2 mixed
+crescendo-decrescendo runs, and 4 articulations under each renderer. Every run is
+rendered and recognized once, and `baseline-v1` plus the four frozen candidates
+replay that one retained decoded trace.
+
+This corpus is **partly** held out, which is the thing to keep straight when
+reading the numbers below. Manifest version 1 assigned three constant layers per
+piano and renderer, one mixed run per renderer, and five of the eight
+articulations to `discovery`; everything else stayed untouched. Every reported
+group therefore carries the partitions it spans and an `evidenceRole` of
+`discovery`, `confirmation`, or `mixed`, and only a `confirmation` group may be
+quoted by a release gate. The whole-corpus rows are `mixed` by construction and
+confirm nothing on their own.
+
+```bash
+node tools/online_amt/run_browser_benchmarks.mjs \
+  http://127.0.0.1:5174/online-amt-benchmark.html listen-dynamics-profile-validation
+
+node tools/online_amt/run_browser_benchmarks.mjs \
+  http://127.0.0.1:5174/online-amt-benchmark.html listen-dynamics-profile-validation articulation
+```
+
+The optional trailing argument names one or more suites — `dynamics-constant`,
+`dynamics-mixed`, `articulation` — for a focused smoke.
+
+Measured at Chrome 151.0.7922.169 on Linux, model `online_amt_streaming.onnx`,
+renderers `bundled-piano-web-audio-v1` and `bundled-piano-tone-v2`. Manifest
+version 1, hash `0ed1e71d`; 52 traces captured, one capture per run and five
+profile columns replayed from each. Registry version 2, candidates
+`early-open-v2`, `steady-open-v2`, `early-held-v2`, `steady-held-v2`. A paired
+run takes about six minutes.
+
+#### Baseline parity against the recorded dynamics matrix
+
+Direct scores all 20 constant layers; Tone scores 19, because the diagnosed
+Tone + Salamander `v05` run is `regression-only` and gates instead of scoring.
+Adding the gate column back reproduces the recorded August 16/17 constant-layer
+matrix exactly:
+
+| Renderer | Scored | Gate row | Sum | Recorded |
+| --- | ---: | ---: | ---: | ---: |
+| Direct independent | 488 / 540 | — | 488 / 540 | 99 + 389 |
+| Direct ordered | 138 / 540 | — | 138 / 540 | 85 + 53 |
+| Tone independent | 467 / 513 | 25 / 27 | 492 / 540 | 93 + 399 |
+| Tone ordered | 163 / 513 | 23 / 27 | 186 / 540 | 55 + 131 |
+
+Complete passages agree the same way (Direct 1 + 0 = 1 / 20, Tone 1 + 0 = 1 / 20),
+as does the single recorded late advance, which is the `v05` gate row. The Direct
+equal-piano aggregate reproduces the recorded cross-piano row to the digit —
+90.86% independent, 45.49% ordered, 12.50% complete against the recorded 90.9%,
+45.5%, 12.5%. Tone's equal-piano ordered rate is 38.80% rather than the recorded
+40.6% for exactly one reason: `v05`'s 23 ordered advances are a gate row here and
+are not allowed to raise a score.
+
+The mixed suite reproduces its own recorded matrix the same way: 20 / 27 and
+3 / 27 ordered under Direct, 13 / 27 and 4 / 27 under Tone, and equal-piano rates
+of 94.44% / 42.59% and 90.74% / 31.48% against the recorded 94.4% / 42.6% and
+90.7% / 31.5%.
+
+Equal-piano aggregates are computed per suite, never blended across suites, so
+each stays comparable with the matrix that recorded it. Every baseline column
+also reproduces its own capture-time replay event for event.
+
+The historical single-profile commands were re-run against the same code:
+`listen-dynamics-mixed` reproduces 94.4% / 42.6% and 90.7% / 31.5% with 0 / 0 / 0
+safety, and `listen-dynamics-case-tone salamander v05` still reports 25 / 27
+independent, 23 / 27 ordered, the pinned `baseline-v1` advance at 25,440 ms, and
+decoded-structure hash `b043076d`. Their results now name `baseline-v1` instead
+of following whichever profile production defaults to.
+
+#### Direct `bundled-piano-web-audio-v1`
+
+Whole scored corpus — 26 runs, `mixed` evidence:
+
+| Profile | Independent | Ordered | Complete | Late | p95 ordered | Ordered delta |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `baseline-v1` | 639 / 702 (91.0%) | 224 / 702 (31.9%) | 1 / 26 | 0 | 212 ms | baseline |
+| `early-open-v2` | 662 / 702 (94.3%) | 265 / 702 (37.7%) | 2 / 26 | 0 | 212 ms | +41 |
+| `steady-open-v2` | 662 / 702 (94.3%) | 265 / 702 (37.7%) | 2 / 26 | 0 | 212 ms | +41 |
+| `early-held-v2` | 658 / 702 (93.7%) | 265 / 702 (37.7%) | 2 / 26 | 0 | 212 ms | +41 |
+| `steady-held-v2` | 658 / 702 (93.7%) | 265 / 702 (37.7%) | 2 / 26 | 0 | 212 ms | +41 |
+
+Untouched `confirmation` rows only — 16 runs:
+
+| Profile | Independent | Ordered | Complete | Ordered delta |
+| --- | ---: | ---: | ---: | ---: |
+| `baseline-v1` | 391 / 432 (90.5%) | 77 / 432 (17.8%) | 1 / 16 | baseline |
+| `early-open-v2` | 407 / 432 (94.2%) | 116 / 432 (26.9%) | 2 / 16 | +39 |
+| `steady-open-v2` | 407 / 432 (94.2%) | 116 / 432 (26.9%) | 2 / 16 | +39 |
+| `early-held-v2` | 403 / 432 (93.3%) | 116 / 432 (26.9%) | 2 / 16 | +39 |
+| `steady-held-v2` | 403 / 432 (93.3%) | 116 / 432 (26.9%) | 2 / 16 | +39 |
+
+#### Tone `bundled-piano-tone-v2`
+
+Whole scored corpus — 25 runs plus the `v05` gate row, `mixed` evidence:
+
+| Profile | Independent | Ordered | Complete | Late | p95 ordered | Ordered delta |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `baseline-v1` | 609 / 675 (90.2%) | 239 / 675 (35.4%) | 1 / 25 | 0 | 220 ms | baseline |
+| `early-open-v2` | 641 / 675 (95.0%) | 439 / 675 (65.0%) | 8 / 25 | 4 | 228 ms | +200 |
+| `steady-open-v2` | 641 / 675 (95.0%) | 439 / 675 (65.0%) | 8 / 25 | 4 | 228 ms | +200 |
+| `early-held-v2` | 632 / 675 (93.6%) | 373 / 675 (55.3%) | 5 / 25 | 4 | 228 ms | +134 |
+| `steady-held-v2` | 632 / 675 (93.6%) | 373 / 675 (55.3%) | 5 / 25 | 4 | 228 ms | +134 |
+
+Untouched `confirmation` rows only — 16 runs:
+
+| Profile | Independent | Ordered | Complete | Ordered delta |
+| --- | ---: | ---: | ---: | ---: |
+| `baseline-v1` | 392 / 432 (90.7%) | 146 / 432 (33.8%) | 1 / 16 | baseline |
+| `early-open-v2` | 413 / 432 (95.6%) | 280 / 432 (64.8%) | 6 / 16 | +134 |
+| `steady-open-v2` | 413 / 432 (95.6%) | 280 / 432 (64.8%) | 6 / 16 | +134 |
+| `early-held-v2` | 409 / 432 (94.7%) | 247 / 432 (57.2%) | 4 / 16 | +101 |
+| `steady-held-v2` | 409 / 432 (94.7%) | 247 / 432 (57.2%) | 4 / 16 | +101 |
+
+#### Every leaf that moved
+
+Aggregates are reported beside the leaf rows they average, so a single velocity
+layer cannot disappear into one. Ordered advances out of 27, in column order
+`baseline-v1`, `early-open-v2`, `steady-open-v2`, `early-held-v2`,
+`steady-held-v2`:
+
+| Leaf | Evidence | Ordered advances |
+| --- | --- | --- |
+| Direct `layer/splendid/ff` | discovery | 18 / 20 / 20 / 20 / 20 |
+| Direct `layer/salamander/v13` | confirmation | 5 / 27 / 27 / 27 / 27 |
+| Direct `articulation/legato` | confirmation | 3 / 20 / 20 / 20 / 20 |
+| Tone `layer/splendid/mf` | confirmation | 19 / 27 / 27 / 19 / 19 |
+| Tone `layer/splendid/ff` | discovery | 3 / 13 / 13 / 3 / 3 |
+| Tone `layer/salamander/v01` | confirmation | 4 / 20 / 20 / 20 / 20 |
+| Tone `layer/salamander/v03` | discovery | 13 / 27 / 27 / 27 / 27 |
+| Tone `layer/salamander/v04` | confirmation | 13 / 27 / 27 / 27 / 27 |
+| Tone `layer/salamander/v08` | confirmation | 3 / 27 / 27 / 3 / 3 |
+| Tone `layer/salamander/v10` | confirmation | 13 / 24 / 24 / 23 / 23 |
+| Tone `layer/salamander/v13` | confirmation | 8 / 23 / 23 / 23 / 23 |
+| Tone `layer/salamander/v14` | discovery | 4 / 27 / 27 / 4 / 4 |
+| Tone `layer/salamander/v15` | confirmation | 3 / 27 / 27 / 27 / 27 |
+| Tone `layer/salamander/v16` | confirmation | 5 / 27 / 27 / 27 / 27 |
+| Tone `mixed/salamander` | discovery | 4 / 23 / 23 / 23 / 23 |
+
+Three of Direct's 26 leaves and twelve of Tone's 25 move; every other leaf is
+identical under all five profiles. **No leaf, piano, partition, suite, or
+renderer row regresses anywhere**: `regressedOrderedAdvanceTraceIds` and
+`lostCompletePassageTraceIds` are empty for every candidate in every group.
+
+The `open`/`held` split is what separates the candidates, and it is only visible
+per layer. Four Tone leaves — `splendid/mf`, `splendid/ff`, `salamander/v08`, and
+`salamander/v14` — recover only under the 0.20 active-target gate; the two `held`
+candidates leave them exactly where `baseline-v1` had them. The fresh-onset gate
+(0.45 versus 0.50) separates nothing in this corpus: `early` and `steady` are
+identical in every row measured here.
+
+#### Safety and the two diagnosed cases
+
+Every profile reports 0 / 0 / 0 false, skipped, and duplicate advances under both
+renderers, `introducedUnsafeTraceIds` is empty for all four candidates, and no
+committed regression is worse than its baseline replay
+(`worseThanBaselineCount: 0`). Safety is evaluated over every partition,
+including the gate rows; scores are not.
+
+Late advances are reported beside safety and never as safety. Under Tone the
+candidates add four late advances to the scored corpus, each one the playhead
+catching a chord the player did play one moment earlier than `baseline-v1` did.
+The `dynamics-constant/tone/salamander/v05` gate row reproduces the diagnosed
+Task 05 behavior exactly: `baseline-v1` advances target 23 at 25,440 ms, and all
+four candidates advance it at 24,448 ms from the earlier repetition and then also
+take target 24 at 25,440 ms — two late advances instead of one, no false, skipped
+or duplicate advance, and identical ordered progress of 23 / 27.
+
+Both committed regressions are replayed under every column. Each candidate shows
+two `deviating` outcomes and zero `worse` ones: the `v05` fixture recovers a
+repetition earlier than pinned, and the Task 06 Tone 333 ms fixture is no longer
+classified as a false advance at all. Deviating from a pinned recovery is
+reported; only becoming less safe rejects.
+
+#### Repeatability
+
+The full matrix was run twice in fresh browser processes. All 52
+decoded-structure hashes, every recognition, advancement, group total, delta,
+equal-piano rate, and safety value are identical, and the two console summaries
+are byte-identical. The only differing values are the rendered `peak` and `rms`
+diagnostics and the wall-clock `maximumInferenceMs` maxima — Chrome's
+`OfflineAudioContext` does not reproduce its last bits between processes, which
+is why identity is pinned to the decoded structure.
+
+Each suite was also run on its own. `dynamics-constant`, `dynamics-mixed`, and
+`articulation` reproduce all 195, 20, and 40 of the corresponding leaf rows of
+the full run, hashes included, with only the wall-clock maxima differing.
+
+Nothing here changes a candidate value, a manifest assignment, or the production
+default, which remains `baseline-v1`.
+
 ### Continuous-sequence candidate matrix — August 19, 2026
 
 The frozen candidates measured across the whole continuous-sequence corpus: 13
@@ -1583,6 +1777,15 @@ node tools\online_amt\run_browser_benchmarks.mjs `
   http://127.0.0.1:5174/online-amt-benchmark.html listen-dynamics-mixed
 
 node tools\online_amt\run_browser_benchmarks.mjs `
+  http://127.0.0.1:5174/online-amt-benchmark.html listen-dynamics-profile-validation
+
+node tools\online_amt\run_browser_benchmarks.mjs `
+  http://127.0.0.1:5174/online-amt-benchmark.html listen-dynamics-profile-validation-summary
+
+node tools\online_amt\run_browser_benchmarks.mjs `
+  http://127.0.0.1:5174/online-amt-benchmark.html listen-dynamics-profile-validation articulation
+
+node tools\online_amt\run_browser_benchmarks.mjs `
   http://127.0.0.1:5174/online-amt-benchmark.html listen-dynamics-case-tone salamander v05
 ```
 
@@ -1604,6 +1807,27 @@ its worst-domain metric is taken across renderers. It never captures a
 `confirmation` trace. The single-renderer `listen-threshold-sweep` command and
 its measured Direct and Tone results remain unchanged as historical discovery
 evidence.
+
+`listen-dynamics-profile-validation` replays `baseline-v1` and the frozen
+multi-domain candidates over the dynamics and articulation corpora: 20 constant
+velocity layers, 2 mixed crescendo-decrescendo runs, and 4 articulations under
+each renderer. Like the other validation commands it captures both renderers in
+one process; append `-legacy` or `-tone` to restrict it to one. The optional
+trailing argument names one or more suites — `dynamics-constant`,
+`dynamics-mixed`, `articulation` — for a focused smoke. Narrowing the suites is
+safe here because the two committed regressions are replayed against every
+profile column independently of which rows were captured, so a suite-limited run
+still cannot report a clean safety verdict while regressing a diagnosed case.
+
+Unlike the isolated matrix, this corpus is **not** uniformly held out: manifest
+version 1 assigned three constant layers per piano and renderer, one mixed run
+per renderer, and five of the eight articulations to `discovery`. Every reported
+group therefore carries the partitions it spans and an `evidenceRole` of
+`discovery`, `confirmation`, or `mixed`, and only a `confirmation` group may be
+quoted by a release gate. The historical single-profile `listen-dynamics-constant`
+and `listen-dynamics-mixed` commands are unchanged; their results now record
+`baseline-v1` by name rather than following whichever profile production
+defaults to.
 
 `listen-dynamics-case` renders one constant-layer run instead of the 40-run
 matrix and prints the complete forensics of every advancement counted against a

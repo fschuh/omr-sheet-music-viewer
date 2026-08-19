@@ -22,6 +22,7 @@ import {
 } from "./listenSequenceBenchmark";
 import {
   LISTEN_BASELINE_PROFILE,
+  LISTEN_BASELINE_PROFILE_ID,
   assertListenSequenceRunParity,
   assertRecognitionTraceUnmutated,
   assertRenderedTraceAudioIdentity,
@@ -32,6 +33,12 @@ import {
   type ListenBaselineProfileMetadata,
   type ListenTraceIdentity,
 } from "./listenBaselineParity";
+import {
+  findListenMatcherProfile,
+  listenMatcherThresholds,
+  type ListenMatcherProfileId,
+  type ListenMatcherThresholds,
+} from "./listenMatcherProfiles";
 import {
   assertFocusedCaseMatchesRegressions,
   buildListenSafetyRegressionFixture,
@@ -54,6 +61,9 @@ export const COURSE_CLEAR_DYNAMICS_INTERVAL_MS = COURSE_CLEAR_ARTICULATION_INTER
 
 export interface CourseClearDynamicsRunResult {
   renderer: ListenBenchmarkRendererConfiguration;
+  /** The matcher profile `recognition` was replayed under, named rather than implied. */
+  profileId: ListenMatcherProfileId;
+  profile: ListenMatcherThresholds;
   piano: PianoId;
   pianoName: string;
   layer: PianoLayerId | null;
@@ -115,6 +125,14 @@ export interface CourseClearMixedDynamicsSuiteResult {
 export interface CaptureCourseClearDynamicsOptions {
   session: SequenceInferenceSession;
   renderer?: ListenBenchmarkRendererConfiguration;
+  /**
+   * The profile the returned recognition is replayed under. It defaults to
+   * `baseline-v1` rather than following the production default pointer, so a
+   * dynamics result states which matcher produced it and keeps meaning the same
+   * thing on the day the default moves. The candidate matrix replays its other
+   * columns from the same retained trace instead of capturing again.
+   */
+  profileId?: ListenMatcherProfileId;
   render?: (
     sequence: MaterializedListenSequence,
     piano: PianoId,
@@ -319,7 +337,7 @@ async function captureRun(
   const label = `${sequence.definition.id} ${piano} ${profile}`;
   assertRenderedTraceAudioIdentity(label, trace, pcmSignature);
   const capturedRecognitionHash = listenRecognitionTraceHash(trace);
-  const recognition = replayListenSequenceTrace(sequence, trace, "current-matcher");
+  const productionRecognition = replayListenSequenceTrace(sequence, trace, "current-matcher");
   assertRecognitionTraceUnmutated(`${label} current-matcher replay`, trace, capturedRecognitionHash);
   const baselineRecognition = replayListenSequenceTrace(
     sequence,
@@ -328,9 +346,27 @@ async function captureRun(
     LISTEN_BASELINE_PROFILE,
   );
   assertRecognitionTraceUnmutated(`${label} baseline replay`, trace, capturedRecognitionHash);
-  assertListenSequenceRunParity(label, recognition, baselineRecognition);
+  // The production default still has to be the baseline entry. This is the check
+  // that fails the day the pointer moves without the recorded results moving.
+  assertListenSequenceRunParity(label, productionRecognition, baselineRecognition);
+  const profileId = options.profileId ?? LISTEN_BASELINE_PROFILE_ID;
+  const matcherProfile = findListenMatcherProfile(profileId);
+  if (!matcherProfile) {
+    throw new Error(`Course Clear dynamics received the unknown profile identifier ${String(profileId)}.`);
+  }
+  const recognition = profileId === LISTEN_BASELINE_PROFILE_ID
+    ? baselineRecognition
+    : replayListenSequenceTrace(
+      sequence,
+      trace,
+      "current-matcher",
+      listenMatcherThresholds(matcherProfile),
+    );
+  assertRecognitionTraceUnmutated(`${label} ${profileId} replay`, trace, capturedRecognitionHash);
   return {
     renderer: { ...rendered.renderer },
+    profileId,
+    profile: listenMatcherThresholds(matcherProfile),
     piano,
     pianoName: pianoDefinition(piano).displayName,
     layer: profile === "constant" ? attackLayers[0] : null,
@@ -589,6 +625,7 @@ export function conciseCourseClearDynamicsResult(
     renderer: result.renderer,
     runs: result.runs.map((run) => ({
       renderer: run.renderer,
+      profileId: run.profileId,
       piano: run.piano,
       pianoName: run.pianoName,
       layer: run.layer,

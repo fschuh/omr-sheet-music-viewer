@@ -13,14 +13,22 @@
  * Clear, distinguishable-wrong, ambiguous-harmonic, and omitted-bass corpus
  * under both renderers, which the manifest holds entirely in `confirmation`.
  * The second covers the continuous-sequence corpus, which both single-renderer
- * sweeps have already read and which is therefore reported as `discovery`.
+ * sweeps have already read and which is therefore reported as `discovery`. The
+ * third covers the dynamics and articulation corpora, which the manifest splits:
+ * one constant layer per piano, renderer, and loudness band, one mixed run per
+ * renderer, and a few articulations tuned thresholds, while every other layer,
+ * mixed run, and articulation stayed untouched. Those rows are therefore labeled
+ * individually, and no aggregate that spans both partitions is ever presented as
+ * confirmation.
  *
- * Both parts share one capture rule: each fixture or passage is rendered and
- * recognized once, and every profile replays that one retained decoded trace, so
- * a candidate row can differ from the baseline row only because of the matcher.
+ * All three parts share one capture rule: each fixture, passage, or dynamics run
+ * is rendered and recognized once, and every profile replays that one retained
+ * decoded trace, so a candidate row can differ from the baseline row only
+ * because of the matcher.
  */
 
 import {
+  LISTEN_BENCHMARK_PIANO,
   LISTEN_BENCHMARK_RENDERER,
   LISTEN_BENCHMARK_TONE_RENDERER,
   type ListenBenchmarkRendererConfiguration,
@@ -44,6 +52,17 @@ import {
   type ListenBenchmarkSummary,
   type ListenBenchmarkTrial,
 } from "./listenBenchmark";
+import { captureCourseClearDynamicsRun } from "./listenDynamicsBenchmark";
+import {
+  replayListenSafetyRegressions,
+  type ListenSafetyRegressionSummary,
+} from "./listenSafetyRegression";
+import {
+  PIANO_IDS,
+  pianoDefinition,
+  type PianoId,
+  type PianoLayerId,
+} from "./pianoRegistry";
 import {
   LISTEN_MULTIDOMAIN_CANDIDATE_PROFILE_IDS,
   findListenMatcherProfile,
@@ -56,6 +75,7 @@ import {
   assertValidListenTraceManifest,
   listenTraceManifestHash,
   listenTracesInSuite,
+  type ListenDynamicBand,
   type ListenIsolatedCaseKind,
   type ListenTraceDescriptor,
   type ListenTraceManifest,
@@ -67,10 +87,12 @@ import {
   aggregateListenSequenceRuns,
   bundledListenSequences,
   captureListenSequenceRun,
+  courseClearArticulationDefinitions,
   replayListenSequenceTrace,
   summarizeListenSequenceSafety,
   withOnlineAmtBenchmarkSession,
   type ListenRecognitionTrace,
+  type ListenSequenceArticulation,
   type ListenSequenceAggregateSummary,
   type ListenSequenceDefinition,
   type ListenSequenceFailureReason,
@@ -266,7 +288,12 @@ const RENDERER_BY_KEY: Readonly<Record<ListenTraceRendererKey, ListenBenchmarkRe
     tone: LISTEN_BENCHMARK_TONE_RENDERER,
   });
 
-function rendererForIsolatedTrace(
+/**
+ * The renderer a manifest trace names, checked rather than assumed: a descriptor
+ * that named a renderer this build does not provide would otherwise be measured
+ * under whichever renderer its key happens to resolve to.
+ */
+function rendererForManifestTrace(
   descriptor: ListenTraceDescriptor,
 ): ListenBenchmarkRendererConfiguration {
   const renderer = RENDERER_BY_KEY[descriptor.rendererKey];
@@ -321,7 +348,7 @@ export function listenIsolatedValidationCases(
       return {
         descriptor,
         caseIndex,
-        renderer: rendererForIsolatedTrace(descriptor),
+        renderer: rendererForManifestTrace(descriptor),
         targetPitches,
         playedPitches,
         expectedCorrect: targetPitches.length === playedPitches.length &&
@@ -950,18 +977,6 @@ function percentile(values: readonly number[], proportion: number): number | nul
   return ordered[Math.ceil(ordered.length * proportion) - 1];
 }
 
-function rendererForSequenceTrace(
-  descriptor: ListenTraceDescriptor,
-): ListenBenchmarkRendererConfiguration {
-  const renderer = RENDERER_BY_KEY[descriptor.rendererKey];
-  if (!renderer || renderer.version !== descriptor.renderer) {
-    throw new Error(
-      `${descriptor.id} names renderer ${descriptor.renderer}, which no benchmark renderer provides.`,
-    );
-  }
-  return renderer;
-}
-
 /**
  * Joins the manifest's sequence descriptors to the passages they render.
  *
@@ -1033,7 +1048,7 @@ export function listenSequenceValidationCases(
         definition,
         intervalMs: descriptor.intervalMs,
         family: definition.family,
-        renderer: rendererForSequenceTrace(descriptor),
+        renderer: rendererForManifestTrace(descriptor),
         scoreEligible: descriptor.scoreEligible,
       };
     });
@@ -1518,6 +1533,1251 @@ export function conciseListenSequenceProfileValidationResult(
           partition: result.partition,
           family: result.family,
           intervalMs: result.intervalMs,
+          profiles: result.profiles
+            .filter(({ run }) => (
+              run.summary.falseAdvanceCount > 0 ||
+              run.summary.skippedAdvanceCount > 0 ||
+              run.summary.duplicateAdvanceCount > 0
+            ))
+            .map(({ profileId, run }) => ({
+              profileId,
+              falseAdvanceCount: run.summary.falseAdvanceCount,
+              skippedAdvanceCount: run.summary.skippedAdvanceCount,
+              duplicateAdvanceCount: run.summary.duplicateAdvanceCount,
+              eventIndices: run.events
+                .filter((event) => event.falseAdvance || event.skipped || event.duplicate)
+                .map(({ index }) => index),
+            })),
+        })),
+    })),
+  };
+}
+
+/**
+ * The dynamics and articulation portion of frozen-candidate validation.
+ *
+ * These are the domains the original Direct-only sequence sweep never saw, and
+ * the manifest deliberately split them: three constant layers per piano and
+ * renderer, one mixed run per renderer, and five of the eight articulation runs
+ * tuned the multi-domain search, while every other layer, the other mixed runs,
+ * and the held-back articulations stayed untouched. A row is therefore reported
+ * under its own partition, and every aggregate carries the partitions it spans:
+ * an aggregate that mixes them is labeled `mixed` and can never be quoted as
+ * confirmation.
+ *
+ * The capture rule is the one both earlier parts use: each layer, mixed run, and
+ * articulation is rendered and recognized once through the suite's own capture
+ * path, and every profile column replays that single retained decoded trace.
+ */
+
+/** The three suites this part covers. Each is filterable for a focused smoke. */
+export type ListenDynamicsValidationSuite =
+  | "dynamics-constant"
+  | "dynamics-mixed"
+  | "articulation";
+
+export const LISTEN_DYNAMICS_VALIDATION_SUITES: readonly ListenDynamicsValidationSuite[] =
+  Object.freeze(["dynamics-constant", "dynamics-mixed", "articulation"] as const);
+
+/**
+ * What a set of rows may be used for. `confirmation` is the only role a release
+ * gate may quote; `mixed` exists so an aggregate that spans both partitions is
+ * visibly not confirmation rather than quietly presented as if it were.
+ */
+export type ListenValidationEvidenceRole = "discovery" | "confirmation" | "mixed";
+
+/**
+ * The evidence role of a set of scored rows. `regression-only` rows gate rather
+ * than score, so they never appear in a scored group and are rejected here.
+ */
+export function listenValidationEvidenceRole(
+  partitions: readonly ListenTracePartition[],
+): ListenValidationEvidenceRole {
+  const distinct = [...new Set(partitions)];
+  if (distinct.includes("regression-only")) {
+    throw new Error("A regression-only trace gates a profile and can never carry an evidence role.");
+  }
+  if (distinct.length === 1 && distinct[0] === "discovery") return "discovery";
+  if (distinct.length === 1 && distinct[0] === "confirmation") return "confirmation";
+  return "mixed";
+}
+
+/** One manifest dynamics or articulation trace, joined to what it renders. */
+export interface ListenDynamicsValidationCase {
+  descriptor: ListenTraceDescriptor;
+  suite: ListenDynamicsValidationSuite;
+  definition: ListenSequenceDefinition;
+  intervalMs: number;
+  renderer: ListenBenchmarkRendererConfiguration;
+  piano: PianoId;
+  pianoName: string;
+  /** Null for a mixed-dynamics run, which plays every layer of its piano. */
+  layer: PianoLayerId | null;
+  dynamicBand: ListenDynamicBand | null;
+  dynamicProfile: "constant" | "crescendo-decrescendo";
+  articulation: ListenSequenceArticulation | null;
+  /** False for the diagnosed regression rows: they gate profiles, never score them. */
+  scoreEligible: boolean;
+}
+
+/** One rendered, recognized dynamics or articulation run, kept for the matrix. */
+export interface ListenDynamicsValidationCapture {
+  validationCase: ListenDynamicsValidationCase;
+  sequence: MaterializedListenSequence;
+  trace: ListenRecognitionTrace;
+  /** Exact trace hash at capture, re-checked after every profile has replayed it. */
+  recognitionHash: string;
+  /** Survives a fresh browser process, unlike the raw PCM and trace hashes. */
+  recognitionStructureHash: string;
+  /** The capture-time baseline replay this matrix's baseline row must reproduce. */
+  baselineRun: ListenSequenceRunResult;
+  /**
+   * The instrument the capture actually rendered. Checked against the descriptor,
+   * so a run captured on the wrong piano or velocity layer cannot be filed as a
+   * layer it never played.
+   */
+  captured: {
+    piano: PianoId;
+    layer: PianoLayerId | null;
+    dynamicProfile: "constant" | "crescendo-decrescendo";
+  };
+}
+
+export type ListenDynamicsValidationCaptureFn = (
+  validationCase: ListenDynamicsValidationCase,
+) => Promise<ListenDynamicsValidationCapture>;
+
+export interface ListenDynamicsValidationCaseResult {
+  traceId: string;
+  partition: ListenTracePartition;
+  scoreEligible: boolean;
+  suite: ListenDynamicsValidationSuite;
+  sequenceId: string;
+  sequenceLabel: string;
+  piano: PianoId;
+  pianoName: string;
+  layer: PianoLayerId | null;
+  dynamicBand: ListenDynamicBand | null;
+  dynamicProfile: "constant" | "crescendo-decrescendo";
+  articulation: ListenSequenceArticulation | null;
+  intervalMs: number;
+  rendererKey: ListenTraceRendererKey;
+  renderer: string;
+  recognitionStructureHash: string;
+  frameCount: number;
+  pcmLength: number;
+  peak: number;
+  rms: number;
+  maximumInferenceMs: number;
+  maximumProcessingBacklogMs: number;
+  /** Every profile's run, in the frozen column order, from this one trace. */
+  profiles: ListenSequenceProfileRun[];
+}
+
+/** The levels a dynamics or articulation regression must stay visible at. */
+export type ListenDynamicsGroupKind =
+  | "corpus"
+  | "partition"
+  | "suite"
+  | "piano"
+  | "piano-partition"
+  | "layer"
+  | "mixed-run"
+  | "articulation";
+
+export interface ListenDynamicsGroupDelta extends ListenSequenceMetricDelta {
+  /** Rows whose completion or ordered progress differs, named individually. */
+  gainedCompletePassageTraceIds: string[];
+  lostCompletePassageTraceIds: string[];
+  regressedOrderedAdvanceTraceIds: string[];
+}
+
+/**
+ * One reported set of rows for one profile.
+ *
+ * Every group states the partitions it covers and the role that makes it, so a
+ * per-piano row that spans a tuned layer and an untouched one is `mixed` rather
+ * than confirmation, while a single layer or articulation stays a clean leaf of
+ * exactly one partition.
+ */
+export interface ListenDynamicsValidationGroup {
+  kind: ListenDynamicsGroupKind;
+  /** Stable identity, unique inside one renderer's group list. */
+  key: string;
+  label: string;
+  suite: ListenDynamicsValidationSuite | null;
+  piano: PianoId | null;
+  pianoName: string | null;
+  layer: PianoLayerId | null;
+  dynamicBand: ListenDynamicBand | null;
+  articulation: ListenSequenceArticulation | null;
+  partitions: ListenTracePartition[];
+  evidenceRole: ListenValidationEvidenceRole;
+  traceIds: string[];
+  totals: ListenSequenceValidationTotals;
+  /** Null for the baseline row itself. */
+  deltaFromBaseline: ListenDynamicsGroupDelta | null;
+}
+
+/** One piano's rates, and the constant layer that performed worst on it. */
+export interface ListenDynamicsPianoRates {
+  piano: PianoId;
+  pianoName: string;
+  runCount: number;
+  partitions: ListenTracePartition[];
+  evidenceRole: ListenValidationEvidenceRole;
+  independentMatchRate: number;
+  orderedAdvanceRate: number;
+  completePassageRate: number;
+  worstLayer: PianoLayerId | null;
+  worstLayerOrderedAdvanceRate: number | null;
+}
+
+/**
+ * Mean of the per-piano rates for one dynamics suite, so Salamander's sixteen
+ * velocity layers weigh exactly as much as Splendid's four instead of deciding
+ * the aggregate on their own.
+ *
+ * It is computed per suite rather than over both together, because the
+ * constant-layer and mixed-dynamics matrices each already record a cross-piano
+ * aggregate of their own; blending them would produce a number that resembles
+ * those records without being comparable with either.
+ */
+export interface ListenDynamicsEqualPianoSummary {
+  suite: ListenDynamicsValidationSuite;
+  pianoCount: number;
+  partitions: ListenTracePartition[];
+  evidenceRole: ListenValidationEvidenceRole | null;
+  independentMatchRate: number | null;
+  orderedAdvanceRate: number | null;
+  completePassageRate: number | null;
+  pianos: ListenDynamicsPianoRates[];
+  worstPiano: PianoId | null;
+}
+
+/**
+ * Safety for one profile across every partition of this corpus.
+ *
+ * The dynamics and articulation corpora contain no dedicated safety family, so
+ * safety here is measured two ways: unsafe advances introduced relative to
+ * `baseline-v1` on the identical trace, and the committed regressions replayed
+ * under the same profile. Late advances are counted separately and never fold
+ * into the verdict: the `v05` case is a playhead lag on music the player did
+ * play, not a false advance.
+ */
+export interface ListenDynamicsSafetySummary {
+  runCount: number;
+  falseAdvanceCount: number;
+  skippedAdvanceCount: number;
+  duplicateAdvanceCount: number;
+  /** Reported beside safety, never as safety. */
+  lateAdvanceCount: number;
+  /** Rows unsafe under this profile that `baseline-v1` handled safely. */
+  introducedUnsafeTraceIds: string[];
+  /** Rows whose baseline unsafe advance this profile no longer produces. */
+  clearedUnsafeTraceIds: string[];
+  /** The committed Task 05 and Task 06 regressions, replayed under this profile. */
+  regressions: ListenSafetyRegressionSummary;
+  passed: boolean;
+}
+
+export interface ListenDynamicsProfileDelta {
+  equalPiano: Array<{
+    suite: ListenDynamicsValidationSuite;
+    independentMatchRate: number | null;
+    orderedAdvanceRate: number | null;
+    completePassageRate: number | null;
+  }>;
+  safety: {
+    falseAdvanceCount: number;
+    skippedAdvanceCount: number;
+    duplicateAdvanceCount: number;
+    lateAdvanceCount: number;
+    regressionWorseThanBaselineCount: number;
+  };
+}
+
+export interface ListenDynamicsProfileValidationSummary {
+  profileId: ListenMatcherProfileId;
+  profile: ListenMatcherThresholds;
+  /**
+   * Every reported grouping, from the whole scored corpus down to one velocity
+   * layer, each labeled with the partitions it spans. The leaf groups are what
+   * keep a single layer, mixed run, or articulation from disappearing into an
+   * average.
+   */
+  groups: ListenDynamicsValidationGroup[];
+  /** One entry per dynamics suite present, never one blended over both. */
+  equalPiano: ListenDynamicsEqualPianoSummary[];
+  /**
+   * The `regression-only` rows on their own. They are never added into a scored
+   * group: a diagnosed case gates a profile and must not be able to raise its
+   * score.
+   */
+  regressionTotals: ListenSequenceValidationTotals;
+  safety: ListenDynamicsSafetySummary;
+  /** Null for the baseline row itself. Group deltas live on each group. */
+  deltaFromBaseline: ListenDynamicsProfileDelta | null;
+}
+
+/**
+ * One diagnosed row reported on its own, with the semantics its fixture pins.
+ *
+ * The Tone plus Salamander `v05` run is a late advance: every profile advances
+ * the correct repeated chord, and the candidates advance it one repetition
+ * earlier than `baseline-v1`. The Task 06 case is a genuine false advance. They
+ * are listed together because both are regression rows, and kept apart by
+ * `expectation` because rejecting the first would reject an improvement.
+ */
+export interface ListenDynamicsRegressionCaseReport {
+  traceId: string;
+  partition: ListenTracePartition;
+  suite: ListenDynamicsValidationSuite;
+  piano: PianoId;
+  layer: PianoLayerId | null;
+  articulation: ListenSequenceArticulation | null;
+  profiles: Array<{
+    profileId: ListenMatcherProfileId;
+    complete: boolean;
+    orderedAdvanceCount: number;
+    lateAdvanceCount: number;
+    falseAdvanceCount: number;
+    skippedAdvanceCount: number;
+    duplicateAdvanceCount: number;
+    /** Each late advance with the moment the playhead actually moved. */
+    lateAdvances: Array<{
+      targetIndex: number;
+      scheduledAttackTimeMs: number;
+      advancedAtMs: number | null;
+    }>;
+    unsafeAdvances: Array<{
+      targetIndex: number;
+      falseAdvance: boolean;
+      skipped: boolean;
+      duplicate: boolean;
+      advancedAtMs: number | null;
+    }>;
+  }>;
+}
+
+export interface ListenDynamicsRendererValidation {
+  rendererKey: ListenTraceRendererKey;
+  renderer: ListenBenchmarkRendererConfiguration;
+  caseCount: number;
+  scoredCaseCount: number;
+  regressionCaseCount: number;
+  suites: ListenDynamicsValidationSuite[];
+  pianos: PianoId[];
+  partitions: ListenTracePartition[];
+  cases: ListenDynamicsValidationCaseResult[];
+  profiles: ListenDynamicsProfileValidationSummary[];
+  /** The diagnosed rows, reported apart from every score. */
+  regressionCases: ListenDynamicsRegressionCaseReport[];
+}
+
+export interface ListenDynamicsProfileValidationResult {
+  manifest: {
+    version: number;
+    hash: string;
+    traceCount: number;
+    dynamicsConstantTraceCount: number;
+    dynamicsMixedTraceCount: number;
+    articulationTraceCount: number;
+    capturedTraceCount: number;
+  };
+  /**
+   * `mixed` whenever the run spans both partitions, which the default corpus
+   * does. It is never a single value that a gate could mistake for a
+   * confirmation-wide verdict; the per-group roles are the usable labels.
+   */
+  evidenceRole: ListenValidationEvidenceRole;
+  partitions: ListenTracePartition[];
+  suites: ListenDynamicsValidationSuite[];
+  baselineProfileId: ListenMatcherProfileId;
+  candidateProfileIds: readonly ListenMatcherProfileId[];
+  profiles: ListenValidationProfileIdentity[];
+  renderers: ListenDynamicsRendererValidation[];
+  /** True when every profile column was replayed from one capture per run. */
+  traceReuseVerified: boolean;
+  /** True when every baseline row reproduced its capture-time replay exactly. */
+  baselineParityVerified: boolean;
+}
+
+/** The suites an equal-piano aggregate is defined for: both pianos play them. */
+const DYNAMICS_EQUAL_PIANO_SUITES = ["dynamics-constant", "dynamics-mixed"] as const;
+
+const DYNAMICS_SUITE_BY_NAME: Readonly<Record<ListenDynamicsValidationSuite, true>> = Object.freeze({
+  "dynamics-constant": true,
+  "dynamics-mixed": true,
+  articulation: true,
+});
+
+/**
+ * Joins the manifest's dynamics and articulation descriptors to the passage and
+ * instrument they render.
+ *
+ * `suites` narrows the corpus to a focused smoke and is validated against the
+ * frozen suite list. Narrowing is safe here in a way narrowing the sequence
+ * families was not: the diagnosed cases gate every profile through the committed
+ * regression replay as well as through the rows themselves, so a suite-limited
+ * run still cannot report a clean safety verdict while regressing one.
+ */
+export function listenDynamicsValidationCases(
+  manifest: ListenTraceManifest = LISTEN_TRACE_MANIFEST,
+  rendererKeys: readonly ListenTraceRendererKey[] = ["direct", "tone"],
+  suites: readonly ListenDynamicsValidationSuite[] = LISTEN_DYNAMICS_VALIDATION_SUITES,
+): ListenDynamicsValidationCase[] {
+  if (rendererKeys.length === 0) {
+    throw new Error("Dynamics profile validation needs at least one renderer.");
+  }
+  if (new Set(rendererKeys).size !== rendererKeys.length) {
+    throw new Error("Dynamics profile validation received a duplicated renderer key.");
+  }
+  for (const key of rendererKeys) {
+    if (!RENDERER_BY_KEY[key]) {
+      throw new Error(`Dynamics profile validation received the unknown renderer key ${String(key)}.`);
+    }
+  }
+  if (suites.length === 0) {
+    throw new Error("Dynamics profile validation needs at least one suite.");
+  }
+  if (new Set(suites).size !== suites.length) {
+    throw new Error("Dynamics profile validation received a duplicated suite.");
+  }
+  for (const suite of suites) {
+    if (!DYNAMICS_SUITE_BY_NAME[suite]) {
+      throw new Error(`Dynamics profile validation received the unknown suite ${String(suite)}.`);
+    }
+  }
+  const definitions = courseClearArticulationDefinitions();
+  const selectedRenderers = new Set(rendererKeys);
+  const selected = LISTEN_DYNAMICS_VALIDATION_SUITES.filter((suite) => suites.includes(suite));
+  return selected.flatMap((suite) => listenTracesInSuite(suite, manifest)
+    .filter((descriptor) => selectedRenderers.has(descriptor.rendererKey))
+    .map((descriptor): ListenDynamicsValidationCase => {
+      const definition = definitions.find(({ id }) => id === descriptor.sourceId);
+      if (!definition) {
+        throw new Error(`${descriptor.id} names the unknown passage ${descriptor.sourceId}.`);
+      }
+      if (descriptor.intervalMs === null) {
+        throw new Error(`${descriptor.id} has no attack interval.`);
+      }
+      if (definition.articulation !== descriptor.articulation) {
+        throw new Error(
+          `${descriptor.id} claims articulation ${String(descriptor.articulation)}, but ` +
+          `${definition.id} is ${String(definition.articulation)}.`,
+        );
+      }
+      if (descriptor.piano === null) {
+        throw new Error(`${descriptor.id} names no piano.`);
+      }
+      const dynamicProfile = descriptor.dynamicProfile;
+      if (dynamicProfile === null) {
+        throw new Error(`${descriptor.id} names no dynamic profile.`);
+      }
+      if ((descriptor.layer === null) !== (dynamicProfile === "crescendo-decrescendo")) {
+        throw new Error(
+          `${descriptor.id} is a ${dynamicProfile} run and cannot name layer ` +
+          `${String(descriptor.layer)}.`,
+        );
+      }
+      // Articulation renders on the fixed benchmark instrument rather than on a
+      // requested one, so the join checks that the manifest still describes it.
+      if (
+        suite === "articulation" &&
+        (descriptor.piano !== LISTEN_BENCHMARK_PIANO.id || descriptor.layer !== LISTEN_BENCHMARK_PIANO.layer)
+      ) {
+        throw new Error(
+          `${descriptor.id} claims ${descriptor.piano}/${String(descriptor.layer)}, but the ` +
+          `articulation matrix renders ${LISTEN_BENCHMARK_PIANO.id}/${LISTEN_BENCHMARK_PIANO.layer}.`,
+        );
+      }
+      return {
+        descriptor,
+        suite,
+        definition,
+        intervalMs: descriptor.intervalMs,
+        renderer: rendererForManifestTrace(descriptor),
+        piano: descriptor.piano,
+        pianoName: pianoDefinition(descriptor.piano).displayName,
+        layer: descriptor.layer,
+        dynamicBand: descriptor.dynamicBand,
+        dynamicProfile,
+        articulation: descriptor.articulation,
+        scoreEligible: descriptor.scoreEligible,
+      };
+    }));
+}
+
+/**
+ * Renders and recognizes one dynamics or articulation run on the capture path
+ * its own suite already uses, so a validation row cannot diverge from the suite
+ * result it claims to describe.
+ */
+export async function captureListenDynamicsValidationTrace(
+  validationCase: ListenDynamicsValidationCase,
+  session: SequenceInferenceSession,
+): Promise<ListenDynamicsValidationCapture> {
+  if (validationCase.suite === "articulation") {
+    const captured = await captureListenSequenceRun({
+      definition: validationCase.definition,
+      intervalMs: validationCase.intervalMs,
+      session,
+      renderer: validationCase.renderer,
+    });
+    return {
+      validationCase,
+      sequence: captured.sequence,
+      trace: captured.trace,
+      recognitionHash: captured.recognitionHash,
+      recognitionStructureHash: listenRecognitionStructureHash(captured.trace),
+      baselineRun: captured.run,
+      captured: {
+        piano: LISTEN_BENCHMARK_PIANO.id,
+        layer: LISTEN_BENCHMARK_PIANO.layer as PianoLayerId,
+        dynamicProfile: "constant",
+      },
+    };
+  }
+  const { sequence, run } = await captureCourseClearDynamicsRun(
+    { session, renderer: validationCase.renderer },
+    validationCase.piano,
+    validationCase.layer,
+  );
+  if (run.profileId !== LISTEN_PROFILE_VALIDATION_BASELINE_PROFILE_ID) {
+    throw new Error(
+      `${validationCase.descriptor.id} was captured under ${run.profileId}, so its baseline ` +
+      `column would not be ${LISTEN_PROFILE_VALIDATION_BASELINE_PROFILE_ID}.`,
+    );
+  }
+  const trace = run.recognition.trace;
+  return {
+    validationCase,
+    sequence,
+    trace,
+    recognitionHash: listenRecognitionTraceHash(trace),
+    recognitionStructureHash: listenRecognitionStructureHash(trace),
+    baselineRun: run.recognition,
+    captured: {
+      piano: run.piano,
+      layer: run.layer,
+      dynamicProfile: run.dynamicProfile,
+    },
+  };
+}
+
+/**
+ * Replays one retained dynamics or articulation trace through every profile
+ * column.
+ *
+ * The trace object is read, never rebuilt, so the only thing that can differ
+ * between columns is the matcher. The capture-time hash is re-checked afterwards
+ * because a replay that wrote back into the trace would make each column depend
+ * on the order the profiles happened to run in.
+ */
+export function replayListenDynamicsProfileMatrix(
+  capture: ListenDynamicsValidationCapture,
+  profiles: readonly ListenValidationProfileIdentity[],
+): ListenDynamicsValidationCaseResult {
+  if (profiles.length === 0) {
+    throw new Error("A dynamics profile matrix needs at least the baseline profile.");
+  }
+  if (new Set(profiles.map(({ profileId }) => profileId)).size !== profiles.length) {
+    throw new Error("A dynamics profile matrix cannot replay the same profile twice.");
+  }
+  if (profiles[0].profileId !== LISTEN_PROFILE_VALIDATION_BASELINE_PROFILE_ID) {
+    throw new Error(
+      `A dynamics profile matrix must start from ${LISTEN_PROFILE_VALIDATION_BASELINE_PROFILE_ID}.`,
+    );
+  }
+  const { validationCase, sequence, trace } = capture;
+  const descriptor = validationCase.descriptor;
+  const runs = profiles.map(({ profileId, profile }): ListenSequenceProfileRun => ({
+    profileId,
+    profile,
+    run: replayListenSequenceTrace(sequence, trace, "current-matcher", profile),
+  }));
+  assertRecognitionTraceUnmutated(
+    `${descriptor.id} candidate-matrix replay`,
+    trace,
+    capture.recognitionHash,
+  );
+  return {
+    traceId: descriptor.id,
+    partition: descriptor.partition,
+    scoreEligible: validationCase.scoreEligible,
+    suite: validationCase.suite,
+    sequenceId: validationCase.definition.id,
+    sequenceLabel: validationCase.definition.label,
+    piano: validationCase.piano,
+    pianoName: validationCase.pianoName,
+    layer: validationCase.layer,
+    dynamicBand: validationCase.dynamicBand,
+    dynamicProfile: validationCase.dynamicProfile,
+    articulation: validationCase.articulation,
+    intervalMs: validationCase.intervalMs,
+    rendererKey: descriptor.rendererKey,
+    renderer: trace.renderer.version,
+    recognitionStructureHash: capture.recognitionStructureHash,
+    frameCount: trace.frames.length,
+    pcmLength: trace.pcm.length,
+    peak: trace.audioDiagnostics.peak,
+    rms: trace.audioDiagnostics.rms,
+    maximumInferenceMs: trace.maximumInferenceMs,
+    maximumProcessingBacklogMs: trace.maximumProcessingBacklogMs,
+    profiles: runs,
+  };
+}
+
+function dynamicsRunFor(
+  result: ListenDynamicsValidationCaseResult,
+  profileId: ListenMatcherProfileId,
+): ListenSequenceRunResult {
+  const entry = result.profiles.find((profile) => profile.profileId === profileId);
+  if (!entry) throw new Error(`${result.traceId} has no ${profileId} row.`);
+  return entry.run;
+}
+
+function unsafeRun(run: ListenSequenceRunResult): boolean {
+  return run.summary.falseAdvanceCount > 0 ||
+    run.summary.skippedAdvanceCount > 0 ||
+    run.summary.duplicateAdvanceCount > 0;
+}
+
+/** One grouping of scored rows, before any profile has been applied to it. */
+export interface ListenDynamicsGroupDefinition {
+  kind: ListenDynamicsGroupKind;
+  key: string;
+  label: string;
+  suite: ListenDynamicsValidationSuite | null;
+  piano: PianoId | null;
+  layer: PianoLayerId | null;
+  dynamicBand: ListenDynamicBand | null;
+  articulation: ListenSequenceArticulation | null;
+  cases: ListenDynamicsValidationCaseResult[];
+}
+
+/**
+ * The groupings one renderer reports, from the whole scored corpus down to a
+ * single velocity layer, mixed run, or articulation.
+ *
+ * The leaf levels are the point: an average over twenty layers can hide one
+ * layer losing every advance, so each layer, each mixed run, and each
+ * articulation is also reported on its own, where it is a clean single-partition
+ * row.
+ */
+export function listenDynamicsValidationGroupDefinitions(
+  cases: readonly ListenDynamicsValidationCaseResult[],
+): ListenDynamicsGroupDefinition[] {
+  const scored = cases.filter(({ scoreEligible }) => scoreEligible);
+  const of = (predicate: (result: ListenDynamicsValidationCaseResult) => boolean) =>
+    scored.filter(predicate);
+  const partitions = [...new Set(scored.map(({ partition }) => partition))].sort();
+  const suites = LISTEN_DYNAMICS_VALIDATION_SUITES
+    .filter((suite) => scored.some((result) => result.suite === suite));
+  const pianos = PIANO_IDS
+    .filter((piano) => scored.some((result) => result.piano === piano && result.suite !== "articulation"));
+  const definitions: ListenDynamicsGroupDefinition[] = [];
+  const push = (
+    kind: ListenDynamicsGroupKind,
+    key: string,
+    label: string,
+    selected: ListenDynamicsValidationCaseResult[],
+    dimensions: Partial<Omit<ListenDynamicsGroupDefinition, "kind" | "key" | "label" | "cases">> = {},
+  ) => {
+    if (selected.length === 0) return;
+    definitions.push({
+      kind,
+      key,
+      label,
+      suite: dimensions.suite ?? null,
+      piano: dimensions.piano ?? null,
+      layer: dimensions.layer ?? null,
+      dynamicBand: dimensions.dynamicBand ?? null,
+      articulation: dimensions.articulation ?? null,
+      cases: selected,
+    });
+  };
+  push("corpus", "corpus", "All scored dynamics and articulation runs", [...scored]);
+  for (const partition of partitions) {
+    push("partition", `partition/${partition}`, `Partition ${partition}`, of(
+      (result) => result.partition === partition,
+    ));
+  }
+  for (const suite of suites) {
+    push("suite", `suite/${suite}`, `Suite ${suite}`, of((result) => result.suite === suite), { suite });
+  }
+  for (const piano of pianos) {
+    const name = pianoDefinition(piano).displayName;
+    push("piano", `piano/${piano}`, name, of(
+      (result) => result.piano === piano && result.suite !== "articulation",
+    ), { piano });
+    for (const partition of partitions) {
+      push("piano-partition", `piano/${piano}/${partition}`, `${name} · ${partition}`, of(
+        (result) => result.piano === piano &&
+          result.suite !== "articulation" &&
+          result.partition === partition,
+      ), { piano });
+    }
+  }
+  for (const result of scored.filter(({ suite }) => suite === "dynamics-constant")) {
+    push("layer", `layer/${result.piano}/${result.layer}`, `${result.pianoName} ${result.layer}`, [result], {
+      suite: "dynamics-constant",
+      piano: result.piano,
+      layer: result.layer,
+      dynamicBand: result.dynamicBand,
+    });
+  }
+  for (const result of scored.filter(({ suite }) => suite === "dynamics-mixed")) {
+    push("mixed-run", `mixed/${result.piano}`, `${result.pianoName} crescendo-decrescendo`, [result], {
+      suite: "dynamics-mixed",
+      piano: result.piano,
+    });
+  }
+  for (const result of scored.filter(({ suite }) => suite === "articulation")) {
+    push("articulation", `articulation/${result.articulation}`, `Articulation ${result.articulation}`, [result], {
+      suite: "articulation",
+      articulation: result.articulation,
+    });
+  }
+  return definitions;
+}
+
+/** One profile's view of one grouping, with the identities a delta names. */
+interface DynamicsGroupColumn {
+  definition: ListenDynamicsGroupDefinition;
+  totals: ListenSequenceValidationTotals;
+  completedTraceIds: Set<string>;
+  orderedAdvancesByTraceId: Map<string, number>;
+}
+
+function dynamicsGroupColumn(
+  definition: ListenDynamicsGroupDefinition,
+  profileId: ListenMatcherProfileId,
+): DynamicsGroupColumn {
+  const runs = definition.cases.map((result) => dynamicsRunFor(result, profileId));
+  return {
+    definition,
+    totals: listenSequenceValidationTotals(runs),
+    completedTraceIds: new Set(definition.cases
+      .filter((result) => dynamicsRunFor(result, profileId).summary.complete)
+      .map(({ traceId }) => traceId)),
+    orderedAdvancesByTraceId: new Map(definition.cases.map((result) => [
+      result.traceId,
+      dynamicsRunFor(result, profileId).summary.orderedAdvanceCount,
+    ])),
+  };
+}
+
+function dynamicsGroup(
+  column: DynamicsGroupColumn,
+  baseline: DynamicsGroupColumn | null,
+): ListenDynamicsValidationGroup {
+  const { definition } = column;
+  const partitions = [...new Set(definition.cases.map(({ partition }) => partition))].sort();
+  return {
+    kind: definition.kind,
+    key: definition.key,
+    label: definition.label,
+    suite: definition.suite,
+    piano: definition.piano,
+    pianoName: definition.piano === null ? null : pianoDefinition(definition.piano).displayName,
+    layer: definition.layer,
+    dynamicBand: definition.dynamicBand,
+    articulation: definition.articulation,
+    partitions,
+    evidenceRole: listenValidationEvidenceRole(partitions),
+    traceIds: definition.cases.map(({ traceId }) => traceId),
+    totals: column.totals,
+    deltaFromBaseline: baseline === null ? null : {
+      ...sequenceMetricDelta(column.totals, baseline.totals),
+      gainedCompletePassageTraceIds: [...column.completedTraceIds]
+        .filter((id) => !baseline.completedTraceIds.has(id)).sort(),
+      lostCompletePassageTraceIds: [...baseline.completedTraceIds]
+        .filter((id) => !column.completedTraceIds.has(id)).sort(),
+      regressedOrderedAdvanceTraceIds: [...column.orderedAdvancesByTraceId]
+        .filter(([id, count]) => count < (baseline.orderedAdvancesByTraceId.get(id) ?? 0))
+        .map(([id]) => id).sort(),
+    },
+  };
+}
+
+/**
+ * Equal weight per piano over the scored dynamics rows.
+ *
+ * Salamander contributes sixteen constant layers and Splendid four, so summing
+ * the runs would let one instrument decide the aggregate. The per-piano rates
+ * are listed beside the mean, and each piano names its worst constant layer, so
+ * an instrument or a layer that collapsed stays visible in the summary itself.
+ */
+export function listenDynamicsEqualPianoSummary(
+  cases: readonly ListenDynamicsValidationCaseResult[],
+  profileId: ListenMatcherProfileId,
+  suite: Exclude<ListenDynamicsValidationSuite, "articulation">,
+): ListenDynamicsEqualPianoSummary {
+  const dynamics = cases.filter((result) => result.scoreEligible && result.suite === suite);
+  const pianos = PIANO_IDS
+    .filter((piano) => dynamics.some((result) => result.piano === piano))
+    .map((piano): ListenDynamicsPianoRates => {
+      const selected = dynamics.filter((result) => result.piano === piano);
+      const totals = listenSequenceValidationTotals(
+        selected.map((result) => dynamicsRunFor(result, profileId)),
+      );
+      const layers = selected
+        .filter(({ suite }) => suite === "dynamics-constant")
+        .map((result) => ({
+          layer: result.layer,
+          summary: dynamicsRunFor(result, profileId).summary,
+        }))
+        .sort((left, right) => (
+          left.summary.orderedAdvanceRate - right.summary.orderedAdvanceRate ||
+          left.summary.independentMatchRate - right.summary.independentMatchRate ||
+          String(left.layer).localeCompare(String(right.layer))
+        ));
+      const partitions = [...new Set(selected.map(({ partition }) => partition))].sort();
+      return {
+        piano,
+        pianoName: pianoDefinition(piano).displayName,
+        runCount: selected.length,
+        partitions,
+        evidenceRole: listenValidationEvidenceRole(partitions),
+        independentMatchRate: totals.independentMatchRate,
+        orderedAdvanceRate: totals.orderedAdvanceRate,
+        completePassageRate: totals.completePassageRate,
+        worstLayer: layers[0]?.layer ?? null,
+        worstLayerOrderedAdvanceRate: layers[0]?.summary.orderedAdvanceRate ?? null,
+      };
+    });
+  const mean = (select: (rates: ListenDynamicsPianoRates) => number) => (pianos.length === 0
+    ? null
+    : pianos.reduce((total, rates) => total + select(rates), 0) / pianos.length);
+  const partitions = [...new Set(dynamics.map(({ partition }) => partition))].sort();
+  return {
+    suite,
+    pianoCount: pianos.length,
+    partitions,
+    evidenceRole: pianos.length === 0 ? null : listenValidationEvidenceRole(partitions),
+    independentMatchRate: mean(({ independentMatchRate }) => independentMatchRate),
+    orderedAdvanceRate: mean(({ orderedAdvanceRate }) => orderedAdvanceRate),
+    completePassageRate: mean(({ completePassageRate }) => completePassageRate),
+    pianos,
+    worstPiano: [...pianos].sort((left, right) => (
+      left.orderedAdvanceRate - right.orderedAdvanceRate ||
+      left.independentMatchRate - right.independentMatchRate ||
+      left.piano.localeCompare(right.piano)
+    ))[0]?.piano ?? null,
+  };
+}
+
+/**
+ * Safety for one profile across every partition of this corpus.
+ *
+ * There is no dedicated safety family here, so an unsafe advance is judged
+ * against `baseline-v1` on the identical trace — the rule the multi-domain
+ * search used, and the only workable one on a corpus that contains a diagnosed
+ * baseline event of its own. The committed regressions are replayed with the
+ * same profile so a diagnosed case cannot be dropped from the verdict.
+ */
+export function listenDynamicsSafetySummary(
+  cases: readonly ListenDynamicsValidationCaseResult[],
+  profileId: ListenMatcherProfileId,
+  profile: ListenMatcherThresholds,
+): ListenDynamicsSafetySummary {
+  const baselineId = LISTEN_PROFILE_VALIDATION_BASELINE_PROFILE_ID;
+  const runs = cases.map((result) => dynamicsRunFor(result, profileId));
+  const total = (select: (run: ListenSequenceRunResult) => number) => runs
+    .reduce((sum, run) => sum + select(run), 0);
+  const introducedUnsafeTraceIds = cases
+    .filter((result) => unsafeRun(dynamicsRunFor(result, profileId)) &&
+      !unsafeRun(dynamicsRunFor(result, baselineId)))
+    .map(({ traceId }) => traceId).sort();
+  const clearedUnsafeTraceIds = cases
+    .filter((result) => !unsafeRun(dynamicsRunFor(result, profileId)) &&
+      unsafeRun(dynamicsRunFor(result, baselineId)))
+    .map(({ traceId }) => traceId).sort();
+  const regressions = replayListenSafetyRegressions(profile, profileId);
+  return {
+    runCount: runs.length,
+    falseAdvanceCount: total((run) => run.summary.falseAdvanceCount),
+    skippedAdvanceCount: total((run) => run.summary.skippedAdvanceCount),
+    duplicateAdvanceCount: total((run) => run.summary.duplicateAdvanceCount),
+    lateAdvanceCount: total((run) => run.summary.lateAdvanceCount),
+    introducedUnsafeTraceIds,
+    clearedUnsafeTraceIds,
+    regressions,
+    passed: introducedUnsafeTraceIds.length === 0 && regressions.passed,
+  };
+}
+
+function dynamicsRegressionCaseReport(
+  result: ListenDynamicsValidationCaseResult,
+): ListenDynamicsRegressionCaseReport {
+  return {
+    traceId: result.traceId,
+    partition: result.partition,
+    suite: result.suite,
+    piano: result.piano,
+    layer: result.layer,
+    articulation: result.articulation,
+    profiles: result.profiles.map(({ profileId, run }) => ({
+      profileId,
+      complete: run.summary.complete,
+      orderedAdvanceCount: run.summary.orderedAdvanceCount,
+      lateAdvanceCount: run.summary.lateAdvanceCount,
+      falseAdvanceCount: run.summary.falseAdvanceCount,
+      skippedAdvanceCount: run.summary.skippedAdvanceCount,
+      duplicateAdvanceCount: run.summary.duplicateAdvanceCount,
+      lateAdvances: run.events
+        .filter((event) => event.lateAdvance)
+        .map((event) => ({
+          targetIndex: event.index,
+          scheduledAttackTimeMs: event.scheduledAttackTimeMs,
+          advancedAtMs: event.advancedAtMs,
+        })),
+      unsafeAdvances: run.events
+        .filter((event) => event.falseAdvance || event.skipped || event.duplicate)
+        .map((event) => ({
+          targetIndex: event.index,
+          falseAdvance: event.falseAdvance,
+          skipped: event.skipped,
+          duplicate: event.duplicate,
+          advancedAtMs: event.advancedAtMs,
+        })),
+    })),
+  };
+}
+
+/**
+ * Summarizes one renderer's dynamics and articulation matrix.
+ *
+ * Scoring follows the manifest's `scoreEligible` flag rather than a name spelled
+ * here, so the diagnosed rows gate every column and contribute to no positive
+ * metric, and every reported group carries the partitions it spans.
+ */
+export function summarizeListenDynamicsProfileValidation(
+  rendererKey: ListenTraceRendererKey,
+  renderer: ListenBenchmarkRendererConfiguration,
+  cases: readonly ListenDynamicsValidationCaseResult[],
+  profiles: readonly ListenValidationProfileIdentity[],
+): ListenDynamicsRendererValidation {
+  const baselineId = LISTEN_PROFILE_VALIDATION_BASELINE_PROFILE_ID;
+  if (profiles.length === 0 || profiles[0].profileId !== baselineId) {
+    throw new Error(`A dynamics validation summary must start from ${baselineId}.`);
+  }
+  for (const result of cases) {
+    if (result.rendererKey !== rendererKey) {
+      throw new Error(`${result.traceId} is not a ${rendererKey} trace.`);
+    }
+  }
+  const scored = cases.filter(({ scoreEligible }) => scoreEligible);
+  const regressionCases = cases.filter(({ scoreEligible }) => !scoreEligible);
+  const definitions = listenDynamicsValidationGroupDefinitions(cases);
+  const columns = profiles.map((identity) => ({
+    identity,
+    groups: definitions.map((definition) => dynamicsGroupColumn(definition, identity.profileId)),
+    equalPiano: DYNAMICS_EQUAL_PIANO_SUITES
+      .filter((suite) => cases.some((result) => result.scoreEligible && result.suite === suite))
+      .map((suite) => listenDynamicsEqualPianoSummary(cases, identity.profileId, suite)),
+    regressionTotals: listenSequenceValidationTotals(
+      regressionCases.map((result) => dynamicsRunFor(result, identity.profileId)),
+    ),
+    safety: listenDynamicsSafetySummary(cases, identity.profileId, identity.profile),
+  }));
+  const baseline = columns[0];
+  const summaries = columns.map((column): ListenDynamicsProfileValidationSummary => ({
+    profileId: column.identity.profileId,
+    profile: column.identity.profile,
+    groups: column.groups.map((group, index) => dynamicsGroup(
+      group,
+      column === baseline ? null : baseline.groups[index],
+    )),
+    equalPiano: column.equalPiano,
+    regressionTotals: column.regressionTotals,
+    safety: column.safety,
+    deltaFromBaseline: column === baseline ? null : {
+      equalPiano: column.equalPiano.map((equal, index) => ({
+        suite: equal.suite,
+        independentMatchRate: rateDelta(
+          equal.independentMatchRate,
+          baseline.equalPiano[index].independentMatchRate,
+        ),
+        orderedAdvanceRate: rateDelta(
+          equal.orderedAdvanceRate,
+          baseline.equalPiano[index].orderedAdvanceRate,
+        ),
+        completePassageRate: rateDelta(
+          equal.completePassageRate,
+          baseline.equalPiano[index].completePassageRate,
+        ),
+      })),
+      safety: {
+        falseAdvanceCount: column.safety.falseAdvanceCount - baseline.safety.falseAdvanceCount,
+        skippedAdvanceCount: column.safety.skippedAdvanceCount - baseline.safety.skippedAdvanceCount,
+        duplicateAdvanceCount:
+          column.safety.duplicateAdvanceCount - baseline.safety.duplicateAdvanceCount,
+        lateAdvanceCount: column.safety.lateAdvanceCount - baseline.safety.lateAdvanceCount,
+        regressionWorseThanBaselineCount: column.safety.regressions.worseThanBaselineCount -
+          baseline.safety.regressions.worseThanBaselineCount,
+      },
+    },
+  }));
+  return {
+    rendererKey,
+    renderer: { ...renderer },
+    caseCount: cases.length,
+    scoredCaseCount: scored.length,
+    regressionCaseCount: regressionCases.length,
+    suites: LISTEN_DYNAMICS_VALIDATION_SUITES.filter((suite) => (
+      cases.some((result) => result.suite === suite)
+    )),
+    pianos: PIANO_IDS.filter((piano) => cases.some((result) => result.piano === piano)),
+    partitions: [...new Set(cases.map(({ partition }) => partition))].sort(),
+    cases: [...cases],
+    profiles: summaries,
+    regressionCases: regressionCases.map(dynamicsRegressionCaseReport),
+  };
+}
+
+function rateDelta(candidate: number | null, baseline: number | null): number | null {
+  return candidate === null || baseline === null ? null : candidate - baseline;
+}
+
+/**
+ * Captures the dynamics and articulation corpora once and replays the frozen
+ * candidate matrix against every retained trace.
+ *
+ * The capture function is injected so unit tests drive the identical join,
+ * matrix, aggregation, and parity path over deterministic synthetic traces, and
+ * so a test can prove that one capture serves every profile column.
+ */
+export async function evaluateListenDynamicsProfileValidation(options: {
+  capture: ListenDynamicsValidationCaptureFn;
+  manifest?: ListenTraceManifest;
+  candidateProfileIds?: readonly ListenMatcherProfileId[];
+  rendererKeys?: readonly ListenTraceRendererKey[];
+  suites?: readonly ListenDynamicsValidationSuite[];
+  onProgress?: (completed: number, total: number, label: string) => void;
+}): Promise<ListenDynamicsProfileValidationResult> {
+  const manifest = options.manifest ?? LISTEN_TRACE_MANIFEST;
+  assertValidListenTraceManifest(manifest);
+  const onProgress = options.onProgress ?? (() => undefined);
+  const profileIds = resolveListenValidationProfileIds(options.candidateProfileIds);
+  const profiles = listenValidationProfileIdentities(profileIds);
+  const rendererKeys = options.rendererKeys ?? ["direct", "tone"];
+  const suites = options.suites ?? LISTEN_DYNAMICS_VALIDATION_SUITES;
+  const validationCases = listenDynamicsValidationCases(manifest, rendererKeys, suites);
+  if (validationCases.length === 0) {
+    throw new Error("The manifest contains no dynamics or articulation traces to validate.");
+  }
+  const resultsByRenderer = new Map<ListenTraceRendererKey, ListenDynamicsValidationCaseResult[]>();
+  for (let index = 0; index < validationCases.length; index += 1) {
+    const validationCase = validationCases[index];
+    const descriptor = validationCase.descriptor;
+    const label = `${validationCase.pianoName} ${validationCase.layer ?? validationCase.dynamicProfile}`;
+    onProgress(index, validationCases.length, `Capturing ${descriptor.id}`);
+    const capture = await options.capture(validationCase);
+    // The row is filed under the requested run's identity, so a capture that
+    // answered with different audio would be reported as this run.
+    if (capture.validationCase.descriptor.id !== descriptor.id) {
+      throw new Error(`Capturing ${descriptor.id} returned ${capture.validationCase.descriptor.id}.`);
+    }
+    if (capture.trace.renderer.version !== descriptor.renderer) {
+      throw new Error(
+        `${descriptor.id} expects renderer ${descriptor.renderer}, but its capture used ` +
+        `${capture.trace.renderer.version}.`,
+      );
+    }
+    if (
+      capture.sequence.definition.id !== validationCase.definition.id ||
+      capture.trace.intervalMs !== validationCase.intervalMs
+    ) {
+      throw new Error(
+        `${descriptor.id} expects ${validationCase.definition.id} at ${validationCase.intervalMs} ` +
+        `ms, but its capture recognized ${capture.sequence.definition.id} at ` +
+        `${capture.trace.intervalMs} ms.`,
+      );
+    }
+    if (
+      capture.captured.piano !== validationCase.piano ||
+      capture.captured.layer !== validationCase.layer ||
+      capture.captured.dynamicProfile !== validationCase.dynamicProfile
+    ) {
+      throw new Error(
+        `${descriptor.id} expects ${validationCase.piano}/${String(validationCase.layer)} as a ` +
+        `${validationCase.dynamicProfile} run, but its capture rendered ` +
+        `${capture.captured.piano}/${String(capture.captured.layer)} as a ` +
+        `${capture.captured.dynamicProfile} run.`,
+      );
+    }
+    const caseResult = replayListenDynamicsProfileMatrix(capture, profiles);
+    // The baseline column must reproduce the capture-time replay exactly. A
+    // difference there means the harness changed, so no candidate comparison
+    // built on this trace would be measuring the profile.
+    assertListenSequenceRunParity(
+      label,
+      capture.baselineRun,
+      dynamicsRunFor(caseResult, LISTEN_PROFILE_VALIDATION_BASELINE_PROFILE_ID),
+    );
+    const existing = resultsByRenderer.get(descriptor.rendererKey);
+    if (existing) existing.push(caseResult);
+    else resultsByRenderer.set(descriptor.rendererKey, [caseResult]);
+    onProgress(index + 1, validationCases.length, `Replayed ${descriptor.id}`);
+  }
+  const renderers = rendererKeys
+    .filter((key) => resultsByRenderer.has(key))
+    .map((key) => summarizeListenDynamicsProfileValidation(
+      key,
+      RENDERER_BY_KEY[key],
+      resultsByRenderer.get(key) ?? [],
+      profiles,
+    ));
+  const scoredPartitions = [...new Set(validationCases
+    .filter(({ scoreEligible }) => scoreEligible)
+    .map(({ descriptor }) => descriptor.partition))];
+  return {
+    manifest: {
+      version: manifest.version,
+      hash: listenTraceManifestHash(manifest),
+      traceCount: manifest.traces.length,
+      dynamicsConstantTraceCount: listenTracesInSuite("dynamics-constant", manifest).length,
+      dynamicsMixedTraceCount: listenTracesInSuite("dynamics-mixed", manifest).length,
+      articulationTraceCount: listenTracesInSuite("articulation", manifest).length,
+      capturedTraceCount: validationCases.length,
+    },
+    evidenceRole: listenValidationEvidenceRole(scoredPartitions),
+    partitions: [...new Set(validationCases.map(({ descriptor }) => descriptor.partition))],
+    suites: LISTEN_DYNAMICS_VALIDATION_SUITES.filter((suite) => suites.includes(suite)),
+    baselineProfileId: LISTEN_PROFILE_VALIDATION_BASELINE_PROFILE_ID,
+    candidateProfileIds: Object.freeze(profileIds.slice(1)),
+    profiles,
+    renderers,
+    traceReuseVerified: true,
+    baselineParityVerified: true,
+  };
+}
+
+/** Runs the dynamics candidate matrix in the browser against one inference session. */
+export function runListenDynamicsProfileValidation(
+  onProgress: (completed: number, total: number, label: string) => void = () => undefined,
+  rendererKeys: readonly ListenTraceRendererKey[] = ["direct", "tone"],
+  suites: readonly ListenDynamicsValidationSuite[] = LISTEN_DYNAMICS_VALIDATION_SUITES,
+): Promise<ListenDynamicsProfileValidationResult> {
+  return withOnlineAmtBenchmarkSession((session) => evaluateListenDynamicsProfileValidation({
+    capture: (validationCase) => captureListenDynamicsValidationTrace(validationCase, session),
+    rendererKeys,
+    suites,
+    onProgress,
+  }));
+}
+
+/**
+ * The exported shape of a dynamics and articulation validation run. Every run
+ * keeps its decoded-structure hash, because that is what two fresh browser
+ * processes must agree on, and every group keeps the partitions it spans, so no
+ * number in the export can be quoted as confirmation without saying so.
+ */
+export function conciseListenDynamicsProfileValidationResult(
+  result: ListenDynamicsProfileValidationResult,
+) {
+  return {
+    manifest: result.manifest,
+    evidenceRole: result.evidenceRole,
+    partitions: result.partitions,
+    suites: result.suites,
+    baselineProfileId: result.baselineProfileId,
+    candidateProfileIds: result.candidateProfileIds,
+    profiles: result.profiles,
+    traceReuseVerified: result.traceReuseVerified,
+    baselineParityVerified: result.baselineParityVerified,
+    renderers: result.renderers.map((renderer) => ({
+      rendererKey: renderer.rendererKey,
+      renderer: renderer.renderer,
+      caseCount: renderer.caseCount,
+      scoredCaseCount: renderer.scoredCaseCount,
+      regressionCaseCount: renderer.regressionCaseCount,
+      suites: renderer.suites,
+      pianos: renderer.pianos,
+      partitions: renderer.partitions,
+      traceIdentities: renderer.cases.map((result) => ({
+        traceId: result.traceId,
+        partition: result.partition,
+        piano: result.piano,
+        layer: result.layer,
+        articulation: result.articulation,
+        recognitionStructureHash: result.recognitionStructureHash,
+        frameCount: result.frameCount,
+        pcmLength: result.pcmLength,
+        peak: result.peak,
+        rms: result.rms,
+      })),
+      profiles: renderer.profiles.map((profile) => ({
+        profileId: profile.profileId,
+        profile: profile.profile,
+        groups: profile.groups,
+        equalPiano: profile.equalPiano,
+        regressionTotals: profile.regressionTotals,
+        safety: {
+          runCount: profile.safety.runCount,
+          falseAdvanceCount: profile.safety.falseAdvanceCount,
+          skippedAdvanceCount: profile.safety.skippedAdvanceCount,
+          duplicateAdvanceCount: profile.safety.duplicateAdvanceCount,
+          lateAdvanceCount: profile.safety.lateAdvanceCount,
+          introducedUnsafeTraceIds: profile.safety.introducedUnsafeTraceIds,
+          clearedUnsafeTraceIds: profile.safety.clearedUnsafeTraceIds,
+          passed: profile.safety.passed,
+          regressions: {
+            fixtureCount: profile.safety.regressions.fixtureCount,
+            deviationCount: profile.safety.regressions.deviationCount,
+            worseThanBaselineCount: profile.safety.regressions.worseThanBaselineCount,
+            passed: profile.safety.regressions.passed,
+            outcomes: profile.safety.regressions.outcomes.map((outcome) => ({
+              fixtureId: outcome.fixtureId,
+              expectation: outcome.expectation,
+              targetIndex: outcome.targetIndex,
+              advanced: outcome.advanced,
+              advancedAtMs: outcome.advancedAtMs,
+              falseAdvance: outcome.falseAdvance,
+              lateAdvance: outcome.lateAdvance,
+              deviations: outcome.deviations,
+              newlyUnsafeTargets: outcome.newlyUnsafeTargets,
+              worseThanBaseline: outcome.worseThanBaseline,
+            })),
+          },
+        },
+        deltaFromBaseline: profile.deltaFromBaseline,
+      })),
+      regressionCases: renderer.regressionCases,
+      incompleteRuns: renderer.cases
+        .filter((result) => result.scoreEligible && result.profiles
+          .some(({ run }) => !run.summary.complete))
+        .map((result) => ({
+          traceId: result.traceId,
+          partition: result.partition,
+          piano: result.piano,
+          layer: result.layer,
+          articulation: result.articulation,
+          profiles: result.profiles.map(({ profileId, run }) => ({
+            profileId,
+            complete: run.summary.complete,
+            orderedAdvanceCount: run.summary.orderedAdvanceCount,
+            independentMatchCount: run.summary.independentMatchCount,
+            firstStallIndex: run.summary.firstStallIndex,
+            primaryFailure: run.summary.firstStallIndex === null
+              ? null
+              : run.events[run.summary.firstStallIndex]?.primaryFailure ?? null,
+          })),
+        })),
+      unsafeAdvances: renderer.cases
+        .filter((result) => result.profiles.some(({ run }) => (
+          run.summary.falseAdvanceCount > 0 ||
+          run.summary.skippedAdvanceCount > 0 ||
+          run.summary.duplicateAdvanceCount > 0
+        )))
+        .map((result) => ({
+          traceId: result.traceId,
+          partition: result.partition,
+          piano: result.piano,
+          layer: result.layer,
           profiles: result.profiles
             .filter(({ run }) => (
               run.summary.falseAdvanceCount > 0 ||

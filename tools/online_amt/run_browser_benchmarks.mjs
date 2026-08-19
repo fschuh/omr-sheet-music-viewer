@@ -42,6 +42,17 @@ const LISTEN_SEQUENCE_VALIDATION_MODE = [
 const SEQUENCE_VALIDATION_INTERVALS_MS = LISTEN_SEQUENCE_VALIDATION_MODE
   ? process.argv[4]
   : undefined;
+const LISTEN_DYNAMICS_VALIDATION_SUMMARY_MODE = CONFIGURATION_FILTER ===
+  "listen-dynamics-profile-validation-summary";
+const LISTEN_DYNAMICS_VALIDATION_MODE = [
+  "listen-dynamics-profile-validation",
+  "listen-dynamics-profile-validation-legacy",
+  "listen-dynamics-profile-validation-tone",
+].includes(CONFIGURATION_FILTER) || LISTEN_DYNAMICS_VALIDATION_SUMMARY_MODE;
+// A focused smoke names one or more suites; absent, all three are captured.
+const DYNAMICS_VALIDATION_SUITES = LISTEN_DYNAMICS_VALIDATION_MODE
+  ? process.argv[4]
+  : undefined;
 const LISTEN_RETRIGGER_SWEEP_SUMMARY_MODE = CONFIGURATION_FILTER ===
   "listen-retrigger-sweep-summary";
 const LISTEN_RETRIGGER_SWEEP_MODE = CONFIGURATION_FILTER === "listen-retrigger-sweep" ||
@@ -231,6 +242,7 @@ async function runConfiguration(configuration) {
       : (LISTEN_SMOKE_MODE || LISTEN_DYNAMICS_SMOKE_MODE || LISTEN_ACCURACY_MODE || LISTEN_SEQUENCE_MODE ||
         LISTEN_THRESHOLD_SWEEP_MODE || LISTEN_MULTIDOMAIN_SWEEP_MODE ||
         LISTEN_ISOLATED_VALIDATION_MODE || LISTEN_SEQUENCE_VALIDATION_MODE ||
+        LISTEN_DYNAMICS_VALIDATION_MODE ||
         LISTEN_RETRIGGER_SWEEP_MODE || LISTEN_ARTICULATION_MODE ||
         LISTEN_INFERENCE_RESET_MODE || LISTEN_DYNAMICS_CONSTANT_MODE ||
         LISTEN_DYNAMICS_MIXED_MODE || LISTEN_DYNAMICS_CASE_MODE ||
@@ -392,6 +404,11 @@ async function runConfiguration(configuration) {
         // Both renderers' complete sequence corpus is rendered and recognized
         // once per passage, then replayed through every frozen profile.
         : LISTEN_SEQUENCE_VALIDATION_MODE
+        ? 5_400_000
+        // Both renderers' twenty velocity layers, two mixed runs, and four
+        // articulations are rendered and recognized once, then replayed through
+        // every frozen profile.
+        : LISTEN_DYNAMICS_VALIDATION_MODE
         ? 5_400_000
         : (LISTEN_RETRIGGER_SWEEP_MODE || LISTEN_DYNAMICS_CONSTANT_MODE)
         ? 1_200_000
@@ -650,6 +667,13 @@ async function runConfiguration(configuration) {
             const { conciseListenSequenceProfileValidationResult } =
               await import("/src/listenProfileValidationBenchmark.ts");
             return conciseListenSequenceProfileValidationResult(result);
+          })()`
+        : LISTEN_DYNAMICS_VALIDATION_MODE
+        ? `(async () => {
+            const result = window.listenDynamicsProfileValidationResult;
+            const { conciseListenDynamicsProfileValidationResult } =
+              await import("/src/listenProfileValidationBenchmark.ts");
+            return conciseListenDynamicsProfileValidationResult(result);
           })()`
         : LISTEN_MULTIDOMAIN_SWEEP_MODE
         ? `(async () => {
@@ -993,6 +1017,22 @@ const selectedConfigurations = FINGERING_SMOKE_MODE
         (SEQUENCE_VALIDATION_INTERVALS_MS
           ? `&benchmark-interval=${SEQUENCE_VALIDATION_INTERVALS_MS}`
           : ""),
+    }]
+  : LISTEN_DYNAMICS_VALIDATION_MODE
+  // One configuration by default: the dynamics matrix captures both renderers
+  // itself, because its per-renderer and per-piano deltas are stated against one
+  // manifest.
+  ? [{
+      name: LISTEN_DYNAMICS_VALIDATION_SUMMARY_MODE
+        ? "listen-dynamics-profile-validation-summary"
+        : CONFIGURATION_FILTER,
+      query: "listen-dynamics-profile-validation=auto" +
+        (CONFIGURATION_FILTER === "listen-dynamics-profile-validation-legacy"
+          ? "&benchmark-renderer=legacy"
+          : CONFIGURATION_FILTER === "listen-dynamics-profile-validation-tone"
+          ? "&benchmark-renderer=tone"
+          : "") +
+        (DYNAMICS_VALIDATION_SUITES ? `&benchmark-suite=${DYNAMICS_VALIDATION_SUITES}` : ""),
     }]
   : LISTEN_MULTIDOMAIN_SWEEP_MODE
   // One configuration, not a renderer pair: the multi-domain sweep captures both
@@ -1470,6 +1510,98 @@ for (let index = 0; index < selectedConfigurations.length; index += 1) {
                 : "")
             : ""),
         );
+      }
+    }
+  } else if (LISTEN_DYNAMICS_VALIDATION_MODE) {
+    console.error(
+      `${configuration.name}: manifest=${result.manifest.version}/${result.manifest.hash} ` +
+      `captured=${result.manifest.capturedTraceCount} ` +
+      `evidence=${result.evidenceRole} ` +
+      `suites=${result.suites.join(",")} ` +
+      `partitions=${result.partitions.join(",")} ` +
+      `candidates=${result.candidateProfileIds.join(",")} ` +
+      `trace-reuse=${result.traceReuseVerified} baseline-parity=${result.baselineParityVerified}`,
+    );
+    for (const renderer of result.renderers) {
+      console.error(
+        `${configuration.name}: ${renderer.rendererKey} scored=${renderer.scoredCaseCount} ` +
+        `regression=${renderer.regressionCaseCount} pianos=${renderer.pianos.join(",")}`,
+      );
+      for (const profile of renderer.profiles) {
+        // Every group is printed with the partitions it spans, so a line can
+        // never be read as confirmation unless it says so.
+        for (const group of profile.groups) {
+          if (!["corpus", "partition", "suite", "piano"].includes(group.kind)) continue;
+          const delta = group.deltaFromBaseline;
+          console.error(
+            `${configuration.name}: ${renderer.rendererKey} ${profile.profileId} ` +
+            `${group.key} evidence=${group.evidenceRole} ` +
+            `independent=${group.totals.independentMatchCount}/` +
+            `${group.totals.expectedEventCount} ` +
+            `ordered=${group.totals.orderedAdvanceCount}/${group.totals.expectedEventCount} ` +
+            `complete=${group.totals.completePassageCount}/${group.totals.sequenceCount} ` +
+            `late=${group.totals.lateAdvanceCount}` +
+            (delta
+              ? ` delta-independent=${delta.independentMatchCount >= 0 ? "+" : ""}` +
+                `${delta.independentMatchCount}` +
+                ` delta-ordered=${delta.orderedAdvanceCount >= 0 ? "+" : ""}` +
+                `${delta.orderedAdvanceCount}` +
+                (delta.regressedOrderedAdvanceTraceIds.length > 0
+                  ? ` REGRESSED=${delta.regressedOrderedAdvanceTraceIds.join(",")}`
+                  : "")
+              : ""),
+          );
+        }
+        for (const equal of profile.equalPiano) {
+          console.error(
+            `${configuration.name}: ${renderer.rendererKey} ${profile.profileId} ` +
+            `equal-piano/${equal.suite} [${equal.evidenceRole ?? "n/a"}] ` +
+            `independent=${equal.independentMatchRate === null
+              ? "n/a"
+              : (equal.independentMatchRate * 100).toFixed(2)}% ` +
+            `ordered=${equal.orderedAdvanceRate === null
+              ? "n/a"
+              : (equal.orderedAdvanceRate * 100).toFixed(2)}% ` +
+            `complete=${equal.completePassageRate === null
+              ? "n/a"
+              : (equal.completePassageRate * 100).toFixed(2)}% ` +
+            `worst-piano=${equal.worstPiano ?? "n/a"} ` +
+            equal.pianos
+              .map(({ piano, worstLayer, worstLayerOrderedAdvanceRate }) => (
+                `${piano}-worst-layer=${worstLayer ?? "n/a"}` +
+                `@${worstLayerOrderedAdvanceRate === null
+                  ? "n/a"
+                  : (worstLayerOrderedAdvanceRate * 100).toFixed(1)}%`
+              ))
+              .join(" "),
+          );
+        }
+        console.error(
+          `${configuration.name}: ${renderer.rendererKey} ${profile.profileId} ` +
+          `safety=${profile.safety.passed ? "pass" : "FAIL"} ` +
+          `unsafe=${profile.safety.falseAdvanceCount}/${profile.safety.skippedAdvanceCount}/` +
+          `${profile.safety.duplicateAdvanceCount} ` +
+          `late=${profile.safety.lateAdvanceCount} ` +
+          `regressions=${profile.safety.regressions.worseThanBaselineCount}worse/` +
+          `${profile.safety.regressions.deviationCount}deviating` +
+          (profile.safety.introducedUnsafeTraceIds.length > 0
+            ? ` INTRODUCED=${profile.safety.introducedUnsafeTraceIds.join(",")}`
+            : ""),
+        );
+      }
+      for (const regression of renderer.regressionCases) {
+        for (const profile of regression.profiles) {
+          console.error(
+            `${configuration.name}: ${renderer.rendererKey} regression ${regression.traceId} ` +
+            `${profile.profileId} ordered=${profile.orderedAdvanceCount} ` +
+            `late=${profile.lateAdvanceCount} ` +
+            `unsafe=${profile.falseAdvanceCount}/${profile.skippedAdvanceCount}/` +
+            `${profile.duplicateAdvanceCount} ` +
+            `late-at=${profile.lateAdvances
+              .map(({ targetIndex, advancedAtMs }) => `${targetIndex}@${advancedAtMs ?? "n/a"}`)
+              .join(",") || "none"}`,
+          );
+        }
       }
     }
   } else if (LISTEN_MULTIDOMAIN_SWEEP_MODE) {
