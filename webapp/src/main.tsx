@@ -12,6 +12,7 @@ if (
   query.has("listen-threshold-sweep") ||
   query.has("listen-matcher-multidomain-sweep") ||
   query.has("listen-isolated-profile-validation") ||
+  query.has("listen-sequence-profile-validation") ||
   query.has("listen-retrigger-sweep") ||
   query.has("listen-articulation") ||
   query.has("listen-inference-reset") ||

@@ -1225,7 +1225,7 @@ main-suite tests plus the dynamics pretest, and the production build passes.
 
 ### Task 10 — Add continuous-sequence candidate-matrix replay
 
-**Status:** Required. **Prerequisites:** Tasks 08-09 complete.
+**Status:** Completed August 19, 2026. **Prerequisites:** Tasks 08-09 complete.
 
 **Objective:** Expose complete per-profile sequence diagnostics for the frozen
 candidates while honestly retaining the previously swept sequence corpus as
@@ -1253,6 +1253,52 @@ matches Task 04 exactly.
 **Complete when:** The full sequence corpus produces deterministic adjacent
 candidate-matrix results, every row is labeled as discovery evidence, and the
 validation module neither imports the sweep nor searches new values.
+
+**Completion evidence:** `listenProfileValidationBenchmark.ts` now owns the
+sequence portion beside the isolated one. It joins the manifest's 156 sequence
+descriptors to the passages they name, captures each once through the historical
+`captureListenSequenceRun` path, and replays that one retained trace through
+`baseline-v1` and the four frozen candidates. It refuses a sequence descriptor
+marked `confirmation`, a passage whose family disagrees with its descriptor, and
+a capture that answers with another passage, renderer, or speed. Scoring follows
+the manifest's `scoreEligible` flag rather than a family name, so the three
+dedicated safety passages gate every column through `summarizeListenSequenceSafety`
+and are reported in a separate `regressionTotals` column that is never added into
+a score. Speeds are filterable for a focused smoke and validated against the
+frozen speed list; families are not filterable, because dropping one would drop a
+safety gate. The module imports neither the sweep nor grid generation.
+
+Every result carries `evidenceRole: "discovery"` and each row its manifest
+partition: both single-renderer sweeps have read this corpus, so no gate may
+quote it as confirmation. Reported per profile are totals, per-speed and
+per-family totals, the historical `aggregateListenSequenceRuns` speed and
+family-speed diagnostics, the reusable safety summary, and deltas from an
+explicit `baseline-v1` per renderer, speed, and family, including named gained
+and lost complete passages and named ordered-advance regressions.
+
+Measured with `listen-sequence-profile-validation` at Chrome 151.0.7922.169 on
+Linux; a paired 156-passage run takes about 140 seconds. `baseline-v1`
+reproduces the recorded baselines exactly: adding the gate column to the scored
+column gives the August 15 whole-corpus rows (Direct 66/85 ordered and 8/13
+complete at 1000 ms, Tone 63/85 and 9/13, 220 ms and 228 ms p95), and the Direct
+totals reproduce the August 13 sweep production baseline at 291 / 283 / 199 / 33
+and 214.67 ms. `early-open-v2`, whose values are the sweep recommendation's,
+reproduces its 308 / 365 / 268 / 43 and 209.33 ms. All four candidates keep every
+dedicated safety counter at zero under both renderers and lose no complete
+passage; the only ordered regression in 156 passages is one advance on
+`sequence/tone/course-clear-27/167ms`, and the only unsafe advance in the scored
+corpus is `baseline-v1`'s already diagnosed Tone 333 ms false advance, which
+every candidate clears.
+
+Two complete runs in fresh browser processes agree on every recognition,
+advancement, classification, latency, backlog, safety counter, and all 156
+decoded-structure hashes; only the wall-clock `maximumInferenceMs` maxima differ.
+Five new unit tests cover the manifest/passage join and its rejections, one
+capture serving every profile column, per-speed and per-family aggregation with
+the gate rows excluded from every score, baseline delta arithmetic, and refusal
+of an unusable column order or a mismatched capture. The unit suite is 327
+main-suite tests plus the dynamics pretest, and the production build passes.
+`tools/online_amt/LISTEN_BENCHMARK.md` records the measured matrix.
 
 ### Task 11 — Add dynamics and articulation candidate-matrix replay
 

@@ -1,19 +1,23 @@
 /**
- * Frozen-candidate validation over the untouched confirmation corpus.
+ * Frozen-candidate validation of the named matcher profiles.
  *
  * The multi-domain search in `listenMatcherSweepBenchmark.ts` chose the
  * candidate profiles from the `discovery` partition of `listenTraceManifest.ts`.
  * This module never searches: it replays `baseline-v1` and exactly the frozen
- * candidate identifiers over evidence that search was not allowed to read, so a
- * release decision quotes numbers no threshold was selected from. It therefore
- * neither imports the sweep nor generates grid profiles.
+ * candidate identifiers, and it reports each suite under the partition the
+ * manifest assigned it, so a release decision can tell which numbers confirm a
+ * candidate and which only describe it. It therefore neither imports the sweep
+ * nor generates grid profiles.
  *
- * This first part covers the isolated suite — the complete correct, Course
+ * The first part covers the isolated suite — the complete correct, Course
  * Clear, distinguishable-wrong, ambiguous-harmonic, and omitted-bass corpus
  * under both renderers, which the manifest holds entirely in `confirmation`.
- * Each fixture is rendered and recognized once; every profile then replays that
- * one retained decoded trace, so a candidate row can differ from the baseline
- * row only because of the matcher.
+ * The second covers the continuous-sequence corpus, which both single-renderer
+ * sweeps have already read and which is therefore reported as `discovery`.
+ *
+ * Both parts share one capture rule: each fixture or passage is rendered and
+ * recognized once, and every profile replays that one retained decoded trace, so
+ * a candidate row can differ from the baseline row only because of the matcher.
  */
 
 import {
@@ -24,6 +28,7 @@ import {
 import {
   LISTEN_BASELINE_PROFILE_ID,
   assertIsolatedListenTrialParity,
+  assertListenSequenceRunParity,
   assertRecognitionTraceUnmutated,
   listenRecognitionStructureHash,
   listenRecognitionTraceHash,
@@ -58,8 +63,20 @@ import {
   type ListenTraceRendererKey,
 } from "./listenTraceManifest";
 import {
+  LISTEN_SEQUENCE_INTERVALS_MS,
+  aggregateListenSequenceRuns,
+  bundledListenSequences,
+  captureListenSequenceRun,
+  replayListenSequenceTrace,
+  summarizeListenSequenceSafety,
   withOnlineAmtBenchmarkSession,
   type ListenRecognitionTrace,
+  type ListenSequenceAggregateSummary,
+  type ListenSequenceDefinition,
+  type ListenSequenceFailureReason,
+  type ListenSequenceRunResult,
+  type ListenSequenceSafetySummary,
+  type MaterializedListenSequence,
   type SequenceInferenceSession,
 } from "./listenSequenceBenchmark";
 
@@ -724,6 +741,798 @@ export function conciseListenIsolatedProfileValidationResult(
           advancedProfileIds: result.profiles
             .filter(({ advanced }) => advanced)
             .map(({ profileId }) => profileId),
+        })),
+    })),
+  };
+}
+
+/**
+ * The continuous-sequence portion of frozen-candidate validation.
+ *
+ * The sequence corpus is honestly labeled `discovery`: both the Direct and the
+ * Tone sweeps have been run and reported over it, so nothing here is held-out
+ * confirmation and no gate may quote it as such. It is measured anyway because
+ * a release decision needs complete per-profile playing diagnostics — ordered
+ * advancement, prefix progress, complete passages, failure reasons, carry-over,
+ * latency, backlog, and the dedicated safety families — for exactly the frozen
+ * candidates, at the same speeds and families the production playhead runs at.
+ *
+ * The capture rule is the isolated suite's rule: each passage is rendered and
+ * recognized once, and every profile column replays that one retained trace.
+ */
+
+/** One manifest sequence trace, joined to the passage it renders. */
+export interface ListenSequenceValidationCase {
+  descriptor: ListenTraceDescriptor;
+  definition: ListenSequenceDefinition;
+  intervalMs: number;
+  family: string;
+  renderer: ListenBenchmarkRendererConfiguration;
+  /** False for the dedicated safety families: they gate profiles, never score them. */
+  scoreEligible: boolean;
+}
+
+/** One rendered, recognized passage, retained for the profile matrix. */
+export interface ListenSequenceValidationCapture {
+  validationCase: ListenSequenceValidationCase;
+  sequence: MaterializedListenSequence;
+  trace: ListenRecognitionTrace;
+  /** Exact trace hash at capture, re-checked after every profile has replayed it. */
+  recognitionHash: string;
+  /** Survives a fresh browser process, unlike the raw PCM and trace hashes. */
+  recognitionStructureHash: string;
+  /** The capture-time baseline replay this matrix's baseline row must reproduce. */
+  baselineRun: ListenSequenceRunResult;
+}
+
+export type ListenSequenceValidationCaptureFn = (
+  validationCase: ListenSequenceValidationCase,
+) => Promise<ListenSequenceValidationCapture>;
+
+/** One profile's complete replayed run over one retained passage trace. */
+export interface ListenSequenceProfileRun {
+  profileId: ListenMatcherProfileId;
+  profile: ListenMatcherThresholds;
+  run: ListenSequenceRunResult;
+}
+
+export interface ListenSequenceValidationCaseResult {
+  traceId: string;
+  partition: ListenTracePartition;
+  scoreEligible: boolean;
+  sequenceId: string;
+  sequenceLabel: string;
+  family: string;
+  intervalMs: number;
+  eventRate: number;
+  rendererKey: ListenTraceRendererKey;
+  renderer: string;
+  recognitionStructureHash: string;
+  frameCount: number;
+  pcmLength: number;
+  maximumInferenceMs: number;
+  maximumProcessingBacklogMs: number;
+  /** Every profile's run, in the frozen column order, from this one trace. */
+  profiles: ListenSequenceProfileRun[];
+}
+
+/**
+ * Scoring metrics for one set of replayed runs.
+ *
+ * `aggregateListenSequenceRuns` already reports these per speed, but a speed
+ * aggregate cannot be recombined into a corpus latency percentile, so the totals
+ * are computed once over the runs themselves and every reported grouping —
+ * corpus, speed, family — uses this same function.
+ */
+export interface ListenSequenceValidationTotals {
+  sequenceCount: number;
+  expectedEventCount: number;
+  independentMatchCount: number;
+  independentMatchRate: number;
+  orderedAdvanceCount: number;
+  orderedAdvanceRate: number;
+  orderedPrefixCompleted: number;
+  completePassageCount: number;
+  completePassageRate: number;
+  recognizedButBlockedCount: number;
+  cascadeLossCount: number;
+  /** Events whose classified failure includes a still-sounding previous chord. */
+  carryOverBlockedEventCount: number;
+  failureClassifications: Partial<Record<ListenSequenceFailureReason, number>>;
+  missedCount: number;
+  lateAdvanceCount: number;
+  falseAdvanceCount: number;
+  skippedAdvanceCount: number;
+  duplicateAdvanceCount: number;
+  p50IndependentMatchLatencyMs: number | null;
+  p95IndependentMatchLatencyMs: number | null;
+  p50OrderedAdvanceLatencyMs: number | null;
+  p95OrderedAdvanceLatencyMs: number | null;
+  maximumInferenceMs: number;
+  maximumProcessingBacklogMs: number;
+  nextAttackBeforeAdvanceCount: number;
+}
+
+/** The metrics a candidate is compared against `baseline-v1` on. */
+export interface ListenSequenceMetricDelta {
+  independentMatchCount: number;
+  orderedAdvanceCount: number;
+  orderedPrefixCompleted: number;
+  completePassageCount: number;
+  lateAdvanceCount: number;
+  carryOverBlockedEventCount: number;
+  falseAdvanceCount: number;
+  skippedAdvanceCount: number;
+  duplicateAdvanceCount: number;
+  p95OrderedAdvanceLatencyMs: number | null;
+}
+
+export interface ListenSequenceProfileDelta extends ListenSequenceMetricDelta {
+  bySpeed: Array<{ intervalMs: number } & ListenSequenceMetricDelta>;
+  byFamily: Array<{ family: string } & ListenSequenceMetricDelta>;
+  /** The dedicated safety families, which gate rather than score. */
+  safety: {
+    falseAdvanceCount: number;
+    skippedAdvanceCount: number;
+    duplicateAdvanceCount: number;
+    lateAdvanceCount: number;
+    incompleteCarriedBassAdvances: number;
+  };
+  /** Passages whose completion differs from the baseline, named individually. */
+  gainedCompletePassageTraceIds: string[];
+  lostCompletePassageTraceIds: string[];
+  /** Passages that lost ordered advances, even where the passage was incomplete either way. */
+  regressedOrderedAdvanceTraceIds: string[];
+}
+
+export interface ListenSequenceProfileValidationSummary {
+  profileId: ListenMatcherProfileId;
+  profile: ListenMatcherThresholds;
+  /** Scored rows only. The safety families are summarized separately below. */
+  totals: ListenSequenceValidationTotals;
+  /**
+   * The `regression-only` rows on their own. They are reported so the baseline
+   * column can be checked against the recorded whole-corpus row, and they are
+   * never added into `totals`: a dedicated safety passage gates a profile and
+   * must never be able to raise its score.
+   */
+  regressionTotals: ListenSequenceValidationTotals;
+  bySpeed: Array<{ intervalMs: number; totals: ListenSequenceValidationTotals }>;
+  byFamily: Array<{ family: string; totals: ListenSequenceValidationTotals }>;
+  /** The historical per-speed and per-family diagnostics, unchanged in shape. */
+  speedSummaries: ListenSequenceAggregateSummary[];
+  familySpeedSummaries: ListenSequenceAggregateSummary[];
+  safety: ListenSequenceSafetySummary;
+  /** Null for the baseline row itself. */
+  deltaFromBaseline: ListenSequenceProfileDelta | null;
+}
+
+export interface ListenSequenceRendererValidation {
+  rendererKey: ListenTraceRendererKey;
+  renderer: ListenBenchmarkRendererConfiguration;
+  caseCount: number;
+  scoredCaseCount: number;
+  safetyCaseCount: number;
+  intervalsMs: number[];
+  families: string[];
+  cases: ListenSequenceValidationCaseResult[];
+  profiles: ListenSequenceProfileValidationSummary[];
+}
+
+export interface ListenSequenceProfileValidationResult {
+  manifest: {
+    version: number;
+    hash: string;
+    traceCount: number;
+    sequenceTraceCount: number;
+    capturedTraceCount: number;
+  };
+  /**
+   * Always `discovery`: the sequence corpus selected thresholds in both
+   * single-renderer sweeps, so these rows describe candidates rather than
+   * confirming them.
+   */
+  evidenceRole: "discovery";
+  partitions: ListenTracePartition[];
+  baselineProfileId: ListenMatcherProfileId;
+  candidateProfileIds: readonly ListenMatcherProfileId[];
+  profiles: ListenValidationProfileIdentity[];
+  renderers: ListenSequenceRendererValidation[];
+  /** True when every profile column was replayed from one capture per passage. */
+  traceReuseVerified: boolean;
+  /** True when every baseline row reproduced its capture-time replay exactly. */
+  baselineParityVerified: boolean;
+}
+
+function percentile(values: readonly number[], proportion: number): number | null {
+  if (values.length === 0) return null;
+  const ordered = [...values].sort((left, right) => left - right);
+  return ordered[Math.ceil(ordered.length * proportion) - 1];
+}
+
+function rendererForSequenceTrace(
+  descriptor: ListenTraceDescriptor,
+): ListenBenchmarkRendererConfiguration {
+  const renderer = RENDERER_BY_KEY[descriptor.rendererKey];
+  if (!renderer || renderer.version !== descriptor.renderer) {
+    throw new Error(
+      `${descriptor.id} names renderer ${descriptor.renderer}, which no benchmark renderer provides.`,
+    );
+  }
+  return renderer;
+}
+
+/**
+ * Joins the manifest's sequence descriptors to the passages they render.
+ *
+ * `intervalsMs` narrows the corpus to a focused smoke; it is validated against
+ * the frozen speed list so a mistyped speed fails loudly instead of quietly
+ * measuring nothing. Families are deliberately not filterable: dropping one
+ * would silently drop the safety gates that every profile row is qualified by.
+ */
+export function listenSequenceValidationCases(
+  manifest: ListenTraceManifest = LISTEN_TRACE_MANIFEST,
+  rendererKeys: readonly ListenTraceRendererKey[] = ["direct", "tone"],
+  intervalsMs?: readonly number[],
+): ListenSequenceValidationCase[] {
+  if (rendererKeys.length === 0) {
+    throw new Error("Sequence profile validation needs at least one renderer.");
+  }
+  if (new Set(rendererKeys).size !== rendererKeys.length) {
+    throw new Error("Sequence profile validation received a duplicated renderer key.");
+  }
+  for (const key of rendererKeys) {
+    if (!RENDERER_BY_KEY[key]) {
+      throw new Error(`Sequence profile validation received the unknown renderer key ${String(key)}.`);
+    }
+  }
+  if (intervalsMs) {
+    if (intervalsMs.length === 0) {
+      throw new Error("Sequence profile validation needs at least one attack interval.");
+    }
+    if (new Set(intervalsMs).size !== intervalsMs.length) {
+      throw new Error("Sequence profile validation received a duplicated attack interval.");
+    }
+    for (const intervalMs of intervalsMs) {
+      if (!LISTEN_SEQUENCE_INTERVALS_MS.includes(intervalMs)) {
+        throw new Error(
+          `Sequence profile validation received the unknown attack interval ${intervalMs} ms.`,
+        );
+      }
+    }
+  }
+  const definitions = bundledListenSequences();
+  const selectedRenderers = new Set(rendererKeys);
+  const selectedIntervals = intervalsMs ? new Set(intervalsMs) : null;
+  return listenTracesInSuite("sequence", manifest)
+    .filter((descriptor) => selectedRenderers.has(descriptor.rendererKey))
+    .filter((descriptor) => (
+      selectedIntervals === null || selectedIntervals.has(descriptor.intervalMs ?? NaN)
+    ))
+    .map((descriptor) => {
+      const definition = definitions.find(({ id }) => id === descriptor.sourceId);
+      if (!definition) {
+        throw new Error(`${descriptor.id} names the unknown passage ${descriptor.sourceId}.`);
+      }
+      if (descriptor.intervalMs === null) {
+        throw new Error(`${descriptor.id} has no attack interval.`);
+      }
+      // The whole sequence corpus was swept under both renderers, so a
+      // confirmation row here would mean the frozen partition changed meaning.
+      if (descriptor.partition === "confirmation") {
+        throw new Error(`${descriptor.id} is sequence evidence and cannot be held-out confirmation.`);
+      }
+      if (definition.family !== descriptor.sequenceFamily) {
+        throw new Error(
+          `${descriptor.id} claims family ${String(descriptor.sequenceFamily)}, but ` +
+          `${definition.id} is ${definition.family}.`,
+        );
+      }
+      return {
+        descriptor,
+        definition,
+        intervalMs: descriptor.intervalMs,
+        family: definition.family,
+        renderer: rendererForSequenceTrace(descriptor),
+        scoreEligible: descriptor.scoreEligible,
+      };
+    });
+}
+
+/**
+ * Renders and recognizes one passage on the capture path the historical
+ * sequence benchmark already uses, so a validation row cannot diverge from the
+ * suite result it claims to describe.
+ */
+export async function captureListenSequenceValidationTrace(
+  validationCase: ListenSequenceValidationCase,
+  session: SequenceInferenceSession,
+): Promise<ListenSequenceValidationCapture> {
+  const captured = await captureListenSequenceRun({
+    definition: validationCase.definition,
+    intervalMs: validationCase.intervalMs,
+    session,
+    renderer: validationCase.renderer,
+  });
+  return {
+    validationCase,
+    sequence: captured.sequence,
+    trace: captured.trace,
+    recognitionHash: captured.recognitionHash,
+    recognitionStructureHash: listenRecognitionStructureHash(captured.trace),
+    baselineRun: captured.run,
+  };
+}
+
+/**
+ * Replays one retained passage trace through every profile column.
+ *
+ * The trace object is read, never rebuilt, so the only thing that can differ
+ * between columns is the matcher. The capture-time hash is re-checked afterwards
+ * because a replay that wrote back into the trace would make each column depend
+ * on the order the profiles happened to run in.
+ */
+export function replayListenSequenceProfileMatrix(
+  capture: ListenSequenceValidationCapture,
+  profiles: readonly ListenValidationProfileIdentity[],
+): ListenSequenceValidationCaseResult {
+  if (profiles.length === 0) {
+    throw new Error("A sequence profile matrix needs at least the baseline profile.");
+  }
+  if (new Set(profiles.map(({ profileId }) => profileId)).size !== profiles.length) {
+    throw new Error("A sequence profile matrix cannot replay the same profile twice.");
+  }
+  if (profiles[0].profileId !== LISTEN_PROFILE_VALIDATION_BASELINE_PROFILE_ID) {
+    throw new Error(
+      `A sequence profile matrix must start from ${LISTEN_PROFILE_VALIDATION_BASELINE_PROFILE_ID}.`,
+    );
+  }
+  const { validationCase, sequence, trace } = capture;
+  const descriptor = validationCase.descriptor;
+  const runs = profiles.map(({ profileId, profile }): ListenSequenceProfileRun => ({
+    profileId,
+    profile,
+    run: replayListenSequenceTrace(sequence, trace, "current-matcher", profile),
+  }));
+  assertRecognitionTraceUnmutated(
+    `${descriptor.id} candidate-matrix replay`,
+    trace,
+    capture.recognitionHash,
+  );
+  return {
+    traceId: descriptor.id,
+    partition: descriptor.partition,
+    scoreEligible: validationCase.scoreEligible,
+    sequenceId: validationCase.definition.id,
+    sequenceLabel: validationCase.definition.label,
+    family: validationCase.family,
+    intervalMs: validationCase.intervalMs,
+    eventRate: 1_000 / validationCase.intervalMs,
+    rendererKey: descriptor.rendererKey,
+    renderer: trace.renderer.version,
+    recognitionStructureHash: capture.recognitionStructureHash,
+    frameCount: trace.frames.length,
+    pcmLength: trace.pcm.length,
+    maximumInferenceMs: trace.maximumInferenceMs,
+    maximumProcessingBacklogMs: trace.maximumProcessingBacklogMs,
+    profiles: runs,
+  };
+}
+
+function sequenceRunFor(
+  result: ListenSequenceValidationCaseResult,
+  profileId: ListenMatcherProfileId,
+): ListenSequenceRunResult {
+  const entry = result.profiles.find((profile) => profile.profileId === profileId);
+  if (!entry) throw new Error(`${result.traceId} has no ${profileId} row.`);
+  return entry.run;
+}
+
+/** Sums one profile's replayed runs into the metrics every grouping reports. */
+export function listenSequenceValidationTotals(
+  runs: readonly ListenSequenceRunResult[],
+): ListenSequenceValidationTotals {
+  const total = (select: (run: ListenSequenceRunResult) => number) => runs
+    .reduce((sum, run) => sum + select(run), 0);
+  const expectedEventCount = total((run) => run.summary.expectedEventCount);
+  const rate = (count: number) => (expectedEventCount === 0 ? 0 : count / expectedEventCount);
+  const failureClassifications: Partial<Record<ListenSequenceFailureReason, number>> = {};
+  for (const run of runs) {
+    for (const event of run.events) {
+      for (const reason of event.failureReasons) {
+        failureClassifications[reason] = (failureClassifications[reason] ?? 0) + 1;
+      }
+    }
+  }
+  const orderedLatencies = runs.flatMap((run) => run.events.flatMap((event) => (
+    event.orderedAdvanced && event.orderedAdvanceLatencyMs !== null
+      ? [event.orderedAdvanceLatencyMs]
+      : []
+  )));
+  const independentLatencies = runs.flatMap((run) => run.events.flatMap((event) => (
+    event.independentMatchLatencyMs !== null ? [event.independentMatchLatencyMs] : []
+  )));
+  const independentMatchCount = total((run) => run.summary.independentMatchCount);
+  const orderedAdvanceCount = total((run) => run.summary.orderedAdvanceCount);
+  const completePassageCount = runs.filter(({ summary }) => summary.complete).length;
+  return {
+    sequenceCount: runs.length,
+    expectedEventCount,
+    independentMatchCount,
+    independentMatchRate: rate(independentMatchCount),
+    orderedAdvanceCount,
+    orderedAdvanceRate: rate(orderedAdvanceCount),
+    orderedPrefixCompleted: total((run) => run.summary.orderedPrefixCompleted),
+    completePassageCount,
+    completePassageRate: runs.length === 0 ? 0 : completePassageCount / runs.length,
+    recognizedButBlockedCount: total((run) => run.summary.recognizedButBlockedCount),
+    cascadeLossCount: total((run) => run.summary.cascadeLossCount),
+    carryOverBlockedEventCount: failureClassifications["carry-over"] ?? 0,
+    failureClassifications,
+    missedCount: total((run) => run.summary.missedCount),
+    lateAdvanceCount: total((run) => run.summary.lateAdvanceCount),
+    falseAdvanceCount: total((run) => run.summary.falseAdvanceCount),
+    skippedAdvanceCount: total((run) => run.summary.skippedAdvanceCount),
+    duplicateAdvanceCount: total((run) => run.summary.duplicateAdvanceCount),
+    p50IndependentMatchLatencyMs: percentile(independentLatencies, 0.5),
+    p95IndependentMatchLatencyMs: percentile(independentLatencies, 0.95),
+    p50OrderedAdvanceLatencyMs: percentile(orderedLatencies, 0.5),
+    p95OrderedAdvanceLatencyMs: percentile(orderedLatencies, 0.95),
+    maximumInferenceMs: Math.max(0, ...runs.map(({ summary }) => summary.maximumInferenceMs)),
+    maximumProcessingBacklogMs: Math.max(
+      0,
+      ...runs.map(({ summary }) => summary.maximumProcessingBacklogMs),
+    ),
+    nextAttackBeforeAdvanceCount: total((run) => run.summary.nextAttackBeforeAdvanceCount),
+  };
+}
+
+function sequenceMetricDelta(
+  candidate: ListenSequenceValidationTotals,
+  baseline: ListenSequenceValidationTotals,
+): ListenSequenceMetricDelta {
+  return {
+    independentMatchCount: candidate.independentMatchCount - baseline.independentMatchCount,
+    orderedAdvanceCount: candidate.orderedAdvanceCount - baseline.orderedAdvanceCount,
+    orderedPrefixCompleted: candidate.orderedPrefixCompleted - baseline.orderedPrefixCompleted,
+    completePassageCount: candidate.completePassageCount - baseline.completePassageCount,
+    lateAdvanceCount: candidate.lateAdvanceCount - baseline.lateAdvanceCount,
+    carryOverBlockedEventCount:
+      candidate.carryOverBlockedEventCount - baseline.carryOverBlockedEventCount,
+    falseAdvanceCount: candidate.falseAdvanceCount - baseline.falseAdvanceCount,
+    skippedAdvanceCount: candidate.skippedAdvanceCount - baseline.skippedAdvanceCount,
+    duplicateAdvanceCount: candidate.duplicateAdvanceCount - baseline.duplicateAdvanceCount,
+    p95OrderedAdvanceLatencyMs: candidate.p95OrderedAdvanceLatencyMs === null ||
+      baseline.p95OrderedAdvanceLatencyMs === null
+      ? null
+      : candidate.p95OrderedAdvanceLatencyMs - baseline.p95OrderedAdvanceLatencyMs,
+  };
+}
+
+/**
+ * Summarizes one renderer's sequence matrix.
+ *
+ * Scoring uses the manifest's `scoreEligible` flag rather than a family name
+ * spelled here, so the dedicated safety passages gate every column through
+ * `summarizeListenSequenceSafety` and contribute nothing to any positive metric.
+ */
+export function summarizeListenSequenceProfileValidation(
+  rendererKey: ListenTraceRendererKey,
+  renderer: ListenBenchmarkRendererConfiguration,
+  cases: readonly ListenSequenceValidationCaseResult[],
+  profiles: readonly ListenValidationProfileIdentity[],
+): ListenSequenceRendererValidation {
+  const baselineId = LISTEN_PROFILE_VALIDATION_BASELINE_PROFILE_ID;
+  if (profiles.length === 0 || profiles[0].profileId !== baselineId) {
+    throw new Error(`A sequence validation summary must start from ${baselineId}.`);
+  }
+  for (const result of cases) {
+    if (result.rendererKey !== rendererKey) {
+      throw new Error(`${result.traceId} is not a ${rendererKey} trace.`);
+    }
+  }
+  const scored = cases.filter(({ scoreEligible }) => scoreEligible);
+  const intervalsMs = [...new Set(scored.map(({ intervalMs }) => intervalMs))]
+    .sort((left, right) => right - left);
+  const families = [...new Set(scored.map(({ family }) => family))].sort();
+  const columnFor = (identity: ListenValidationProfileIdentity) => {
+    const runsFor = (selected: readonly ListenSequenceValidationCaseResult[]) => selected
+      .map((result) => sequenceRunFor(result, identity.profileId));
+    const scoredRuns = runsFor(scored);
+    return {
+      identity,
+      totals: listenSequenceValidationTotals(scoredRuns),
+      regressionTotals: listenSequenceValidationTotals(
+        runsFor(cases.filter(({ scoreEligible }) => !scoreEligible)),
+      ),
+      bySpeed: intervalsMs.map((intervalMs) => ({
+        intervalMs,
+        totals: listenSequenceValidationTotals(
+          runsFor(scored.filter((result) => result.intervalMs === intervalMs)),
+        ),
+      })),
+      byFamily: families.map((family) => ({
+        family,
+        totals: listenSequenceValidationTotals(
+          runsFor(scored.filter((result) => result.family === family)),
+        ),
+      })),
+      speedSummaries: intervalsMs.map((intervalMs) => aggregateListenSequenceRuns(
+        runsFor(scored.filter((result) => result.intervalMs === intervalMs)),
+        intervalMs,
+      )),
+      familySpeedSummaries: intervalsMs.flatMap((intervalMs) => families.flatMap((family) => {
+        const selected = scored.filter((result) => (
+          result.intervalMs === intervalMs && result.family === family
+        ));
+        return selected.length === 0
+          ? []
+          : [aggregateListenSequenceRuns(runsFor(selected), intervalMs, family)];
+      })),
+      safety: summarizeListenSequenceSafety(runsFor(cases)),
+      completedTraceIds: new Set(scored
+        .filter((result) => sequenceRunFor(result, identity.profileId).summary.complete)
+        .map(({ traceId }) => traceId)),
+      orderedAdvancesByTraceId: new Map(scored.map((result) => [
+        result.traceId,
+        sequenceRunFor(result, identity.profileId).summary.orderedAdvanceCount,
+      ])),
+    };
+  };
+  const columns = profiles.map(columnFor);
+  const baseline = columns[0];
+  const summaries = columns.map((column): ListenSequenceProfileValidationSummary => ({
+    profileId: column.identity.profileId,
+    profile: column.identity.profile,
+    totals: column.totals,
+    regressionTotals: column.regressionTotals,
+    bySpeed: column.bySpeed,
+    byFamily: column.byFamily,
+    speedSummaries: column.speedSummaries,
+    familySpeedSummaries: column.familySpeedSummaries,
+    safety: column.safety,
+    deltaFromBaseline: column === baseline ? null : {
+      ...sequenceMetricDelta(column.totals, baseline.totals),
+      bySpeed: column.bySpeed.map(({ intervalMs, totals }, index) => ({
+        intervalMs,
+        ...sequenceMetricDelta(totals, baseline.bySpeed[index].totals),
+      })),
+      byFamily: column.byFamily.map(({ family, totals }, index) => ({
+        family,
+        ...sequenceMetricDelta(totals, baseline.byFamily[index].totals),
+      })),
+      safety: {
+        falseAdvanceCount: column.safety.falseAdvanceCount - baseline.safety.falseAdvanceCount,
+        skippedAdvanceCount: column.safety.skippedAdvanceCount - baseline.safety.skippedAdvanceCount,
+        duplicateAdvanceCount:
+          column.safety.duplicateAdvanceCount - baseline.safety.duplicateAdvanceCount,
+        lateAdvanceCount: column.safety.lateAdvanceCount - baseline.safety.lateAdvanceCount,
+        incompleteCarriedBassAdvances:
+          column.safety.incompleteCarriedBassAdvances - baseline.safety.incompleteCarriedBassAdvances,
+      },
+      gainedCompletePassageTraceIds: [...column.completedTraceIds]
+        .filter((id) => !baseline.completedTraceIds.has(id)).sort(),
+      lostCompletePassageTraceIds: [...baseline.completedTraceIds]
+        .filter((id) => !column.completedTraceIds.has(id)).sort(),
+      regressedOrderedAdvanceTraceIds: [...column.orderedAdvancesByTraceId]
+        .filter(([id, count]) => count < (baseline.orderedAdvancesByTraceId.get(id) ?? 0))
+        .map(([id]) => id).sort(),
+    },
+  }));
+  return {
+    rendererKey,
+    renderer: { ...renderer },
+    caseCount: cases.length,
+    scoredCaseCount: scored.length,
+    safetyCaseCount: cases.length - scored.length,
+    intervalsMs,
+    families,
+    cases: [...cases],
+    profiles: summaries,
+  };
+}
+
+/**
+ * Captures the sequence corpus once and replays the frozen candidate matrix
+ * against every retained trace.
+ *
+ * The capture function is injected so unit tests drive the identical join,
+ * matrix, aggregation, and parity path over deterministic synthetic traces, and
+ * so a test can prove that one capture serves every profile column.
+ */
+export async function evaluateListenSequenceProfileValidation(options: {
+  capture: ListenSequenceValidationCaptureFn;
+  manifest?: ListenTraceManifest;
+  candidateProfileIds?: readonly ListenMatcherProfileId[];
+  rendererKeys?: readonly ListenTraceRendererKey[];
+  intervalsMs?: readonly number[];
+  onProgress?: (completed: number, total: number, label: string) => void;
+}): Promise<ListenSequenceProfileValidationResult> {
+  const manifest = options.manifest ?? LISTEN_TRACE_MANIFEST;
+  assertValidListenTraceManifest(manifest);
+  const onProgress = options.onProgress ?? (() => undefined);
+  const profileIds = resolveListenValidationProfileIds(options.candidateProfileIds);
+  const profiles = listenValidationProfileIdentities(profileIds);
+  const rendererKeys = options.rendererKeys ?? ["direct", "tone"];
+  const validationCases = listenSequenceValidationCases(
+    manifest,
+    rendererKeys,
+    options.intervalsMs,
+  );
+  if (validationCases.length === 0) {
+    throw new Error("The manifest contains no sequence traces to validate.");
+  }
+  const resultsByRenderer = new Map<ListenTraceRendererKey, ListenSequenceValidationCaseResult[]>();
+  for (let index = 0; index < validationCases.length; index += 1) {
+    const validationCase = validationCases[index];
+    const descriptor = validationCase.descriptor;
+    const label = `${validationCase.definition.label} at ${validationCase.intervalMs} ms`;
+    onProgress(index, validationCases.length, `Capturing ${descriptor.id}`);
+    const capture = await options.capture(validationCase);
+    // The row is filed under the requested passage's identity, so a capture that
+    // answered with different audio would be reported as this passage.
+    if (capture.validationCase.descriptor.id !== descriptor.id) {
+      throw new Error(`Capturing ${descriptor.id} returned ${capture.validationCase.descriptor.id}.`);
+    }
+    if (capture.trace.renderer.version !== descriptor.renderer) {
+      throw new Error(
+        `${descriptor.id} expects renderer ${descriptor.renderer}, but its capture used ` +
+        `${capture.trace.renderer.version}.`,
+      );
+    }
+    if (
+      capture.trace.sequenceId !== validationCase.definition.id ||
+      capture.trace.intervalMs !== validationCase.intervalMs
+    ) {
+      throw new Error(
+        `${descriptor.id} expects ${validationCase.definition.id} at ${validationCase.intervalMs} ` +
+        `ms, but its capture recognized ${capture.trace.sequenceId} at ${capture.trace.intervalMs} ms.`,
+      );
+    }
+    const caseResult = replayListenSequenceProfileMatrix(capture, profiles);
+    // The baseline column must reproduce the capture-time replay exactly. A
+    // difference there means the harness changed, so no candidate comparison
+    // built on this trace would be measuring the profile.
+    assertListenSequenceRunParity(
+      label,
+      capture.baselineRun,
+      sequenceRunFor(caseResult, LISTEN_PROFILE_VALIDATION_BASELINE_PROFILE_ID),
+    );
+    const existing = resultsByRenderer.get(descriptor.rendererKey);
+    if (existing) existing.push(caseResult);
+    else resultsByRenderer.set(descriptor.rendererKey, [caseResult]);
+    onProgress(index + 1, validationCases.length, `Replayed ${descriptor.id}`);
+  }
+  const renderers = rendererKeys
+    .filter((key) => resultsByRenderer.has(key))
+    .map((key) => summarizeListenSequenceProfileValidation(
+      key,
+      RENDERER_BY_KEY[key],
+      resultsByRenderer.get(key) ?? [],
+      profiles,
+    ));
+  return {
+    manifest: {
+      version: manifest.version,
+      hash: listenTraceManifestHash(manifest),
+      traceCount: manifest.traces.length,
+      sequenceTraceCount: listenTracesInSuite("sequence", manifest).length,
+      capturedTraceCount: validationCases.length,
+    },
+    evidenceRole: "discovery",
+    partitions: [...new Set(validationCases.map(({ descriptor }) => descriptor.partition))],
+    baselineProfileId: LISTEN_PROFILE_VALIDATION_BASELINE_PROFILE_ID,
+    candidateProfileIds: Object.freeze(profileIds.slice(1)),
+    profiles,
+    renderers,
+    traceReuseVerified: true,
+    baselineParityVerified: true,
+  };
+}
+
+/** Runs the sequence candidate matrix in the browser against one inference session. */
+export function runListenSequenceProfileValidation(
+  onProgress: (completed: number, total: number, label: string) => void = () => undefined,
+  rendererKeys: readonly ListenTraceRendererKey[] = ["direct", "tone"],
+  intervalsMs?: readonly number[],
+): Promise<ListenSequenceProfileValidationResult> {
+  return withOnlineAmtBenchmarkSession((session) => evaluateListenSequenceProfileValidation({
+    capture: (validationCase) => captureListenSequenceValidationTrace(validationCase, session),
+    rendererKeys,
+    intervalsMs,
+    onProgress,
+  }));
+}
+
+/**
+ * The exported shape of a sequence validation run. Every passage keeps its
+ * decoded-structure hash, because that is what two fresh browser processes must
+ * agree on; individual passage rows are kept where a profile disagrees with the
+ * baseline, so a regression can be named rather than only counted.
+ */
+export function conciseListenSequenceProfileValidationResult(
+  result: ListenSequenceProfileValidationResult,
+) {
+  const baselineId = result.baselineProfileId;
+  return {
+    manifest: result.manifest,
+    evidenceRole: result.evidenceRole,
+    partitions: result.partitions,
+    baselineProfileId: baselineId,
+    candidateProfileIds: result.candidateProfileIds,
+    profiles: result.profiles,
+    traceReuseVerified: result.traceReuseVerified,
+    baselineParityVerified: result.baselineParityVerified,
+    renderers: result.renderers.map((renderer) => ({
+      rendererKey: renderer.rendererKey,
+      renderer: renderer.renderer,
+      caseCount: renderer.caseCount,
+      scoredCaseCount: renderer.scoredCaseCount,
+      safetyCaseCount: renderer.safetyCaseCount,
+      intervalsMs: renderer.intervalsMs,
+      families: renderer.families,
+      traceIdentities: renderer.cases.map((result) => ({
+        traceId: result.traceId,
+        partition: result.partition,
+        recognitionStructureHash: result.recognitionStructureHash,
+        frameCount: result.frameCount,
+        pcmLength: result.pcmLength,
+      })),
+      profiles: renderer.profiles.map((profile) => ({
+        profileId: profile.profileId,
+        profile: profile.profile,
+        totals: profile.totals,
+        regressionTotals: profile.regressionTotals,
+        bySpeed: profile.bySpeed,
+        byFamily: profile.byFamily,
+        speedSummaries: profile.speedSummaries,
+        familySpeedSummaries: profile.familySpeedSummaries,
+        safety: profile.safety,
+        deltaFromBaseline: profile.deltaFromBaseline,
+      })),
+      incompletePassages: renderer.cases
+        .filter((result) => result.scoreEligible && result.profiles
+          .some(({ run }) => !run.summary.complete))
+        .map((result) => ({
+          traceId: result.traceId,
+          family: result.family,
+          intervalMs: result.intervalMs,
+          profiles: result.profiles.map(({ profileId, run }) => ({
+            profileId,
+            complete: run.summary.complete,
+            orderedAdvanceCount: run.summary.orderedAdvanceCount,
+            firstStallIndex: run.summary.firstStallIndex,
+            primaryFailure: run.summary.firstStallIndex === null
+              ? null
+              : run.events[run.summary.firstStallIndex]?.primaryFailure ?? null,
+          })),
+        })),
+      unsafeAdvances: renderer.cases
+        .filter((result) => result.profiles.some(({ run }) => (
+          run.summary.falseAdvanceCount > 0 ||
+          run.summary.skippedAdvanceCount > 0 ||
+          run.summary.duplicateAdvanceCount > 0
+        )))
+        .map((result) => ({
+          traceId: result.traceId,
+          partition: result.partition,
+          family: result.family,
+          intervalMs: result.intervalMs,
+          profiles: result.profiles
+            .filter(({ run }) => (
+              run.summary.falseAdvanceCount > 0 ||
+              run.summary.skippedAdvanceCount > 0 ||
+              run.summary.duplicateAdvanceCount > 0
+            ))
+            .map(({ profileId, run }) => ({
+              profileId,
+              falseAdvanceCount: run.summary.falseAdvanceCount,
+              skippedAdvanceCount: run.summary.skippedAdvanceCount,
+              duplicateAdvanceCount: run.summary.duplicateAdvanceCount,
+              eventIndices: run.events
+                .filter((event) => event.falseAdvance || event.skipped || event.duplicate)
+                .map(({ index }) => index),
+            })),
         })),
     })),
   };

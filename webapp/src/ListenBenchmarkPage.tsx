@@ -28,8 +28,11 @@ import {
 import type { ListenTraceRendererKey } from "./listenTraceManifest";
 import {
   conciseListenIsolatedProfileValidationResult,
+  conciseListenSequenceProfileValidationResult,
   runListenIsolatedProfileValidation,
+  runListenSequenceProfileValidation,
   type ListenIsolatedProfileValidationResult,
+  type ListenSequenceProfileValidationResult,
 } from "./listenProfileValidationBenchmark";
 import {
   runListenInferenceResetBenchmark,
@@ -93,6 +96,22 @@ function requestedSequenceCase(): { sequenceId: string; intervalMs: number } {
   };
 }
 
+/**
+ * Speeds a sequence-validation command covers. The corpus is six speeds deep, so
+ * a focused smoke names one or more of them; an absent selector keeps all six.
+ * Requested values are resolved to the frozen corpus speeds, so `333.33` and
+ * `1000/3` name the same one instead of quietly matching nothing.
+ */
+function requestedSequenceIntervalsMs(): number[] | undefined {
+  const requested = new URLSearchParams(window.location.search).get("benchmark-interval");
+  if (requested === null) return undefined;
+  const intervals = requested.split(",")
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0)
+    .map((value) => listenSequenceCaseInterval(Number(value)));
+  return intervals.length === 0 ? undefined : [...new Set(intervals)];
+}
+
 function requestedRenderer(): ListenBenchmarkRendererConfiguration {
   const query = new URLSearchParams(window.location.search);
   return query.get("benchmark-renderer") === "tone"
@@ -119,6 +138,7 @@ export function ListenBenchmarkPage() {
       "articulation" | "reset-comparison" | null
       | "dynamics-constant" | "dynamics-mixed" | "dynamics-case" | "sequence-case"
       | "multidomain-sweep" | "isolated-profile-validation"
+      | "sequence-profile-validation"
   >(null);
   const running = runningTask !== null;
   const [progress, setProgress] = useState("");
@@ -127,6 +147,7 @@ export function ListenBenchmarkPage() {
       "reset-comparison"
       | "dynamics-constant" | "dynamics-mixed" | "dynamics-case" | "sequence-case"
       | "multidomain-sweep" | "isolated-profile-validation"
+      | "sequence-profile-validation"
   >("isolated");
   const [error, setError] = useState<string | null>(null);
   const [automated, setAutomated] = useState<ListenBenchmarkSummary | null>(null);
@@ -137,6 +158,8 @@ export function ListenBenchmarkPage() {
     useState<ListenMultiDomainSweepResult | null>(null);
   const [isolatedValidationResult, setIsolatedValidationResult] =
     useState<ListenIsolatedProfileValidationResult | null>(null);
+  const [sequenceValidationResult, setSequenceValidationResult] =
+    useState<ListenSequenceProfileValidationResult | null>(null);
   const [articulationResult, setArticulationResult] =
     useState<ListenArticulationMatrixResult | null>(null);
   const [retriggerSweepResult, setRetriggerSweepResult] =
@@ -179,6 +202,9 @@ export function ListenBenchmarkPage() {
     } else if (query.get("listen-isolated-profile-validation") === "auto") {
       automaticBenchmarkStarted = true;
       void runIsolatedProfileValidation();
+    } else if (query.get("listen-sequence-profile-validation") === "auto") {
+      automaticBenchmarkStarted = true;
+      void runSequenceProfileValidation();
     } else if (query.get("listen-matcher-multidomain-sweep") === "auto") {
       automaticBenchmarkStarted = true;
       void runMultiDomainSweep();
@@ -322,6 +348,34 @@ export function ListenBenchmarkPage() {
       (window as typeof window & {
         listenIsolatedProfileValidationResult?: ListenIsolatedProfileValidationResult;
       }).listenIsolatedProfileValidationResult = result;
+      document.body.dataset.status = "complete";
+    } catch (benchmarkError) {
+      setError(benchmarkError instanceof Error ? benchmarkError.message : String(benchmarkError));
+      document.body.dataset.status = "error";
+    } finally {
+      setRunningTask(null);
+    }
+  }
+
+  /**
+   * The continuous-sequence candidate matrix. The corpus is `discovery`
+   * evidence — both single-renderer sweeps read it — so this command reports
+   * complete per-profile playing diagnostics rather than a confirmation gate.
+   */
+  async function runSequenceProfileValidation() {
+    setRunningTask("sequence-profile-validation");
+    setProgressTask("sequence-profile-validation");
+    setError(null);
+    setProgress("Preparing the continuous-sequence corpus…");
+    document.body.dataset.status = "running";
+    try {
+      const result = await runListenSequenceProfileValidation((complete, total, label) => {
+        setProgress(`${complete} / ${total} passages · ${label}`);
+      }, requestedRendererKeys(), requestedSequenceIntervalsMs());
+      setSequenceValidationResult(result);
+      (window as typeof window & {
+        listenSequenceProfileValidationResult?: ListenSequenceProfileValidationResult;
+      }).listenSequenceProfileValidationResult = result;
       document.body.dataset.status = "complete";
     } catch (benchmarkError) {
       setError(benchmarkError instanceof Error ? benchmarkError.message : String(benchmarkError));
@@ -915,8 +969,14 @@ export function ListenBenchmarkPage() {
         </button>{" "}
         <button type="button" disabled={running} onClick={() => void runSequenceCase()}>
           {runningTask === "sequence-case" ? "Running…" : "Reproduce one sequence case"}
+        </button>{" "}
+        <button type="button" disabled={running} onClick={() => void runSequenceProfileValidation()}>
+          {runningTask === "sequence-profile-validation"
+            ? "Running…"
+            : "Run sequence candidate matrix"}
         </button>
-        {progress && (progressTask === "sequence" || progressTask === "sequence-case")
+        {progress && (progressTask === "sequence" || progressTask === "sequence-case" ||
+          progressTask === "sequence-profile-validation")
           ? <span className="benchmark-progress">{progress}</span>
           : null}
         {sequenceCaseResult ? (
@@ -1022,6 +1082,78 @@ export function ListenBenchmarkPage() {
             </div>
             <h3>Detailed continuous diagnostics</h3>
             <pre>{sequenceDiagnostics(sequenceResult)}</pre>
+          </>
+        ) : null}
+        {sequenceValidationResult ? (
+          <>
+            <h3>Continuous-sequence candidate matrix</h3>
+            <p>
+              Each passage is rendered and recognized once; <code>baseline-v1</code> and the
+              frozen multi-domain candidates then replay that one retained decoded trace. Both
+              single-renderer sweeps have read this corpus, so every row is{" "}
+              <code>{sequenceValidationResult.evidenceRole}</code> evidence and confirms nothing.
+              The dedicated safety families gate each column instead of scoring it. Manifest{" "}
+              {sequenceValidationResult.manifest.version}/{sequenceValidationResult.manifest.hash},{" "}
+              {sequenceValidationResult.manifest.capturedTraceCount} passages captured.
+            </p>
+            <div className="benchmark-table-wrap">
+              <table className="benchmark-table">
+                <thead>
+                  <tr>
+                    <th>Renderer</th>
+                    <th>Profile</th>
+                    <th>Independent</th>
+                    <th>Ordered</th>
+                    <th>Prefix</th>
+                    <th>Complete passages</th>
+                    <th>Late</th>
+                    <th>p95 ordered latency</th>
+                    <th>Safety (false / skipped / duplicate)</th>
+                    <th>Ordered delta</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sequenceValidationResult.renderers.flatMap((renderer) => (
+                    renderer.profiles.map((profile) => (
+                      <tr key={`${renderer.rendererKey}-${profile.profileId}`}>
+                        <td>{renderer.renderer.version}</td>
+                        <td><code>{profile.profileId}</code></td>
+                        <td>
+                          {profile.totals.independentMatchCount} / {profile.totals.expectedEventCount}
+                          {" "}({percentageValue(profile.totals.independentMatchRate)})
+                        </td>
+                        <td>
+                          {profile.totals.orderedAdvanceCount} / {profile.totals.expectedEventCount}
+                          {" "}({percentageValue(profile.totals.orderedAdvanceRate)})
+                        </td>
+                        <td>{profile.totals.orderedPrefixCompleted}</td>
+                        <td>
+                          {profile.totals.completePassageCount} / {profile.totals.sequenceCount}
+                        </td>
+                        <td>{profile.totals.lateAdvanceCount}</td>
+                        <td>{profile.totals.p95OrderedAdvanceLatencyMs === null
+                          ? "—"
+                          : `${profile.totals.p95OrderedAdvanceLatencyMs.toFixed(0)} ms`}</td>
+                        <td>
+                          {profile.safety.falseAdvanceCount} / {profile.safety.skippedAdvanceCount}
+                          {" "}/ {profile.safety.duplicateAdvanceCount}
+                          {profile.safety.passed ? "" : " (FAILED)"}
+                        </td>
+                        <td>{profile.deltaFromBaseline === null
+                          ? "baseline"
+                          : `${profile.deltaFromBaseline.orderedAdvanceCount >= 0 ? "+" : ""}${profile.deltaFromBaseline.orderedAdvanceCount}`}</td>
+                      </tr>
+                    ))
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <h3>Detailed sequence candidate diagnostics</h3>
+            <pre>{JSON.stringify(
+              conciseListenSequenceProfileValidationResult(sequenceValidationResult),
+              null,
+              2,
+            )}</pre>
           </>
         ) : null}
       </section>

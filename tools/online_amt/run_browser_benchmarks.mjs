@@ -31,6 +31,17 @@ const LISTEN_ISOLATED_VALIDATION_MODE = [
   "listen-isolated-profile-validation-legacy",
   "listen-isolated-profile-validation-tone",
 ].includes(CONFIGURATION_FILTER) || LISTEN_ISOLATED_VALIDATION_SUMMARY_MODE;
+const LISTEN_SEQUENCE_VALIDATION_SUMMARY_MODE = CONFIGURATION_FILTER ===
+  "listen-sequence-profile-validation-summary";
+const LISTEN_SEQUENCE_VALIDATION_MODE = [
+  "listen-sequence-profile-validation",
+  "listen-sequence-profile-validation-legacy",
+  "listen-sequence-profile-validation-tone",
+].includes(CONFIGURATION_FILTER) || LISTEN_SEQUENCE_VALIDATION_SUMMARY_MODE;
+// A focused smoke names one or more corpus speeds; absent, all six are captured.
+const SEQUENCE_VALIDATION_INTERVALS_MS = LISTEN_SEQUENCE_VALIDATION_MODE
+  ? process.argv[4]
+  : undefined;
 const LISTEN_RETRIGGER_SWEEP_SUMMARY_MODE = CONFIGURATION_FILTER ===
   "listen-retrigger-sweep-summary";
 const LISTEN_RETRIGGER_SWEEP_MODE = CONFIGURATION_FILTER === "listen-retrigger-sweep" ||
@@ -219,7 +230,7 @@ async function runConfiguration(configuration) {
       ? BASE_URL.replace(/online-amt-benchmark\.html(?:\?.*)?$/, "listen-benchmark-parity.html")
       : (LISTEN_SMOKE_MODE || LISTEN_DYNAMICS_SMOKE_MODE || LISTEN_ACCURACY_MODE || LISTEN_SEQUENCE_MODE ||
         LISTEN_THRESHOLD_SWEEP_MODE || LISTEN_MULTIDOMAIN_SWEEP_MODE ||
-        LISTEN_ISOLATED_VALIDATION_MODE ||
+        LISTEN_ISOLATED_VALIDATION_MODE || LISTEN_SEQUENCE_VALIDATION_MODE ||
         LISTEN_RETRIGGER_SWEEP_MODE || LISTEN_ARTICULATION_MODE ||
         LISTEN_INFERENCE_RESET_MODE || LISTEN_DYNAMICS_CONSTANT_MODE ||
         LISTEN_DYNAMICS_MIXED_MODE || LISTEN_DYNAMICS_CASE_MODE ||
@@ -378,6 +389,10 @@ async function runConfiguration(configuration) {
         // once per fixture, then replayed through every frozen profile.
         : LISTEN_ISOLATED_VALIDATION_MODE
         ? 3_600_000
+        // Both renderers' complete sequence corpus is rendered and recognized
+        // once per passage, then replayed through every frozen profile.
+        : LISTEN_SEQUENCE_VALIDATION_MODE
+        ? 5_400_000
         : (LISTEN_RETRIGGER_SWEEP_MODE || LISTEN_DYNAMICS_CONSTANT_MODE)
         ? 1_200_000
         : (LISTEN_ACCURACY_MODE || LISTEN_SEQUENCE_MODE || LISTEN_THRESHOLD_SWEEP_MODE ||
@@ -628,6 +643,13 @@ async function runConfiguration(configuration) {
             const { conciseListenIsolatedProfileValidationResult } =
               await import("/src/listenProfileValidationBenchmark.ts");
             return conciseListenIsolatedProfileValidationResult(result);
+          })()`
+        : LISTEN_SEQUENCE_VALIDATION_MODE
+        ? `(async () => {
+            const result = window.listenSequenceProfileValidationResult;
+            const { conciseListenSequenceProfileValidationResult } =
+              await import("/src/listenProfileValidationBenchmark.ts");
+            return conciseListenSequenceProfileValidationResult(result);
           })()`
         : LISTEN_MULTIDOMAIN_SWEEP_MODE
         ? `(async () => {
@@ -955,6 +977,23 @@ const selectedConfigurations = FINGERING_SMOKE_MODE
           ? "&benchmark-renderer=tone"
           : ""),
     }]
+  : LISTEN_SEQUENCE_VALIDATION_MODE
+  // One configuration by default: the sequence matrix captures both renderers
+  // itself, because its per-renderer deltas are stated against one manifest.
+  ? [{
+      name: LISTEN_SEQUENCE_VALIDATION_SUMMARY_MODE
+        ? "listen-sequence-profile-validation-summary"
+        : CONFIGURATION_FILTER,
+      query: "listen-sequence-profile-validation=auto" +
+        (CONFIGURATION_FILTER === "listen-sequence-profile-validation-legacy"
+          ? "&benchmark-renderer=legacy"
+          : CONFIGURATION_FILTER === "listen-sequence-profile-validation-tone"
+          ? "&benchmark-renderer=tone"
+          : "") +
+        (SEQUENCE_VALIDATION_INTERVALS_MS
+          ? `&benchmark-interval=${SEQUENCE_VALIDATION_INTERVALS_MS}`
+          : ""),
+    }]
   : LISTEN_MULTIDOMAIN_SWEEP_MODE
   // One configuration, not a renderer pair: the multi-domain sweep captures both
   // renderers itself because its worst-domain metric spans them.
@@ -1145,6 +1184,35 @@ for (let index = 0; index < selectedConfigurations.length; index += 1) {
           caseCount: renderer.caseCount,
           correctTrialCount: renderer.correctTrialCount,
           profiles: renderer.profiles,
+        })),
+      }
+    : LISTEN_SEQUENCE_VALIDATION_SUMMARY_MODE
+    ? {
+        manifest: result.manifest,
+        evidenceRole: result.evidenceRole,
+        partitions: result.partitions,
+        baselineProfileId: result.baselineProfileId,
+        candidateProfileIds: result.candidateProfileIds,
+        traceReuseVerified: result.traceReuseVerified,
+        baselineParityVerified: result.baselineParityVerified,
+        renderers: result.renderers.map((renderer) => ({
+          rendererKey: renderer.rendererKey,
+          renderer: renderer.renderer,
+          scoredCaseCount: renderer.scoredCaseCount,
+          safetyCaseCount: renderer.safetyCaseCount,
+          intervalsMs: renderer.intervalsMs,
+          families: renderer.families,
+          profiles: renderer.profiles.map((profile) => ({
+            profileId: profile.profileId,
+            profile: profile.profile,
+            totals: profile.totals,
+            regressionTotals: profile.regressionTotals,
+            bySpeed: profile.bySpeed,
+            byFamily: profile.byFamily,
+            safety: profile.safety,
+            deltaFromBaseline: profile.deltaFromBaseline,
+          })),
+          unsafeAdvances: renderer.unsafeAdvances,
         })),
       }
     : LISTEN_MULTIDOMAIN_SWEEP_SUMMARY_MODE
@@ -1350,6 +1418,55 @@ for (let index = 0; index < selectedConfigurations.length; index += 1) {
               `${delta.correctAdvanceCount} delta-false=${delta.distinguishableFalseAdvanceCount}` +
               (delta.lostCorrectTraceIds.length > 0
                 ? ` LOST=${delta.lostCorrectTraceIds.join(",")}`
+                : "")
+            : ""),
+        );
+      }
+    }
+  } else if (LISTEN_SEQUENCE_VALIDATION_MODE) {
+    console.error(
+      `${configuration.name}: manifest=${result.manifest.version}/${result.manifest.hash} ` +
+      `captured=${result.manifest.capturedTraceCount} ` +
+      `evidence=${result.evidenceRole} ` +
+      `partitions=${result.partitions.join(",")} ` +
+      `candidates=${result.candidateProfileIds.join(",")} ` +
+      `trace-reuse=${result.traceReuseVerified} baseline-parity=${result.baselineParityVerified}`,
+    );
+    for (const renderer of result.renderers) {
+      console.error(
+        `${configuration.name}: ${renderer.rendererKey} scored=${renderer.scoredCaseCount} ` +
+        `safety=${renderer.safetyCaseCount} ` +
+        `speeds=${renderer.intervalsMs.map((value) => value.toFixed(2)).join(",")}`,
+      );
+      for (const profile of renderer.profiles) {
+        const delta = profile.deltaFromBaseline;
+        const totals = profile.totals;
+        console.error(
+          `${configuration.name}: ${renderer.rendererKey} ${profile.profileId} ` +
+          `independent=${totals.independentMatchCount}/${totals.expectedEventCount} ` +
+          `ordered=${totals.orderedAdvanceCount}/${totals.expectedEventCount} ` +
+          `prefix=${totals.orderedPrefixCompleted} ` +
+          `complete=${totals.completePassageCount}/${totals.sequenceCount} ` +
+          `late=${totals.lateAdvanceCount} ` +
+          `carry-over=${totals.carryOverBlockedEventCount} ` +
+          `p95=${totals.p95OrderedAdvanceLatencyMs ?? "n/a"}ms ` +
+          `backlog=${totals.maximumProcessingBacklogMs.toFixed(1)}ms ` +
+          `gate-ordered=${profile.regressionTotals.orderedAdvanceCount}/` +
+          `${profile.regressionTotals.expectedEventCount} ` +
+          `gate-complete=${profile.regressionTotals.completePassageCount}/` +
+          `${profile.regressionTotals.sequenceCount} ` +
+          `safety=${profile.safety.passed ? "pass" : "FAIL"} ` +
+          `unsafe=${profile.safety.falseAdvanceCount}/${profile.safety.skippedAdvanceCount}/` +
+          `${profile.safety.duplicateAdvanceCount}/${profile.safety.incompleteCarriedBassAdvances}` +
+          (delta
+            ? ` delta-independent=${delta.independentMatchCount >= 0 ? "+" : ""}` +
+              `${delta.independentMatchCount}` +
+              ` delta-ordered=${delta.orderedAdvanceCount >= 0 ? "+" : ""}` +
+              `${delta.orderedAdvanceCount}` +
+              ` delta-complete=${delta.completePassageCount >= 0 ? "+" : ""}` +
+              `${delta.completePassageCount}` +
+              (delta.lostCompletePassageTraceIds.length > 0
+                ? ` LOST=${delta.lostCompletePassageTraceIds.join(",")}`
                 : "")
             : ""),
         );

@@ -7,6 +7,142 @@
 Entries are kept newest first so renderer and recognition changes remain
 comparable over time.
 
+### Continuous-sequence candidate matrix — August 19, 2026
+
+The frozen candidates measured across the whole continuous-sequence corpus: 13
+passages × 6 speeds × 2 renderers, each rendered and recognized once, with
+`baseline-v1` and the four frozen candidates replaying that one retained decoded
+trace. Unlike the isolated matrix, this evidence **confirms nothing**. Both
+single-renderer sweeps have already read the sequence corpus, so the manifest
+labels it `discovery` and the result reports `evidenceRole: "discovery"`. It is
+measured because a release decision still needs complete per-profile playing
+diagnostics — ordered advancement, prefix progress, complete passages, failure
+reasons, carry-over, latency, backlog, and the dedicated safety families — at the
+speeds and in the families production actually runs.
+
+```bash
+node tools/online_amt/run_browser_benchmarks.mjs \
+  http://127.0.0.1:5174/online-amt-benchmark.html listen-sequence-profile-validation
+
+node tools/online_amt/run_browser_benchmarks.mjs \
+  http://127.0.0.1:5174/online-amt-benchmark.html listen-sequence-profile-validation 1000
+```
+
+The optional trailing argument names one or more corpus speeds for a focused
+smoke. Families are deliberately not filterable: dropping one would drop the
+safety gates that qualify every profile row.
+
+Measured at Chrome 151.0.7922.169 on Linux, model `online_amt_streaming.onnx`,
+renderers `bundled-piano-web-audio-v1` and `bundled-piano-tone-v2`. Manifest
+version 1, hash `0ed1e71d`; 156 sequence traces captured, one capture per passage
+and five profile columns replayed from each. Registry version 2, candidates
+`early-open-v2`, `steady-open-v2`, `early-held-v2`, `steady-held-v2`. A paired
+run takes about 140 seconds.
+
+#### Scoring and gating are separate
+
+The 10 musical families score; the 3 dedicated safety passages gate. The split
+follows the manifest's `scoreEligible` flag, not a family name spelled in the
+validation module, and the gate rows are reported in their own
+`regressionTotals` column that is never added into a score. Adding the two
+columns reproduces the recorded whole-corpus row exactly, which is how the
+baseline column is checked against the August 15 paired renderer baseline:
+
+| Renderer | Scored ordered | Gate ordered | Whole corpus | Recorded August 15 |
+| --- | ---: | ---: | ---: | ---: |
+| Direct, 1000 ms | 57 / 76 | 9 / 9 | 66 / 85 | 66 / 85 |
+| Tone, 1000 ms | 54 / 76 | 9 / 9 | 63 / 85 | 63 / 85 |
+
+Complete passages agree the same way — Direct 5 + 3 = 8 / 13 and Tone 6 + 3 =
+9 / 13 — as do the 220 ms and 228 ms P95 ordered latencies.
+
+#### Direct `bundled-piano-web-audio-v1`
+
+| Profile | Independent | Ordered | Prefix | Complete | Late | Carry-over | Ordered p50 / p95 | Safety |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| `baseline-v1` | 291 / 456 | 283 / 456 | 199 | 33 / 60 | 8 | 58 | 192 / 214.67 ms | 0 / 0 / 0 / 0 |
+| `early-open-v2` | 308 / 456 | 365 / 456 | 268 | 43 / 60 | 0 | 51 | 190.67 / 209.33 ms | 0 / 0 / 0 / 0 |
+| `steady-open-v2` | 306 / 456 | 357 / 456 | 260 | 41 / 60 | 5 | 53 | 192 / 212 ms | 0 / 0 / 0 / 0 |
+| `early-held-v2` | 307 / 456 | 362 / 456 | 265 | 42 / 60 | 0 | 51 | 190.67 / 209.33 ms | 0 / 0 / 0 / 0 |
+| `steady-held-v2` | 305 / 456 | 354 / 456 | 257 | 40 / 60 | 5 | 53 | 192 / 212 ms | 0 / 0 / 0 / 0 |
+
+Safety is the dedicated families' false / skipped / duplicate / incomplete
+carried-bass counters. `baseline-v1` reproduces the August 13 Direct sweep
+production baseline exactly — 291 / 283 / 199 / 33 and 214.67 ms — and
+`early-open-v2`, whose values are those of the sweep recommendation
+`o0p450-t0p500-a0p200-x0p990-b1`, reproduces its 308 / 365 / 268 / 43 and
+209.33 ms. That is expected rather than new information: this corpus is what
+selected those values.
+
+#### Tone `bundled-piano-tone-v2`
+
+| Profile | Independent | Ordered | Prefix | Complete | Late | Carry-over | Ordered p50 / p95 | Safety |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| `baseline-v1` | 292 / 456 | 310 / 456 | 219 | 38 / 60 | 0 | 62 | 200 / 228 ms | 0 / 0 / 0 / 0 |
+| `early-open-v2` | 297 / 456 | 315 / 456 | 225 | 39 / 60 | 0 | 62 | 200 / 228 ms | 0 / 0 / 0 / 0 |
+| `steady-open-v2` | 297 / 456 | 315 / 456 | 225 | 39 / 60 | 0 | 62 | 200 / 228 ms | 0 / 0 / 0 / 0 |
+| `early-held-v2` | 294 / 456 | 314 / 456 | 224 | 38 / 60 | 0 | 62 | 200 / 228 ms | 0 / 0 / 0 / 0 |
+| `steady-held-v2` | 294 / 456 | 314 / 456 | 224 | 38 / 60 | 0 | 62 | 200 / 228 ms | 0 / 0 / 0 / 0 |
+
+The candidates separate sharply under Direct and barely under Tone. Every
+candidate keeps all four dedicated safety counters at zero under both renderers,
+and none loses a complete passage.
+
+#### Where the Direct gain comes from
+
+`early-open-v2` deltas from `baseline-v1`, per speed and per family:
+
+| Interval | Independent | Ordered | Prefix | Complete | Late | Carry-over | Ordered p95 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1000 ms | +2 | +4 | +4 | 0 | 0 | 0 | −8 ms |
+| 500 ms | +3 | +7 | +7 | +1 | −2 | −1 | 0 ms |
+| 333⅓ ms | +7 | +39 | +39 | +5 | −5 | −3 | −13.33 ms |
+| 250 ms | +4 | +19 | +19 | +1 | 0 | 0 | 0 ms |
+| 167 ms | 0 | +8 | 0 | +2 | −1 | −2 | −7 ms |
+| 125 ms | +1 | +5 | 0 | +1 | 0 | −1 | 0 ms |
+
+| Family | Independent | Ordered | Complete | Late |
+| --- | ---: | ---: | ---: | ---: |
+| `course-clear` | +2 | +37 | +1 | 0 |
+| `three-note-independent` | +6 | +22 | +4 | 0 |
+| `alternating-pitches` | +1 | +7 | +2 | −3 |
+| `repeated-notes` | +2 | +7 | +2 | −5 |
+| `shared-sustain` | +4 | +6 | 0 | 0 |
+| `known-weak-chord` | +2 | +3 | +1 | 0 |
+| `rolled-chords`, `scales`, `two-note-chords` | 0 | 0 | 0 | 0 |
+
+The gain is concentrated in the cascade the dynamics work already identified:
+ordered advancement improves far more than independent recognition, because
+recovering one stalled target unblocks the targets behind it. Eight of
+`baseline-v1`'s Direct late advances become on-time advances, which is why its
+late count falls to zero while no advance is lost.
+
+#### The two rows that got worse
+
+Nothing regressed on Direct: `regressedOrderedAdvanceTraceIds` and
+`lostCompletePassageTraceIds` are empty for all four candidates. Under Tone, all
+four candidates lose one ordered advance on `sequence/tone/course-clear-27/167ms`
+without losing the passage's completion, the single ordered regression in 156
+passages.
+
+The only unsafe advance anywhere in the scored corpus belongs to `baseline-v1`:
+the diagnosed Tone 333 ms false advance on `sequence/tone/course-clear-27`, event
+index 8, which every candidate clears. The dedicated safety families report
+0 / 0 / 0 / 0 for every profile under both renderers.
+
+#### Repeatability
+
+The full matrix was run twice in fresh browser processes. Every recognition,
+advancement, classification, latency, backlog, safety counter, and all 156
+decoded-structure hashes are identical; the only differing values are the
+wall-clock `maximumInferenceMs` maxima, which are measured durations rather than
+decoded results. The `listen-sequence-profile-validation-tone` command reproduces
+the paired run's Tone rows exactly, and a focused single-speed smoke reproduces
+the corresponding rows of the full run.
+
+Nothing here changes a candidate value, a manifest assignment, or the production
+default, which remains `baseline-v1`.
+
 ### Isolated candidate-matrix confirmation — August 19, 2026
 
 The first frozen-candidate result measured on evidence the multi-domain search
@@ -1424,6 +1560,15 @@ node tools\online_amt\run_browser_benchmarks.mjs `
 
 node tools\online_amt\run_browser_benchmarks.mjs `
   http://127.0.0.1:5174/online-amt-benchmark.html listen-isolated-profile-validation-tone
+
+node tools\online_amt\run_browser_benchmarks.mjs `
+  http://127.0.0.1:5174/online-amt-benchmark.html listen-sequence-profile-validation
+
+node tools\online_amt\run_browser_benchmarks.mjs `
+  http://127.0.0.1:5174/online-amt-benchmark.html listen-sequence-profile-validation-summary
+
+node tools\online_amt\run_browser_benchmarks.mjs `
+  http://127.0.0.1:5174/online-amt-benchmark.html listen-sequence-profile-validation-tone
 
 node tools\online_amt\run_browser_benchmarks.mjs `
   http://127.0.0.1:5174/online-amt-benchmark.html listen-retrigger-sweep
