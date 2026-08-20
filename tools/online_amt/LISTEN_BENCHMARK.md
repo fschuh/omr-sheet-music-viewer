@@ -71,6 +71,32 @@ and 8 of its 52 dynamics traces, so a complete run necessarily produces differen
 values, and `f67b8d57` and `0902e4cf` are references for repeating this same
 narrowed smoke rather than baselines for anything wider.
 
+#### Outcome-identity reproducibility
+
+The per-trace, per-profile outcome identities did not exist at `10a32a7`, so the
+values below are separate evidence measured later, on the change that adds them
+(parent commit `c3c2001`), Chrome 151.0.7922.169 on Linux, model
+`online_amt_streaming.onnx`. The smoke, corpora, renderers, and manifest are the
+same as above, and the identity digests were reproduced unchanged, which is what
+makes the two measurements comparable at all.
+
+| Domain | Outcome rows | Outcome digest | Identity digest |
+| --- | ---: | --- | --- |
+| Isolated | 1,340 | `be407330` | `bff20df8` |
+| Sequence | 130 | `81d4265d` | `f67b8d57` |
+| Dynamics | 40 | `94f46bb3` | `0902e4cf` |
+
+An outcome digest folds the per-trace, per-profile rows the way the identity
+digest folds the captured traces: one row for each captured trace under each of
+the five profile columns, each carrying a digest of every discrete outcome that
+column produced on that trace, per-pitch evidence included.
+
+Two repetitions of this smoke in fresh browser processes reproduced every value
+above, all 1,510 outcome rows included, and their two archives are canonically
+identical. That is the property the frozen confirmation depends on: the decoded
+structure and every discrete matcher outcome are reproducible across processes
+even though the raw PCM and confidence hashes are not.
+
 The frozen automated confirmation does not compare against these digests at all.
 It runs the complete matrix twice and compares its two repetitions with each
 other, which is the only comparison in which both sides captured the same traces.
@@ -84,6 +110,44 @@ node tools/online_amt/verify_listen_benchmark_evidence.mjs \
 The comparison ignores only host-dependent `maximumInferenceMs` and floating-point
 audio diagnostics `peak` and `rms`. It compares every corpus identity, musical
 outcome, summary, gate code, failure identity, and recommendation input.
+
+Before comparing the two files to each other it holds each of them to the frozen
+matrix: exactly one `listen-profile-validation` result, `evidenceComplete`,
+registry version 2, `baseline-v1` plus the four frozen `v2` candidates at their
+frozen threshold values, all eighteen gates with their stated requirements, all
+three domains under both renderers, 268 isolated, 156 sequence, and 52 dynamics
+traces named for their suite and renderer, manifest version 1 / `0ed1e71d` /
+`10ae2e0b`, trace reuse and baseline parity verified per domain, and each domain
+spanning exactly the partitions its frozen corpus spans. Outcome coverage is read
+rather than counted: every captured trace must carry one row per profile column,
+in the frozen column order and under the renderer and partition it was captured
+in — both checked against the frozen values rather than against the trace's own
+claim about itself — and both aggregate digests are recomputed from their own
+rows. The decision is required beside the identities: the three measured
+matrices, and for each candidate all eighteen gates applied — an unapplied gate
+contributes no pass, so a report that applied none of them would clear a
+candidate it never judged. Each outcome must satisfy the report's own algebra,
+`passed === (applied && failures.length === 0)`, which requires the verdict to
+follow from the recorded failures and not that the gate passed; each must read
+exactly the rows a complete matrix reads for it, so safety cannot be gated on the
+held-back rows alone; every failure must name its rows, its
+baseline and candidate values as scalars or null, and a reason; the four per-role
+counters are recomputed from those failures; and eligibility, the eligibility
+set, and the recommendation must all follow from the outcomes. No waiver may be declared, and a run cannot call
+itself complete while still listing reasons it was not. Two archives of this narrowed smoke are refused by that contract rather
+than accepted as confirmation, which is the point: they agree with each other
+perfectly.
+
+Musical outcomes are compared row by row through the per-trace, per-profile
+outcome identities each domain carries — one row per captured trace and profile
+column, digesting every discrete outcome that column produced on that trace —
+down to each expected pitch's attack type, evidence times, and qualification —
+with one digest over the whole list beside the corpus identity digest. An
+advancement that moved to another moment, a failure that changed classification,
+an advance credited to a different physical attack, or a chord that qualified on
+different notes is therefore a mismatch even when every aggregate count holds,
+and it is reported against the trace and profile it happened under. Model
+confidences stay out, because they are not bit-stable across browser processes.
 
 The `baseline-v1` columns reproduce the recorded Task 09 isolated matrix exactly
 — 104/106 and 52/54 under Direct, 100/106 and 48/54 under Tone — and the gate

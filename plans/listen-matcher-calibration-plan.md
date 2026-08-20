@@ -1495,6 +1495,26 @@ decision.
   `node tools/online_amt/verify_listen_benchmark_evidence.mjs --compare <first-run.json>
   <second-run.json>`; this canonical comparison excludes only host-dependent
   `maximumInferenceMs` and floating-point audio diagnostics `peak` and `rms`.
+  That command refuses either file unless it is one complete `listen-profile-validation`
+  run of the frozen matrix — `evidenceComplete`, registry version 2, `baseline-v1`
+  plus the four frozen candidates at their frozen threshold values, all eighteen
+  gates with their stated requirements, all three domains under both renderers,
+  268/156/52 traces, manifest 1 / `0ed1e71d` / `10ae2e0b`, one outcome row per
+  captured trace per profile column, and the decision itself — the three measured
+  matrices, each candidate's eighteen gates all applied, each satisfying
+  `passed === (applied && failures.length === 0)` and reading exactly the rows a
+  complete matrix reads for it, every failure naming its rows, its scalar baseline
+  and candidate values, and its reason, the per-role failure counters recomputed
+  from them, no layer-loss waiver, and an eligibility set and recommendation that
+  follow — so two repetitions of a narrowed smoke, of a
+  differently configured matrix, of an export truncated to its identities, or of a
+  report whose verdicts do not follow from its own gate outcomes can never be quoted
+  as this task's evidence.
+  Discrete outcomes are compared through the archive's per-trace, per-profile
+  outcome digests, which read each expected pitch's attack type, evidence times,
+  and qualification as well as the target-level result, so an advancement that
+  moved, changed classification, was credited to another attack, or qualified on
+  different notes is a mismatch even when every aggregate count holds.
 - Do not alter candidate values, fixtures, attribution, or gates after viewing the
   first run. Any such change invalidates both repetitions and restarts this task.
 - Record Direct/Tone, speed/family, piano/layer, mixed-dynamics, articulation,

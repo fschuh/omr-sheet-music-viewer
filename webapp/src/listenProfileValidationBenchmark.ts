@@ -64,6 +64,7 @@ import {
   type PianoLayerId,
 } from "./pianoRegistry";
 import {
+  LISTEN_MATCHER_REGISTRY_VERSION,
   LISTEN_MULTIDOMAIN_CANDIDATE_PROFILE_IDS,
   findListenMatcherProfile,
   listenMatcherThresholds,
@@ -92,10 +93,13 @@ import {
   replayListenSequenceTrace,
   summarizeListenSequenceSafety,
   withOnlineAmtBenchmarkSession,
+  type ExpectedPitchDiagnostic,
   type ListenRecognitionTrace,
   type ListenSequenceArticulation,
   type ListenSequenceAggregateSummary,
+  type ListenSequenceAttackDiagnostic,
   type ListenSequenceDefinition,
+  type ListenSequenceEventDiagnostic,
   type ListenSequenceFailureReason,
   type ListenSequenceRunResult,
   type ListenSequenceSafetySummary,
@@ -3408,6 +3412,32 @@ export interface ListenProfileCandidateGateReport {
 }
 
 /** What one measured domain contributed, and the identity it must be reproduced under. */
+/**
+ * One profile column's complete discrete outcome on one captured trace.
+ *
+ * The unified export reports aggregates, safety identities, and gate results;
+ * it deliberately leaves the per-fixture dumps to the three domain commands.
+ * That left the confirmation comparison unable to see an outcome that moved
+ * without moving a count — a target that advanced from a different attack, a
+ * failure that changed classification, a passage that reached the same score by
+ * a different route. Each row below closes that gap by carrying a digest of
+ * every discrete outcome one profile produced on one trace, so two repetitions
+ * are compared outcome by outcome and a mismatch names the trace and the
+ * profile it happened under.
+ */
+export interface ListenProfileOutcomeIdentity {
+  traceId: string;
+  rendererKey: ListenTraceRendererKey;
+  partition: ListenTracePartition;
+  profileId: ListenMatcherProfileId;
+  /**
+   * FNV-1a over this profile's discrete outcome on this trace. The digest is
+   * over the outcome alone, so two rows that produced the same outcome carry
+   * the same value and the trace and profile they belong to stay beside it.
+   */
+  outcomeDigest: string;
+}
+
 export interface ListenProfileValidationDomainIdentity {
   domain: "isolated" | "sequence" | "dynamics";
   present: boolean;
@@ -3433,6 +3463,19 @@ export interface ListenProfileValidationDomainIdentity {
     frameCount: number;
   }>;
   identityDigest: string;
+  /**
+   * Every captured trace crossed with every profile column, so the archive
+   * literally contains each measured discrete outcome rather than only the
+   * aggregates and failures computed from them. A complete run therefore holds
+   * `capturedTraceCount` times the profile-column count rows.
+   */
+  outcomeIdentities: ListenProfileOutcomeIdentity[];
+  /**
+   * One digest over the whole outcome list, so a repetition can be compared
+   * with a single value before being compared row by row. It is only
+   * comparable with a run that measured the same traces under the same columns.
+   */
+  outcomeDigest: string;
 }
 
 export type ListenProfileGateRecommendationCode =
@@ -3443,6 +3486,13 @@ export type ListenProfileGateRecommendationCode =
 export interface ListenProfileValidationGateReport {
   baselineProfileId: ListenMatcherProfileId;
   candidateProfileIds: readonly ListenMatcherProfileId[];
+  /**
+   * The profile registry these values came from. A stored calibration record or
+   * an archived evidence file from another registry version describes different
+   * profiles under the same identifiers, so the version is recorded with the
+   * measurement rather than inferred from it afterwards.
+   */
+  registryVersion: number;
   /** The exact threshold values every row was measured under. */
   profiles: ListenValidationProfileIdentity[];
   gates: readonly ListenProfileGateDefinition[];
@@ -3472,6 +3522,134 @@ function identityDigest(parts: readonly string[]): string {
     hash = Math.imul(hash ^ (character.codePointAt(0) ?? 0), 0x01000193) >>> 0;
   }
   return hash.toString(16).padStart(8, "0");
+}
+
+/**
+ * The per-target outcome flags a second repetition has to reproduce.
+ *
+ * Every entry is a discrete classification the matcher reached, never a
+ * confidence it reached it from: neither Chrome's offline rendering nor ONNX
+ * Runtime is bit-stable across processes, which is why
+ * `listenRecognitionStructureHash` excludes model confidences as well. Times
+ * are frame timestamps and differences of them, so they are exactly as
+ * reproducible as the decoded structure the two repetitions already agree on.
+ */
+const SEQUENCE_EVENT_OUTCOME_FLAGS: ReadonlyArray<
+  readonly [string, (event: ListenSequenceEventDiagnostic) => boolean]
+> = Object.freeze([
+  ["R", (event) => event.allRequiredRawEvidencePresent],
+  ["Q", (event) => event.thresholdQualified],
+  ["M", (event) => event.independentlyMatched],
+  ["O", (event) => event.orderedAdvanced],
+  ["A", (event) => event.advanced],
+  ["L", (event) => event.lateAdvance],
+  ["F", (event) => event.falseAdvance],
+  ["S", (event) => event.skipped],
+  ["D", (event) => event.duplicate],
+  ["X", (event) => event.missed],
+  ["T", (event) => event.timedOut],
+  ["B", (event) => event.blockedByPriorStall],
+  ["N", (event) => event.nextAttackBeforeAdvance],
+] satisfies ReadonlyArray<
+  readonly [string, (event: ListenSequenceEventDiagnostic) => boolean]
+>);
+
+/**
+ * The per-pitch outcome flags, which decide the event-level ones above.
+ *
+ * A target can reach the same verdict from a different set of pitches: one note
+ * whose attack was detected where another's was carried, or a chord that
+ * qualified on different members. Those are different musical outcomes that the
+ * event-level reductions and every aggregate count report identically, so the
+ * digest reads each expected pitch rather than only the conclusion drawn from
+ * them. Confidences stay out for the same reason they stay out above.
+ */
+const EXPECTED_PITCH_OUTCOME_FLAGS: ReadonlyArray<
+  readonly [string, (pitch: ExpectedPitchDiagnostic) => boolean]
+> = Object.freeze([
+  ["A", (pitch) => pitch.attackRequired],
+  ["D", (pitch) => pitch.rawAttackDetected],
+  ["P", (pitch) => pitch.rawOnsetProduced],
+  ["Q", (pitch) => pitch.qualifyingOnset],
+  ["R", (pitch) => pitch.requiredRawEvidencePresent],
+  ["T", (pitch) => pitch.thresholdQualified],
+] satisfies ReadonlyArray<readonly [string, (pitch: ExpectedPitchDiagnostic) => boolean]>);
+
+/** A nullable outcome number, written so a null can never read as a zero. */
+function outcomeField(value: number | null): string {
+  return value === null ? "" : String(value);
+}
+
+/** One expected pitch's discrete outcome, in a fixed field order. */
+function expectedPitchOutcomeToken(pitch: ExpectedPitchDiagnostic): string {
+  return [
+    pitch.midi,
+    EXPECTED_PITCH_OUTCOME_FLAGS
+      .filter(([, read]) => read(pitch))
+      .map(([letter]) => letter)
+      .join(""),
+    pitch.requiredAttackType ?? "",
+    pitch.observedAttackType ?? "",
+    outcomeField(pitch.rawOnsetTimeMs),
+    outcomeField(pitch.firstRawEvidenceTimeMs),
+    outcomeField(pitch.firstThresholdQualifiedEvidenceTimeMs),
+  ].join(":");
+}
+
+/** One target's complete discrete outcome, in a fixed field order. */
+function sequenceEventOutcomeToken(event: ListenSequenceEventDiagnostic): string {
+  return [
+    event.index,
+    SEQUENCE_EVENT_OUTCOME_FLAGS
+      .filter(([, read]) => read(event))
+      .map(([letter]) => letter)
+      .join(""),
+    outcomeField(event.firstRawEvidenceTimeMs),
+    outcomeField(event.firstThresholdQualifiedEvidenceTimeMs),
+    outcomeField(event.firstQualifyingPitchEvidenceTimeMs),
+    outcomeField(event.independentMatchAtMs),
+    outcomeField(event.orderedAdvancedAtMs),
+    outcomeField(event.advancedAtMs),
+    outcomeField(event.activeTargetIndexAtAttack),
+    event.confidentUnexpectedPitches.join(","),
+    event.unexpectedPitches.join(","),
+    event.primaryFailure ?? "",
+    event.rawFailureReasons.join(","),
+    event.independentFailureReasons.join(","),
+    event.orderedFailureReasons.join(","),
+    event.failureReasons.join(","),
+    event.expectedPitches.map(expectedPitchOutcomeToken).join("+"),
+  ].join("|");
+}
+
+/**
+ * The attribution half of a run's outcome: which physical attack the replay
+ * credited each advancement to, and which target was armed when it arrived. A
+ * passage that reaches the same score from different attacks has a different
+ * outcome, and without these the digest could not tell the two apart.
+ */
+function sequenceAttackOutcomeToken(attack: ListenSequenceAttackDiagnostic): string {
+  return [
+    attack.index,
+    outcomeField(attack.activeTargetIndexAtAttack),
+    attack.advancementTargetIndices.join(","),
+  ].join("|");
+}
+
+/** Every discrete outcome one profile produced on one passage or dynamics run. */
+export function listenSequenceOutcomeSignature(run: ListenSequenceRunResult): string {
+  return `${run.events.map(sequenceEventOutcomeToken).join(";")}` +
+    `//${run.attacks.map(sequenceAttackOutcomeToken).join(";")}`;
+}
+
+/** Every discrete outcome one profile produced on one isolated fixture. */
+export function listenIsolatedOutcomeSignature(outcome: ListenIsolatedProfileOutcome): string {
+  return `${outcome.advanced ? "A" : ""}|${outcomeField(outcome.onsetToAdvanceMs)}`;
+}
+
+/** The digest one outcome identity row carries. Exported so a test can restate it. */
+export function listenProfileOutcomeDigest(signature: string): string {
+  return identityDigest([signature]);
 }
 
 /**
@@ -3655,6 +3833,7 @@ function domainIdentity(
     traceReuseVerified: boolean;
     baselineParityVerified: boolean;
     traceIdentities: ListenProfileValidationDomainIdentity["traceIdentities"];
+    outcomeIdentities: ListenProfileOutcomeIdentity[];
   } | null,
 ): ListenProfileValidationDomainIdentity {
   if (input === null) {
@@ -3672,6 +3851,8 @@ function domainIdentity(
       baselineParityVerified: false,
       traceIdentities: [],
       identityDigest: identityDigest([]),
+      outcomeIdentities: [],
+      outcomeDigest: identityDigest([]),
     };
   }
   return {
@@ -3689,6 +3870,10 @@ function domainIdentity(
     traceIdentities: input.traceIdentities,
     identityDigest: identityDigest(input.traceIdentities.map((identity) => (
       `${identity.traceId}:${identity.recognitionStructureHash}:${identity.frameCount}`
+    ))),
+    outcomeIdentities: input.outcomeIdentities,
+    outcomeDigest: identityDigest(input.outcomeIdentities.map((identity) => (
+      `${identity.traceId}:${identity.profileId}:${identity.outcomeDigest}`
     ))),
   };
 }
@@ -3712,6 +3897,14 @@ function listenProfileValidationDomainIdentities(
         recognitionStructureHash: result.recognitionStructureHash,
         frameCount: result.frameCount,
       }))),
+      outcomeIdentities: isolated.renderers.flatMap((renderer) => renderer.cases
+        .flatMap((result) => result.profiles.map((outcome) => ({
+          traceId: result.traceId,
+          rendererKey: renderer.rendererKey,
+          partition: result.partition,
+          profileId: outcome.profileId,
+          outcomeDigest: listenProfileOutcomeDigest(listenIsolatedOutcomeSignature(outcome)),
+        })))),
     }),
     domainIdentity("sequence", !sequence ? null : {
       partitions: [...new Set(sequence.renderers.flatMap((renderer) => renderer.cases
@@ -3727,6 +3920,14 @@ function listenProfileValidationDomainIdentities(
         recognitionStructureHash: result.recognitionStructureHash,
         frameCount: result.frameCount,
       }))),
+      outcomeIdentities: sequence.renderers.flatMap((renderer) => renderer.cases
+        .flatMap((result) => result.profiles.map(({ profileId, run }) => ({
+          traceId: result.traceId,
+          rendererKey: renderer.rendererKey,
+          partition: result.partition,
+          profileId,
+          outcomeDigest: listenProfileOutcomeDigest(listenSequenceOutcomeSignature(run)),
+        })))),
     }),
     domainIdentity("dynamics", !dynamics ? null : {
       partitions: [...new Set(dynamics.renderers.flatMap((renderer) => renderer.cases
@@ -3742,6 +3943,14 @@ function listenProfileValidationDomainIdentities(
         recognitionStructureHash: result.recognitionStructureHash,
         frameCount: result.frameCount,
       }))),
+      outcomeIdentities: dynamics.renderers.flatMap((renderer) => renderer.cases
+        .flatMap((result) => result.profiles.map(({ profileId, run }) => ({
+          traceId: result.traceId,
+          rendererKey: renderer.rendererKey,
+          partition: result.partition,
+          profileId,
+          outcomeDigest: listenProfileOutcomeDigest(listenSequenceOutcomeSignature(run)),
+        })))),
     }),
   ];
 }
@@ -4543,6 +4752,7 @@ export function evaluateListenProfileValidationGates(
   return {
     baselineProfileId,
     candidateProfileIds,
+    registryVersion: LISTEN_MATCHER_REGISTRY_VERSION,
     profiles,
     gates: LISTEN_PROFILE_GATES,
     domains: listenProfileValidationDomainIdentities(input),

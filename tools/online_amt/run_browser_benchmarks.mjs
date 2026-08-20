@@ -1285,6 +1285,7 @@ for (let index = 0; index < selectedConfigurations.length; index += 1) {
     ? {
         baselineProfileId: result.gates.baselineProfileId,
         candidateProfileIds: result.gates.candidateProfileIds,
+        registryVersion: result.gates.registryVersion,
         profiles: result.gates.profiles,
         evidenceComplete: result.gates.evidenceComplete,
         incompleteEvidenceReasons: result.gates.incompleteEvidenceReasons,
@@ -1307,6 +1308,8 @@ for (let index = 0; index < selectedConfigurations.length; index += 1) {
           baselineParityVerified: domain.baselineParityVerified,
           traceIdentityCount: domain.traceIdentities.length,
           identityDigest: domain.identityDigest,
+          outcomeIdentityCount: domain.outcomeIdentities.length,
+          outcomeDigest: domain.outcomeDigest,
         })),
         candidates: result.gates.candidates.map((candidate) => ({
           profileId: candidate.profileId,
@@ -1555,6 +1558,7 @@ for (let index = 0; index < selectedConfigurations.length; index += 1) {
       `${configuration.name}: recommendation=${gates.recommendation.code} ` +
       `eligible=${gates.eligibleProfileIds.join(",") || "none"} ` +
       `evidence-complete=${gates.evidenceComplete} ` +
+      `registry=${gates.registryVersion} ` +
       `baseline=${gates.baselineProfileId} ` +
       `candidates=${gates.candidateProfileIds.join(",")}`,
     );
@@ -1566,6 +1570,7 @@ for (let index = 0; index < selectedConfigurations.length; index += 1) {
         `renderers=${domain.rendererKeys.join(",") || "none"} ` +
         `partitions=${domain.partitions.join(",") || "none"} ` +
         `identity=${domain.identityDigest} ` +
+        `outcome=${domain.outcomeDigest}/${domain.outcomeIdentities.length} rows ` +
         `trace-reuse=${domain.traceReuseVerified} ` +
         `baseline-parity=${domain.baselineParityVerified}`,
       );

@@ -18,17 +18,26 @@ import {
 } from "./listenBaselineParity";
 import {
   LISTEN_MATCHER_PROFILES,
+  LISTEN_MATCHER_REGISTRY_VERSION,
   LISTEN_MULTIDOMAIN_CANDIDATE_PROFILE_IDS,
   listenMatcherThresholds,
   matcherOptionsForListenMatcherProfile,
   type ListenMatcherProfileId,
 } from "./listenMatcherProfiles";
 import {
+  CONFIRMATION_EVIDENCE,
+  GATE_SCOPE_BY_DOMAIN,
+  GATE_SCOPE_BY_ROLE,
+} from "../../tools/online_amt/verify_listen_benchmark_evidence.mjs";
+import {
+  LISTEN_TRACE_CORPUS_HASH,
   LISTEN_TRACE_MANIFEST,
+  LISTEN_TRACE_MANIFEST_HASH,
   listenTracesInSuite,
   type ListenIsolatedCaseKind,
   type ListenTracePartition,
   type ListenTraceRendererKey,
+  type ListenTraceSuite,
 } from "./listenTraceManifest";
 import {
   COURSE_CLEAR_ARTICULATION_INTERVAL_MS,
@@ -36,6 +45,7 @@ import {
   bundledListenSequences,
   materializeListenSequence,
   replayListenSequenceTrace,
+  type ExpectedPitchDiagnostic,
   type ListenRecognitionFrame,
   type ListenRecognitionTrace,
   type ListenSequenceArticulation,
@@ -52,6 +62,7 @@ import {
   LISTEN_LAYER_INDEPENDENT_LOSS_ALLOWANCE,
   LISTEN_LATENCY_REGRESSION_TOLERANCE_MS,
   LISTEN_PROFILE_GATES,
+  LISTEN_PROFILE_VALIDATION_BASELINE_PROFILE_ID,
   conciseListenDynamicsProfileValidationResult,
   conciseListenIsolatedProfileValidationResult,
   conciseListenSequenceProfileValidationResult,
@@ -60,6 +71,7 @@ import {
   evaluateListenProfileValidationGates,
   evaluateListenSequenceProfileValidation,
   listenDynamicsValidationCases,
+  listenIsolatedOutcomeSignature,
   listenIsolatedValidationCases,
   listenCommittedRegressionFailures,
   listenLateAdvanceDiagnostics,
@@ -67,6 +79,8 @@ import {
   listenNewUnsafeAdvances,
   listenProfileGateDefinition,
   listenProfileLayerLossKey,
+  listenProfileOutcomeDigest,
+  listenSequenceOutcomeSignature,
   listenSequenceValidationCases,
   listenUnsafeAdvanceIdentities,
   listenValidationEvidenceRole,
@@ -1099,6 +1113,89 @@ function fabricatedSummary(update: Partial<ListenSequenceRunSummary>): ListenSeq
   };
 }
 
+/** A complete event diagnostic, so an outcome signature reads real fields. */
+function outcomeEvent(
+  update: Partial<ListenSequenceEventDiagnostic> = {},
+): ListenSequenceEventDiagnostic {
+  return {
+    index: 0,
+    scheduledAttackTimeMs: 1000,
+    targetPitches: [60, 64, 67],
+    playedPitches: [60, 64, 67],
+    expectedPitches: [],
+    firstRawEvidenceTimeMs: 1032,
+    firstThresholdQualifiedEvidenceTimeMs: 1064,
+    firstQualifyingPitchEvidenceTimeMs: 1064,
+    confidentUnexpectedPitches: [],
+    allRequiredRawEvidencePresent: true,
+    thresholdQualified: true,
+    independentlyMatched: true,
+    independentMatchAtMs: 1096,
+    independentMatchLatencyMs: 96,
+    orderedAdvanced: true,
+    orderedAdvancedAtMs: 1096,
+    orderedAdvanceLatencyMs: 96,
+    advanced: true,
+    advancedAtMs: 1096,
+    onsetToAdvanceMs: 96,
+    activeTargetIndexAtAttack: 0,
+    blockedByPriorStall: false,
+    unexpectedPitches: [],
+    nextAttackBeforeAdvance: false,
+    missed: false,
+    duplicate: false,
+    skipped: false,
+    falseAdvance: false,
+    lateAdvance: false,
+    timedOut: false,
+    rawFailureReasons: [],
+    independentFailureReasons: [],
+    orderedFailureReasons: [],
+    failureReasons: [],
+    primaryFailure: null,
+    ...update,
+  };
+}
+
+/** A complete expected-pitch diagnostic, the leaf of one target's outcome. */
+function outcomePitch(update: Partial<ExpectedPitchDiagnostic> = {}): ExpectedPitchDiagnostic {
+  return {
+    midi: 60,
+    attackRequired: true,
+    requiredAttackType: "onset",
+    observedAttackType: "onset",
+    rawAttackDetected: true,
+    rawOnsetProduced: true,
+    rawOnsetTimeMs: 1032,
+    maximumOnsetConfidence: 0.82,
+    onsetConfidence: 0.81,
+    noteConfidence: 0.79,
+    qualifyingOnset: true,
+    maximumActiveConfidence: 0.9,
+    firstRawEvidenceTimeMs: 1032,
+    firstThresholdQualifiedEvidenceTimeMs: 1064,
+    requiredRawEvidencePresent: true,
+    thresholdQualified: true,
+    ...update,
+  };
+}
+
+/** A complete attack diagnostic, which carries the advancement's attribution. */
+function outcomeAttack(
+  update: Partial<ListenSequenceAttackDiagnostic> = {},
+): ListenSequenceAttackDiagnostic {
+  return {
+    index: 0,
+    scheduledAtMs: 1000,
+    targetIndex: 0,
+    playedPitches: [60, 64, 67],
+    expectedAdvance: true,
+    activeTargetIndexAtAttack: 0,
+    advancementTargetIndices: [0],
+    ...update,
+  };
+}
+
 /**
  * One measured row, built directly rather than replayed.
  *
@@ -1117,6 +1214,8 @@ function fabricatedDynamicsCase(options: {
   scoreEligible?: boolean;
   rendererKey?: ListenTraceRendererKey;
   column?: readonly ListenValidationProfileIdentity[];
+  events?: (profileId: ListenMatcherProfileId) => ListenSequenceEventDiagnostic[];
+  attacks?: (profileId: ListenMatcherProfileId) => ListenSequenceAttackDiagnostic[];
   counts: (profileId: ListenMatcherProfileId) => Partial<ListenSequenceRunSummary>;
 }): ListenDynamicsValidationCaseResult {
   const layer = options.layer ?? null;
@@ -1151,7 +1250,8 @@ function fabricatedDynamicsCase(options: {
       profileId,
       profile,
       run: {
-        events: [],
+        events: options.events?.(profileId) ?? [],
+        attacks: options.attacks?.(profileId) ?? [],
         summary: fabricatedSummary(options.counts(profileId)),
       } as unknown as ListenSequenceRunResult,
     })),
@@ -1595,6 +1695,11 @@ function gateSequenceRenderer(
       family: string;
       intervalMs: number;
     }) => ListenSequenceEventDiagnostic[];
+    attacks?: (input: {
+      profileId: ListenMatcherProfileId;
+      family: string;
+      intervalMs: number;
+    }) => ListenSequenceAttackDiagnostic[];
   } = {},
 ): ListenSequenceRendererValidation {
   const intervalsMs = options.intervalsMs ?? LISTEN_SEQUENCE_INTERVALS_MS;
@@ -1613,6 +1718,7 @@ function gateSequenceRenderer(
         intervalMs,
         column,
         events: (profileId) => options.events?.({ profileId, family, intervalMs }) ?? [],
+        attacks: (profileId) => options.attacks?.({ profileId, family, intervalMs }) ?? [],
         counts: (profileId) => counts({ profileId, family, intervalMs }),
       }));
     }
@@ -1667,7 +1773,17 @@ function gateDynamicsRenderer(
     key: string;
     partition: ListenTracePartition;
   }) => Partial<ListenSequenceRunSummary>,
-  options: { column?: readonly ListenValidationProfileIdentity[] } = {},
+  options: {
+    column?: readonly ListenValidationProfileIdentity[];
+    events?: (input: {
+      profileId: ListenMatcherProfileId;
+      key: string;
+    }) => ListenSequenceEventDiagnostic[];
+    attacks?: (input: {
+      profileId: ListenMatcherProfileId;
+      key: string;
+    }) => ListenSequenceAttackDiagnostic[];
+  } = {},
 ): ListenDynamicsRendererValidation {
   const column = options.column ?? GATE_COLUMN;
   const renderer = rendererKey === "tone"
@@ -1699,6 +1815,8 @@ function gateDynamicsRenderer(
     articulation: row.articulation ?? "normal",
     rendererKey,
     column,
+    events: (profileId) => options.events?.({ profileId, key: row.key }) ?? [],
+    attacks: (profileId) => options.attacks?.({ profileId, key: row.key }) ?? [],
     counts: (profileId) => counts({ profileId, key: row.key, partition: row.partition }),
   }));
   return summarizeListenDynamicsProfileValidation(rendererKey, renderer, cases, column);
@@ -2902,17 +3020,10 @@ test("a lost complete passage rejects a candidate whose ordered advances held", 
 });
 
 test("continuous latency holds at one decoder hop and rejects beyond it", () => {
-  const advanceAt = (latencyMs: number) => [{
-    index: 0,
-    orderedAdvanced: true,
+  const advanceAt = (latencyMs: number) => [outcomeEvent({
     orderedAdvanceLatencyMs: latencyMs,
-    independentlyMatched: true,
     independentMatchLatencyMs: latencyMs,
-    failureReasons: [],
-    rawFailureReasons: [],
-    independentFailureReasons: [],
-    orderedFailureReasons: [],
-  } as unknown as ListenSequenceEventDiagnostic];
+  })];
   const at = (candidateMs: number, baselineMs = 180) => gateOutcome(
     evaluateListenProfileValidationGates({
       ...cleanGateInput(),
@@ -3052,5 +3163,556 @@ test("the committed-regression gate rejects a worsened case and a lost recovery"
       "baseline-v1",
     ),
     [],
+  );
+});
+
+/* ------------------------------------------------------------------------- *
+ * Per-trace, per-profile discrete outcomes
+ * ------------------------------------------------------------------------- */
+
+function domainIdentityFor(
+  report: ListenProfileValidationGateReport,
+  domain: "isolated" | "sequence" | "dynamics",
+) {
+  const identity = report.domains.find((entry) => entry.domain === domain);
+  assert.ok(identity, `no ${domain} identity`);
+  return identity;
+}
+
+test("every captured trace reports one discrete outcome per profile column", () => {
+  const report = evaluateListenProfileValidationGates(cleanGateInput());
+  // The registry the values were read from is recorded with the measurement,
+  // because the same identifiers name different thresholds in another version.
+  assert.equal(report.registryVersion, LISTEN_MATCHER_REGISTRY_VERSION);
+  for (const domain of report.domains) {
+    assert.equal(domain.present, true);
+    // One row per trace per column: an archive missing them can only be compared
+    // aggregate by aggregate, never outcome by outcome.
+    assert.equal(
+      domain.outcomeIdentities.length,
+      domain.capturedTraceCount * report.profiles.length,
+    );
+    const rowKeys = new Set(domain.outcomeIdentities
+      .map(({ traceId, profileId }) => `${traceId} ${profileId}`));
+    assert.equal(rowKeys.size, domain.outcomeIdentities.length);
+    assert.deepEqual(
+      [...new Set(domain.outcomeIdentities.map(({ traceId }) => traceId))].sort(),
+      [...new Set(domain.traceIdentities.map(({ traceId }) => traceId))].sort(),
+    );
+    for (const row of domain.outcomeIdentities) {
+      assert.match(row.outcomeDigest, /^[0-9a-f]{8}$/, `${row.traceId} ${row.profileId}`);
+    }
+    assert.match(domain.outcomeDigest, /^[0-9a-f]{8}$/);
+  }
+  // An unmeasured domain still reports its row, empty rather than absent.
+  const isolatedOnly = evaluateListenProfileValidationGates({
+    isolated: cleanGateInput().isolated,
+  });
+  assert.deepEqual(domainIdentityFor(isolatedOnly, "sequence").outcomeIdentities, []);
+});
+
+test("an outcome that moves without moving a count changes only its own row", () => {
+  // The candidate advances the same target, scored identically, either from the
+  // attack that played it or from the next one, one decoder hop later.
+  const movedOutcome = (moved: boolean) => ({
+    events: ({ profileId }: { profileId: ListenMatcherProfileId }) => [outcomeEvent({
+      advancedAtMs: profileId === "baseline-v1" || !moved ? 1096 : 1128,
+    })],
+    attacks: ({ profileId }: { profileId: ListenMatcherProfileId }) => [
+      outcomeAttack(),
+      outcomeAttack({
+        index: 1,
+        scheduledAtMs: 1240,
+        targetIndex: 1,
+        advancementTargetIndices: profileId === "baseline-v1" || !moved ? [1] : [0, 1],
+      }),
+    ],
+  });
+  const input = (moved: boolean) => {
+    const clean = cleanGateInput();
+    return {
+      isolated: clean.isolated,
+      sequence: gateSequenceResult([
+        gateSequenceRenderer("direct", cleanSequenceCounts, movedOutcome(moved)),
+        gateSequenceRenderer("tone", cleanSequenceCounts),
+      ]),
+      dynamics: gateDynamicsResult([
+        gateDynamicsRenderer("direct", cleanDynamicsCounts, movedOutcome(moved)),
+        gateDynamicsRenderer("tone", cleanDynamicsCounts),
+      ]),
+    };
+  };
+  const stable = evaluateListenProfileValidationGates(input(false));
+  const moved = evaluateListenProfileValidationGates(input(true));
+
+  // Nothing an aggregate reports has changed: the same counts, the same deltas,
+  // the same eligibility, and the same decoded traces under both runs.
+  assert.deepEqual(moved.candidates, stable.candidates);
+  assert.deepEqual(moved.eligibleProfileIds, stable.eligibleProfileIds);
+  assert.deepEqual(moved.recommendation, stable.recommendation);
+  for (const domain of ["isolated", "sequence", "dynamics"] as const) {
+    assert.equal(
+      domainIdentityFor(moved, domain).identityDigest,
+      domainIdentityFor(stable, domain).identityDigest,
+      domain,
+    );
+  }
+  // The outcome did change, so the outcome evidence says so, in both domains
+  // that measured it and for the candidate column alone.
+  for (const domain of ["sequence", "dynamics"] as const) {
+    assert.notEqual(
+      domainIdentityFor(moved, domain).outcomeDigest,
+      domainIdentityFor(stable, domain).outcomeDigest,
+      domain,
+    );
+    const before = domainIdentityFor(stable, domain).outcomeIdentities;
+    const after = domainIdentityFor(moved, domain).outcomeIdentities;
+    const changed = after.filter((row, index) => row.outcomeDigest !== before[index].outcomeDigest);
+    assert.ok(changed.length > 0, domain);
+    assert.deepEqual(
+      [...new Set(changed.map(({ profileId }) => profileId))],
+      [GATE_CANDIDATE_PROFILE_ID],
+    );
+    assert.deepEqual([...new Set(changed.map(({ rendererKey }) => rendererKey))], ["direct"]);
+  }
+  // The isolated domain measured neither change, and reports none.
+  assert.equal(
+    domainIdentityFor(moved, "isolated").outcomeDigest,
+    domainIdentityFor(stable, "isolated").outcomeDigest,
+  );
+});
+
+test("outcome signatures separate every discrete field a replay can move", () => {
+  const run = (
+    events: ListenSequenceEventDiagnostic[],
+    attacks: ListenSequenceAttackDiagnostic[] = [outcomeAttack()],
+  ) => ({ events, attacks } as unknown as ListenSequenceRunResult);
+  const signature = listenSequenceOutcomeSignature(run([outcomeEvent()]));
+  const differs = (update: Partial<ListenSequenceEventDiagnostic>) => (
+    listenSequenceOutcomeSignature(run([outcomeEvent(update)])) !== signature
+  );
+  // Each of these is a different musical outcome at identical counts elsewhere.
+  assert.ok(differs({ advancedAtMs: 1128 }), "advance time");
+  assert.ok(differs({ orderedAdvancedAtMs: 1128 }), "ordered advance time");
+  assert.ok(differs({ independentMatchAtMs: 1128 }), "independent match time");
+  assert.ok(differs({ firstRawEvidenceTimeMs: null }), "first raw evidence");
+  assert.ok(differs({ firstThresholdQualifiedEvidenceTimeMs: null }), "first qualified evidence");
+  assert.ok(differs({ firstQualifyingPitchEvidenceTimeMs: null }), "first qualifying pitch");
+  assert.ok(differs({ lateAdvance: true }), "late advance");
+  assert.ok(differs({ falseAdvance: true }), "false advance");
+  assert.ok(differs({ skipped: true }), "skipped");
+  assert.ok(differs({ duplicate: true }), "duplicate");
+  assert.ok(differs({ missed: true }), "missed");
+  assert.ok(differs({ timedOut: true }), "timed out");
+  assert.ok(differs({ blockedByPriorStall: true }), "blocked by prior stall");
+  assert.ok(differs({ nextAttackBeforeAdvance: true }), "next attack before advance");
+  assert.ok(differs({ independentlyMatched: false }), "independent match");
+  assert.ok(differs({ orderedAdvanced: false }), "ordered advance");
+  assert.ok(differs({ advanced: false }), "advance");
+  assert.ok(differs({ thresholdQualified: false }), "threshold qualified");
+  assert.ok(differs({ allRequiredRawEvidencePresent: false }), "raw evidence present");
+  assert.ok(differs({ activeTargetIndexAtAttack: 1 }), "armed target");
+  assert.ok(differs({ unexpectedPitches: [61] }), "unexpected pitches");
+  assert.ok(differs({ confidentUnexpectedPitches: [61] }), "confident unexpected pitches");
+  assert.ok(differs({ primaryFailure: "carry-over" }), "primary failure");
+  assert.ok(differs({ failureReasons: ["carry-over"] }), "failure reasons");
+  assert.ok(differs({ rawFailureReasons: ["carry-over"] }), "raw failure reasons");
+  assert.ok(differs({ independentFailureReasons: ["carry-over"] }), "independent failure reasons");
+  assert.ok(differs({ orderedFailureReasons: ["carry-over"] }), "ordered failure reasons");
+  assert.ok(differs({ index: 1 }), "target index");
+  // A null never reads as a zero, and attribution is part of the outcome.
+  assert.notEqual(
+    listenSequenceOutcomeSignature(run([outcomeEvent({ advancedAtMs: null })])),
+    listenSequenceOutcomeSignature(run([outcomeEvent({ advancedAtMs: 0 })])),
+  );
+  assert.notEqual(
+    listenSequenceOutcomeSignature(
+      run([outcomeEvent()], [outcomeAttack({ advancementTargetIndices: [0, 1] })]),
+    ),
+    signature,
+  );
+  assert.notEqual(
+    listenSequenceOutcomeSignature(
+      run([outcomeEvent()], [outcomeAttack({ activeTargetIndexAtAttack: null })]),
+    ),
+    signature,
+  );
+  // The isolated domain's outcome is its advancement and the moment it happened.
+  const isolated = (advanced: boolean, onsetToAdvanceMs: number | null) => (
+    listenIsolatedOutcomeSignature({
+      profileId: "baseline-v1",
+      profile: listenMatcherThresholds(LISTEN_MATCHER_PROFILES["baseline-v1"]),
+      advanced,
+      onsetToAdvanceMs,
+    })
+  );
+  assert.notEqual(isolated(true, 196), isolated(true, 232));
+  assert.notEqual(isolated(true, null), isolated(false, null));
+  assert.equal(isolated(true, 196), isolated(true, 196));
+  assert.notEqual(
+    listenProfileOutcomeDigest(isolated(true, 196)),
+    listenProfileOutcomeDigest(isolated(true, 232)),
+  );
+});
+
+test("per-pitch outcomes are read, and per-pitch confidences are not", () => {
+  const run = (events: ListenSequenceEventDiagnostic[]) => (
+    { events, attacks: [outcomeAttack()] } as unknown as ListenSequenceRunResult
+  );
+  const withPitch = (update: Partial<ExpectedPitchDiagnostic>) => listenSequenceOutcomeSignature(
+    run([outcomeEvent({ expectedPitches: [outcomePitch(update)] })]),
+  );
+  const base = withPitch({});
+  const differs = (update: Partial<ExpectedPitchDiagnostic>) => withPitch(update) !== base;
+  // A target can reach the same verdict from a different set of pitches, and
+  // every one of these moves without moving an event-level field or a count.
+  assert.ok(differs({ midi: 64 }), "pitch");
+  assert.ok(differs({ attackRequired: false }), "attack required");
+  assert.ok(differs({ requiredAttackType: "reOnset" }), "required attack type");
+  assert.ok(differs({ requiredAttackType: null }), "no required attack type");
+  assert.ok(differs({ observedAttackType: "reOnset" }), "observed attack type");
+  assert.ok(differs({ observedAttackType: null }), "no observed attack type");
+  assert.ok(differs({ rawAttackDetected: false }), "raw attack detected");
+  assert.ok(differs({ rawOnsetProduced: false }), "raw onset produced");
+  assert.ok(differs({ rawOnsetTimeMs: 1040 }), "raw onset time");
+  assert.ok(differs({ rawOnsetTimeMs: null }), "no raw onset time");
+  assert.ok(differs({ qualifyingOnset: false }), "qualifying onset");
+  assert.ok(differs({ firstRawEvidenceTimeMs: 1040 }), "first raw evidence time");
+  assert.ok(differs({ firstThresholdQualifiedEvidenceTimeMs: 1040 }), "first qualified time");
+  assert.ok(differs({ requiredRawEvidencePresent: false }), "required raw evidence present");
+  assert.ok(differs({ thresholdQualified: false }), "threshold qualified");
+  // A pitch that dropped out of the target is a different outcome as well.
+  assert.notEqual(
+    listenSequenceOutcomeSignature(run([outcomeEvent({ expectedPitches: [] })])),
+    base,
+  );
+  assert.notEqual(
+    listenSequenceOutcomeSignature(run([outcomeEvent({
+      expectedPitches: [outcomePitch({}), outcomePitch({ midi: 64 })],
+    })])),
+    base,
+  );
+  // Confidences stay out: neither Chrome's offline rendering nor ONNX Runtime
+  // reproduces them bit for bit, so reading them would make two honest
+  // repetitions disagree over numbers no decision is taken on.
+  assert.ok(!differs({ onsetConfidence: 0.71 }), "onset confidence");
+  assert.ok(!differs({ noteConfidence: 0.71 }), "note confidence");
+  assert.ok(!differs({ maximumOnsetConfidence: 0.71 }), "maximum onset confidence");
+  assert.ok(!differs({ maximumActiveConfidence: 0.71 }), "maximum active confidence");
+});
+
+/**
+ * The evidence verifier restates the frozen matrix in plain JavaScript, because
+ * it has to judge an archive without importing the build that produced it. That
+ * copy is only trustworthy while it agrees with the definitions the benchmark
+ * actually applies, so this test is what keeps the two in step: a threshold, a
+ * gate, a corpus size, or a manifest hash that moves here fails until the
+ * verifier's contract is updated to match, deliberately.
+ */
+test("the evidence verifier's frozen contract matches the code it describes", () => {
+  assert.equal(CONFIRMATION_EVIDENCE.registryVersion, LISTEN_MATCHER_REGISTRY_VERSION);
+  assert.equal(
+    CONFIRMATION_EVIDENCE.baselineProfileId,
+    LISTEN_PROFILE_VALIDATION_BASELINE_PROFILE_ID,
+  );
+  assert.deepEqual(
+    CONFIRMATION_EVIDENCE.candidateProfileIds,
+    [...LISTEN_MULTIDOMAIN_CANDIDATE_PROFILE_IDS],
+  );
+  assert.equal(CONFIRMATION_EVIDENCE.manifestVersion, LISTEN_TRACE_MANIFEST.version);
+  assert.equal(CONFIRMATION_EVIDENCE.manifestHash, LISTEN_TRACE_MANIFEST_HASH);
+  assert.equal(CONFIRMATION_EVIDENCE.manifestCorpusHash, LISTEN_TRACE_CORPUS_HASH);
+
+  // The thresholds, not only the identifiers: the verifier exists to catch an
+  // archive whose profile values are not the ones this task froze.
+  const column = [
+    LISTEN_PROFILE_VALIDATION_BASELINE_PROFILE_ID,
+    ...LISTEN_MULTIDOMAIN_CANDIDATE_PROFILE_IDS,
+  ];
+  assert.deepEqual(Object.keys(CONFIRMATION_EVIDENCE.profiles), column);
+  for (const profileId of column) {
+    assert.deepEqual(
+      CONFIRMATION_EVIDENCE.profiles[profileId],
+      listenMatcherThresholds(LISTEN_MATCHER_PROFILES[profileId]),
+      profileId,
+    );
+  }
+
+  // The eighteen gates, with their stated requirements, are the standard both
+  // archived repetitions were judged against.
+  assert.deepEqual(
+    CONFIRMATION_EVIDENCE.gates.map(({ partitions: _partitions, ...gate }) => gate),
+    LISTEN_PROFILE_GATES.map((gate) => ({
+      code: gate.code,
+      role: gate.role,
+      domain: gate.domain,
+      label: gate.label,
+      requirement: gate.requirement,
+    })),
+  );
+
+  // The corpus sizes come from the frozen manifest rather than from a memory of
+  // it, so a manifest that grew a trace fails here before it reaches a run.
+  const dynamicsSuites = ["dynamics-constant", "dynamics-mixed", "articulation"] as const;
+  const capturedTraceCounts = {
+    isolated: listenTracesInSuite("isolated").length,
+    sequence: listenTracesInSuite("sequence").length,
+    dynamics: dynamicsSuites
+      .reduce((total, suite) => total + listenTracesInSuite(suite).length, 0),
+  };
+  assert.deepEqual(
+    CONFIRMATION_EVIDENCE.domains.map(({ domain, capturedTraceCount }) => (
+      [domain, capturedTraceCount]
+    )),
+    [
+      ["isolated", capturedTraceCounts.isolated],
+      ["sequence", capturedTraceCounts.sequence],
+      ["dynamics", capturedTraceCounts.dynamics],
+    ],
+  );
+  assert.deepEqual(
+    CONFIRMATION_EVIDENCE.domains.map(({ suites }) => suites),
+    [["isolated"], ["sequence"], [...dynamicsSuites]],
+  );
+  // The partitions each domain spans, and the evidence role that makes, are
+  // derived from the manifest here so the verifier can refuse a trace attributed
+  // to a partition or renderer the frozen matrix does not contain.
+  for (const expected of CONFIRMATION_EVIDENCE.domains) {
+    const partitions = [...new Set(expected.suites
+      .flatMap((suite) => listenTracesInSuite(suite as ListenTraceSuite))
+      .map(({ partition }) => partition))].sort();
+    assert.deepEqual(expected.partitions, partitions, expected.domain);
+    // A gating row carries no scored role at all, which the report writes as null.
+    const evidenceRole = partitions.includes("regression-only")
+      ? null
+      : listenValidationEvidenceRole(partitions);
+    assert.equal(expected.evidenceRole, evidenceRole, expected.domain);
+  }
+  assert.deepEqual(CONFIRMATION_EVIDENCE.rendererKeys, ["direct", "tone"]);
+
+  // The verifier also restates which rows a gate of each role and domain may
+  // have read, so it can refuse an outcome that quotes discovery rows as a
+  // release result. That rule is checked against gates the benchmark actually
+  // evaluated rather than against a description of them.
+  const report = evaluateListenProfileValidationGates(cleanGateInput());
+  for (const candidate of report.candidates) {
+    for (const gate of candidate.gates) {
+      const allowed = GATE_SCOPE_BY_ROLE[gate.role]
+        .filter((partition) => GATE_SCOPE_BY_DOMAIN[gate.domain].includes(partition));
+      for (const partition of gate.partitions) {
+        assert.ok(allowed.includes(partition), `${gate.code} read ${partition} rows`);
+      }
+      assert.equal(gate.applied, gate.partitions.length > 0, gate.code);
+      assert.equal(gate.passed, gate.applied && gate.failures.length === 0, gate.code);
+    }
+  }
+  assert.deepEqual(
+    Object.keys(GATE_SCOPE_BY_ROLE).sort(),
+    [...new Set(LISTEN_PROFILE_GATES.map(({ role }) => role))].sort(),
+  );
+  assert.deepEqual(
+    Object.keys(GATE_SCOPE_BY_DOMAIN).sort(),
+    [...new Set(LISTEN_PROFILE_GATES.map(({ domain }) => domain))].sort(),
+  );
+  // The unified command's rows are named `<suite>/<renderer>/…`, which is what
+  // lets the verifier check that a domain captured the corpus it claims to have.
+  for (const suite of ["isolated", "sequence", ...dynamicsSuites] as const) {
+    for (const descriptor of listenTracesInSuite(suite)) {
+      assert.ok(
+        descriptor.id.startsWith(`${suite}/${descriptor.rendererKey}/`),
+        `${descriptor.id} does not name its suite and renderer`,
+      );
+    }
+  }
+});
+
+/**
+ * The gate report a complete, clean matrix produces, without rendering a note.
+ *
+ * Which rows each gate reads is decided by the corpus and the gate code, not by
+ * what the audio turned out to sound like, so the frozen coverage can be
+ * established here: every case of the real manifest is fabricated as a clean
+ * outcome, and the real aggregation and gate functions do the rest. That makes
+ * the verifier's required-coverage pins checkable in the unit suite instead of
+ * resting on a reading of the gate implementation.
+ */
+function completeCorpusGateReport(): ListenProfileValidationGateReport {
+  const rendererKeys: readonly ListenTraceRendererKey[] = ["direct", "tone"];
+  const column = GATE_COLUMN;
+  const rendererFor = (rendererKey: ListenTraceRendererKey) => rendererKey === "tone"
+    ? LISTEN_BENCHMARK_TONE_RENDERER
+    : LISTEN_BENCHMARK_RENDERER;
+  const cleanCounts = fabricatedSummary({ independentMatchCount: 20, orderedAdvanceCount: 18 });
+
+  const isolatedCases = listenIsolatedValidationCases(LISTEN_TRACE_MANIFEST, rendererKeys);
+  const isolatedRenderers = rendererKeys.map((rendererKey) => {
+    const cases: ListenIsolatedValidationCaseResult[] = isolatedCases
+      .filter(({ descriptor }) => descriptor.rendererKey === rendererKey)
+      .map((validationCase) => ({
+        traceId: validationCase.descriptor.id,
+        partition: validationCase.descriptor.partition,
+        caseIndex: validationCase.caseIndex,
+        caseKind: validationCase.descriptor.caseKind ?? "correct",
+        fixtureGroup: validationCase.fixtureGroup,
+        measure: validationCase.measure,
+        moment: validationCase.moment,
+        targetPitches: validationCase.targetPitches,
+        playedPitches: validationCase.playedPitches,
+        expectedCorrect: validationCase.expectedCorrect,
+        mathematicallyAmbiguous: validationCase.mathematicallyAmbiguous,
+        rendererKey,
+        renderer: validationCase.renderer.version,
+        recognitionStructureHash: validationCase.descriptor.id,
+        frameCount: 4,
+        pcmLength: 512,
+        maximumInferenceMs: 4,
+        // Clean: every correct fixture advances and nothing else does.
+        profiles: column.map(({ profileId, profile }) => ({
+          profileId,
+          profile,
+          advanced: validationCase.expectedCorrect,
+          onsetToAdvanceMs: validationCase.expectedCorrect ? 196 : null,
+        })),
+      }));
+    return summarizeListenIsolatedProfileValidation(
+      rendererKey,
+      rendererFor(rendererKey),
+      cases,
+      column,
+    );
+  });
+
+  const sequenceCases = listenSequenceValidationCases(LISTEN_TRACE_MANIFEST, rendererKeys);
+  const sequenceRenderers = sequenceCases.length === 0 ? [] : rendererKeys.map((rendererKey) => {
+    const cases: ListenSequenceValidationCaseResult[] = sequenceCases
+      .filter(({ descriptor }) => descriptor.rendererKey === rendererKey)
+      .map((validationCase) => ({
+        traceId: validationCase.descriptor.id,
+        partition: validationCase.descriptor.partition,
+        scoreEligible: validationCase.scoreEligible,
+        sequenceId: validationCase.definition.id,
+        sequenceLabel: validationCase.definition.label,
+        family: validationCase.family,
+        intervalMs: validationCase.intervalMs,
+        eventRate: 1000 / validationCase.intervalMs,
+        rendererKey,
+        renderer: validationCase.renderer.version,
+        recognitionStructureHash: validationCase.descriptor.id,
+        frameCount: 54,
+        pcmLength: 512,
+        maximumInferenceMs: 4,
+        maximumProcessingBacklogMs: 0,
+        profiles: column.map(({ profileId, profile }) => ({
+          profileId,
+          profile,
+          run: {
+            sequenceId: validationCase.definition.id,
+            family: validationCase.family,
+            intervalMs: validationCase.intervalMs,
+            events: [],
+            attacks: [],
+            summary: cleanCounts,
+          } as unknown as ListenSequenceRunResult,
+        })),
+      }));
+    return summarizeListenSequenceProfileValidation(
+      rendererKey,
+      rendererFor(rendererKey),
+      cases,
+      column,
+    );
+  });
+
+  const dynamicsCases = listenDynamicsValidationCases(
+    LISTEN_TRACE_MANIFEST,
+    rendererKeys,
+    LISTEN_DYNAMICS_VALIDATION_SUITES,
+  );
+  const dynamicsRenderers = rendererKeys.map((rendererKey) => {
+    const cases: ListenDynamicsValidationCaseResult[] = dynamicsCases
+      .filter(({ descriptor }) => descriptor.rendererKey === rendererKey)
+      .map((validationCase) => ({
+        traceId: validationCase.descriptor.id,
+        partition: validationCase.descriptor.partition,
+        scoreEligible: validationCase.scoreEligible,
+        suite: validationCase.suite,
+        sequenceId: validationCase.definition.id,
+        sequenceLabel: validationCase.definition.label,
+        piano: validationCase.piano,
+        pianoName: validationCase.pianoName,
+        layer: validationCase.layer,
+        dynamicBand: validationCase.dynamicBand,
+        dynamicProfile: validationCase.dynamicProfile,
+        articulation: validationCase.articulation,
+        intervalMs: validationCase.intervalMs,
+        rendererKey,
+        renderer: validationCase.renderer.version,
+        recognitionStructureHash: validationCase.descriptor.id,
+        frameCount: 54,
+        pcmLength: 512,
+        peak: 0.4,
+        rms: 0.1,
+        maximumInferenceMs: 4,
+        maximumProcessingBacklogMs: 0,
+        profiles: column.map(({ profileId, profile }) => ({
+          profileId,
+          profile,
+          run: {
+            sequenceId: validationCase.definition.id,
+            family: validationCase.definition.family,
+            intervalMs: validationCase.intervalMs,
+            events: [],
+            attacks: [],
+            summary: cleanCounts,
+          } as unknown as ListenSequenceRunResult,
+        })),
+      }));
+    return summarizeListenDynamicsProfileValidation(
+      rendererKey,
+      rendererFor(rendererKey),
+      cases,
+      column,
+    );
+  });
+
+  return evaluateListenProfileValidationGates({
+    isolated: gateIsolatedResult(isolatedRenderers),
+    sequence: gateSequenceResult(sequenceRenderers),
+    dynamics: gateDynamicsResult(dynamicsRenderers),
+  });
+}
+
+test("the verifier's required gate coverage is the coverage a complete matrix has", () => {
+  const report = completeCorpusGateReport();
+  // The fabricated matrix is the complete frozen corpus, so the release floors
+  // apply and every gate is reached.
+  assert.equal(report.evidenceComplete, true, report.incompleteEvidenceReasons.join(" "));
+  const candidate = report.candidates[0];
+  assert.deepEqual(candidate.failedGateCodes, []);
+  for (const gate of candidate.gates) {
+    assert.equal(gate.applied, true, `${gate.code} was not applied`);
+  }
+  // Coverage is pinned per gate, not merely bounded: a complete archive that
+  // gated safety on the confirmation rows alone must be refused, and a subset
+  // rule would accept it.
+  assert.deepEqual(
+    candidate.gates.map(({ code, partitions }) => [code, partitions]),
+    CONFIRMATION_EVIDENCE.gates.map(({ code, partitions }) => [code, partitions]),
+  );
+  for (const gate of candidate.gates) {
+    const allowed = GATE_SCOPE_BY_ROLE[gate.role]
+      .filter((partition) => GATE_SCOPE_BY_DOMAIN[gate.domain].includes(partition));
+    for (const partition of gate.partitions) {
+      assert.ok(allowed.includes(partition), `${gate.code} read ${partition} rows`);
+    }
+  }
+  // The three domains carry the partitions the verifier pins for them too.
+  assert.deepEqual(
+    report.domains.map(({ domain, partitions, evidenceRole }) => (
+      [domain, partitions, evidenceRole]
+    )),
+    CONFIRMATION_EVIDENCE.domains.map(({ domain, partitions, evidenceRole }) => (
+      [domain, partitions, evidenceRole]
+    )),
   );
 });
