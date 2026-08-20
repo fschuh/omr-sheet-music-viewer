@@ -39,6 +39,12 @@ delay are reported per domain beside safety and never as safety.
 
 #### Construction smoke
 
+```bash
+node tools/online_amt/run_browser_benchmarks.mjs \
+  http://127.0.0.1:5174/online-amt-benchmark.html \
+  listen-profile-validation-summary 333.33 articulation
+```
+
 Measured at commit `10a32a7`, Chrome 151.0.7922.169 on Linux, model
 `online_amt_streaming.onnx`, renderers `bundled-piano-web-audio-v1` and
 `bundled-piano-tone-v2`. Manifest version 1, hash `0ed1e71d`; the complete
@@ -52,9 +58,22 @@ incomplete evidence.
 | Sequence | 26 | Direct, Tone | `discovery`, `regression-only` | `f67b8d57` |
 | Dynamics | 8 | Direct, Tone | `confirmation`, `discovery` | `0902e4cf` |
 
-Trace reuse and baseline parity are confirmed for all three. The identity digest
+Trace reuse and baseline parity are confirmed for all three. An identity digest
 folds every captured trace's decoded-structure hash into one value, so a
-repetition can be compared against it before being compared row by row.
+repetition of the same corpus can be compared against it before being compared
+row by row — and it is only comparable with a run that captured the same traces.
+
+That scope differs by domain here, because this smoke narrowed two of the three
+corpora. The isolated digest covers the complete 268-trace corpus, so a full run
+captures the same traces and should reproduce `bff20df8`. The sequence and
+dynamics digests do not: this run captured 26 of the corpus's 156 sequence traces
+and 8 of its 52 dynamics traces, so a complete run necessarily produces different
+values, and `f67b8d57` and `0902e4cf` are references for repeating this same
+narrowed smoke rather than baselines for anything wider.
+
+The frozen automated confirmation does not compare against these digests at all.
+It runs the complete matrix twice and compares its two repetitions with each
+other, which is the only comparison in which both sides captured the same traces.
 
 The `baseline-v1` columns reproduce the recorded Task 09 isolated matrix exactly
 — 104/106 and 52/54 under Direct, 100/106 and 48/54 under Tone — and the gate
@@ -1827,7 +1846,7 @@ node tools\online_amt\run_browser_benchmarks.mjs `
   http://127.0.0.1:5174/online-amt-benchmark.html listen-profile-validation-summary
 
 node tools\online_amt\run_browser_benchmarks.mjs `
-  http://127.0.0.1:5174/online-amt-benchmark.html listen-profile-validation 250 articulation
+  http://127.0.0.1:5174/online-amt-benchmark.html listen-profile-validation 333.33 articulation
 
 node tools\online_amt\run_browser_benchmarks.mjs `
   http://127.0.0.1:5174/online-amt-benchmark.html listen-isolated-profile-validation
