@@ -7,6 +7,79 @@
 Entries are kept newest first so renderer and recognition changes remain
 comparable over time.
 
+### Unified production-candidate gate — August 19, 2026
+
+The isolated, continuous-sequence, dynamics, and articulation matrices, measured
+in one pass and turned into one deterministic eligibility decision. This entry
+records the gate itself, not the confirmatory run: the frozen automated
+confirmation is a separate repeated execution, and nothing here changes a
+candidate value, a manifest assignment, or the production default, which remains
+`baseline-v1`.
+
+```bash
+node tools/online_amt/run_browser_benchmarks.mjs \
+  http://127.0.0.1:5174/online-amt-benchmark.html listen-profile-validation
+
+node tools/online_amt/run_browser_benchmarks.mjs \
+  http://127.0.0.1:5174/online-amt-benchmark.html listen-profile-validation-summary
+```
+
+The optional trailing arguments name corpus speeds and dynamics suites for a
+focused smoke. A narrowed run can reject a candidate but never clear one: the
+release floors are absolute counts against the frozen corpora, so the gate
+reports `incomplete-evidence` with the reasons rather than a verdict.
+
+Eighteen gates are reported for every candidate, applied or not, so a narrowed
+command cannot look complete by omitting the gates it skipped. Safety gates read
+every partition, release gates read only held-back `confirmation` rows, and the
+sequence and discovery-side dynamics gates are labeled `discovery-consistency`:
+they still reject a regression, but no discovery number can be quoted as
+generalization. Late-advance counts, source-to-target distance, and attribution
+delay are reported per domain beside safety and never as safety.
+
+#### Construction smoke
+
+Measured at Chrome 151.0.7922.169 on Linux, model `online_amt_streaming.onnx`,
+renderers `bundled-piano-web-audio-v1` and `bundled-piano-tone-v2`. Manifest
+version 1, hash `0ed1e71d`; the complete 268-trace isolated corpus with the
+sequence corpus narrowed to 333.33 ms and the dynamics corpus narrowed to the
+articulation suite, so the run is deliberately incomplete evidence.
+
+| Domain | Captured | Renderers | Partitions | Identity |
+| --- | ---: | --- | --- | --- |
+| Isolated | 268 | Direct, Tone | `confirmation` | `bff20df8` |
+| Sequence | 26 | Direct, Tone | `discovery`, `regression-only` | `f67b8d57` |
+| Dynamics | 8 | Direct, Tone | `confirmation`, `discovery` | `0902e4cf` |
+
+Trace reuse and baseline parity are confirmed for all three. The identity digest
+folds every captured trace's decoded-structure hash into one value, so a
+repetition can be compared against it before being compared row by row.
+
+The `baseline-v1` columns reproduce the recorded Task 09 isolated matrix exactly
+— 104/106 and 52/54 under Direct, 100/106 and 48/54 under Tone — and the gate
+rejects all four candidates on the confirmation rows, with the reasons the
+isolated matrix already documented:
+
+| Candidate | Verdict | Failed gates |
+| --- | --- | --- |
+| `early-open-v2` | rejected | `safety-isolated-false-advance`, `release-isolated-course-clear` |
+| `steady-open-v2` | rejected | `safety-isolated-false-advance`, `release-isolated-course-clear` |
+| `early-held-v2` | rejected | `safety-isolated-false-advance`, `release-isolated-recognition`, `release-isolated-course-clear` |
+| `steady-held-v2` | rejected | `safety-isolated-false-advance`, `release-isolated-recognition`, `release-isolated-course-clear` |
+
+The safety failure is the omitted-bass advance the isolated matrix reported:
+`isolated/direct/122` under Direct and `isolated/tone/124` under Tone, one
+fixture each, under all four candidates. The committed regressions pass for every
+candidate — the `v05` recovery deviates from the pinned advancement without
+becoming unsafe, which is reported as a deviation and not gated — and the
+sequence and dynamics rows contributed no safety event in this smoke.
+
+Whether these rejections stand is the confirmation run's result, not this one's:
+the smoke narrowed two corpora and therefore reports `incomplete-evidence`
+overall. What it establishes is that one command evaluates the frozen candidates
+across all automated domains and returns eligibility with exact reasons, without
+searching a parameter or touching the production default.
+
 ### Dynamics and articulation candidate matrix — August 19, 2026
 
 The frozen candidates measured across the domains the original Direct-only
@@ -1747,6 +1820,15 @@ node tools\online_amt\run_browser_benchmarks.mjs `
   http://127.0.0.1:5174/online-amt-benchmark.html listen-matcher-multidomain-sweep-summary
 
 node tools\online_amt\run_browser_benchmarks.mjs `
+  http://127.0.0.1:5174/online-amt-benchmark.html listen-profile-validation
+
+node tools\online_amt\run_browser_benchmarks.mjs `
+  http://127.0.0.1:5174/online-amt-benchmark.html listen-profile-validation-summary
+
+node tools\online_amt\run_browser_benchmarks.mjs `
+  http://127.0.0.1:5174/online-amt-benchmark.html listen-profile-validation 250 articulation
+
+node tools\online_amt\run_browser_benchmarks.mjs `
   http://127.0.0.1:5174/online-amt-benchmark.html listen-isolated-profile-validation
 
 node tools\online_amt\run_browser_benchmarks.mjs `
@@ -1788,6 +1870,71 @@ node tools\online_amt\run_browser_benchmarks.mjs `
 node tools\online_amt\run_browser_benchmarks.mjs `
   http://127.0.0.1:5174/online-amt-benchmark.html listen-dynamics-case-tone salamander v05
 ```
+
+`listen-profile-validation` is the unified production-candidate gate. It runs
+the isolated, continuous-sequence, dynamics, and articulation matrices in one
+pass over one inference session and then applies every automated acceptance gate
+to the frozen candidates, producing one deterministic eligibility decision. It
+performs no parameter search, ranks nothing, and never changes the production
+default; the three per-domain commands above are unchanged and remain the place
+a diagnosis reads per-fixture detail.
+
+Each gate carries a stable code, a role, and the partitions it read:
+
+| Role | Reads | Meaning |
+| --- | --- | --- |
+| `replay-integrity` | every measured domain | One capture per run served every profile column, and each `baseline-v1` row reproduced its capture-time replay. |
+| `safety` | every partition | A false, skipped, duplicate, or incomplete-carried-bass advance rejects a candidate wherever it was measured, including on the rows the search itself read. The dedicated safety families are held to zero absolutely; every other row — ordinary passages, velocity layers, mixed runs, articulations — is compared with `baseline-v1` on the identical trace and may not get worse. |
+| `release` | `confirmation` rows only | The held-out floors: Direct at least 104/106, Tone at least 101/106, both at least 52/54, p95 under 400 ms, held-back renderer/piano recognition preserved, no held-back leaf row losing more than one independent event. |
+| `discovery-consistency` | `discovery` rows | Per-speed independent recognition, per-renderer ordered and complete-passage progress, family breadth, and continuous latency. These still reject a regression, but the label keeps a discovery number from being read as held-out confirmation. |
+
+Family breadth is stated on net per-family deltas summed across both renderers,
+so a family that gains under Direct and loses the same ground under Tone counts
+as improving nowhere. The rule applies to whichever improvement the candidate
+actually claims, ordered or independent, and the cascade test is settled in the
+same place as the claim: at least one family whose ordered advances rose must
+also have recognized more events independently. Independent recognition is
+measured per event without regard to whether the playhead reached it, so it
+cannot be manufactured by an earlier recovery unblocking later targets — and an
+independent gain in some *other* family would prove nothing about the family
+whose ordered count moved.
+
+That comparison is made one trace at a time and one classification at a time,
+because a corpus total hides the two regressions that matter most: a profile that
+clears one row's false advance while introducing another's, and a profile that
+adds an event to a row the baseline already advanced unsafely. Where both replays
+kept their events, the target indices are compared as well, so an unsafe advance
+that moved to another target is not read as the same failure staying put.
+
+Every failed gate reports its code, the affected domain identifiers, the
+baseline value, the candidate value, and an explanation. Late-advance counts,
+source-to-target distance, and attribution delay are reported beside safety and
+never as safety: the diagnosed `v05` case advances music the player did play, one
+repetition behind, so rejecting an earlier correct recovery would reject an
+improvement. Every leaf dynamics loss is listed whether or not it failed a gate,
+and a loss larger than the one-event allowance can be excused only by an explicit
+reviewed waiver. A waiver names the candidate it was reviewed for, the renderer
+and row, the loss that was reviewed, and the reasoning; it applies to that one
+candidate on that one row, and only while the measured loss stays within the
+reviewed one. Every field is checked against the measured matrix, so a stale or
+mistyped waiver fails the run loudly rather than quietly ceasing to excuse the
+row it was written for. The frozen confirmation run declares none, because a
+waiver is a decision taken after seeing a measured loss and so cannot precede
+the run that produces it.
+
+Eligibility additionally requires complete evidence: all three domains, both
+renderers, all six corpus speeds, and all three dynamics suites. A focused smoke
+— the optional trailing arguments name speeds and suites, as above — may
+therefore reject a candidate but can never clear one, and reports
+`incomplete-evidence` with the reasons instead of a verdict. The two committed
+regressions are replayed against every candidate independently of which traces
+were captured, so even a narrowed run cannot report a clean safety verdict while
+regressing a diagnosed case.
+
+The `-summary` variant folds each domain's per-trace identities into one digest
+and keeps the profile values, domain identities, safety counts, and gate reasons.
+The unabridged export keeps every decoded-structure hash, which is what a second
+repetition in a fresh browser process is compared against.
 
 `listen-isolated-profile-validation` replays `baseline-v1` and the frozen
 multi-domain candidates over the complete isolated `confirmation` corpus. Like

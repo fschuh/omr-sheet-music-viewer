@@ -24,6 +24,23 @@ const LISTEN_MULTIDOMAIN_SWEEP_SUMMARY_MODE = CONFIGURATION_FILTER ===
   "listen-matcher-multidomain-sweep-summary";
 const LISTEN_MULTIDOMAIN_SWEEP_MODE = CONFIGURATION_FILTER ===
   "listen-matcher-multidomain-sweep" || LISTEN_MULTIDOMAIN_SWEEP_SUMMARY_MODE;
+const LISTEN_PROFILE_VALIDATION_SUMMARY_MODE = CONFIGURATION_FILTER ===
+  "listen-profile-validation-summary";
+// The unified production-candidate gate: all three matrices in one pass, then
+// one eligibility decision. The historical per-domain commands are unchanged.
+const LISTEN_PROFILE_VALIDATION_MODE = [
+  "listen-profile-validation",
+  "listen-profile-validation-legacy",
+  "listen-profile-validation-tone",
+].includes(CONFIGURATION_FILTER) || LISTEN_PROFILE_VALIDATION_SUMMARY_MODE;
+// A focused smoke narrows the corpus; the gate then reports incomplete evidence
+// rather than eligibility, because an absolute floor needs its whole corpus.
+const PROFILE_VALIDATION_INTERVALS_MS = LISTEN_PROFILE_VALIDATION_MODE
+  ? process.argv[4]
+  : undefined;
+const PROFILE_VALIDATION_SUITES = LISTEN_PROFILE_VALIDATION_MODE
+  ? process.argv[5]
+  : undefined;
 const LISTEN_ISOLATED_VALIDATION_SUMMARY_MODE = CONFIGURATION_FILTER ===
   "listen-isolated-profile-validation-summary";
 const LISTEN_ISOLATED_VALIDATION_MODE = [
@@ -241,6 +258,7 @@ async function runConfiguration(configuration) {
       ? BASE_URL.replace(/online-amt-benchmark\.html(?:\?.*)?$/, "listen-benchmark-parity.html")
       : (LISTEN_SMOKE_MODE || LISTEN_DYNAMICS_SMOKE_MODE || LISTEN_ACCURACY_MODE || LISTEN_SEQUENCE_MODE ||
         LISTEN_THRESHOLD_SWEEP_MODE || LISTEN_MULTIDOMAIN_SWEEP_MODE ||
+        LISTEN_PROFILE_VALIDATION_MODE ||
         LISTEN_ISOLATED_VALIDATION_MODE || LISTEN_SEQUENCE_VALIDATION_MODE ||
         LISTEN_DYNAMICS_VALIDATION_MODE ||
         LISTEN_RETRIGGER_SWEEP_MODE || LISTEN_ARTICULATION_MODE ||
@@ -397,6 +415,10 @@ async function runConfiguration(configuration) {
       // and regression corpora, then replays 1,000 profiles against each trace.
       LISTEN_MULTIDOMAIN_SWEEP_MODE
         ? 7_200_000
+        // The unified gate captures the isolated, sequence, dynamics, and
+        // articulation corpora under both renderers in one pass.
+        : LISTEN_PROFILE_VALIDATION_MODE
+        ? 12_600_000
         // Both renderers' complete isolated corpus is rendered and recognized
         // once per fixture, then replayed through every frozen profile.
         : LISTEN_ISOLATED_VALIDATION_MODE
@@ -653,6 +675,13 @@ async function runConfiguration(configuration) {
                   })),
               })),
             };
+          })()`
+        : LISTEN_PROFILE_VALIDATION_MODE
+        ? `(async () => {
+            const result = window.listenProfileValidationResult;
+            const { conciseListenProfileValidationResult } =
+              await import("/src/listenProfileValidationBenchmark.ts");
+            return conciseListenProfileValidationResult(result);
           })()`
         : LISTEN_ISOLATED_VALIDATION_MODE
         ? `(async () => {
@@ -987,6 +1016,24 @@ const selectedConfigurations = FINGERING_SMOKE_MODE
       LISTEN_SEQUENCE_SUMMARY_MODE ? "listen-sequence-summary" : "listen-sequence",
       "listen-sequence=auto",
     )
+  : LISTEN_PROFILE_VALIDATION_MODE
+  // One configuration: the gate is stated across renderers and domains, so it
+  // captures both renderers itself rather than being paired by the runner.
+  ? [{
+      name: LISTEN_PROFILE_VALIDATION_SUMMARY_MODE
+        ? "listen-profile-validation-summary"
+        : CONFIGURATION_FILTER,
+      query: "listen-profile-validation=auto" +
+        (CONFIGURATION_FILTER === "listen-profile-validation-legacy"
+          ? "&benchmark-renderer=legacy"
+          : CONFIGURATION_FILTER === "listen-profile-validation-tone"
+          ? "&benchmark-renderer=tone"
+          : "") +
+        (PROFILE_VALIDATION_INTERVALS_MS
+          ? `&benchmark-interval=${PROFILE_VALIDATION_INTERVALS_MS}`
+          : "") +
+        (PROFILE_VALIDATION_SUITES ? `&benchmark-suite=${PROFILE_VALIDATION_SUITES}` : ""),
+    }]
   : LISTEN_ISOLATED_VALIDATION_MODE
   // One configuration by default: the isolated matrix captures both renderers
   // itself, because its gates are stated per renderer against one manifest.
@@ -1208,6 +1255,49 @@ for (let index = 0; index < selectedConfigurations.length; index += 1) {
           articulation: profile.articulation,
           summary: profile.summary,
           deltaFromNormal: profile.deltaFromNormal,
+        })),
+      }
+    : LISTEN_PROFILE_VALIDATION_SUMMARY_MODE
+    ? {
+        baselineProfileId: result.gates.baselineProfileId,
+        candidateProfileIds: result.gates.candidateProfileIds,
+        profiles: result.gates.profiles,
+        evidenceComplete: result.gates.evidenceComplete,
+        incompleteEvidenceReasons: result.gates.incompleteEvidenceReasons,
+        reviewedLayerLosses: result.gates.reviewedLayerLosses,
+        eligibleProfileIds: result.gates.eligibleProfileIds,
+        recommendation: result.gates.recommendation,
+        // Identities are folded to their digest here. The unabridged export
+        // keeps every trace hash, which is what a second repetition compares.
+        domains: result.gates.domains.map((domain) => ({
+          domain: domain.domain,
+          present: domain.present,
+          manifestVersion: domain.manifestVersion,
+          manifestHash: domain.manifestHash,
+          capturedTraceCount: domain.capturedTraceCount,
+          rendererKeys: domain.rendererKeys,
+          partitions: domain.partitions,
+          evidenceRole: domain.evidenceRole,
+          traceReuseVerified: domain.traceReuseVerified,
+          baselineParityVerified: domain.baselineParityVerified,
+          traceIdentityCount: domain.traceIdentities.length,
+          identityDigest: domain.identityDigest,
+        })),
+        candidates: result.gates.candidates.map((candidate) => ({
+          profileId: candidate.profileId,
+          profile: candidate.profile,
+          eligibility: candidate.eligibility,
+          eligible: candidate.eligible,
+          failedGateCodes: candidate.failedGateCodes,
+          replayIntegrityFailureCount: candidate.replayIntegrityFailureCount,
+          safetyFailureCount: candidate.safetyFailureCount,
+          releaseFailureCount: candidate.releaseFailureCount,
+          discoveryConsistencyFailureCount: candidate.discoveryConsistencyFailureCount,
+          safety: candidate.safety,
+          lateAdvance: candidate.lateAdvance,
+          layerLosses: candidate.layerLosses,
+          regressedSequenceTraceIds: candidate.regressedSequenceTraceIds,
+          gates: candidate.gates,
         })),
       }
     : LISTEN_ISOLATED_VALIDATION_SUMMARY_MODE
@@ -1433,6 +1523,71 @@ for (let index = 0; index < selectedConfigurations.length; index += 1) {
       `raw-delta=${summary.rawEvidenceDelta} ` +
       `audio=${result.audioSignature.pcmHash}`,
     );
+  } else if (LISTEN_PROFILE_VALIDATION_MODE) {
+    const gates = result.gates;
+    console.error(
+      `${configuration.name}: recommendation=${gates.recommendation.code} ` +
+      `eligible=${gates.eligibleProfileIds.join(",") || "none"} ` +
+      `evidence-complete=${gates.evidenceComplete} ` +
+      `baseline=${gates.baselineProfileId} ` +
+      `candidates=${gates.candidateProfileIds.join(",")}`,
+    );
+    for (const domain of gates.domains) {
+      console.error(
+        `${configuration.name}: ${domain.domain} present=${domain.present} ` +
+        `manifest=${domain.manifestVersion}/${domain.manifestHash} ` +
+        `captured=${domain.capturedTraceCount} ` +
+        `renderers=${domain.rendererKeys.join(",") || "none"} ` +
+        `partitions=${domain.partitions.join(",") || "none"} ` +
+        `identity=${domain.identityDigest} ` +
+        `trace-reuse=${domain.traceReuseVerified} ` +
+        `baseline-parity=${domain.baselineParityVerified}`,
+      );
+    }
+    for (const reason of gates.incompleteEvidenceReasons) {
+      console.error(`${configuration.name}: incomplete-evidence: ${reason}`);
+    }
+    for (const candidate of gates.candidates) {
+      console.error(
+        `${configuration.name}: ${candidate.profileId} ${candidate.eligibility} ` +
+        `replay=${candidate.replayIntegrityFailureCount} ` +
+        `safety=${candidate.safetyFailureCount} ` +
+        `release=${candidate.releaseFailureCount} ` +
+        `consistency=${candidate.discoveryConsistencyFailureCount} ` +
+        `isolated-false=${candidate.safety.isolatedDistinguishableFalseAdvances} ` +
+        `sequence-unsafe=${candidate.safety.sequenceFalseAdvances}/` +
+        `${candidate.safety.sequenceSkippedAdvances}/` +
+        `${candidate.safety.sequenceDuplicateAdvances}/` +
+        `${candidate.safety.sequenceIncompleteCarriedBassAdvances} ` +
+        `sequence-introduced=${candidate.safety.sequenceIntroducedUnsafeTraceIds.length}/` +
+        `${candidate.safety.sequenceWorsenedUnsafeTraceIds.length} ` +
+        `dynamics-introduced=${candidate.safety.dynamicsIntroducedUnsafeTraceIds.length}/` +
+        `${candidate.safety.dynamicsWorsenedUnsafeTraceIds.length} ` +
+        `regression-worse=${candidate.safety.regressionWorseThanBaselineCount} ` +
+        `late=${candidate.lateAdvance.sequence?.lateAdvanceCount ?? "n/a"}/` +
+        `${candidate.lateAdvance.dynamics?.lateAdvanceCount ?? "n/a"} ` +
+        `gates=${candidate.failedGateCodes.join(",") || "all-passed"}`,
+      );
+      for (const gate of candidate.gates) {
+        for (const failure of gate.failures) {
+          console.error(
+            `${configuration.name}: ${candidate.profileId} ${gate.code} [${gate.role}/` +
+            `${gate.evidenceRole ?? "gating"}] ` +
+            `domains=${failure.domainIds.join(",")} ` +
+            `baseline=${String(failure.baselineValue)} ` +
+            `candidate=${String(failure.candidateValue)} :: ${failure.explanation}`,
+          );
+        }
+      }
+      for (const loss of candidate.layerLosses) {
+        console.error(
+          `${configuration.name}: ${candidate.profileId} layer-loss ${loss.rendererKey} ` +
+          `${loss.groupKey} [${loss.evidenceRole}] ` +
+          `independent=${loss.independentMatchDelta} ordered=${loss.orderedAdvanceDelta} ` +
+          `reviewed=${loss.reviewed}`,
+        );
+      }
+    }
   } else if (LISTEN_ISOLATED_VALIDATION_MODE) {
     console.error(
       `${configuration.name}: manifest=${result.manifest.version}/${result.manifest.hash} ` +

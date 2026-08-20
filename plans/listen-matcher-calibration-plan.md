@@ -1404,7 +1404,7 @@ passes. `tools/online_amt/LISTEN_BENCHMARK.md` records the measured matrix.
 
 ### Task 12 — Build the unified production-candidate gate and automation
 
-**Status:** Required. **Prerequisites:** Tasks 09-11 complete.
+**Status:** Completed August 19, 2026. **Prerequisites:** Tasks 09-11 complete.
 
 **Objective:** Combine isolated, sequence, dynamics, articulation, and known
 safety results into one deterministic eligibility decision without selecting new

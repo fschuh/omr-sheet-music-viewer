@@ -26,7 +26,9 @@ import {
 import {
   LISTEN_TRACE_MANIFEST,
   listenTracesInSuite,
+  type ListenIsolatedCaseKind,
   type ListenTracePartition,
+  type ListenTraceRendererKey,
 } from "./listenTraceManifest";
 import {
   COURSE_CLEAR_ARTICULATION_INTERVAL_MS,
@@ -37,22 +39,37 @@ import {
   type ListenRecognitionFrame,
   type ListenRecognitionTrace,
   type ListenSequenceArticulation,
+  type ListenSequenceAttackDiagnostic,
+  type ListenSequenceEventDiagnostic,
   type ListenSequenceRunResult,
   type ListenSequenceRunSummary,
   type MaterializedListenSequence,
 } from "./listenSequenceBenchmark";
 import { pianoDefinition, type PianoId, type PianoLayerId } from "./pianoRegistry";
 import {
+  LISTEN_DYNAMICS_VALIDATION_SUITES,
+  LISTEN_ISOLATED_RELEASE_GATE,
+  LISTEN_LAYER_INDEPENDENT_LOSS_ALLOWANCE,
+  LISTEN_LATENCY_REGRESSION_TOLERANCE_MS,
+  LISTEN_PROFILE_GATES,
   conciseListenDynamicsProfileValidationResult,
   conciseListenIsolatedProfileValidationResult,
   conciseListenSequenceProfileValidationResult,
   evaluateListenDynamicsProfileValidation,
   evaluateListenIsolatedProfileValidation,
+  evaluateListenProfileValidationGates,
   evaluateListenSequenceProfileValidation,
   listenDynamicsValidationCases,
   listenIsolatedValidationCases,
+  listenCommittedRegressionFailures,
+  listenLateAdvanceDiagnostics,
+  listenNewUnsafeAdvances,
+  listenProfileGateDefinition,
+  listenProfileLayerLossKey,
   listenSequenceValidationCases,
+  listenUnsafeAdvanceIdentities,
   listenValidationEvidenceRole,
+  listenValidationTraceSafety,
   replayListenIsolatedProfileMatrix,
   replayListenSequenceProfileMatrix,
   resolveListenValidationProfileIds,
@@ -60,14 +77,26 @@ import {
   summarizeListenDynamicsProfileValidation,
   summarizeListenIsolatedProfileValidation,
   summarizeListenSequenceProfileValidation,
+  type ListenDynamicsProfileValidationResult,
+  type ListenDynamicsRendererValidation,
   type ListenDynamicsValidationCapture,
   type ListenDynamicsValidationCase,
   type ListenDynamicsValidationCaseResult,
   type ListenDynamicsValidationSuite,
+  type ListenIsolatedProfileValidationResult,
+  type ListenIsolatedRendererValidation,
   type ListenIsolatedValidationCapture,
   type ListenIsolatedValidationCase,
+  type ListenIsolatedValidationCaseResult,
+  type ListenProfileGateCode,
+  type ListenProfileValidationGateReport,
+  type ListenReviewedLayerLoss,
+  type ListenSequenceProfileValidationResult,
+  type ListenSequenceRendererValidation,
   type ListenSequenceValidationCapture,
   type ListenSequenceValidationCase,
+  type ListenSequenceValidationCaseResult,
+  type ListenValidationProfileIdentity,
 } from "./listenProfileValidationBenchmark";
 
 const PRE_ROLL_MS = ISOLATED_LISTEN_BENCHMARK_PRE_ROLL_MS;
@@ -1058,9 +1087,13 @@ function fabricatedDynamicsCase(options: {
   layer?: PianoLayerId | null;
   articulation?: ListenSequenceArticulation | null;
   scoreEligible?: boolean;
+  rendererKey?: ListenTraceRendererKey;
+  column?: readonly ListenValidationProfileIdentity[];
   counts: (profileId: ListenMatcherProfileId) => Partial<ListenSequenceRunSummary>;
 }): ListenDynamicsValidationCaseResult {
   const layer = options.layer ?? null;
+  const rendererKey = options.rendererKey ?? "direct";
+  const column = options.column ?? DYNAMICS_COLUMN;
   return {
     traceId: options.traceId,
     partition: options.partition,
@@ -1075,8 +1108,10 @@ function fabricatedDynamicsCase(options: {
     dynamicProfile: options.suite === "dynamics-mixed" ? "crescendo-decrescendo" : "constant",
     articulation: options.articulation ?? "normal",
     intervalMs: COURSE_CLEAR_ARTICULATION_INTERVAL_MS,
-    rendererKey: "direct",
-    renderer: LISTEN_BENCHMARK_RENDERER.version,
+    rendererKey,
+    renderer: rendererKey === "tone"
+      ? LISTEN_BENCHMARK_TONE_RENDERER.version
+      : LISTEN_BENCHMARK_RENDERER.version,
     recognitionStructureHash: options.traceId,
     frameCount: 54,
     pcmLength: 512,
@@ -1084,7 +1119,7 @@ function fabricatedDynamicsCase(options: {
     rms: 0.1,
     maximumInferenceMs: 4,
     maximumProcessingBacklogMs: 0,
-    profiles: DYNAMICS_COLUMN.map(({ profileId, profile }) => ({
+    profiles: column.map(({ profileId, profile }) => ({
       profileId,
       profile,
       run: {
@@ -1265,5 +1300,1658 @@ test("no dynamics aggregate can hide a layer, articulation, or piano regression"
   assert.throws(
     () => listenValidationEvidenceRole(["confirmation", "regression-only"]),
     /can never carry an evidence role/,
+  );
+});
+
+/* ------------------------------------------------------------------------- *
+ * The unified production-candidate gate
+ * ------------------------------------------------------------------------- */
+
+/**
+ * The gate is proved on stated results rather than on replayed audio.
+ *
+ * Every frozen candidate is strictly more permissive than `baseline-v1`, so the
+ * synthetic traces cannot produce a candidate that loses recognition, regresses
+ * a speed, or drops a velocity layer — and those are exactly the boundaries a
+ * gate has to be shown to reject. The three domain matrices are therefore built
+ * from stated per-profile rows and summarized by the real aggregation
+ * functions, so only the measurement is synthetic, not the arithmetic.
+ */
+
+const GATE_CANDIDATE_PROFILE_ID: ListenMatcherProfileId = "early-open-v2";
+const GATE_COLUMN = listenValidationProfileIdentities(
+  resolveListenValidationProfileIds([GATE_CANDIDATE_PROFILE_ID]),
+);
+const GATE_MANIFEST = Object.freeze({ version: 1, hash: "gate-test" });
+
+/** A two-candidate matrix, for proving that a per-candidate rule is per candidate. */
+const TWO_CANDIDATE_COLUMN = listenValidationProfileIdentities(
+  resolveListenValidationProfileIds(["early-open-v2", "steady-open-v2"]),
+);
+
+interface GateIsolatedRow {
+  correctAdvances: number;
+  courseClearAdvances: number;
+  falseAdvances?: number;
+  ambiguousAdvances?: number;
+  onsetToAdvanceMs?: number;
+}
+
+function gateIsolatedCase(options: {
+  traceId: string;
+  caseIndex: number;
+  rendererKey: ListenTraceRendererKey;
+  partition: ListenTracePartition;
+  caseKind: ListenIsolatedCaseKind;
+  fixtureGroup: "general" | "course-clear";
+  expectedCorrect: boolean;
+  mathematicallyAmbiguous: boolean;
+  column: readonly ListenValidationProfileIdentity[];
+  outcome: (profileId: ListenMatcherProfileId) => { advanced: boolean; onsetToAdvanceMs: number | null };
+}): ListenIsolatedValidationCaseResult {
+  return {
+    traceId: options.traceId,
+    partition: options.partition,
+    caseIndex: options.caseIndex,
+    caseKind: options.caseKind,
+    fixtureGroup: options.fixtureGroup,
+    measure: 1,
+    moment: options.caseIndex,
+    targetPitches: [60, 64, 67],
+    playedPitches: options.expectedCorrect ? [60, 64, 67] : [64, 67],
+    expectedCorrect: options.expectedCorrect,
+    mathematicallyAmbiguous: options.mathematicallyAmbiguous,
+    rendererKey: options.rendererKey,
+    renderer: options.rendererKey === "tone"
+      ? LISTEN_BENCHMARK_TONE_RENDERER.version
+      : LISTEN_BENCHMARK_RENDERER.version,
+    recognitionStructureHash: options.traceId,
+    frameCount: 4,
+    pcmLength: 512,
+    maximumInferenceMs: 4,
+    profiles: options.column.map(({ profileId, profile }) => ({
+      profileId,
+      profile,
+      ...options.outcome(profileId),
+    })),
+  };
+}
+
+/**
+ * One renderer's isolated matrix, sized as the frozen corpus unless a test is
+ * proving what a differently sized corpus does to the absolute floors.
+ */
+function gateIsolatedRenderer(
+  rendererKey: ListenTraceRendererKey,
+  rows: Partial<Record<ListenMatcherProfileId, GateIsolatedRow>>,
+  options: {
+    correctTrialCount?: number;
+    courseClearCorrectTrialCount?: number;
+    wrongTrialCount?: number;
+    ambiguousTrialCount?: number;
+    partition?: ListenTracePartition;
+    column?: readonly ListenValidationProfileIdentity[];
+  } = {},
+): ListenIsolatedRendererValidation {
+  const column = options.column ?? GATE_COLUMN;
+  const correctTrialCount = options.correctTrialCount ?? 106;
+  const courseClearCorrectTrialCount = options.courseClearCorrectTrialCount ?? 54;
+  const wrongTrialCount = options.wrongTrialCount ?? 4;
+  const ambiguousTrialCount = options.ambiguousTrialCount ?? 2;
+  const partition = options.partition ?? "confirmation";
+  const renderer = rendererKey === "tone"
+    ? LISTEN_BENCHMARK_TONE_RENDERER
+    : LISTEN_BENCHMARK_RENDERER;
+  const rowFor = (profileId: ListenMatcherProfileId): GateIsolatedRow => {
+    const row = rows[profileId];
+    if (!row) throw new Error(`The isolated ${rendererKey} matrix has no row for ${profileId}.`);
+    return row;
+  };
+  const cases: ListenIsolatedValidationCaseResult[] = [];
+  for (let index = 0; index < correctTrialCount; index += 1) {
+    const courseClear = index < courseClearCorrectTrialCount;
+    cases.push(gateIsolatedCase({
+      traceId: `isolated/${rendererKey}/${String(index).padStart(3, "0")}`,
+      caseIndex: index,
+      rendererKey,
+      partition,
+      caseKind: "correct",
+      fixtureGroup: courseClear ? "course-clear" : "general",
+      expectedCorrect: true,
+      mathematicallyAmbiguous: false,
+      column,
+      outcome: (profileId) => {
+        const row = rowFor(profileId);
+        const advanced = courseClear
+          ? index < row.courseClearAdvances
+          : index - courseClearCorrectTrialCount < row.correctAdvances - row.courseClearAdvances;
+        return { advanced, onsetToAdvanceMs: advanced ? row.onsetToAdvanceMs ?? 196 : null };
+      },
+    }));
+  }
+  for (let index = 0; index < wrongTrialCount; index += 1) {
+    cases.push(gateIsolatedCase({
+      traceId: `isolated/${rendererKey}/omitted-bass-${index}`,
+      caseIndex: correctTrialCount + index,
+      rendererKey,
+      partition,
+      caseKind: "omitted-bass",
+      fixtureGroup: "course-clear",
+      expectedCorrect: false,
+      mathematicallyAmbiguous: false,
+      column,
+      outcome: (profileId) => ({
+        advanced: index < (rowFor(profileId).falseAdvances ?? 0),
+        onsetToAdvanceMs: null,
+      }),
+    }));
+  }
+  for (let index = 0; index < ambiguousTrialCount; index += 1) {
+    cases.push(gateIsolatedCase({
+      traceId: `isolated/${rendererKey}/ambiguous-${index}`,
+      caseIndex: correctTrialCount + wrongTrialCount + index,
+      rendererKey,
+      partition,
+      caseKind: "ambiguous-harmonic",
+      fixtureGroup: "general",
+      expectedCorrect: false,
+      mathematicallyAmbiguous: true,
+      column,
+      outcome: (profileId) => ({
+        advanced: index < (rowFor(profileId).ambiguousAdvances ?? 0),
+        onsetToAdvanceMs: null,
+      }),
+    }));
+  }
+  return summarizeListenIsolatedProfileValidation(rendererKey, renderer, cases, column);
+}
+
+function gateIsolatedResult(
+  renderers: ListenIsolatedRendererValidation[],
+  overrides: Partial<ListenIsolatedProfileValidationResult> = {},
+): ListenIsolatedProfileValidationResult {
+  const capturedTraceCount = renderers.reduce((total, { caseCount }) => total + caseCount, 0);
+  return {
+    manifest: {
+      ...GATE_MANIFEST,
+      traceCount: capturedTraceCount,
+      isolatedTraceCount: capturedTraceCount,
+      capturedTraceCount,
+    },
+    partitions: [...new Set(renderers.flatMap((renderer) => renderer.cases
+      .map(({ partition }) => partition)))],
+    baselineProfileId: "baseline-v1",
+    candidateProfileIds: [GATE_CANDIDATE_PROFILE_ID],
+    profiles: GATE_COLUMN,
+    renderers,
+    traceReuseVerified: true,
+    baselineParityVerified: true,
+    ...overrides,
+  };
+}
+
+function gateSequenceCase(options: {
+  traceId: string;
+  rendererKey: ListenTraceRendererKey;
+  partition: ListenTracePartition;
+  family: string;
+  intervalMs: number;
+  sequenceId?: string;
+  scoreEligible?: boolean;
+  attacks?: (profileId: ListenMatcherProfileId) => ListenSequenceAttackDiagnostic[];
+  events?: (profileId: ListenMatcherProfileId) => ListenSequenceEventDiagnostic[];
+  column: readonly ListenValidationProfileIdentity[];
+  counts: (profileId: ListenMatcherProfileId) => Partial<ListenSequenceRunSummary>;
+}): ListenSequenceValidationCaseResult {
+  const sequenceId = options.sequenceId ?? `${options.family}-passage`;
+  return {
+    traceId: options.traceId,
+    partition: options.partition,
+    scoreEligible: options.scoreEligible ?? options.partition !== "regression-only",
+    sequenceId,
+    sequenceLabel: sequenceId,
+    family: options.family,
+    intervalMs: options.intervalMs,
+    eventRate: 1000 / options.intervalMs,
+    rendererKey: options.rendererKey,
+    renderer: options.rendererKey === "tone"
+      ? LISTEN_BENCHMARK_TONE_RENDERER.version
+      : LISTEN_BENCHMARK_RENDERER.version,
+    recognitionStructureHash: options.traceId,
+    frameCount: 54,
+    pcmLength: 512,
+    maximumInferenceMs: 4,
+    maximumProcessingBacklogMs: 0,
+    profiles: options.column.map(({ profileId, profile }) => ({
+      profileId,
+      profile,
+      run: {
+        sequenceId,
+        family: options.family,
+        intervalMs: options.intervalMs,
+        events: options.events?.(profileId) ?? [],
+        attacks: options.attacks?.(profileId) ?? [],
+        summary: fabricatedSummary(options.counts(profileId)),
+      } as unknown as ListenSequenceRunResult,
+    })),
+  };
+}
+
+/** The scored families the synthetic sequence corpus spans. */
+const GATE_SEQUENCE_FAMILIES = ["course-clear", "repeated-chord"] as const;
+
+function gateSequenceRenderer(
+  rendererKey: ListenTraceRendererKey,
+  counts: (input: {
+    profileId: ListenMatcherProfileId;
+    family: string;
+    intervalMs: number;
+  }) => Partial<ListenSequenceRunSummary>,
+  options: {
+    intervalsMs?: readonly number[];
+    safety?: (input: {
+      profileId: ListenMatcherProfileId;
+      intervalMs: number;
+    }) => Partial<ListenSequenceRunSummary>;
+    carriedBassAttacks?: (input: {
+      profileId: ListenMatcherProfileId;
+      intervalMs: number;
+    }) => ListenSequenceAttackDiagnostic[];
+    column?: readonly ListenValidationProfileIdentity[];
+    events?: (input: {
+      profileId: ListenMatcherProfileId;
+      family: string;
+      intervalMs: number;
+    }) => ListenSequenceEventDiagnostic[];
+  } = {},
+): ListenSequenceRendererValidation {
+  const intervalsMs = options.intervalsMs ?? LISTEN_SEQUENCE_INTERVALS_MS;
+  const column = options.column ?? GATE_COLUMN;
+  const renderer = rendererKey === "tone"
+    ? LISTEN_BENCHMARK_TONE_RENDERER
+    : LISTEN_BENCHMARK_RENDERER;
+  const cases: ListenSequenceValidationCaseResult[] = [];
+  for (const intervalMs of intervalsMs) {
+    for (const family of GATE_SEQUENCE_FAMILIES) {
+      cases.push(gateSequenceCase({
+        traceId: `sequence/${rendererKey}/${family}/${intervalMs.toFixed(0)}`,
+        rendererKey,
+        partition: "discovery",
+        family,
+        intervalMs,
+        column,
+        events: (profileId) => options.events?.({ profileId, family, intervalMs }) ?? [],
+        counts: (profileId) => counts({ profileId, family, intervalMs }),
+      }));
+    }
+    cases.push(gateSequenceCase({
+      traceId: `sequence/${rendererKey}/carried-bass-safety/${intervalMs.toFixed(0)}`,
+      rendererKey,
+      partition: "regression-only",
+      family: "safety",
+      intervalMs,
+      sequenceId: "carried-bass-safety",
+      column,
+      attacks: (profileId) => options.carriedBassAttacks?.({ profileId, intervalMs }) ?? [],
+      counts: (profileId) => options.safety?.({ profileId, intervalMs }) ?? {},
+    }));
+  }
+  return summarizeListenSequenceProfileValidation(rendererKey, renderer, cases, column);
+}
+
+function gateSequenceResult(
+  renderers: ListenSequenceRendererValidation[],
+  overrides: Partial<ListenSequenceProfileValidationResult> = {},
+): ListenSequenceProfileValidationResult {
+  const capturedTraceCount = renderers.reduce((total, { caseCount }) => total + caseCount, 0);
+  return {
+    manifest: {
+      ...GATE_MANIFEST,
+      traceCount: capturedTraceCount,
+      sequenceTraceCount: capturedTraceCount,
+      capturedTraceCount,
+    },
+    evidenceRole: "discovery",
+    partitions: [...new Set(renderers.flatMap((renderer) => renderer.cases
+      .map(({ partition }) => partition)))],
+    baselineProfileId: "baseline-v1",
+    candidateProfileIds: [GATE_CANDIDATE_PROFILE_ID],
+    profiles: GATE_COLUMN,
+    renderers,
+    traceReuseVerified: true,
+    baselineParityVerified: true,
+    ...overrides,
+  };
+}
+
+/**
+ * One renderer's dynamics matrix: one tuned and one held-back layer per piano,
+ * a held-back mixed run per piano, and one articulation of each partition.
+ */
+function gateDynamicsRenderer(
+  rendererKey: ListenTraceRendererKey,
+  counts: (input: {
+    profileId: ListenMatcherProfileId;
+    key: string;
+    partition: ListenTracePartition;
+  }) => Partial<ListenSequenceRunSummary>,
+  options: { column?: readonly ListenValidationProfileIdentity[] } = {},
+): ListenDynamicsRendererValidation {
+  const column = options.column ?? GATE_COLUMN;
+  const renderer = rendererKey === "tone"
+    ? LISTEN_BENCHMARK_TONE_RENDERER
+    : LISTEN_BENCHMARK_RENDERER;
+  const rows: Array<{
+    key: string;
+    partition: ListenTracePartition;
+    suite: ListenDynamicsValidationSuite;
+    piano: PianoId;
+    layer?: PianoLayerId | null;
+    articulation?: ListenSequenceArticulation;
+  }> = [
+    { key: "layer/splendid/mp", partition: "discovery", suite: "dynamics-constant", piano: "splendid", layer: "mp" },
+    { key: "layer/splendid/pp", partition: "confirmation", suite: "dynamics-constant", piano: "splendid", layer: "pp" },
+    { key: "layer/salamander/v03", partition: "discovery", suite: "dynamics-constant", piano: "salamander", layer: "v03" },
+    { key: "layer/salamander/v05", partition: "confirmation", suite: "dynamics-constant", piano: "salamander", layer: "v05" },
+    { key: "mixed/splendid", partition: "confirmation", suite: "dynamics-mixed", piano: "splendid", layer: null },
+    { key: "mixed/salamander", partition: "confirmation", suite: "dynamics-mixed", piano: "salamander", layer: null },
+    { key: "articulation/normal", partition: "discovery", suite: "articulation", piano: "splendid", articulation: "normal" },
+    { key: "articulation/legato", partition: "confirmation", suite: "articulation", piano: "splendid", articulation: "legato" },
+  ];
+  const cases = rows.map((row) => fabricatedDynamicsCase({
+    traceId: `${row.suite}/${rendererKey}/${row.key}`,
+    partition: row.partition,
+    suite: row.suite,
+    piano: row.piano,
+    layer: row.layer === undefined ? "mp" : row.layer,
+    articulation: row.articulation ?? "normal",
+    rendererKey,
+    column,
+    counts: (profileId) => counts({ profileId, key: row.key, partition: row.partition }),
+  }));
+  return summarizeListenDynamicsProfileValidation(rendererKey, renderer, cases, column);
+}
+
+function gateDynamicsResult(
+  renderers: ListenDynamicsRendererValidation[],
+  overrides: Partial<ListenDynamicsProfileValidationResult> = {},
+): ListenDynamicsProfileValidationResult {
+  const capturedTraceCount = renderers.reduce((total, { caseCount }) => total + caseCount, 0);
+  return {
+    manifest: {
+      ...GATE_MANIFEST,
+      traceCount: capturedTraceCount,
+      dynamicsConstantTraceCount: capturedTraceCount,
+      dynamicsMixedTraceCount: 0,
+      articulationTraceCount: 0,
+      capturedTraceCount,
+    },
+    evidenceRole: "mixed",
+    partitions: [...new Set(renderers.flatMap((renderer) => renderer.cases
+      .map(({ partition }) => partition)))],
+    suites: [...LISTEN_DYNAMICS_VALIDATION_SUITES],
+    baselineProfileId: "baseline-v1",
+    candidateProfileIds: [GATE_CANDIDATE_PROFILE_ID],
+    profiles: GATE_COLUMN,
+    renderers,
+    traceReuseVerified: true,
+    baselineParityVerified: true,
+    ...overrides,
+  };
+}
+
+/** Isolated rows that clear every fixed floor with room on both renderers. */
+const CLEAN_ISOLATED_ROWS: Partial<Record<ListenMatcherProfileId, GateIsolatedRow>> = {
+  "baseline-v1": { correctAdvances: 104, courseClearAdvances: 52 },
+  [GATE_CANDIDATE_PROFILE_ID]: { correctAdvances: 106, courseClearAdvances: 54 },
+};
+
+const TWO_CANDIDATE_ISOLATED_ROWS: Partial<Record<ListenMatcherProfileId, GateIsolatedRow>> = {
+  ...CLEAN_ISOLATED_ROWS,
+  "steady-open-v2": { correctAdvances: 106, courseClearAdvances: 54 },
+};
+
+/** A candidate that recognizes more at every speed, in both scored families. */
+function cleanSequenceCounts({ profileId }: { profileId: ListenMatcherProfileId }) {
+  return profileId === "baseline-v1"
+    ? { independentMatchCount: 20, orderedAdvanceCount: 18 }
+    : { independentMatchCount: 22, orderedAdvanceCount: 20 };
+}
+
+/** A candidate that loses nothing on any layer, mixed run, or articulation. */
+function cleanDynamicsCounts({ profileId }: { profileId: ListenMatcherProfileId }) {
+  return profileId === "baseline-v1"
+    ? { independentMatchCount: 24, orderedAdvanceCount: 22 }
+    : { independentMatchCount: 26, orderedAdvanceCount: 24 };
+}
+
+function cleanGateInput() {
+  return {
+    isolated: gateIsolatedResult([
+      gateIsolatedRenderer("direct", CLEAN_ISOLATED_ROWS),
+      gateIsolatedRenderer("tone", CLEAN_ISOLATED_ROWS),
+    ]),
+    sequence: gateSequenceResult([
+      gateSequenceRenderer("direct", cleanSequenceCounts),
+      gateSequenceRenderer("tone", cleanSequenceCounts),
+    ]),
+    dynamics: gateDynamicsResult([
+      gateDynamicsRenderer("direct", cleanDynamicsCounts),
+      gateDynamicsRenderer("tone", cleanDynamicsCounts),
+    ]),
+  };
+}
+
+function gateOutcome(
+  report: ListenProfileValidationGateReport,
+  code: ListenProfileGateCode,
+  profileId: ListenMatcherProfileId = GATE_CANDIDATE_PROFILE_ID,
+) {
+  const candidate = report.candidates.find((entry) => entry.profileId === profileId);
+  assert.ok(candidate, `no gate report for ${profileId}`);
+  const outcome = candidate.gates.find((gate) => gate.code === code);
+  assert.ok(outcome, `no ${code} outcome for ${profileId}`);
+  return outcome;
+}
+
+test("the frozen gate list is reported in full, with a role and a requirement each", () => {
+  const codes = LISTEN_PROFILE_GATES.map(({ code }) => code);
+  assert.equal(new Set(codes).size, codes.length);
+  for (const definition of LISTEN_PROFILE_GATES) {
+    assert.equal(listenProfileGateDefinition(definition.code), definition);
+    assert.ok(definition.requirement.length > 0, definition.code);
+  }
+  assert.throws(
+    () => listenProfileGateDefinition("not-a-gate" as ListenProfileGateCode),
+    /Unknown profile gate code/,
+  );
+  // Every gate appears on every candidate, applied or not, so a narrowed run
+  // cannot look complete by reporting only the gates it managed to evaluate.
+  const report = evaluateListenProfileValidationGates(cleanGateInput());
+  for (const candidate of report.candidates) {
+    assert.deepEqual(candidate.gates.map(({ code }) => code), codes);
+  }
+});
+
+test("a clean complete matrix makes the candidate eligible without selecting anything", () => {
+  const report = evaluateListenProfileValidationGates(cleanGateInput());
+  assert.equal(report.evidenceComplete, true);
+  assert.deepEqual(report.incompleteEvidenceReasons, []);
+  assert.deepEqual(report.eligibleProfileIds, [GATE_CANDIDATE_PROFILE_ID]);
+  assert.equal(report.recommendation.code, "eligible-candidates");
+  assert.equal(report.baselineProfileId, "baseline-v1");
+  // The report carries the threshold values every row was measured under.
+  assert.deepEqual(
+    report.profiles.map(({ profileId }) => profileId),
+    ["baseline-v1", GATE_CANDIDATE_PROFILE_ID],
+  );
+  assert.ok(report.profiles[1].profile.onsetThreshold > 0);
+  assert.equal(report.profiles[1].profile.requireFreshBassOnset, true);
+  const candidate = report.candidates[0];
+  assert.equal(candidate.eligibility, "eligible");
+  assert.deepEqual(candidate.failedGateCodes, []);
+  assert.equal(candidate.safetyFailureCount, 0);
+  for (const gate of candidate.gates) {
+    assert.equal(gate.applied, true, gate.code);
+    assert.equal(gate.passed, true, gate.code);
+  }
+  // Each gate says which partitions it read, and release gates read only the
+  // held-back ones while the sequence corpus stays labeled discovery.
+  assert.deepEqual(gateOutcome(report, "release-isolated-recognition").partitions, ["confirmation"]);
+  assert.equal(gateOutcome(report, "release-isolated-recognition").evidenceRole, "confirmation");
+  assert.deepEqual(gateOutcome(report, "release-dynamics-layer-loss").partitions, ["confirmation"]);
+  assert.equal(
+    gateOutcome(report, "consistency-sequence-speed-recognition").evidenceRole,
+    "discovery",
+  );
+  assert.deepEqual(gateOutcome(report, "consistency-dynamics-layer-loss").partitions, ["discovery"]);
+  // A gate that reads gating rows borrows no scored role at all.
+  assert.equal(gateOutcome(report, "safety-committed-regression").evidenceRole, null);
+  assert.deepEqual(gateOutcome(report, "safety-sequence-dedicated-families").partitions, [
+    "regression-only",
+  ]);
+  // Every measured domain is identified well enough to be repeated and compared.
+  const domains = new Map(report.domains.map((domain) => [domain.domain, domain]));
+  assert.equal(domains.get("isolated")?.traceIdentities.length, 224);
+  assert.deepEqual(domains.get("sequence")?.rendererKeys, ["direct", "tone"]);
+  assert.equal(domains.get("dynamics")?.manifestHash, GATE_MANIFEST.hash);
+  for (const domain of report.domains) {
+    assert.equal(domain.present, true, domain.domain);
+    assert.equal(domain.identityDigest.length, 8, domain.domain);
+  }
+});
+
+test("each fixed isolated floor rejects exactly one advance below itself", () => {
+  const at = (rendererKey: ListenTraceRendererKey, row: GateIsolatedRow) => {
+    const clean = cleanGateInput();
+    return evaluateListenProfileValidationGates({
+      ...clean,
+      isolated: gateIsolatedResult([
+        gateIsolatedRenderer("direct", {
+          ...CLEAN_ISOLATED_ROWS,
+          ...(rendererKey === "direct" ? { [GATE_CANDIDATE_PROFILE_ID]: row } : {}),
+        }),
+        gateIsolatedRenderer("tone", {
+          ...CLEAN_ISOLATED_ROWS,
+          ...(rendererKey === "tone" ? { [GATE_CANDIDATE_PROFILE_ID]: row } : {}),
+        }),
+      ]),
+    });
+  };
+  assert.equal(LISTEN_ISOLATED_RELEASE_GATE.direct.minimumCorrectAdvances, 104);
+  assert.equal(LISTEN_ISOLATED_RELEASE_GATE.tone.minimumCorrectAdvances, 101);
+  // Direct holds at 104 and fails at 103.
+  assert.equal(
+    gateOutcome(at("direct", { correctAdvances: 104, courseClearAdvances: 54 }), "release-isolated-recognition").passed,
+    true,
+  );
+  const lowDirect = gateOutcome(
+    at("direct", { correctAdvances: 103, courseClearAdvances: 54 }),
+    "release-isolated-recognition",
+  );
+  assert.equal(lowDirect.passed, false);
+  assert.equal(lowDirect.failures[0].baselineValue, 104);
+  assert.equal(lowDirect.failures[0].candidateValue, 103);
+  assert.equal(lowDirect.failures[0].code, "release-isolated-recognition");
+  assert.ok(lowDirect.failures[0].domainIds.includes("direct"));
+  assert.match(lowDirect.failures[0].explanation, /below the fixed floor of 104/);
+  // Tone holds at its own 101 and fails at 100, so one renderer's floor is
+  // never applied to the other.
+  assert.equal(
+    gateOutcome(at("tone", { correctAdvances: 101, courseClearAdvances: 54 }), "release-isolated-recognition").passed,
+    true,
+  );
+  assert.equal(
+    gateOutcome(at("tone", { correctAdvances: 100, courseClearAdvances: 54 }), "release-isolated-recognition").passed,
+    false,
+  );
+  // Course Clear holds at 52 and fails at 51 under both renderers.
+  assert.equal(
+    gateOutcome(at("direct", { correctAdvances: 106, courseClearAdvances: 52 }), "release-isolated-course-clear").passed,
+    true,
+  );
+  assert.equal(
+    gateOutcome(at("tone", { correctAdvances: 106, courseClearAdvances: 51 }), "release-isolated-course-clear").passed,
+    false,
+  );
+});
+
+test("the isolated latency gate holds at its ceiling and at one decoder hop of drift", () => {
+  const at = (candidateMs: number, baselineMs = 196) => {
+    const clean = cleanGateInput();
+    const rows: Partial<Record<ListenMatcherProfileId, GateIsolatedRow>> = {
+      "baseline-v1": { correctAdvances: 104, courseClearAdvances: 52, onsetToAdvanceMs: baselineMs },
+      [GATE_CANDIDATE_PROFILE_ID]: {
+        correctAdvances: 106,
+        courseClearAdvances: 54,
+        onsetToAdvanceMs: candidateMs,
+      },
+    };
+    return gateOutcome(
+      evaluateListenProfileValidationGates({
+        ...clean,
+        isolated: gateIsolatedResult([
+          gateIsolatedRenderer("direct", rows),
+          gateIsolatedRenderer("tone", rows),
+        ]),
+      }),
+      "release-isolated-latency",
+    );
+  };
+  assert.equal(LISTEN_LATENCY_REGRESSION_TOLERANCE_MS, 32);
+  // A percentile that moved by less than one decoder hop has not moved.
+  assert.equal(at(196 + LISTEN_LATENCY_REGRESSION_TOLERANCE_MS).passed, true);
+  const drifted = at(196 + LISTEN_LATENCY_REGRESSION_TOLERANCE_MS + 1);
+  assert.equal(drifted.passed, false);
+  assert.match(drifted.failures[0].explanation, /decoder hop/);
+  // The absolute ceiling is checked separately from the drift.
+  assert.equal(at(399, 399).passed, true);
+  const overCeiling = at(400, 400);
+  assert.equal(overCeiling.passed, false);
+  assert.match(overCeiling.failures[0].explanation, /400 ms limit/);
+});
+
+test("a distinguishable false advance rejects a candidate and names the fixtures", () => {
+  const rows: Partial<Record<ListenMatcherProfileId, GateIsolatedRow>> = {
+    "baseline-v1": { correctAdvances: 104, courseClearAdvances: 52, ambiguousAdvances: 2 },
+    [GATE_CANDIDATE_PROFILE_ID]: {
+      correctAdvances: 106,
+      courseClearAdvances: 54,
+      falseAdvances: 1,
+      ambiguousAdvances: 2,
+    },
+  };
+  const report = evaluateListenProfileValidationGates({
+    ...cleanGateInput(),
+    isolated: gateIsolatedResult([
+      gateIsolatedRenderer("direct", rows),
+      gateIsolatedRenderer("tone", CLEAN_ISOLATED_ROWS),
+    ]),
+  });
+  const outcome = gateOutcome(report, "safety-isolated-false-advance");
+  assert.equal(outcome.role, "safety");
+  assert.equal(outcome.passed, false);
+  assert.deepEqual(outcome.failures[0].domainIds, ["direct", "isolated/direct/omitted-bass-0"]);
+  assert.equal(outcome.failures[0].baselineValue, 0);
+  assert.equal(outcome.failures[0].candidateValue, 1);
+  const candidate = report.candidates[0];
+  assert.equal(candidate.eligible, false);
+  assert.equal(candidate.eligibility, "rejected");
+  assert.equal(candidate.safetyFailureCount, 1);
+  assert.equal(candidate.safety.isolatedDistinguishableFalseAdvances, 1);
+  // Ambiguous advances are counted apart and never hide or excuse the above.
+  assert.equal(candidate.safety.isolatedAmbiguousAdvances, 2);
+  assert.equal(report.recommendation.code, "no-safe-candidate");
+  assert.deepEqual(report.eligibleProfileIds, []);
+  assert.match(report.recommendation.explanation, /baseline-v1 remains the production default/);
+});
+
+test("the dedicated safety families gate at every speed, including the carried bass", () => {
+  const fastest = LISTEN_SEQUENCE_INTERVALS_MS[LISTEN_SEQUENCE_INTERVALS_MS.length - 1];
+  const report = evaluateListenProfileValidationGates({
+    ...cleanGateInput(),
+    sequence: gateSequenceResult([
+      gateSequenceRenderer("direct", cleanSequenceCounts, {
+        safety: ({ profileId, intervalMs }) => (
+          profileId === "baseline-v1" || intervalMs !== fastest
+            ? {}
+            : { falseAdvanceCount: 1 }
+        ),
+      }),
+      gateSequenceRenderer("tone", cleanSequenceCounts),
+    ]),
+  });
+  const outcome = gateOutcome(report, "safety-sequence-dedicated-families");
+  assert.equal(outcome.passed, false);
+  assert.equal(outcome.failures.length, 1);
+  assert.deepEqual(outcome.failures[0].domainIds, [`direct@${fastest.toFixed(2)}ms`]);
+  assert.equal(outcome.failures[0].baselineValue, 0);
+  assert.equal(outcome.failures[0].candidateValue, 1);
+  assert.match(outcome.failures[0].explanation, /1 false/);
+  assert.equal(report.candidates[0].safety.sequenceFalseAdvances, 1);
+  // A fresh bass stays required: completing a target over a still sounding bass
+  // is an incomplete carried-bass advance and rejects the candidate too.
+  const carried = evaluateListenProfileValidationGates({
+    ...cleanGateInput(),
+    sequence: gateSequenceResult([
+      gateSequenceRenderer("direct", cleanSequenceCounts, {
+        carriedBassAttacks: ({ profileId }) => (profileId === "baseline-v1" ? [] : [{
+          index: 1,
+          scheduledAtMs: 1000,
+          targetIndex: 1,
+          playedPitches: [64, 67],
+          expectedAdvance: false,
+          activeTargetIndexAtAttack: 1,
+          advancementTargetIndices: [1],
+        }]),
+      }),
+      gateSequenceRenderer("tone", cleanSequenceCounts),
+    ]),
+  });
+  const carriedOutcome = gateOutcome(carried, "safety-sequence-dedicated-families");
+  assert.equal(carriedOutcome.passed, false);
+  assert.equal(carriedOutcome.failures.length, LISTEN_SEQUENCE_INTERVALS_MS.length);
+  assert.match(carriedOutcome.failures[0].explanation, /incomplete-carried-bass/);
+  assert.equal(
+    carried.candidates[0].safety.sequenceIncompleteCarriedBassAdvances,
+    LISTEN_SEQUENCE_INTERVALS_MS.length,
+  );
+});
+
+test("sequence non-regression rejects a lost speed and is labeled discovery consistency", () => {
+  const slowest = LISTEN_SEQUENCE_INTERVALS_MS[0];
+  const report = evaluateListenProfileValidationGates({
+    ...cleanGateInput(),
+    sequence: gateSequenceResult([
+      gateSequenceRenderer("direct", ({ profileId, intervalMs }) => (
+        profileId === "baseline-v1"
+          ? { independentMatchCount: 20, orderedAdvanceCount: 18 }
+          : intervalMs === slowest
+          ? { independentMatchCount: 19, orderedAdvanceCount: 20 }
+          : { independentMatchCount: 22, orderedAdvanceCount: 20 }
+      )),
+      gateSequenceRenderer("tone", cleanSequenceCounts),
+    ]),
+  });
+  const outcome = gateOutcome(report, "consistency-sequence-speed-recognition");
+  assert.equal(outcome.role, "discovery-consistency");
+  assert.equal(outcome.evidenceRole, "discovery");
+  assert.equal(outcome.passed, false);
+  assert.deepEqual(outcome.failures[0].domainIds, [`direct@${slowest.toFixed(2)}ms`]);
+  // Two scored families lost one event each at that speed.
+  assert.equal(outcome.failures[0].baselineValue, 40);
+  assert.equal(outcome.failures[0].candidateValue, 38);
+  // It still rejects: a labeled gate is not an optional one.
+  assert.equal(report.candidates[0].eligible, false);
+  assert.equal(report.candidates[0].discoveryConsistencyFailureCount, 1);
+  assert.equal(report.candidates[0].releaseFailureCount, 0);
+});
+
+test("ordered advancement and complete passages hold under each renderer separately", () => {
+  const report = evaluateListenProfileValidationGates({
+    ...cleanGateInput(),
+    sequence: gateSequenceResult([
+      // Direct gains a great deal.
+      gateSequenceRenderer("direct", ({ profileId }) => (profileId === "baseline-v1"
+        ? { independentMatchCount: 20, orderedAdvanceCount: 18 }
+        : { independentMatchCount: 26, orderedAdvanceCount: 26 })),
+      // Tone loses one ordered advance, which the Direct gain must not hide.
+      gateSequenceRenderer("tone", ({ profileId }) => (profileId === "baseline-v1"
+        ? { independentMatchCount: 20, orderedAdvanceCount: 18 }
+        : { independentMatchCount: 22, orderedAdvanceCount: 17 })),
+    ]),
+  });
+  const outcome = gateOutcome(report, "consistency-sequence-ordered-progress");
+  assert.equal(outcome.passed, false);
+  assert.equal(outcome.failures.length, 1);
+  assert.ok(outcome.failures[0].domainIds.includes("tone"));
+  assert.match(outcome.failures[0].explanation, /under each renderer separately/);
+  // The regressed passages stay individually named whatever the aggregate said.
+  assert.equal(report.candidates[0].regressedSequenceTraceIds.length, 12);
+});
+
+test("an improvement must span more than one family and not be cascade amplification", () => {
+  const oneFamily = evaluateListenProfileValidationGates({
+    ...cleanGateInput(),
+    sequence: gateSequenceResult([
+      gateSequenceRenderer("direct", ({ profileId, family }) => (profileId === "baseline-v1"
+        ? { independentMatchCount: 20, orderedAdvanceCount: 18 }
+        : family === "course-clear"
+        ? { independentMatchCount: 22, orderedAdvanceCount: 20 }
+        : { independentMatchCount: 20, orderedAdvanceCount: 18 })),
+      gateSequenceRenderer("tone", ({ profileId, family }) => (profileId === "baseline-v1"
+        ? { independentMatchCount: 20, orderedAdvanceCount: 18 }
+        : family === "course-clear"
+        ? { independentMatchCount: 22, orderedAdvanceCount: 20 }
+        : { independentMatchCount: 20, orderedAdvanceCount: 18 })),
+    ]),
+  });
+  const narrow = gateOutcome(oneFamily, "consistency-sequence-family-breadth");
+  assert.equal(narrow.passed, false);
+  assert.equal(narrow.failures[0].baselineValue, 2);
+  assert.equal(narrow.failures[0].candidateValue, 1);
+  assert.deepEqual(narrow.failures[0].domainIds, ["course-clear"]);
+  // Ordered gains in both families with no additional independent recognition
+  // anywhere is cascade amplification, which the same gate refuses.
+  const cascade = evaluateListenProfileValidationGates({
+    ...cleanGateInput(),
+    sequence: gateSequenceResult([
+      gateSequenceRenderer("direct", ({ profileId }) => (profileId === "baseline-v1"
+        ? { independentMatchCount: 20, orderedAdvanceCount: 18 }
+        : { independentMatchCount: 20, orderedAdvanceCount: 20 })),
+      gateSequenceRenderer("tone", ({ profileId }) => (profileId === "baseline-v1"
+        ? { independentMatchCount: 20, orderedAdvanceCount: 18 }
+        : { independentMatchCount: 20, orderedAdvanceCount: 20 })),
+    ]),
+  });
+  const amplified = gateOutcome(cascade, "consistency-sequence-family-breadth");
+  assert.equal(amplified.passed, false);
+  assert.match(amplified.failures[0].explanation, /cascade amplification/);
+  // A candidate that gains nothing claims nothing, so the gate is not tripped.
+  const flat = evaluateListenProfileValidationGates({
+    ...cleanGateInput(),
+    sequence: gateSequenceResult([
+      gateSequenceRenderer("direct", () => ({ independentMatchCount: 20, orderedAdvanceCount: 18 })),
+      gateSequenceRenderer("tone", () => ({ independentMatchCount: 20, orderedAdvanceCount: 18 })),
+    ]),
+  });
+  assert.equal(gateOutcome(flat, "consistency-sequence-family-breadth").passed, true);
+});
+
+test("a held-back layer loss gates above its allowance and stays visible below it", () => {
+  const withLoss = (loss: number, key = "layer/salamander/v05") => evaluateListenProfileValidationGates({
+    ...cleanGateInput(),
+    dynamics: gateDynamicsResult([
+      gateDynamicsRenderer("direct", ({ profileId, key: groupKey }) => (
+        profileId === "baseline-v1"
+          ? { independentMatchCount: 24, orderedAdvanceCount: 22 }
+          : groupKey === key
+          ? { independentMatchCount: 24 - loss, orderedAdvanceCount: 22 - loss }
+          : { independentMatchCount: 26, orderedAdvanceCount: 24 }
+      )),
+      gateDynamicsRenderer("tone", cleanDynamicsCounts),
+    ]),
+  });
+  assert.equal(LISTEN_LAYER_INDEPENDENT_LOSS_ALLOWANCE, 1);
+  // One lost event is allowed, and is still reported as a loss.
+  const allowed = withLoss(1);
+  assert.equal(gateOutcome(allowed, "release-dynamics-layer-loss").passed, true);
+  assert.deepEqual(
+    allowed.candidates[0].layerLosses.map(({ groupKey }) => groupKey),
+    ["layer/salamander/v05"],
+  );
+  assert.equal(allowed.candidates[0].layerLosses[0].independentMatchDelta, -1);
+  assert.equal(allowed.candidates[0].layerLosses[0].evidenceRole, "confirmation");
+  assert.equal(allowed.candidates[0].layerLosses[0].reviewed, false);
+  // Two lose the row its gate.
+  const rejected = withLoss(2);
+  const outcome = gateOutcome(rejected, "release-dynamics-layer-loss");
+  assert.equal(outcome.passed, false);
+  assert.equal(outcome.role, "release");
+  assert.ok(outcome.failures[0].domainIds.includes("layer/salamander/v05"));
+  assert.equal(outcome.failures[0].baselineValue, 24);
+  assert.equal(outcome.failures[0].candidateValue, 22);
+  // A discovery layer is measured by the labeled gate instead, never by the
+  // release one, so tuning data cannot be quoted as generalization.
+  const discovery = withLoss(2, "layer/salamander/v03");
+  assert.equal(gateOutcome(discovery, "release-dynamics-layer-loss").passed, true);
+  assert.equal(gateOutcome(discovery, "consistency-dynamics-layer-loss").passed, false);
+  assert.equal(
+    gateOutcome(discovery, "consistency-dynamics-layer-loss").failures[0].code,
+    "consistency-dynamics-layer-loss",
+  );
+});
+
+test("a reviewed explanation excuses one candidate's named loss, and nothing else", () => {
+  const input = (candidateIndependent = 20) => ({
+    ...cleanGateInput(),
+    dynamics: gateDynamicsResult([
+      gateDynamicsRenderer("direct", ({ profileId, key }) => (
+        profileId === "baseline-v1"
+          ? { independentMatchCount: 24, orderedAdvanceCount: 22 }
+          : key === "layer/salamander/v05"
+          ? { independentMatchCount: candidateIndependent, orderedAdvanceCount: 18 }
+          : { independentMatchCount: 26, orderedAdvanceCount: 24 }
+      )),
+      gateDynamicsRenderer("tone", cleanDynamicsCounts),
+    ]),
+  });
+  const waiver = (overrides: Partial<ListenReviewedLayerLoss> = {}): ListenReviewedLayerLoss => ({
+    profileId: GATE_CANDIDATE_PROFILE_ID,
+    rendererKey: "direct",
+    groupKey: "layer/salamander/v05",
+    reviewedIndependentMatchDelta: -4,
+    explanation: "The v05 layer is the quietest Salamander recording and its four lost events " +
+      "are all upper voices already covered by the mp layer.",
+    ...overrides,
+  });
+  assert.equal(listenProfileLayerLossKey("direct", "layer/x"), "direct:layer/x");
+  const reviewed = evaluateListenProfileValidationGates({
+    ...input(),
+    reviewedLayerLosses: [waiver()],
+  });
+  assert.equal(gateOutcome(reviewed, "release-dynamics-layer-loss").passed, true);
+  assert.equal(reviewed.candidates[0].layerLosses[0].reviewed, true);
+  assert.equal(reviewed.reviewedLayerLosses.length, 1);
+  assert.match(reviewed.reviewedLayerLosses[0].explanation, /quietest Salamander recording/);
+  // The waiver covers the loss that was reviewed. A larger loss on the same row
+  // is a loss nobody has looked at, whatever was written about the smaller one.
+  const larger = evaluateListenProfileValidationGates({
+    ...input(18),
+    reviewedLayerLosses: [waiver()],
+  });
+  const exceeded = gateOutcome(larger, "release-dynamics-layer-loss");
+  assert.equal(exceeded.passed, false);
+  assert.match(exceeded.failures[0].explanation, /covers a loss of -4, which this loss exceeds/);
+  // A loss smaller than the reviewed one stays covered.
+  assert.equal(
+    gateOutcome(
+      evaluateListenProfileValidationGates({
+        ...input(22),
+        reviewedLayerLosses: [waiver()],
+      }),
+      "release-dynamics-layer-loss",
+    ).passed,
+    true,
+  );
+  // The waiver is for one candidate. Reviewing early-open-v2's loss says nothing
+  // about any other profile's loss on the same row.
+  const otherCandidate = evaluateListenProfileValidationGates({
+    ...cleanGateInput(),
+    dynamics: gateDynamicsResult([
+      gateDynamicsRenderer("direct", ({ profileId, key }) => (
+        profileId === "baseline-v1" || key !== "layer/salamander/v05"
+          ? cleanDynamicsCounts({ profileId })
+          : { independentMatchCount: 20, orderedAdvanceCount: 18 }
+      ), { column: TWO_CANDIDATE_COLUMN }),
+      gateDynamicsRenderer("tone", cleanDynamicsCounts, { column: TWO_CANDIDATE_COLUMN }),
+    ], { candidateProfileIds: ["early-open-v2", "steady-open-v2"] }),
+    isolated: gateIsolatedResult([
+      gateIsolatedRenderer("direct", TWO_CANDIDATE_ISOLATED_ROWS, { column: TWO_CANDIDATE_COLUMN }),
+      gateIsolatedRenderer("tone", TWO_CANDIDATE_ISOLATED_ROWS, { column: TWO_CANDIDATE_COLUMN }),
+    ], { candidateProfileIds: ["early-open-v2", "steady-open-v2"] }),
+    sequence: gateSequenceResult([
+      gateSequenceRenderer("direct", cleanSequenceCounts, { column: TWO_CANDIDATE_COLUMN }),
+      gateSequenceRenderer("tone", cleanSequenceCounts, { column: TWO_CANDIDATE_COLUMN }),
+    ], { candidateProfileIds: ["early-open-v2", "steady-open-v2"] }),
+    reviewedLayerLosses: [waiver()],
+  });
+  const waived = otherCandidate.candidates
+    .find(({ profileId }) => profileId === "early-open-v2");
+  const unwaived = otherCandidate.candidates
+    .find(({ profileId }) => profileId === "steady-open-v2");
+  assert.ok(waived && unwaived);
+  assert.ok(!waived.failedGateCodes.includes("release-dynamics-layer-loss"));
+  assert.ok(unwaived.failedGateCodes.includes("release-dynamics-layer-loss"));
+  // Every field is checked against the measured matrix, so a stale waiver fails
+  // loudly rather than quietly ceasing to excuse the row it was written for.
+  const refuses = (overrides: Partial<ListenReviewedLayerLoss>, pattern: RegExp) => assert.throws(
+    () => evaluateListenProfileValidationGates({
+      ...input(),
+      reviewedLayerLosses: [waiver(overrides)],
+    }),
+    pattern,
+  );
+  refuses({ groupKey: "layer/salamander/v5" }, /names no leaf row/);
+  refuses({ profileId: "baseline-v1" }, /is not a candidate in this matrix/);
+  refuses({ profileId: "balanced-v1" }, /is not a candidate in this matrix/);
+  refuses({ explanation: "   " }, /carries no explanation/);
+  refuses({ reviewedIndependentMatchDelta: 4 }, /must record a negative one/);
+  // The excuse is per renderer: the same layer under Tone is a different row.
+  const wrongRenderer = evaluateListenProfileValidationGates({
+    ...input(),
+    reviewedLayerLosses: [waiver({ rendererKey: "tone" })],
+  });
+  assert.equal(gateOutcome(wrongRenderer, "release-dynamics-layer-loss").passed, false);
+  assert.throws(
+    () => evaluateListenProfileValidationGates({
+      ...input(),
+      reviewedLayerLosses: [waiver(), waiver()],
+    }),
+    /listed twice/,
+  );
+  assert.throws(
+    () => evaluateListenProfileValidationGates({
+      isolated: cleanGateInput().isolated,
+      reviewedLayerLosses: [waiver()],
+    }),
+    /no dynamics matrix was measured/,
+  );
+});
+
+test("a renderer and piano aggregate is gated on the partition it belongs to", () => {
+  const report = evaluateListenProfileValidationGates({
+    ...cleanGateInput(),
+    dynamics: gateDynamicsResult([
+      gateDynamicsRenderer("direct", ({ profileId, partition }) => (
+        profileId === "baseline-v1"
+          ? { independentMatchCount: 24, orderedAdvanceCount: 22 }
+          : partition === "confirmation"
+          ? { independentMatchCount: 23, orderedAdvanceCount: 22 }
+          : { independentMatchCount: 26, orderedAdvanceCount: 24 }
+      )),
+      gateDynamicsRenderer("tone", cleanDynamicsCounts),
+    ]),
+  });
+  const outcome = gateOutcome(report, "release-dynamics-piano-recognition");
+  assert.equal(outcome.passed, false);
+  assert.deepEqual(
+    outcome.failures.map(({ domainIds }) => domainIds).sort(),
+    [["direct", "piano/salamander/confirmation"], ["direct", "piano/splendid/confirmation"]],
+  );
+  assert.equal(gateOutcome(report, "consistency-dynamics-piano-recognition").passed, true);
+});
+
+test("a new unsafe dynamics advance rejects the candidate on any partition", () => {
+  const report = evaluateListenProfileValidationGates({
+    ...cleanGateInput(),
+    dynamics: gateDynamicsResult([
+      gateDynamicsRenderer("direct", ({ profileId, key }) => (
+        profileId === "baseline-v1"
+          ? { independentMatchCount: 24, orderedAdvanceCount: 22 }
+          : key === "articulation/normal"
+          ? { independentMatchCount: 26, orderedAdvanceCount: 24, falseAdvanceCount: 1 }
+          : { independentMatchCount: 26, orderedAdvanceCount: 24 }
+      )),
+      gateDynamicsRenderer("tone", cleanDynamicsCounts),
+    ]),
+  });
+  const outcome = gateOutcome(report, "safety-dynamics-introduced-advance");
+  assert.equal(outcome.role, "safety");
+  assert.equal(outcome.passed, false);
+  // Discovery is a partition, not an exemption: safety applies to every row.
+  assert.ok(outcome.partitions.includes("discovery"));
+  assert.deepEqual(
+    report.candidates[0].safety.dynamicsIntroducedUnsafeTraceIds,
+    ["articulation/direct/articulation/normal"],
+  );
+  assert.equal(report.recommendation.code, "no-safe-candidate");
+});
+
+test("late advances are reported with distance and delay, and never gate", () => {
+  const lateEvent = (index: number, scheduledAttackTimeMs: number, advancedAtMs: number) => ({
+    index,
+    scheduledAttackTimeMs,
+    lateAdvance: true,
+    advancedAtMs,
+  } as unknown as ListenSequenceEventDiagnostic);
+  const runs = [{
+    events: [lateEvent(1, 1000, 1330), lateEvent(4, 2000, 2660)],
+    attacks: [
+      { index: 2, targetIndex: 2, advancementTargetIndices: [1] },
+      { index: 7, targetIndex: 7, advancementTargetIndices: [4] },
+    ],
+  } as unknown as ListenSequenceRunResult];
+  const diagnostics = listenLateAdvanceDiagnostics(runs);
+  assert.equal(diagnostics.lateAdvanceCount, 2);
+  assert.equal(diagnostics.meanSourceDistance, 2);
+  assert.equal(diagnostics.maximumSourceDistance, 3);
+  assert.equal(diagnostics.meanAttributionDelayMs, 495);
+  assert.equal(diagnostics.maximumAttributionDelayMs, 660);
+  assert.equal(listenLateAdvanceDiagnostics([]).lateAdvanceCount, 0);
+  assert.equal(listenLateAdvanceDiagnostics([]).meanSourceDistance, null);
+  // A candidate that advances correct content one repetition behind is a lag,
+  // not a safety failure, so it stays eligible with the lag on the record.
+  const report = evaluateListenProfileValidationGates({
+    ...cleanGateInput(),
+    sequence: gateSequenceResult([
+      gateSequenceRenderer("direct", ({ profileId }) => (profileId === "baseline-v1"
+        ? { independentMatchCount: 20, orderedAdvanceCount: 18 }
+        : { independentMatchCount: 22, orderedAdvanceCount: 20, lateAdvanceCount: 3 })),
+      gateSequenceRenderer("tone", cleanSequenceCounts),
+    ]),
+  });
+  assert.equal(report.candidates[0].eligible, true);
+  assert.equal(gateOutcome(report, "safety-sequence-dedicated-families").passed, true);
+});
+
+test("the committed regressions gate every candidate without replaying any audio", () => {
+  const report = evaluateListenProfileValidationGates(cleanGateInput());
+  const outcome = gateOutcome(report, "safety-committed-regression");
+  assert.equal(outcome.applied, true);
+  assert.equal(outcome.passed, true);
+  assert.deepEqual(outcome.partitions, ["regression-only"]);
+  assert.equal(report.candidates[0].safety.regressionWorseThanBaselineCount, 0);
+  // The v05 case is recovered a repetition earlier by every frozen candidate,
+  // which deviates from the pinned advancement without being unsafe. Rejecting
+  // it would reject an improvement, so the deviation is reported, not gated.
+  assert.ok(report.candidates[0].safety.regressionDeviationCount > 0);
+});
+
+test("replay integrity is a gate, not an assumption", () => {
+  const clean = cleanGateInput();
+  const reused = evaluateListenProfileValidationGates({
+    ...clean,
+    sequence: gateSequenceResult(clean.sequence.renderers, { traceReuseVerified: false }),
+  });
+  const reuseOutcome = gateOutcome(reused, "replay-trace-reuse");
+  assert.equal(reuseOutcome.passed, false);
+  assert.deepEqual(reuseOutcome.failures[0].domainIds, ["sequence"]);
+  assert.equal(reuseOutcome.failures[0].baselineValue, true);
+  assert.equal(reuseOutcome.failures[0].candidateValue, false);
+  const drifted = evaluateListenProfileValidationGates({
+    ...clean,
+    dynamics: gateDynamicsResult(clean.dynamics.renderers, { baselineParityVerified: false }),
+  });
+  const parityOutcome = gateOutcome(drifted, "replay-baseline-parity");
+  assert.equal(parityOutcome.passed, false);
+  assert.match(parityOutcome.failures[0].explanation, /the harness moved/);
+  assert.equal(drifted.candidates[0].replayIntegrityFailureCount, 1);
+  assert.equal(drifted.candidates[0].eligible, false);
+});
+
+test("a partial run may reject a candidate but may never clear one", () => {
+  const clean = cleanGateInput();
+  const report = evaluateListenProfileValidationGates({ isolated: clean.isolated });
+  assert.equal(report.evidenceComplete, false);
+  assert.equal(report.recommendation.code, "incomplete-evidence");
+  assert.deepEqual(report.eligibleProfileIds, []);
+  assert.equal(report.candidates[0].eligibility, "incomplete-evidence");
+  assert.match(report.incompleteEvidenceReasons.join(" "), /continuous-sequence matrix was not measured/);
+  assert.match(report.incompleteEvidenceReasons.join(" "), /dynamics and articulation matrix was not measured/);
+  // Gates the run could not apply never report a pass.
+  assert.equal(gateOutcome(report, "consistency-sequence-speed-recognition").applied, false);
+  assert.equal(gateOutcome(report, "consistency-sequence-speed-recognition").passed, false);
+  assert.equal(gateOutcome(report, "release-isolated-recognition").passed, true);
+  // A one-renderer isolated run cannot clear the per-renderer floors either,
+  // and a corpus of another size leaves the absolute floors unapplied.
+  const single = evaluateListenProfileValidationGates({
+    ...clean,
+    isolated: gateIsolatedResult([gateIsolatedRenderer("direct", CLEAN_ISOLATED_ROWS)]),
+  });
+  assert.equal(single.evidenceComplete, false);
+  assert.match(single.incompleteEvidenceReasons.join(" "), /covered one renderer/);
+  const smallCorpus = evaluateListenProfileValidationGates({
+    ...clean,
+    isolated: gateIsolatedResult([
+      gateIsolatedRenderer("direct", {
+        "baseline-v1": { correctAdvances: 8, courseClearAdvances: 4 },
+        [GATE_CANDIDATE_PROFILE_ID]: { correctAdvances: 8, courseClearAdvances: 4 },
+      }, { correctTrialCount: 8, courseClearCorrectTrialCount: 4 }),
+      gateIsolatedRenderer("tone", CLEAN_ISOLATED_ROWS),
+    ]),
+  });
+  // 8 of 8 is far below the floor of 104, and the floor is not rescaled to the
+  // corpus it was handed: the smaller renderer is left unscored, not passed.
+  assert.equal(gateOutcome(smallCorpus, "release-isolated-recognition").passed, true);
+  assert.match(smallCorpus.incompleteEvidenceReasons.join(" "), /not the 106 the fixed floor/);
+  // A confirmation gate may not read a row from another partition at all, so a
+  // misfiled renderer that would have failed the floor is skipped, not scored.
+  const misfiled = evaluateListenProfileValidationGates({
+    ...clean,
+    isolated: gateIsolatedResult([
+      gateIsolatedRenderer("direct", {
+        "baseline-v1": { correctAdvances: 104, courseClearAdvances: 52 },
+        [GATE_CANDIDATE_PROFILE_ID]: { correctAdvances: 50, courseClearAdvances: 20 },
+      }, { partition: "discovery" }),
+      gateIsolatedRenderer("tone", CLEAN_ISOLATED_ROWS),
+    ]),
+  });
+  assert.equal(gateOutcome(misfiled, "release-isolated-recognition").passed, true);
+  assert.deepEqual(gateOutcome(misfiled, "release-isolated-recognition").partitions, ["confirmation"]);
+  assert.match(misfiled.incompleteEvidenceReasons.join(" "), /outside the confirmation partition/);
+});
+
+test("domains that did not measure one frozen matrix are refused rather than gated", () => {
+  const clean = cleanGateInput();
+  assert.throws(
+    () => evaluateListenProfileValidationGates({}),
+    /at least one measured validation domain/,
+  );
+  assert.throws(
+    () => evaluateListenProfileValidationGates({
+      ...clean,
+      dynamics: gateDynamicsResult(clean.dynamics.renderers, {
+        manifest: { ...clean.dynamics.manifest, hash: "another" },
+      }),
+    }),
+    /while the isolated matrix used/,
+  );
+  assert.throws(
+    () => evaluateListenProfileValidationGates({
+      ...clean,
+      sequence: gateSequenceResult(clean.sequence.renderers, {
+        candidateProfileIds: ["steady-open-v2"],
+      }),
+    }),
+    /while the isolated matrix measured/,
+  );
+  assert.throws(
+    () => evaluateListenProfileValidationGates({
+      ...clean,
+      sequence: gateSequenceResult(clean.sequence.renderers, {
+        baselineProfileId: "balanced-v1",
+      }),
+    }),
+    /compares against balanced-v1/,
+  );
+});
+
+test("safety comparison sees a moved failure and a changed classification", () => {
+  const run = (
+    summary: Partial<ListenSequenceRunSummary>,
+    events: ListenSequenceEventDiagnostic[] = [],
+  ) => ({ events, summary: fabricatedSummary(summary) } as unknown as ListenSequenceRunResult);
+  const unsafeEvent = (
+    index: number,
+    classification: "false-advance" | "skipped" | "duplicate",
+  ) => ({
+    index,
+    falseAdvance: classification === "false-advance",
+    skipped: classification === "skipped",
+    duplicate: classification === "duplicate",
+  } as unknown as ListenSequenceEventDiagnostic);
+  // A run that keeps its total while turning a skip into a false advance has not
+  // stayed as safe, so the classifications are compared one at a time.
+  assert.deepEqual(
+    listenNewUnsafeAdvances(run({ falseAdvanceCount: 1 }), run({ skippedAdvanceCount: 1 })),
+    ["false advances rose from 0 to 1"],
+  );
+  // Same count and classification at another target is still a new failure.
+  assert.deepEqual(
+    listenNewUnsafeAdvances(
+      run({ falseAdvanceCount: 1 }, [unsafeEvent(7, "false-advance")]),
+      run({ falseAdvanceCount: 1 }, [unsafeEvent(3, "false-advance")]),
+    ),
+    ["target 7 is a new false-advance"],
+  );
+  // An unchanged row reads as unchanged rather than as a regression.
+  assert.deepEqual(
+    listenNewUnsafeAdvances(
+      run({ falseAdvanceCount: 1 }, [unsafeEvent(3, "false-advance")]),
+      run({ falseAdvanceCount: 1 }, [unsafeEvent(3, "false-advance")]),
+    ),
+    [],
+  );
+  assert.deepEqual(
+    listenUnsafeAdvanceIdentities(run({}, [unsafeEvent(3, "duplicate")])),
+    [{ targetIndex: 3, classification: "duplicate" }],
+  );
+  // Clearing a baseline failure is a gain, and is reported as one.
+  const cleared = listenValidationTraceSafety([{
+    traceId: "row",
+    candidate: run({}),
+    baseline: run({ falseAdvanceCount: 1 }, [unsafeEvent(3, "false-advance")]),
+  }]);
+  assert.deepEqual(cleared.clearedUnsafeTraceIds, ["row"]);
+  assert.deepEqual(cleared.worsenedUnsafeTraceIds, []);
+  assert.equal(cleared.passed, true);
+  // Rows are compared one at a time: clearing one failure never pays for another.
+  const traded = listenValidationTraceSafety([
+    {
+      traceId: "cleared-row",
+      candidate: run({}),
+      baseline: run({ falseAdvanceCount: 1 }),
+    },
+    {
+      traceId: "introduced-row",
+      candidate: run({ falseAdvanceCount: 1 }),
+      baseline: run({}),
+    },
+  ]);
+  assert.deepEqual(traded.clearedUnsafeTraceIds, ["cleared-row"]);
+  assert.deepEqual(traded.introducedUnsafeTraceIds, ["introduced-row"]);
+  assert.equal(traded.passed, false);
+});
+
+test("a false advance in an ordinary scored passage rejects the candidate", () => {
+  const fastest = LISTEN_SEQUENCE_INTERVALS_MS[LISTEN_SEQUENCE_INTERVALS_MS.length - 1];
+  const traceId = `sequence/direct/course-clear/${fastest.toFixed(0)}`;
+  const report = evaluateListenProfileValidationGates({
+    ...cleanGateInput(),
+    sequence: gateSequenceResult([
+      gateSequenceRenderer("direct", ({ profileId, family, intervalMs }) => (
+        profileId === "baseline-v1"
+          ? { independentMatchCount: 20, orderedAdvanceCount: 18 }
+          : family === "course-clear" && intervalMs === fastest
+          ? { independentMatchCount: 22, orderedAdvanceCount: 20, falseAdvanceCount: 1 }
+          : { independentMatchCount: 22, orderedAdvanceCount: 20 }
+      )),
+      gateSequenceRenderer("tone", cleanSequenceCounts),
+    ]),
+  });
+  // The passage belongs to no dedicated safety family, so the family-scoped
+  // summary reports nothing at all. Safety cannot depend on that summary alone.
+  assert.equal(gateOutcome(report, "safety-sequence-dedicated-families").passed, true);
+  const outcome = gateOutcome(report, "safety-sequence-introduced-advance");
+  assert.equal(outcome.role, "safety");
+  assert.equal(outcome.passed, false);
+  assert.deepEqual(outcome.failures[0].domainIds, ["direct", traceId]);
+  assert.equal(outcome.failures[0].baselineValue, 0);
+  assert.equal(outcome.failures[0].candidateValue, 1);
+  assert.match(outcome.failures[0].explanation, /false advances rose from 0 to 1/);
+  // Safety applies to every partition, and these rows are discovery rows.
+  assert.ok(outcome.partitions.includes("discovery"));
+  const candidate = report.candidates[0];
+  assert.deepEqual(candidate.safety.sequenceIntroducedUnsafeTraceIds, [traceId]);
+  // The reported total counts every row too. Sourcing it from the family-scoped
+  // summary would export a corpus with no false advance in it while the gate
+  // was rejecting the candidate for exactly one.
+  assert.equal(candidate.safety.sequenceFalseAdvances, 1);
+  assert.equal(candidate.safety.sequenceSkippedAdvances, 0);
+  assert.equal(candidate.safety.sequenceDuplicateAdvances, 0);
+  assert.equal(candidate.safety.sequenceIncompleteCarriedBassAdvances, 0);
+  assert.equal(candidate.eligible, false);
+  assert.equal(candidate.safetyFailureCount, 1);
+  assert.equal(report.recommendation.code, "no-safe-candidate");
+});
+
+test("an already unsafe run still gates when a candidate makes it worse", () => {
+  const traceId = "dynamics-constant/direct/layer/salamander/v05";
+  const dynamicsWith = (candidateCounts: Partial<ListenSequenceRunSummary>) =>
+    gateDynamicsResult([
+      gateDynamicsRenderer("direct", ({ profileId, key }) => (
+        key !== "layer/salamander/v05"
+          ? cleanDynamicsCounts({ profileId })
+          : profileId === "baseline-v1"
+          ? { independentMatchCount: 24, orderedAdvanceCount: 22, falseAdvanceCount: 1 }
+          : { independentMatchCount: 26, orderedAdvanceCount: 24, ...candidateCounts }
+      )),
+      gateDynamicsRenderer("tone", cleanDynamicsCounts),
+    ]);
+  const worseBy = (candidateCounts: Partial<ListenSequenceRunSummary>) =>
+    evaluateListenProfileValidationGates({
+      ...cleanGateInput(),
+      dynamics: dynamicsWith(candidateCounts),
+    });
+  const worse = worseBy({ falseAdvanceCount: 2 });
+  const candidate = worse.candidates[0];
+  // The row was unsafe under both profiles, so asking only whether it is unsafe
+  // reports no change. It is the count that moved, and the gate must see it.
+  assert.deepEqual(candidate.safety.dynamicsIntroducedUnsafeTraceIds, []);
+  assert.deepEqual(candidate.safety.dynamicsWorsenedUnsafeTraceIds, [traceId]);
+  const outcome = gateOutcome(worse, "safety-dynamics-introduced-advance");
+  assert.equal(outcome.passed, false);
+  assert.deepEqual(outcome.failures[0].domainIds, ["direct", traceId]);
+  assert.equal(outcome.failures[0].baselineValue, 1);
+  assert.equal(outcome.failures[0].candidateValue, 2);
+  assert.match(outcome.failures[0].explanation, /false advances rose from 1 to 2/);
+  assert.equal(candidate.eligible, false);
+  // Adding a different classification at the same total is a regression too.
+  const traded = worseBy({ falseAdvanceCount: 1, skippedAdvanceCount: 1 });
+  assert.deepEqual(traded.candidates[0].safety.dynamicsWorsenedUnsafeTraceIds, [traceId]);
+  assert.match(
+    gateOutcome(traded, "safety-dynamics-introduced-advance").failures[0].explanation,
+    /skipped advances rose from 0 to 1/,
+  );
+  // Reproducing the baseline's unsafe advance unchanged is not a regression, and
+  // the summarizer's own verdict says so rather than leaving it to the gate.
+  const unchangedDynamics = dynamicsWith({ falseAdvanceCount: 1 });
+  assert.equal(
+    gateOutcome(
+      evaluateListenProfileValidationGates({
+        ...cleanGateInput(),
+        dynamics: unchangedDynamics,
+      }),
+      "safety-dynamics-introduced-advance",
+    ).passed,
+    true,
+  );
+  const direct = unchangedDynamics.renderers
+    .find(({ rendererKey }) => rendererKey === "direct");
+  const summary = direct?.profiles
+    .find((profile) => profile.profileId === GATE_CANDIDATE_PROFILE_ID);
+  assert.equal(summary?.safety.passed, true);
+  assert.deepEqual(summary?.safety.worsenedUnsafeTraceIds, []);
+  // The worsened run's own summary rejects it without being asked by the gate.
+  const worsenedSummary = dynamicsWith({ falseAdvanceCount: 2 }).renderers
+    .find(({ rendererKey }) => rendererKey === "direct")?.profiles
+    .find((profile) => profile.profileId === GATE_CANDIDATE_PROFILE_ID);
+  assert.equal(worsenedSummary?.safety.passed, false);
+  assert.deepEqual(worsenedSummary?.safety.worsenedUnsafeTraceIds, [traceId]);
+});
+
+test("family breadth nets each family across renderers before counting it", () => {
+  const netted = (
+    direct: (input: { profileId: ListenMatcherProfileId; family: string }) =>
+      Partial<ListenSequenceRunSummary>,
+    tone: (input: { profileId: ListenMatcherProfileId; family: string }) =>
+      Partial<ListenSequenceRunSummary>,
+  ) => evaluateListenProfileValidationGates({
+    ...cleanGateInput(),
+    sequence: gateSequenceResult([
+      gateSequenceRenderer("direct", direct),
+      gateSequenceRenderer("tone", tone),
+    ]),
+  });
+  const flat = { independentMatchCount: 20, orderedAdvanceCount: 18 };
+  // `repeated-chord` gains 2 per speed under Direct and loses 2 per speed under
+  // Tone. It has improved nowhere, so it cannot help satisfy the two-family
+  // minimum, and only `course-clear` is left improving.
+  const cancelled = netted(
+    ({ profileId, family }) => (profileId === "baseline-v1"
+      ? flat
+      : family === "course-clear"
+      ? { independentMatchCount: 22, orderedAdvanceCount: 20 }
+      : { independentMatchCount: 22, orderedAdvanceCount: 20 }),
+    ({ profileId, family }) => (profileId === "baseline-v1"
+      ? flat
+      : family === "course-clear"
+      ? { independentMatchCount: 22, orderedAdvanceCount: 20 }
+      : { independentMatchCount: 18, orderedAdvanceCount: 16 }),
+  );
+  const outcome = gateOutcome(cancelled, "consistency-sequence-family-breadth");
+  assert.equal(outcome.passed, false);
+  assert.deepEqual(outcome.failures[0].domainIds, ["course-clear"]);
+  assert.equal(outcome.failures[0].candidateValue, 1);
+  assert.match(outcome.failures[0].explanation, /netted across both renderers/);
+  // The same shape with the loss removed nets two improved families and passes.
+  assert.equal(
+    gateOutcome(
+      netted(
+        ({ profileId }) => (profileId === "baseline-v1"
+          ? flat
+          : { independentMatchCount: 22, orderedAdvanceCount: 20 }),
+        ({ profileId }) => (profileId === "baseline-v1"
+          ? flat
+          : { independentMatchCount: 22, orderedAdvanceCount: 20 }),
+      ),
+      "consistency-sequence-family-breadth",
+    ).passed,
+    true,
+  );
+});
+
+test("a narrow independent-only gain is held to the breadth rule too", () => {
+  const oneFamily = evaluateListenProfileValidationGates({
+    ...cleanGateInput(),
+    sequence: gateSequenceResult([
+      gateSequenceRenderer("direct", ({ profileId, family }) => (
+        profileId !== "baseline-v1" && family === "course-clear"
+          ? { independentMatchCount: 21, orderedAdvanceCount: 18 }
+          : { independentMatchCount: 20, orderedAdvanceCount: 18 }
+      )),
+      gateSequenceRenderer("tone", () => ({
+        independentMatchCount: 20,
+        orderedAdvanceCount: 18,
+      })),
+    ]),
+  });
+  // Ordered progress is flat, so the old rule never ran at all. The claim is an
+  // independent-recognition gain, and it is confined to one family.
+  const outcome = gateOutcome(oneFamily, "consistency-sequence-family-breadth");
+  assert.equal(outcome.passed, false);
+  assert.deepEqual(outcome.failures[0].domainIds, ["course-clear"]);
+  assert.equal(outcome.failures.length, 1);
+  // The cascade half of the gate stays silent: nothing claimed ordered progress.
+  assert.ok(outcome.failures.every(({ explanation }) => !/cascade/.test(explanation)));
+});
+
+test("cascade amplification is disproved in the family that claimed the gain", () => {
+  // Both families gain ordered advances. `repeated-chord` also recognizes more
+  // events independently, but `course-clear` — where the ordered gain is — does
+  // not, and an independent gain somewhere else proves nothing about it.
+  const report = evaluateListenProfileValidationGates({
+    ...cleanGateInput(),
+    sequence: gateSequenceResult([
+      gateSequenceRenderer("direct", ({ profileId, family }) => (
+        profileId === "baseline-v1"
+          ? { independentMatchCount: 20, orderedAdvanceCount: 18 }
+          : family === "course-clear"
+          ? { independentMatchCount: 20, orderedAdvanceCount: 20 }
+          : { independentMatchCount: 22, orderedAdvanceCount: 18 }
+      )),
+      gateSequenceRenderer("tone", ({ profileId }) => (profileId === "baseline-v1"
+        ? { independentMatchCount: 20, orderedAdvanceCount: 18 }
+        : { independentMatchCount: 20, orderedAdvanceCount: 18 })),
+    ]),
+  });
+  const outcome = gateOutcome(report, "consistency-sequence-family-breadth");
+  assert.equal(outcome.passed, false);
+  const cascade = outcome.failures.find(({ explanation }) => /cascade/.test(explanation));
+  assert.ok(cascade);
+  assert.deepEqual(cascade.domainIds, ["course-clear"]);
+  assert.match(cascade.explanation, /also\s+recognized more events independently/);
+  // Moving the independent gain into the family that gained ordered advances is
+  // what the gate is asking for, and it passes.
+  assert.equal(
+    gateOutcome(
+      evaluateListenProfileValidationGates({
+        ...cleanGateInput(),
+        sequence: gateSequenceResult([
+          gateSequenceRenderer("direct", ({ profileId, family }) => (
+            profileId === "baseline-v1"
+              ? { independentMatchCount: 20, orderedAdvanceCount: 18 }
+              : family === "course-clear"
+              ? { independentMatchCount: 22, orderedAdvanceCount: 20 }
+              : { independentMatchCount: 22, orderedAdvanceCount: 18 }
+          )),
+          gateSequenceRenderer("tone", ({ profileId }) => (profileId === "baseline-v1"
+            ? { independentMatchCount: 20, orderedAdvanceCount: 18 }
+            : { independentMatchCount: 20, orderedAdvanceCount: 18 })),
+        ]),
+      }),
+      "consistency-sequence-family-breadth",
+    ).passed,
+    true,
+  );
+});
+
+test("a lost complete passage rejects a candidate whose ordered advances held", () => {
+  const slowest = LISTEN_SEQUENCE_INTERVALS_MS[0];
+  const complete = 27;
+  const report = evaluateListenProfileValidationGates({
+    ...cleanGateInput(),
+    sequence: gateSequenceResult([
+      gateSequenceRenderer("direct", cleanSequenceCounts),
+      // Tone keeps every ordered advance it had — it gains one elsewhere — but
+      // the passage that used to complete no longer does.
+      gateSequenceRenderer("tone", ({ profileId, family, intervalMs }) => {
+        if (profileId === "baseline-v1") {
+          return family === "course-clear" && intervalMs === slowest
+            ? { independentMatchCount: complete, orderedAdvanceCount: complete }
+            : { independentMatchCount: 20, orderedAdvanceCount: 18 };
+        }
+        return family === "course-clear" && intervalMs === slowest
+          ? { independentMatchCount: complete, orderedAdvanceCount: complete - 1 }
+          : { independentMatchCount: 22, orderedAdvanceCount: 20 };
+      }),
+    ]),
+  });
+  const outcome = gateOutcome(report, "consistency-sequence-ordered-progress");
+  assert.equal(outcome.passed, false);
+  const lost = outcome.failures
+    .find(({ explanation }) => /fewer\s+passage/.test(explanation));
+  assert.ok(lost, "the complete-passage branch reported nothing");
+  assert.equal(lost.baselineValue, 1);
+  assert.equal(lost.candidateValue, 0);
+  assert.deepEqual(
+    lost.domainIds,
+    ["tone", `sequence/tone/course-clear/${slowest.toFixed(0)}`],
+  );
+  assert.equal(report.candidates[0].eligible, false);
+});
+
+test("continuous latency holds at one decoder hop and rejects beyond it", () => {
+  const advanceAt = (latencyMs: number) => [{
+    index: 0,
+    orderedAdvanced: true,
+    orderedAdvanceLatencyMs: latencyMs,
+    independentlyMatched: true,
+    independentMatchLatencyMs: latencyMs,
+    failureReasons: [],
+    rawFailureReasons: [],
+    independentFailureReasons: [],
+    orderedFailureReasons: [],
+  } as unknown as ListenSequenceEventDiagnostic];
+  const at = (candidateMs: number, baselineMs = 180) => gateOutcome(
+    evaluateListenProfileValidationGates({
+      ...cleanGateInput(),
+      sequence: gateSequenceResult([
+        gateSequenceRenderer("direct", cleanSequenceCounts, {
+          events: ({ profileId }) => advanceAt(
+            profileId === "baseline-v1" ? baselineMs : candidateMs,
+          ),
+        }),
+        gateSequenceRenderer("tone", cleanSequenceCounts),
+      ]),
+    }),
+    "consistency-sequence-latency",
+  );
+  assert.equal(at(180 + LISTEN_LATENCY_REGRESSION_TOLERANCE_MS).passed, true);
+  const regressed = at(180 + LISTEN_LATENCY_REGRESSION_TOLERANCE_MS + 1);
+  assert.equal(regressed.passed, false);
+  assert.equal(regressed.role, "discovery-consistency");
+  assert.deepEqual(regressed.failures[0].domainIds, ["direct"]);
+  assert.equal(regressed.failures[0].baselineValue, 180);
+  assert.equal(regressed.failures[0].candidateValue, 213);
+  assert.match(regressed.failures[0].explanation, /p95 ordered-advance latency/);
+  // A candidate that is faster than the baseline is never rejected for it.
+  assert.equal(at(120).passed, true);
+});
+
+test("a discovery renderer and piano regression is gated by the labeled rule", () => {
+  const report = evaluateListenProfileValidationGates({
+    ...cleanGateInput(),
+    dynamics: gateDynamicsResult([
+      gateDynamicsRenderer("direct", ({ profileId, partition }) => (
+        profileId === "baseline-v1"
+          ? { independentMatchCount: 24, orderedAdvanceCount: 22 }
+          : partition === "discovery"
+          ? { independentMatchCount: 23, orderedAdvanceCount: 22 }
+          : { independentMatchCount: 26, orderedAdvanceCount: 24 }
+      )),
+      gateDynamicsRenderer("tone", cleanDynamicsCounts),
+    ]),
+  });
+  const outcome = gateOutcome(report, "consistency-dynamics-piano-recognition");
+  assert.equal(outcome.passed, false);
+  assert.equal(outcome.role, "discovery-consistency");
+  assert.deepEqual(outcome.partitions, ["discovery"]);
+  assert.deepEqual(
+    outcome.failures.map(({ domainIds }) => domainIds).sort(),
+    [["direct", "piano/salamander/discovery"], ["direct", "piano/splendid/discovery"]],
+  );
+  assert.equal(outcome.failures[0].baselineValue, 24);
+  assert.equal(outcome.failures[0].candidateValue, 23);
+  // The held-back rule is untouched: a discovery loss is never quoted as one.
+  assert.equal(gateOutcome(report, "release-dynamics-piano-recognition").passed, true);
+  assert.equal(report.candidates[0].releaseFailureCount, 0);
+  assert.equal(report.candidates[0].discoveryConsistencyFailureCount, 2);
+});
+
+test("the committed-regression gate rejects a worsened case and a lost recovery", () => {
+  const outcome = (overrides: Record<string, unknown>) => ({
+    fixtureId: "tone-salamander-v05-repeated-chord-late-advance",
+    profileId: GATE_CANDIDATE_PROFILE_ID,
+    targetIndex: 8,
+    expectation: "late-advance",
+    advanced: true,
+    orderedAdvanced: false,
+    advancedAtMs: 24_448,
+    sourceAttackIndex: 2,
+    falseAdvance: false,
+    lateAdvance: true,
+    deviations: [],
+    falseAdvanceCount: 0,
+    skippedAdvanceCount: 0,
+    duplicateAdvanceCount: 0,
+    satisfied: true,
+    newlyUnsafeTargets: [],
+    worseThanBaseline: false,
+    ...overrides,
+  });
+  const summary = (outcomes: unknown[]) => ({
+    fixtureCount: outcomes.length,
+    outcomes,
+    falseAdvanceCount: 0,
+    skippedAdvanceCount: 0,
+    duplicateAdvanceCount: 0,
+    deviationCount: 0,
+    worseThanBaselineCount: 0,
+    passed: true,
+  } as unknown as Parameters<typeof listenCommittedRegressionFailures>[0]);
+  // A replay that reproduces its pinned behavior contributes nothing.
+  assert.deepEqual(
+    listenCommittedRegressionFailures(
+      summary([outcome({})]),
+      GATE_CANDIDATE_PROFILE_ID,
+      "baseline-v1",
+    ),
+    [],
+  );
+  // A diagnosed case that got worse is rejected, and the targets are named,
+  // because a failure that merely moved is still a failure.
+  const worsened = listenCommittedRegressionFailures(
+    summary([outcome({
+      worseThanBaseline: true,
+      newlyUnsafeTargets: [{ targetIndex: 11, classifications: ["false-advance"] }],
+    })]),
+    GATE_CANDIDATE_PROFILE_ID,
+    "baseline-v1",
+  );
+  assert.equal(worsened.length, 1);
+  assert.deepEqual(worsened[0].domainIds, [
+    "tone-salamander-v05-repeated-chord-late-advance",
+    "tone-salamander-v05-repeated-chord-late-advance#11",
+  ]);
+  assert.equal(worsened[0].baselineValue, 0);
+  assert.equal(worsened[0].candidateValue, 1);
+  assert.match(worsened[0].explanation, /may\s+not worsen/);
+  // A pinned late-advance recovery that turned into a false advance is rejected
+  // even where the replay comparison did not flag it.
+  const lostRecovery = listenCommittedRegressionFailures(
+    summary([outcome({ falseAdvance: true, falseAdvanceCount: 1, lateAdvance: false })]),
+    GATE_CANDIDATE_PROFILE_ID,
+    "baseline-v1",
+  );
+  assert.equal(lostRecovery.length, 1);
+  assert.match(lostRecovery[0].explanation, /pinned as a late-advance recovery/);
+  assert.equal(lostRecovery[0].candidateValue, 1);
+  // A fixture pinned as a genuine false advance reproduces it by design, so
+  // reproducing it is not a rejection.
+  assert.deepEqual(
+    listenCommittedRegressionFailures(
+      summary([outcome({
+        fixtureId: "tone-course-clear-333-shared-pitch-false-advance",
+        expectation: "reported-unsafe-advance",
+        falseAdvance: true,
+        falseAdvanceCount: 1,
+        lateAdvance: false,
+      })]),
+      GATE_CANDIDATE_PROFILE_ID,
+      "baseline-v1",
+    ),
+    [],
   );
 });

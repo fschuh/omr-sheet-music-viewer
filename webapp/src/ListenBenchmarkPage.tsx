@@ -30,13 +30,16 @@ import {
   LISTEN_DYNAMICS_VALIDATION_SUITES,
   conciseListenDynamicsProfileValidationResult,
   conciseListenIsolatedProfileValidationResult,
+  conciseListenProfileValidationResult,
   conciseListenSequenceProfileValidationResult,
   runListenDynamicsProfileValidation,
   runListenIsolatedProfileValidation,
+  runListenProfileValidation,
   runListenSequenceProfileValidation,
   type ListenDynamicsProfileValidationResult,
   type ListenDynamicsValidationSuite,
   type ListenIsolatedProfileValidationResult,
+  type ListenProfileValidationResult,
   type ListenSequenceProfileValidationResult,
 } from "./listenProfileValidationBenchmark";
 import {
@@ -164,6 +167,7 @@ export function ListenBenchmarkPage() {
       | "dynamics-constant" | "dynamics-mixed" | "dynamics-case" | "sequence-case"
       | "multidomain-sweep" | "isolated-profile-validation"
       | "sequence-profile-validation" | "dynamics-profile-validation"
+      | "profile-validation"
   >(null);
   const running = runningTask !== null;
   const [progress, setProgress] = useState("");
@@ -173,6 +177,7 @@ export function ListenBenchmarkPage() {
       | "dynamics-constant" | "dynamics-mixed" | "dynamics-case" | "sequence-case"
       | "multidomain-sweep" | "isolated-profile-validation"
       | "sequence-profile-validation" | "dynamics-profile-validation"
+      | "profile-validation"
   >("isolated");
   const [error, setError] = useState<string | null>(null);
   const [automated, setAutomated] = useState<ListenBenchmarkSummary | null>(null);
@@ -181,6 +186,8 @@ export function ListenBenchmarkPage() {
     useState<ListenThresholdSweepResult | null>(null);
   const [multiDomainSweepResult, setMultiDomainSweepResult] =
     useState<ListenMultiDomainSweepResult | null>(null);
+  const [profileValidationResult, setProfileValidationResult] =
+    useState<ListenProfileValidationResult | null>(null);
   const [isolatedValidationResult, setIsolatedValidationResult] =
     useState<ListenIsolatedProfileValidationResult | null>(null);
   const [sequenceValidationResult, setSequenceValidationResult] =
@@ -226,6 +233,9 @@ export function ListenBenchmarkPage() {
     } else if (query.get("listen-retrigger-sweep") === "auto") {
       automaticBenchmarkStarted = true;
       void runRetriggerSweep();
+    } else if (query.get("listen-profile-validation") === "auto") {
+      automaticBenchmarkStarted = true;
+      void runProfileValidation();
     } else if (query.get("listen-isolated-profile-validation") === "auto") {
       automaticBenchmarkStarted = true;
       void runIsolatedProfileValidation();
@@ -364,6 +374,37 @@ export function ListenBenchmarkPage() {
    * corpus under both renderers, so an unfiltered command validates both; the
    * historical `benchmark-renderer` selector still narrows it to one.
    */
+  /**
+   * The unified production-candidate gate: all three matrices in one pass over
+   * one inference session, then one eligibility decision over the frozen
+   * candidates. It selects no parameter value and changes no default.
+   */
+  async function runProfileValidation() {
+    setRunningTask("profile-validation");
+    setProgressTask("profile-validation");
+    setError(null);
+    setProgress("Preparing the complete production-candidate matrix…");
+    document.body.dataset.status = "running";
+    try {
+      const result = await runListenProfileValidation((complete, total, label) => {
+        setProgress(`${complete} / ${total} traces · ${label}`);
+      }, requestedRendererKeys(), requestedSequenceIntervalsMs(), requestedDynamicsSuites());
+      setProfileValidationResult(result);
+      setIsolatedValidationResult(result.isolated);
+      setSequenceValidationResult(result.sequence);
+      setDynamicsValidationResult(result.dynamics);
+      (window as typeof window & {
+        listenProfileValidationResult?: ListenProfileValidationResult;
+      }).listenProfileValidationResult = result;
+      document.body.dataset.status = "complete";
+    } catch (benchmarkError) {
+      setError(benchmarkError instanceof Error ? benchmarkError.message : String(benchmarkError));
+      document.body.dataset.status = "error";
+    } finally {
+      setRunningTask(null);
+    }
+  }
+
   async function runIsolatedProfileValidation() {
     setRunningTask("isolated-profile-validation");
     setProgressTask("isolated-profile-validation");
@@ -871,6 +912,115 @@ export function ListenBenchmarkPage() {
         and zero distinguishable wrong-note false advances. Exact upper-harmonic ties are
         reported separately because the spectrum alone cannot identify their source note.
       </p>
+      <h2>Production-candidate gate</h2>
+      <p>
+        One command measures the isolated, continuous-sequence, dynamics, and articulation
+        matrices against <code>baseline-v1</code> and the frozen multi-domain candidates, then
+        applies every automated acceptance gate to them. It selects no parameter value, ranks
+        nothing, and never changes the production default. Safety gates apply to every
+        partition; release gates read only held-back <code>confirmation</code> rows; everything
+        measured on <code>discovery</code> rows is labeled <code>discovery-consistency</code>,
+        so no tuning data can be presented as generalization. Late advances, source distance,
+        and attribution delay are reported beside safety and never as safety.
+      </p>
+      <button type="button" disabled={running} onClick={() => void runProfileValidation()}>
+        {runningTask === "profile-validation"
+          ? "Running…"
+          : "Run the production-candidate gate"}
+      </button>
+      {progress && progressTask === "profile-validation"
+        ? <span className="benchmark-progress">{progress}</span>
+        : null}
+      {profileValidationResult ? (
+        <>
+          <h3>Eligibility</h3>
+          <p className={profileValidationResult.gates.eligibleProfileIds.length > 0
+            ? "benchmark-outcome benchmark-outcome-pass"
+            : "benchmark-outcome benchmark-outcome-fail"}>
+            <strong>{profileValidationResult.gates.recommendation.code}</strong>{" "}
+            {profileValidationResult.gates.recommendation.explanation}
+          </p>
+          <div className="benchmark-table-wrap">
+            <table className="benchmark-table">
+              <thead>
+                <tr>
+                  <th>Candidate</th>
+                  <th>Eligibility</th>
+                  <th>Safety failures</th>
+                  <th>Release failures</th>
+                  <th>Discovery-consistency failures</th>
+                  <th>Late advances (sequence / dynamics)</th>
+                  <th>Failed gates</th>
+                </tr>
+              </thead>
+              <tbody>
+                {profileValidationResult.gates.candidates.map((candidate) => (
+                  <tr key={candidate.profileId}>
+                    <td><code>{candidate.profileId}</code></td>
+                    <td>{candidate.eligibility}</td>
+                    <td>{candidate.safetyFailureCount}</td>
+                    <td>{candidate.releaseFailureCount}</td>
+                    <td>{candidate.discoveryConsistencyFailureCount}</td>
+                    <td>
+                      {candidate.lateAdvance.sequence?.lateAdvanceCount ?? "—"} /{" "}
+                      {candidate.lateAdvance.dynamics?.lateAdvanceCount ?? "—"}
+                    </td>
+                    <td>{candidate.failedGateCodes.length === 0
+                      ? "none"
+                      : candidate.failedGateCodes.join(", ")}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <h3>Gate reasons</h3>
+          <div className="benchmark-table-wrap">
+            <table className="benchmark-table">
+              <thead>
+                <tr>
+                  <th>Candidate</th>
+                  <th>Gate</th>
+                  <th>Role</th>
+                  <th>Evidence</th>
+                  <th>Domains</th>
+                  <th>Baseline</th>
+                  <th>Candidate</th>
+                  <th>Reason</th>
+                </tr>
+              </thead>
+              <tbody>
+                {profileValidationResult.gates.candidates.flatMap((candidate) => (
+                  candidate.gates.flatMap((gate) => gate.failures.map((failure, index) => (
+                    <tr key={`${candidate.profileId}-${gate.code}-${index}`}>
+                      <td><code>{candidate.profileId}</code></td>
+                      <td><code>{gate.code}</code></td>
+                      <td>{gate.role}</td>
+                      <td>{gate.evidenceRole ?? "gating rows"}</td>
+                      <td>{failure.domainIds.join(", ")}</td>
+                      <td>{String(failure.baselineValue)}</td>
+                      <td>{String(failure.candidateValue)}</td>
+                      <td>{failure.explanation}</td>
+                    </tr>
+                  )))
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {profileValidationResult.gates.evidenceComplete ? null : (
+            <p>
+              This run did not measure the complete frozen matrix, so it can reject a candidate
+              but cannot clear one:{" "}
+              {profileValidationResult.gates.incompleteEvidenceReasons.join(" ")}
+            </p>
+          )}
+          <h3>Detailed production-candidate gate result</h3>
+          <pre>{JSON.stringify(
+            conciseListenProfileValidationResult(profileValidationResult),
+            null,
+            2,
+          )}</pre>
+        </>
+      ) : null}
       <h2>Isolated notes and chords</h2>
       <button type="button" disabled={running} onClick={() => void run("online_amt")}>
         {runningTask === "online_amt" ? "Running…" : "Run online_amt benchmark"}

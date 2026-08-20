@@ -11,6 +11,7 @@ if (
   query.has("listen-sequence-case") ||
   query.has("listen-threshold-sweep") ||
   query.has("listen-matcher-multidomain-sweep") ||
+  query.has("listen-profile-validation") ||
   query.has("listen-isolated-profile-validation") ||
   query.has("listen-sequence-profile-validation") ||
   query.has("listen-dynamics-profile-validation") ||

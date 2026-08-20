@@ -159,6 +159,140 @@ export function listenValidationProfileIdentities(
   });
 }
 
+/**
+ * One unsafe advancement, identified rather than counted.
+ *
+ * A profile that stops advancing one wrong target and starts advancing another
+ * has not become safer, so the comparison below needs the target a failure
+ * happened at and not only how many there were.
+ */
+export interface ListenUnsafeAdvanceIdentity {
+  targetIndex: number;
+  classification: "false-advance" | "skipped" | "duplicate";
+}
+
+export function listenUnsafeAdvanceIdentities(
+  run: ListenSequenceRunResult,
+): ListenUnsafeAdvanceIdentity[] {
+  const identities: ListenUnsafeAdvanceIdentity[] = [];
+  for (const event of run.events) {
+    if (event.falseAdvance) {
+      identities.push({ targetIndex: event.index, classification: "false-advance" });
+    }
+    if (event.skipped) identities.push({ targetIndex: event.index, classification: "skipped" });
+    if (event.duplicate) identities.push({ targetIndex: event.index, classification: "duplicate" });
+  }
+  return identities;
+}
+
+/**
+ * Every way one profile's replay of one trace is less safe than the baseline's.
+ *
+ * Two comparisons are made because either alone lets a real regression through.
+ * Counts are compared per classification rather than in total, so a run that
+ * turns a skipped advance into a false one is worse even though its total did
+ * not move. Target indices are compared as well, so an unsafe advance that moved
+ * to another target is not read as the same failure staying put.
+ *
+ * The rule is relative to the baseline rather than absolute because parts of
+ * this corpus are diagnosed cases whose baseline replay reproduces a genuine
+ * unsafe advance by design; the requirement there is that a candidate does not
+ * worsen them. The dedicated safety families are held to zero separately.
+ */
+export function listenNewUnsafeAdvances(
+  candidate: ListenSequenceRunResult,
+  baseline: ListenSequenceRunResult,
+): string[] {
+  const reasons: string[] = [];
+  const classifications = [
+    ["false", (run: ListenSequenceRunResult) => run.summary.falseAdvanceCount],
+    ["skipped", (run: ListenSequenceRunResult) => run.summary.skippedAdvanceCount],
+    ["duplicate", (run: ListenSequenceRunResult) => run.summary.duplicateAdvanceCount],
+  ] as const;
+  for (const [label, count] of classifications) {
+    const candidateCount = count(candidate);
+    const baselineCount = count(baseline);
+    if (candidateCount > baselineCount) {
+      reasons.push(`${label} advances rose from ${baselineCount} to ${candidateCount}`);
+    }
+  }
+  const baselineIdentities = new Set(listenUnsafeAdvanceIdentities(baseline)
+    .map(({ classification, targetIndex }) => `${classification}@${targetIndex}`));
+  for (const { classification, targetIndex } of listenUnsafeAdvanceIdentities(candidate)) {
+    if (baselineIdentities.has(`${classification}@${targetIndex}`)) continue;
+    reasons.push(`target ${targetIndex} is a new ${classification}`);
+  }
+  return reasons;
+}
+
+/** One profile column's safety, compared with the baseline column trace by trace. */
+export interface ListenValidationTraceSafety {
+  runCount: number;
+  falseAdvanceCount: number;
+  skippedAdvanceCount: number;
+  duplicateAdvanceCount: number;
+  /** Reported beside safety, never as safety. */
+  lateAdvanceCount: number;
+  /** Rows unsafe under this profile that the baseline handled safely. */
+  introducedUnsafeTraceIds: string[];
+  /**
+   * Rows the baseline already advanced unsafely that this profile made worse.
+   * Kept apart from `introducedUnsafeTraceIds` because a row cannot become
+   * unsafe twice, and an aggregate that only asks whether a row is unsafe would
+   * report both states as unchanged.
+   */
+  worsenedUnsafeTraceIds: string[];
+  /** Rows whose baseline unsafe advance this profile no longer produces. */
+  clearedUnsafeTraceIds: string[];
+  /** Why each named row is worse, so the verdict never has to be taken on trust. */
+  reasons: Array<{ traceId: string; reasons: string[] }>;
+  passed: boolean;
+}
+
+/**
+ * Compares one profile column against the baseline column, one trace at a time.
+ *
+ * Every row is compared on its own. Summing a corpus first would let a profile
+ * that cleared one trace's false advance and introduced another's report no
+ * change at all.
+ */
+export function listenValidationTraceSafety(
+  rows: ReadonlyArray<{
+    traceId: string;
+    candidate: ListenSequenceRunResult;
+    baseline: ListenSequenceRunResult;
+  }>,
+): ListenValidationTraceSafety {
+  const introducedUnsafeTraceIds: string[] = [];
+  const worsenedUnsafeTraceIds: string[] = [];
+  const clearedUnsafeTraceIds: string[] = [];
+  const reasons: Array<{ traceId: string; reasons: string[] }> = [];
+  for (const { traceId, candidate, baseline } of rows) {
+    const candidateUnsafe = unsafeRun(candidate);
+    const baselineUnsafe = unsafeRun(baseline);
+    if (!candidateUnsafe && baselineUnsafe) clearedUnsafeTraceIds.push(traceId);
+    const rowReasons = listenNewUnsafeAdvances(candidate, baseline);
+    if (rowReasons.length === 0) continue;
+    reasons.push({ traceId, reasons: rowReasons });
+    if (baselineUnsafe) worsenedUnsafeTraceIds.push(traceId);
+    else introducedUnsafeTraceIds.push(traceId);
+  }
+  const total = (select: (run: ListenSequenceRunResult) => number) => rows
+    .reduce((sum, { candidate }) => sum + select(candidate), 0);
+  return {
+    runCount: rows.length,
+    falseAdvanceCount: total((run) => run.summary.falseAdvanceCount),
+    skippedAdvanceCount: total((run) => run.summary.skippedAdvanceCount),
+    duplicateAdvanceCount: total((run) => run.summary.duplicateAdvanceCount),
+    lateAdvanceCount: total((run) => run.summary.lateAdvanceCount),
+    introducedUnsafeTraceIds: introducedUnsafeTraceIds.sort(),
+    worsenedUnsafeTraceIds: worsenedUnsafeTraceIds.sort(),
+    clearedUnsafeTraceIds: clearedUnsafeTraceIds.sort(),
+    reasons,
+    passed: introducedUnsafeTraceIds.length === 0 && worsenedUnsafeTraceIds.length === 0,
+  };
+}
+
 /** One manifest isolated trace, joined to the fixture it renders. */
 export interface ListenIsolatedValidationCase {
   descriptor: ListenTraceDescriptor;
@@ -929,7 +1063,21 @@ export interface ListenSequenceProfileValidationSummary {
   /** The historical per-speed and per-family diagnostics, unchanged in shape. */
   speedSummaries: ListenSequenceAggregateSummary[];
   familySpeedSummaries: ListenSequenceAggregateSummary[];
+  /**
+   * The dedicated safety families, which are held to zero absolutely.
+   *
+   * They are the corpus built to provoke a wrong advance, so they are the only
+   * rows whose safety can be stated without a comparison. They also cover only
+   * the passages whose family is `safety`, which is why `traceSafety` below
+   * compares every other row against the baseline instead.
+   */
   safety: ListenSequenceSafetySummary;
+  /**
+   * Every row of this corpus, safety family or not, compared with the baseline
+   * column on the identical trace. An ordinary passage can advance a wrong
+   * target too, and the family-scoped summary above would never see it.
+   */
+  traceSafety: ListenValidationTraceSafety;
   /** Null for the baseline row itself. */
   deltaFromBaseline: ListenSequenceProfileDelta | null;
 }
@@ -1306,6 +1454,11 @@ export function summarizeListenSequenceProfileValidation(
     speedSummaries: column.speedSummaries,
     familySpeedSummaries: column.familySpeedSummaries,
     safety: column.safety,
+    traceSafety: listenValidationTraceSafety(cases.map((result) => ({
+      traceId: result.traceId,
+      candidate: sequenceRunFor(result, column.identity.profileId),
+      baseline: sequenceRunFor(result, baselineId),
+    }))),
     deltaFromBaseline: column === baseline ? null : {
       ...sequenceMetricDelta(column.totals, baseline.totals),
       bySpeed: column.bySpeed.map(({ intervalMs, totals }, index) => ({
@@ -1503,6 +1656,7 @@ export function conciseListenSequenceProfileValidationResult(
         speedSummaries: profile.speedSummaries,
         familySpeedSummaries: profile.familySpeedSummaries,
         safety: profile.safety,
+        traceSafety: profile.traceSafety,
         deltaFromBaseline: profile.deltaFromBaseline,
       })),
       incompletePassages: renderer.cases
@@ -1774,8 +1928,17 @@ export interface ListenDynamicsSafetySummary {
   lateAdvanceCount: number;
   /** Rows unsafe under this profile that `baseline-v1` handled safely. */
   introducedUnsafeTraceIds: string[];
+  /**
+   * Rows `baseline-v1` already advanced unsafely that this profile made worse,
+   * by adding an event, changing its classification, or moving it to another
+   * target. Asking only whether a row is unsafe would report every one of those
+   * as no change at all, because the row was unsafe either way.
+   */
+  worsenedUnsafeTraceIds: string[];
   /** Rows whose baseline unsafe advance this profile no longer produces. */
   clearedUnsafeTraceIds: string[];
+  /** Why each named row is worse, so the verdict never has to be taken on trust. */
+  unsafeReasons: Array<{ traceId: string; reasons: string[] }>;
   /** The committed Task 05 and Task 06 regressions, replayed under this profile. */
   regressions: ListenSafetyRegressionSummary;
   passed: boolean;
@@ -2384,28 +2547,24 @@ export function listenDynamicsSafetySummary(
   profile: ListenMatcherThresholds,
 ): ListenDynamicsSafetySummary {
   const baselineId = LISTEN_PROFILE_VALIDATION_BASELINE_PROFILE_ID;
-  const runs = cases.map((result) => dynamicsRunFor(result, profileId));
-  const total = (select: (run: ListenSequenceRunResult) => number) => runs
-    .reduce((sum, run) => sum + select(run), 0);
-  const introducedUnsafeTraceIds = cases
-    .filter((result) => unsafeRun(dynamicsRunFor(result, profileId)) &&
-      !unsafeRun(dynamicsRunFor(result, baselineId)))
-    .map(({ traceId }) => traceId).sort();
-  const clearedUnsafeTraceIds = cases
-    .filter((result) => !unsafeRun(dynamicsRunFor(result, profileId)) &&
-      unsafeRun(dynamicsRunFor(result, baselineId)))
-    .map(({ traceId }) => traceId).sort();
+  const traceSafety = listenValidationTraceSafety(cases.map((result) => ({
+    traceId: result.traceId,
+    candidate: dynamicsRunFor(result, profileId),
+    baseline: dynamicsRunFor(result, baselineId),
+  })));
   const regressions = replayListenSafetyRegressions(profile, profileId);
   return {
-    runCount: runs.length,
-    falseAdvanceCount: total((run) => run.summary.falseAdvanceCount),
-    skippedAdvanceCount: total((run) => run.summary.skippedAdvanceCount),
-    duplicateAdvanceCount: total((run) => run.summary.duplicateAdvanceCount),
-    lateAdvanceCount: total((run) => run.summary.lateAdvanceCount),
-    introducedUnsafeTraceIds,
-    clearedUnsafeTraceIds,
+    runCount: traceSafety.runCount,
+    falseAdvanceCount: traceSafety.falseAdvanceCount,
+    skippedAdvanceCount: traceSafety.skippedAdvanceCount,
+    duplicateAdvanceCount: traceSafety.duplicateAdvanceCount,
+    lateAdvanceCount: traceSafety.lateAdvanceCount,
+    introducedUnsafeTraceIds: traceSafety.introducedUnsafeTraceIds,
+    worsenedUnsafeTraceIds: traceSafety.worsenedUnsafeTraceIds,
+    clearedUnsafeTraceIds: traceSafety.clearedUnsafeTraceIds,
+    unsafeReasons: traceSafety.reasons,
     regressions,
-    passed: introducedUnsafeTraceIds.length === 0 && regressions.passed,
+    passed: traceSafety.passed && regressions.passed,
   };
 }
 
@@ -2723,7 +2882,9 @@ export function conciseListenDynamicsProfileValidationResult(
           duplicateAdvanceCount: profile.safety.duplicateAdvanceCount,
           lateAdvanceCount: profile.safety.lateAdvanceCount,
           introducedUnsafeTraceIds: profile.safety.introducedUnsafeTraceIds,
+          worsenedUnsafeTraceIds: profile.safety.worsenedUnsafeTraceIds,
           clearedUnsafeTraceIds: profile.safety.clearedUnsafeTraceIds,
+          unsafeReasons: profile.safety.unsafeReasons,
           passed: profile.safety.passed,
           regressions: {
             fixtureCount: profile.safety.regressions.fixtureCount,
@@ -2795,5 +2956,1750 @@ export function conciseListenDynamicsProfileValidationResult(
             })),
         })),
     })),
+  };
+}
+
+/* ------------------------------------------------------------------------- *
+ * The unified production-candidate gate
+ * ------------------------------------------------------------------------- */
+
+/**
+ * The fourth part turns the three measured matrices into one eligibility
+ * decision. It selects nothing and searches nothing: it applies the frozen
+ * acceptance gates to the frozen candidates and, for every gate that failed,
+ * reports a stable code, the domains involved, the baseline value, the
+ * candidate value, and why the comparison failed.
+ *
+ * Three rules keep that decision honest, and they are why a gate carries a role
+ * rather than only a verdict:
+ *
+ * - Safety gates apply across every partition. A false, skipped, duplicate, or
+ *   incomplete-carried-bass advance is a rejection wherever it was measured,
+ *   including on the discovery rows the search itself read.
+ * - Release gates read `confirmation` rows only, so data a threshold was tuned
+ *   on can never be quoted as evidence that the threshold generalizes.
+ * - Everything else is `discovery-consistency`. It still rejects a regression —
+ *   a candidate that loses recognition at 250 ms has lost it — but the label
+ *   keeps a discovery number from being presented as held-out confirmation.
+ *
+ * Late advances are reported beside safety and never as safety: the diagnosed
+ * `v05` case advances music the player did play, one repetition behind, and
+ * rejecting an earlier correct recovery merely for deviating from `baseline-v1`
+ * would reject an improvement.
+ */
+
+export type ListenProfileGateRole =
+  | "replay-integrity"
+  | "safety"
+  | "release"
+  | "discovery-consistency";
+
+export type ListenProfileGateDomain =
+  | "isolated"
+  | "sequence"
+  | "dynamics"
+  | "regression"
+  | "cross-domain";
+
+/** The stable identity a failed gate is reported and tracked under. */
+export type ListenProfileGateCode =
+  | "replay-trace-reuse"
+  | "replay-baseline-parity"
+  | "safety-isolated-false-advance"
+  | "safety-sequence-dedicated-families"
+  | "safety-sequence-introduced-advance"
+  | "safety-dynamics-introduced-advance"
+  | "safety-committed-regression"
+  | "release-isolated-recognition"
+  | "release-isolated-course-clear"
+  | "release-isolated-latency"
+  | "release-dynamics-piano-recognition"
+  | "release-dynamics-layer-loss"
+  | "consistency-sequence-speed-recognition"
+  | "consistency-sequence-ordered-progress"
+  | "consistency-sequence-family-breadth"
+  | "consistency-sequence-latency"
+  | "consistency-dynamics-piano-recognition"
+  | "consistency-dynamics-layer-loss";
+
+export interface ListenProfileGateDefinition {
+  code: ListenProfileGateCode;
+  role: ListenProfileGateRole;
+  domain: ListenProfileGateDomain;
+  label: string;
+  /** The rule as the automated acceptance gates state it. */
+  requirement: string;
+}
+
+/**
+ * Every gate, in report order. The list is frozen and always reported in full,
+ * including the gates a partial run could not apply, so a narrowed command can
+ * never look like a complete pass by omitting the gates it skipped.
+ */
+export const LISTEN_PROFILE_GATES: readonly ListenProfileGateDefinition[] = Object.freeze([
+  Object.freeze({
+    code: "replay-trace-reuse" as const,
+    role: "replay-integrity" as const,
+    domain: "cross-domain" as const,
+    label: "One capture per run, replayed by every profile",
+    requirement: "Within each captured run, all compared profiles use the identical PCM, " +
+      "decoded trace, frame count, renderer, model, and target schedule.",
+  }),
+  Object.freeze({
+    code: "replay-baseline-parity" as const,
+    role: "replay-integrity" as const,
+    domain: "cross-domain" as const,
+    label: "Baseline replay is event-for-event identical",
+    requirement: "Every baseline-v1 row reproduces its capture-time replay exactly.",
+  }),
+  Object.freeze({
+    code: "safety-isolated-false-advance" as const,
+    role: "safety" as const,
+    domain: "isolated" as const,
+    label: "No distinguishable false advance on the isolated corpus",
+    requirement: "Dedicated distinguishable-wrong, extra-note, and omitted-bass fixtures never " +
+      "advance. Ambiguous harmonic cases are reported separately and never hide one.",
+  }),
+  Object.freeze({
+    code: "safety-sequence-dedicated-families" as const,
+    role: "safety" as const,
+    domain: "sequence" as const,
+    label: "Dedicated safety families stay at zero at every speed",
+    requirement: "False, skipped, duplicate, and incomplete-carried-bass counts remain zero at " +
+      "every speed under both renderers. Fresh bass remains required.",
+  }),
+  Object.freeze({
+    code: "safety-sequence-introduced-advance" as const,
+    role: "safety" as const,
+    domain: "sequence" as const,
+    label: "No new unsafe advance in an ordinary passage",
+    requirement: "No candidate adds a false, skipped, or duplicate advance to any sequence row " +
+      "relative to baseline-v1 on the identical trace, including the scored passages that " +
+      "belong to no dedicated safety family.",
+  }),
+  Object.freeze({
+    code: "safety-dynamics-introduced-advance" as const,
+    role: "safety" as const,
+    domain: "dynamics" as const,
+    label: "No new unsafe advance in a dynamics or articulation run",
+    requirement: "No candidate adds a false, skipped, or duplicate advance to any dynamics or " +
+      "articulation run relative to baseline-v1 on the identical trace.",
+  }),
+  Object.freeze({
+    code: "safety-committed-regression" as const,
+    role: "safety" as const,
+    domain: "regression" as const,
+    label: "The diagnosed regressions do not worsen",
+    requirement: "The Tone plus Salamander v05 case keeps zero false, skipped, and duplicate " +
+      "advances and stays a late-advance recovery; the Tone 333 ms false case does not worsen.",
+  }),
+  Object.freeze({
+    code: "release-isolated-recognition" as const,
+    role: "release" as const,
+    domain: "isolated" as const,
+    label: "Isolated correct advancement holds its fixed floor",
+    requirement: "Direct remains at least 104/106 overall; Tone reaches at least 101/106.",
+  }),
+  Object.freeze({
+    code: "release-isolated-course-clear" as const,
+    role: "release" as const,
+    domain: "isolated" as const,
+    label: "Course Clear advancement holds its fixed floor",
+    requirement: "Both renderers remain at least 52/54 on the Course Clear fixtures.",
+  }),
+  Object.freeze({
+    code: "release-isolated-latency" as const,
+    role: "release" as const,
+    domain: "isolated" as const,
+    label: "P95 onset-to-advance latency stays inside its limit",
+    requirement: "P95 remains below 400 ms for each renderer and does not materially regress " +
+      "from its paired baseline.",
+  }),
+  Object.freeze({
+    code: "release-dynamics-piano-recognition" as const,
+    role: "release" as const,
+    domain: "dynamics" as const,
+    label: "Held-back renderer and piano recognition is preserved",
+    requirement: "Each renderer and piano aggregate over confirmation rows preserves or improves " +
+      "independent recognition.",
+  }),
+  Object.freeze({
+    code: "release-dynamics-layer-loss" as const,
+    role: "release" as const,
+    domain: "dynamics" as const,
+    label: "No held-back layer loses more than one independent event",
+    requirement: "No individual confirmation layer, mixed run, or articulation loses more than " +
+      "one independent event without an explicit reviewed explanation.",
+  }),
+  Object.freeze({
+    code: "consistency-sequence-speed-recognition" as const,
+    role: "discovery-consistency" as const,
+    domain: "sequence" as const,
+    label: "Independent recognition does not fall at any speed",
+    requirement: "Independent recognition does not decrease at any speed under either renderer.",
+  }),
+  Object.freeze({
+    code: "consistency-sequence-ordered-progress" as const,
+    role: "discovery-consistency" as const,
+    domain: "sequence" as const,
+    label: "Ordered advances and complete passages hold per renderer",
+    requirement: "Ordered advances and complete passages improve or remain equal under each " +
+      "renderer separately; a Direct gain cannot hide a Tone regression.",
+  }),
+  Object.freeze({
+    code: "consistency-sequence-family-breadth" as const,
+    role: "discovery-consistency" as const,
+    domain: "sequence" as const,
+    label: "An improvement spans more than one sequence family",
+    requirement: "Improvement, netted per family across both renderers, is present in more than " +
+      "one sequence family, and at least one family whose ordered advances rose also recognized " +
+      "more events independently, so the gain is not cascade amplification following one " +
+      "recovered early event.",
+  }),
+  Object.freeze({
+    code: "consistency-sequence-latency" as const,
+    role: "discovery-consistency" as const,
+    domain: "sequence" as const,
+    label: "Continuous latency stays within existing limits",
+    requirement: "The p95 ordered-advance latency does not materially regress from its paired " +
+      "baseline under either renderer.",
+  }),
+  Object.freeze({
+    code: "consistency-dynamics-piano-recognition" as const,
+    role: "discovery-consistency" as const,
+    domain: "dynamics" as const,
+    label: "Discovery renderer and piano recognition is preserved",
+    requirement: "Each renderer and piano aggregate over discovery rows preserves or improves " +
+      "independent recognition.",
+  }),
+  Object.freeze({
+    code: "consistency-dynamics-layer-loss" as const,
+    role: "discovery-consistency" as const,
+    domain: "dynamics" as const,
+    label: "No discovery layer loses more than one independent event",
+    requirement: "No individual discovery layer, mixed run, or articulation loses more than one " +
+      "independent event without an explicit reviewed explanation.",
+  }),
+]);
+
+const GATE_BY_CODE: ReadonlyMap<ListenProfileGateCode, ListenProfileGateDefinition> = new Map(
+  LISTEN_PROFILE_GATES.map((definition) => [definition.code, definition]),
+);
+
+export function listenProfileGateDefinition(
+  code: ListenProfileGateCode,
+): ListenProfileGateDefinition {
+  const definition = GATE_BY_CODE.get(code);
+  if (!definition) throw new Error(`Unknown profile gate code ${String(code)}.`);
+  return definition;
+}
+
+/**
+ * The fixed isolated floors, stated as counts together with the corpus they were
+ * measured on. The corpus size is part of the constant so a narrowed fixture
+ * list cannot satisfy a 104-advance floor with 104 fixtures: a run whose corpus
+ * is not this one leaves the gate unapplied instead of scoring it.
+ */
+export const LISTEN_ISOLATED_RELEASE_GATE: Readonly<Record<ListenTraceRendererKey, Readonly<{
+  correctTrialCount: number;
+  minimumCorrectAdvances: number;
+  courseClearCorrectTrialCount: number;
+  minimumCourseClearAdvances: number;
+}>>> = Object.freeze({
+  direct: Object.freeze({
+    correctTrialCount: 106,
+    minimumCorrectAdvances: 104,
+    courseClearCorrectTrialCount: 54,
+    minimumCourseClearAdvances: 52,
+  }),
+  tone: Object.freeze({
+    correctTrialCount: 106,
+    minimumCorrectAdvances: 101,
+    courseClearCorrectTrialCount: 54,
+    minimumCourseClearAdvances: 52,
+  }),
+});
+
+/** The fixed isolated latency ceiling, unchanged from the production gate. */
+export const LISTEN_ISOLATED_LATENCY_LIMIT_MS = 400;
+
+/**
+ * What "materially regress" means for a latency percentile.
+ *
+ * One decoder hop is 512 samples at 16 kHz, so an advancement can only be
+ * observed on a 32 ms grid. A p95 that moves by less than one hop has not moved
+ * in anything the decoder can express; a p95 that moves by more has.
+ */
+export const LISTEN_LATENCY_REGRESSION_TOLERANCE_MS = 32;
+
+/** Independent events one leaf row may lose before it needs a reviewed explanation. */
+export const LISTEN_LAYER_INDEPENDENT_LOSS_ALLOWANCE = 1;
+
+/** Sequence families an improvement must span before it counts as an improvement. */
+export const LISTEN_FAMILY_BREADTH_MINIMUM = 2;
+
+export type ListenProfileGateValue = number | string | boolean | null;
+
+/** One reason one gate rejected one candidate. */
+export interface ListenProfileGateFailure {
+  code: ListenProfileGateCode;
+  /** Renderers, speeds, pianos, layers, families, or trace IDs the failure is about. */
+  domainIds: string[];
+  baselineValue: ListenProfileGateValue;
+  candidateValue: ListenProfileGateValue;
+  explanation: string;
+}
+
+export interface ListenProfileGateOutcome {
+  code: ListenProfileGateCode;
+  role: ListenProfileGateRole;
+  domain: ListenProfileGateDomain;
+  label: string;
+  requirement: string;
+  /**
+   * The partitions the rows behind this outcome came from, and the role that
+   * makes. `evidenceRole` is null when the gate reads gating rows, which carry
+   * no scored role at all.
+   */
+  partitions: ListenTracePartition[];
+  evidenceRole: ListenValidationEvidenceRole | null;
+  /** False when this run did not measure the domain the gate needs. */
+  applied: boolean;
+  passed: boolean;
+  failures: ListenProfileGateFailure[];
+}
+
+/**
+ * Late-advance burden for one set of runs.
+ *
+ * Source distance is how many targets back the attack that actually moved the
+ * playhead sits; attribution delay is how long after its own scheduled attack
+ * the target finally advanced. Both are performance diagnostics reported beside
+ * safety, never folded into it.
+ */
+export interface ListenLateAdvanceDiagnostics {
+  lateAdvanceCount: number;
+  meanSourceDistance: number | null;
+  maximumSourceDistance: number | null;
+  meanAttributionDelayMs: number | null;
+  maximumAttributionDelayMs: number | null;
+}
+
+/** One leaf dynamics row that lost ground, reported whether or not it failed a gate. */
+export interface ListenProfileLayerLoss {
+  rendererKey: ListenTraceRendererKey;
+  groupKey: string;
+  label: string;
+  partitions: ListenTracePartition[];
+  evidenceRole: ListenValidationEvidenceRole | null;
+  independentMatchDelta: number;
+  orderedAdvanceDelta: number;
+  traceIds: string[];
+  /** True when this loss was named as an explicit reviewed explanation. */
+  reviewed: boolean;
+}
+
+/** Every safety count one candidate produced, across every partition. */
+export interface ListenProfileCandidateSafetyCounts {
+  isolatedDistinguishableFalseAdvances: number;
+  /** Reported beside safety, never as safety. */
+  isolatedAmbiguousAdvances: number;
+  /** Every sequence row, not only the dedicated safety families. */
+  sequenceFalseAdvances: number;
+  sequenceSkippedAdvances: number;
+  sequenceDuplicateAdvances: number;
+  /** Defined against the carried-bass fixture, so scoped to that passage. */
+  sequenceIncompleteCarriedBassAdvances: number;
+  /** Sequence rows made unsafe relative to the baseline on the identical trace. */
+  sequenceIntroducedUnsafeTraceIds: string[];
+  sequenceWorsenedUnsafeTraceIds: string[];
+  dynamicsIntroducedUnsafeTraceIds: string[];
+  dynamicsWorsenedUnsafeTraceIds: string[];
+  dynamicsClearedUnsafeTraceIds: string[];
+  regressionWorseThanBaselineCount: number;
+  /** Replays that no longer reproduce their pinned behavior. Reported, not gating. */
+  regressionDeviationCount: number;
+}
+
+export type ListenProfileEligibility = "eligible" | "rejected" | "incomplete-evidence";
+
+export interface ListenProfileCandidateGateReport {
+  profileId: ListenMatcherProfileId;
+  profile: ListenMatcherThresholds;
+  gates: ListenProfileGateOutcome[];
+  failedGateCodes: ListenProfileGateCode[];
+  replayIntegrityFailureCount: number;
+  safetyFailureCount: number;
+  releaseFailureCount: number;
+  discoveryConsistencyFailureCount: number;
+  safety: ListenProfileCandidateSafetyCounts;
+  /** Per domain, so a lag in one corpus is never averaged into another. */
+  lateAdvance: {
+    sequence: ListenLateAdvanceDiagnostics | null;
+    dynamics: ListenLateAdvanceDiagnostics | null;
+  };
+  /** Every leaf dynamics loss, so no layer-level loss can vanish into an average. */
+  layerLosses: ListenProfileLayerLoss[];
+  /** Sequence passages that lost ordered advances, listed even when the gate passed. */
+  regressedSequenceTraceIds: string[];
+  eligibility: ListenProfileEligibility;
+  eligible: boolean;
+}
+
+/** What one measured domain contributed, and the identity it must be reproduced under. */
+export interface ListenProfileValidationDomainIdentity {
+  domain: "isolated" | "sequence" | "dynamics";
+  present: boolean;
+  manifestVersion: number | null;
+  manifestHash: string | null;
+  capturedTraceCount: number;
+  rendererKeys: ListenTraceRendererKey[];
+  partitions: ListenTracePartition[];
+  evidenceRole: ListenValidationEvidenceRole | null;
+  traceReuseVerified: boolean;
+  baselineParityVerified: boolean;
+  /**
+   * Every captured trace with the decoded-structure hash two fresh browser
+   * processes must agree on, plus one digest over the whole list so a repetition
+   * can be compared with a single value before being compared row by row.
+   */
+  traceIdentities: Array<{
+    traceId: string;
+    partition: ListenTracePartition;
+    rendererKey: ListenTraceRendererKey;
+    recognitionStructureHash: string;
+    frameCount: number;
+  }>;
+  identityDigest: string;
+}
+
+export type ListenProfileGateRecommendationCode =
+  | "eligible-candidates"
+  | "no-safe-candidate"
+  | "incomplete-evidence";
+
+export interface ListenProfileValidationGateReport {
+  baselineProfileId: ListenMatcherProfileId;
+  candidateProfileIds: readonly ListenMatcherProfileId[];
+  /** The exact threshold values every row was measured under. */
+  profiles: ListenValidationProfileIdentity[];
+  gates: readonly ListenProfileGateDefinition[];
+  domains: ListenProfileValidationDomainIdentity[];
+  /**
+   * True only when all three domains were measured, under both renderers, over
+   * the complete frozen corpora. Eligibility requires it: a focused smoke may
+   * reject a candidate but may never clear one.
+   */
+  evidenceComplete: boolean;
+  incompleteEvidenceReasons: string[];
+  /** Leaf losses the caller declared explicitly reviewed, echoed for the record. */
+  reviewedLayerLosses: ListenReviewedLayerLoss[];
+  candidates: ListenProfileCandidateGateReport[];
+  eligibleProfileIds: ListenMatcherProfileId[];
+  recommendation: {
+    code: ListenProfileGateRecommendationCode;
+    eligibleProfileIds: ListenMatcherProfileId[];
+    explanation: string;
+  };
+}
+
+/** FNV-1a over the joined identity text, so a repetition compares one value first. */
+function identityDigest(parts: readonly string[]): string {
+  let hash = 0x811c9dc5;
+  for (const character of parts.join(" ")) {
+    hash = Math.imul(hash ^ (character.codePointAt(0) ?? 0), 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, "0");
+}
+
+/**
+ * Late-advance burden, source distance, and attribution delay for a set of runs.
+ *
+ * The source attack is the physical attack the replay credited the advancement
+ * to; for a late advance that is a later repetition of the same chord than the
+ * target's own attack, so the distance says how far behind the playhead ran.
+ */
+export function listenLateAdvanceDiagnostics(
+  runs: readonly ListenSequenceRunResult[],
+): ListenLateAdvanceDiagnostics {
+  let lateAdvanceCount = 0;
+  const distances: number[] = [];
+  const delays: number[] = [];
+  for (const run of runs) {
+    const attacks = run.attacks ?? [];
+    for (const event of run.events) {
+      if (!event.lateAdvance) continue;
+      lateAdvanceCount += 1;
+      const source = attacks.find((attack) => attack.advancementTargetIndices.includes(event.index));
+      if (source) distances.push(Math.abs(source.targetIndex - event.index));
+      if (event.advancedAtMs !== null) {
+        delays.push(event.advancedAtMs - event.scheduledAttackTimeMs);
+      }
+    }
+  }
+  const mean = (values: readonly number[]) => values.length === 0
+    ? null
+    : values.reduce((total, value) => total + value, 0) / values.length;
+  return {
+    lateAdvanceCount,
+    meanSourceDistance: mean(distances),
+    maximumSourceDistance: distances.length === 0 ? null : Math.max(...distances),
+    meanAttributionDelayMs: mean(delays),
+    maximumAttributionDelayMs: delays.length === 0 ? null : Math.max(...delays),
+  };
+}
+
+/** One gate's accumulating state while a single candidate is evaluated. */
+interface ListenProfileGateEntry {
+  applied: boolean;
+  partitions: Set<ListenTracePartition>;
+  failures: ListenProfileGateFailure[];
+}
+
+/**
+ * Collects one candidate's gate results.
+ *
+ * A gate must be applied before it can pass: an unapplied gate reports
+ * `applied: false` and never contributes a pass, so a run that skipped a domain
+ * cannot be read as having cleared that domain's gates.
+ */
+class ListenProfileGateBook {
+  private readonly entries: Map<ListenProfileGateCode, ListenProfileGateEntry> = new Map(
+    LISTEN_PROFILE_GATES.map(({ code }) => [
+      code,
+      { applied: false, partitions: new Set<ListenTracePartition>(), failures: [] },
+    ]),
+  );
+
+  apply(code: ListenProfileGateCode, partitions: readonly ListenTracePartition[]): void {
+    const entry = this.entry(code);
+    entry.applied = true;
+    for (const partition of partitions) entry.partitions.add(partition);
+  }
+
+  fail(code: ListenProfileGateCode, failure: Omit<ListenProfileGateFailure, "code">): void {
+    const entry = this.entry(code);
+    if (!entry.applied) {
+      throw new Error(`Gate ${code} reported a failure before it was applied to any rows.`);
+    }
+    entry.failures.push({ code, ...failure });
+  }
+
+  outcomes(): ListenProfileGateOutcome[] {
+    return LISTEN_PROFILE_GATES.map((definition): ListenProfileGateOutcome => {
+      const entry = this.entry(definition.code);
+      const partitions = [...entry.partitions].sort();
+      return {
+        code: definition.code,
+        role: definition.role,
+        domain: definition.domain,
+        label: definition.label,
+        requirement: definition.requirement,
+        partitions,
+        evidenceRole: gateEvidenceRole(partitions),
+        applied: entry.applied,
+        passed: entry.applied && entry.failures.length === 0,
+        failures: entry.failures,
+      };
+    });
+  }
+
+  private entry(code: ListenProfileGateCode): ListenProfileGateEntry {
+    const entry = this.entries.get(code);
+    if (!entry) throw new Error(`Unknown profile gate code ${String(code)}.`);
+    return entry;
+  }
+}
+
+/**
+ * The evidence role of the rows a gate read. Gating rows carry no scored role,
+ * so a gate that reads them reports null rather than borrowing one.
+ */
+function gateEvidenceRole(
+  partitions: readonly ListenTracePartition[],
+): ListenValidationEvidenceRole | null {
+  if (partitions.length === 0 || partitions.includes("regression-only")) return null;
+  return listenValidationEvidenceRole(partitions);
+}
+
+function isolatedSummaryFor(
+  renderer: ListenIsolatedRendererValidation,
+  profileId: ListenMatcherProfileId,
+): ListenIsolatedProfileValidationSummary {
+  const summary = renderer.profiles.find((profile) => profile.profileId === profileId);
+  if (!summary) throw new Error(`The isolated ${renderer.rendererKey} matrix has no ${profileId} row.`);
+  return summary;
+}
+
+function sequenceSummaryFor(
+  renderer: ListenSequenceRendererValidation,
+  profileId: ListenMatcherProfileId,
+): ListenSequenceProfileValidationSummary {
+  const summary = renderer.profiles.find((profile) => profile.profileId === profileId);
+  if (!summary) throw new Error(`The sequence ${renderer.rendererKey} matrix has no ${profileId} row.`);
+  return summary;
+}
+
+function dynamicsSummaryFor(
+  renderer: ListenDynamicsRendererValidation,
+  profileId: ListenMatcherProfileId,
+): ListenDynamicsProfileValidationSummary {
+  const summary = renderer.profiles.find((profile) => profile.profileId === profileId);
+  if (!summary) throw new Error(`The dynamics ${renderer.rendererKey} matrix has no ${profileId} row.`);
+  return summary;
+}
+
+const DYNAMICS_LEAF_GROUP_KINDS: readonly ListenDynamicsGroupKind[] =
+  Object.freeze(["layer", "mixed-run", "articulation"] as const);
+
+/** The reviewed-loss key a leaf group is named by: renderer first, then group. */
+export function listenProfileLayerLossKey(
+  rendererKey: ListenTraceRendererKey,
+  groupKey: string,
+): string {
+  return `${rendererKey}:${groupKey}`;
+}
+
+/**
+ * One reviewed exception to the leaf-row loss allowance.
+ *
+ * The plan permits a row to lose more than the allowance only with an explicit
+ * reviewed explanation, which means the waiver has to carry three things a bare
+ * row name cannot. It names the candidate, because a loss reviewed for one
+ * profile says nothing about another profile's loss on the same row. It records
+ * the loss that was actually reviewed, because a waiver written against a
+ * two-event loss must not excuse a five-event one. And it carries the
+ * explanation itself, because "reviewed" with no reasoning recorded is
+ * indistinguishable from "suppressed".
+ */
+export interface ListenReviewedLayerLoss {
+  profileId: ListenMatcherProfileId;
+  rendererKey: ListenTraceRendererKey;
+  /** The leaf group key, as the dynamics matrix reports it. */
+  groupKey: string;
+  /**
+   * The independent-recognition delta that was reviewed, as a negative number.
+   * The waiver applies while the measured loss is no worse than this.
+   */
+  reviewedIndependentMatchDelta: number;
+  /** Why this row's larger loss was accepted. */
+  explanation: string;
+}
+
+/** The measured domains a gate report is built from. */
+export interface ListenProfileValidationDomainResults {
+  isolated?: ListenIsolatedProfileValidationResult | null;
+  sequence?: ListenSequenceProfileValidationResult | null;
+  dynamics?: ListenDynamicsProfileValidationResult | null;
+}
+
+function domainIdentity(
+  domain: "isolated" | "sequence" | "dynamics",
+  input: {
+    partitions: ListenTracePartition[];
+    rendererKeys: ListenTraceRendererKey[];
+    manifest: { version: number; hash: string; capturedTraceCount: number };
+    traceReuseVerified: boolean;
+    baselineParityVerified: boolean;
+    traceIdentities: ListenProfileValidationDomainIdentity["traceIdentities"];
+  } | null,
+): ListenProfileValidationDomainIdentity {
+  if (input === null) {
+    return {
+      domain,
+      present: false,
+      manifestVersion: null,
+      manifestHash: null,
+      capturedTraceCount: 0,
+      rendererKeys: [],
+      partitions: [],
+      evidenceRole: null,
+      traceReuseVerified: false,
+      baselineParityVerified: false,
+      traceIdentities: [],
+      identityDigest: identityDigest([]),
+    };
+  }
+  return {
+    domain,
+    present: true,
+    manifestVersion: input.manifest.version,
+    manifestHash: input.manifest.hash,
+    capturedTraceCount: input.manifest.capturedTraceCount,
+    rendererKeys: input.rendererKeys,
+    partitions: input.partitions,
+    evidenceRole: gateEvidenceRole(input.partitions),
+    traceReuseVerified: input.traceReuseVerified,
+    baselineParityVerified: input.baselineParityVerified,
+    traceIdentities: input.traceIdentities,
+    identityDigest: identityDigest(input.traceIdentities.map((identity) => (
+      `${identity.traceId}:${identity.recognitionStructureHash}:${identity.frameCount}`
+    ))),
+  };
+}
+
+function listenProfileValidationDomainIdentities(
+  results: ListenProfileValidationDomainResults,
+): ListenProfileValidationDomainIdentity[] {
+  const { isolated, sequence, dynamics } = results;
+  return [
+    domainIdentity("isolated", !isolated ? null : {
+      partitions: [...new Set(isolated.renderers.flatMap((renderer) => renderer.cases
+        .map(({ partition }) => partition)))].sort(),
+      rendererKeys: isolated.renderers.map(({ rendererKey }) => rendererKey),
+      manifest: isolated.manifest,
+      traceReuseVerified: isolated.traceReuseVerified,
+      baselineParityVerified: isolated.baselineParityVerified,
+      traceIdentities: isolated.renderers.flatMap((renderer) => renderer.cases.map((result) => ({
+        traceId: result.traceId,
+        partition: result.partition,
+        rendererKey: renderer.rendererKey,
+        recognitionStructureHash: result.recognitionStructureHash,
+        frameCount: result.frameCount,
+      }))),
+    }),
+    domainIdentity("sequence", !sequence ? null : {
+      partitions: [...new Set(sequence.renderers.flatMap((renderer) => renderer.cases
+        .map(({ partition }) => partition)))].sort(),
+      rendererKeys: sequence.renderers.map(({ rendererKey }) => rendererKey),
+      manifest: sequence.manifest,
+      traceReuseVerified: sequence.traceReuseVerified,
+      baselineParityVerified: sequence.baselineParityVerified,
+      traceIdentities: sequence.renderers.flatMap((renderer) => renderer.cases.map((result) => ({
+        traceId: result.traceId,
+        partition: result.partition,
+        rendererKey: renderer.rendererKey,
+        recognitionStructureHash: result.recognitionStructureHash,
+        frameCount: result.frameCount,
+      }))),
+    }),
+    domainIdentity("dynamics", !dynamics ? null : {
+      partitions: [...new Set(dynamics.renderers.flatMap((renderer) => renderer.cases
+        .map(({ partition }) => partition)))].sort(),
+      rendererKeys: dynamics.renderers.map(({ rendererKey }) => rendererKey),
+      manifest: dynamics.manifest,
+      traceReuseVerified: dynamics.traceReuseVerified,
+      baselineParityVerified: dynamics.baselineParityVerified,
+      traceIdentities: dynamics.renderers.flatMap((renderer) => renderer.cases.map((result) => ({
+        traceId: result.traceId,
+        partition: result.partition,
+        rendererKey: renderer.rendererKey,
+        recognitionStructureHash: result.recognitionStructureHash,
+        frameCount: result.frameCount,
+      }))),
+    }),
+  ];
+}
+
+/**
+ * Why a run may reject a candidate but may never clear one.
+ *
+ * Completeness is checked against the frozen corpora rather than against what
+ * the run happened to capture, because the release floors are absolute counts:
+ * 104 of 106 is a different claim on a corpus of 106 than on a corpus of 40.
+ */
+function incompleteEvidenceReasons(results: ListenProfileValidationDomainResults): string[] {
+  const { isolated, sequence, dynamics } = results;
+  const reasons: string[] = [];
+  const bothRenderers = (keys: readonly ListenTraceRendererKey[]) =>
+    keys.includes("direct") && keys.includes("tone");
+  if (!isolated) reasons.push("The isolated confirmation matrix was not measured.");
+  else {
+    if (!bothRenderers(isolated.renderers.map(({ rendererKey }) => rendererKey))) {
+      reasons.push("The isolated matrix covered one renderer, and its floors are stated per renderer.");
+    }
+    for (const renderer of isolated.renderers) {
+      const gate = LISTEN_ISOLATED_RELEASE_GATE[renderer.rendererKey];
+      if (renderer.correctTrialCount !== gate.correctTrialCount) {
+        reasons.push(
+          `The isolated ${renderer.rendererKey} corpus holds ${renderer.correctTrialCount} correct ` +
+          `fixtures, not the ${gate.correctTrialCount} the fixed floor is stated against.`,
+        );
+      }
+      if (renderer.cases.some(({ partition }) => partition !== "confirmation")) {
+        reasons.push(
+          `The isolated ${renderer.rendererKey} corpus contains a row outside the confirmation ` +
+          "partition, which a release gate may not read.",
+        );
+      }
+    }
+  }
+  if (!sequence) reasons.push("The continuous-sequence matrix was not measured.");
+  else {
+    if (!bothRenderers(sequence.renderers.map(({ rendererKey }) => rendererKey))) {
+      reasons.push("The sequence matrix covered one renderer, and its gates are stated per renderer.");
+    }
+    for (const renderer of sequence.renderers) {
+      if (renderer.intervalsMs.length !== LISTEN_SEQUENCE_INTERVALS_MS.length) {
+        reasons.push(
+          `The sequence ${renderer.rendererKey} matrix covered ${renderer.intervalsMs.length} of ` +
+          `${LISTEN_SEQUENCE_INTERVALS_MS.length} corpus speeds.`,
+        );
+      }
+    }
+  }
+  if (!dynamics) reasons.push("The dynamics and articulation matrix was not measured.");
+  else {
+    if (!bothRenderers(dynamics.renderers.map(({ rendererKey }) => rendererKey))) {
+      reasons.push("The dynamics matrix covered one renderer, and its gates are stated per renderer.");
+    }
+    if (dynamics.suites.length !== LISTEN_DYNAMICS_VALIDATION_SUITES.length) {
+      reasons.push(
+        `The dynamics matrix covered ${dynamics.suites.length} of ` +
+        `${LISTEN_DYNAMICS_VALIDATION_SUITES.length} suites.`,
+      );
+    }
+  }
+  return reasons;
+}
+
+/**
+ * Checks that the measured domains describe one run of one frozen matrix.
+ *
+ * Gating an isolated matrix from one manifest against a dynamics matrix from
+ * another would compare rows that never shared a corpus, and gating two runs
+ * with different candidate columns would silently drop a candidate, so both are
+ * refused here rather than produced as a report.
+ */
+function assertComparableDomains(results: ListenProfileValidationDomainResults): void {
+  const present: Array<{
+    domain: string;
+    baselineProfileId: ListenMatcherProfileId;
+    candidateProfileIds: readonly ListenMatcherProfileId[];
+    manifest: { version: number; hash: string };
+  }> = [];
+  if (results.isolated) present.push({ domain: "isolated", ...results.isolated });
+  if (results.sequence) present.push({ domain: "sequence", ...results.sequence });
+  if (results.dynamics) present.push({ domain: "dynamics", ...results.dynamics });
+  if (present.length === 0) {
+    throw new Error("A gate report needs at least one measured validation domain.");
+  }
+  const [first, ...rest] = present;
+  for (const other of rest) {
+    if (other.baselineProfileId !== first.baselineProfileId) {
+      throw new Error(
+        `The ${other.domain} matrix compares against ${other.baselineProfileId} while the ` +
+        `${first.domain} matrix compares against ${first.baselineProfileId}.`,
+      );
+    }
+    if (
+      other.candidateProfileIds.length !== first.candidateProfileIds.length ||
+      other.candidateProfileIds.some((id, index) => id !== first.candidateProfileIds[index])
+    ) {
+      throw new Error(
+        `The ${other.domain} matrix measured candidates ${other.candidateProfileIds.join(", ")} ` +
+        `while the ${first.domain} matrix measured ${first.candidateProfileIds.join(", ")}.`,
+      );
+    }
+    if (
+      other.manifest.version !== first.manifest.version ||
+      other.manifest.hash !== first.manifest.hash
+    ) {
+      throw new Error(
+        `The ${other.domain} matrix used manifest ${other.manifest.version}/${other.manifest.hash} ` +
+        `while the ${first.domain} matrix used ${first.manifest.version}/${first.manifest.hash}.`,
+      );
+    }
+  }
+}
+
+/**
+ * Validates the reviewed-loss exceptions.
+ *
+ * A reviewed key excuses a leaf row from the layer-loss gate, so a mistyped key
+ * would quietly stop excusing the row it was written for. Every key must name a
+ * leaf group that the dynamics matrix actually reported.
+ */
+function resolveReviewedLayerLosses(
+  reviewed: readonly ListenReviewedLayerLoss[],
+  candidateProfileIds: readonly ListenMatcherProfileId[],
+  dynamics: ListenDynamicsProfileValidationResult | null | undefined,
+): Map<string, ListenReviewedLayerLoss> {
+  const byKey = new Map<string, ListenReviewedLayerLoss>();
+  if (reviewed.length === 0) return byKey;
+  if (!dynamics) {
+    throw new Error("Reviewed layer losses were declared, but no dynamics matrix was measured.");
+  }
+  const known = new Set(dynamics.renderers.flatMap((renderer) => renderer.profiles[0].groups
+    .filter(({ kind }) => DYNAMICS_LEAF_GROUP_KINDS.includes(kind))
+    .map(({ key }) => listenProfileLayerLossKey(renderer.rendererKey, key))));
+  for (const entry of reviewed) {
+    const rowKey = listenProfileLayerLossKey(entry.rendererKey, entry.groupKey);
+    const key = `${entry.profileId}/${rowKey}`;
+    if (byKey.has(key)) {
+      throw new Error(`Reviewed layer loss ${key} was listed twice.`);
+    }
+    // A waiver for the baseline column or for a profile this run never measured
+    // is a waiver that can never be checked against anything.
+    if (!candidateProfileIds.includes(entry.profileId)) {
+      throw new Error(
+        `Reviewed layer loss ${key} names ${entry.profileId}, which is not a candidate in this ` +
+        `matrix (${candidateProfileIds.join(", ")}).`,
+      );
+    }
+    if (!known.has(rowKey)) {
+      throw new Error(`Reviewed layer loss ${key} names no leaf row in this dynamics matrix.`);
+    }
+    if (!(entry.reviewedIndependentMatchDelta < 0)) {
+      throw new Error(
+        `Reviewed layer loss ${key} records a delta of ${entry.reviewedIndependentMatchDelta}, ` +
+        "but a waiver exists to excuse a loss and must record a negative one.",
+      );
+    }
+    if (entry.explanation.trim().length === 0) {
+      throw new Error(`Reviewed layer loss ${key} carries no explanation.`);
+    }
+    byKey.set(key, entry);
+  }
+  return byKey;
+}
+
+/**
+ * The committed regressions' contribution to the safety gate.
+ *
+ * Split out from the gate so both rejection branches can be exercised against
+ * stated outcomes. Every registry profile currently passes these fixtures, so a
+ * test driving the real replay could only ever prove the passing case, and the
+ * branches that matter are the ones that reject.
+ */
+export function listenCommittedRegressionFailures(
+  regressions: ListenSafetyRegressionSummary,
+  profileId: ListenMatcherProfileId,
+  baselineProfileId: ListenMatcherProfileId,
+): Array<Omit<ListenProfileGateFailure, "code">> {
+  const failures: Array<Omit<ListenProfileGateFailure, "code">> = [];
+  for (const outcome of regressions.outcomes) {
+    if (outcome.worseThanBaseline) {
+      failures.push({
+        domainIds: [outcome.fixtureId, ...outcome.newlyUnsafeTargets
+          .map(({ targetIndex }) => `${outcome.fixtureId}#${targetIndex}`)],
+        baselineValue: 0,
+        candidateValue: outcome.newlyUnsafeTargets.length,
+        explanation: `${profileId} made ${outcome.newlyUnsafeTargets.length} target(s) of ` +
+          `${outcome.fixtureId} unsafe that ${baselineProfileId} did not. A diagnosed case may ` +
+          "not worsen, and a failure that merely moves to another target is still a failure.",
+      });
+      continue;
+    }
+    // A pinned late advance is a recovery, not a safety event. It may move
+    // earlier without being rejected, but it may never become unsafe.
+    if (outcome.expectation !== "late-advance") continue;
+    const unsafe = outcome.falseAdvance ||
+      outcome.skippedAdvanceCount > 0 ||
+      outcome.duplicateAdvanceCount > 0;
+    if (!unsafe) continue;
+    failures.push({
+      domainIds: [outcome.fixtureId, `${outcome.fixtureId}#${outcome.targetIndex}`],
+      baselineValue: 0,
+      candidateValue: outcome.falseAdvanceCount + outcome.skippedAdvanceCount +
+        outcome.duplicateAdvanceCount,
+      explanation: `${outcome.fixtureId} is pinned as a late-advance recovery, but ${profileId} ` +
+        "turned it into a false, skipped, or duplicate advance.",
+    });
+  }
+  return failures;
+}
+
+function evaluateCandidateGates(
+  identity: ListenValidationProfileIdentity,
+  baselineProfileId: ListenMatcherProfileId,
+  results: ListenProfileValidationDomainResults,
+  reviewedLayerLosses: ReadonlyMap<string, ListenReviewedLayerLoss>,
+  evidenceComplete: boolean,
+): ListenProfileCandidateGateReport {
+  const { isolated, sequence, dynamics } = results;
+  const { profileId, profile } = identity;
+  const book = new ListenProfileGateBook();
+  const layerLosses: ListenProfileLayerLoss[] = [];
+  const regressedSequenceTraceIds = new Set<string>();
+  const safety: ListenProfileCandidateSafetyCounts = {
+    isolatedDistinguishableFalseAdvances: 0,
+    isolatedAmbiguousAdvances: 0,
+    sequenceFalseAdvances: 0,
+    sequenceSkippedAdvances: 0,
+    sequenceDuplicateAdvances: 0,
+    sequenceIncompleteCarriedBassAdvances: 0,
+    sequenceIntroducedUnsafeTraceIds: [],
+    sequenceWorsenedUnsafeTraceIds: [],
+    dynamicsIntroducedUnsafeTraceIds: [],
+    dynamicsWorsenedUnsafeTraceIds: [],
+    dynamicsClearedUnsafeTraceIds: [],
+    regressionWorseThanBaselineCount: 0,
+    regressionDeviationCount: 0,
+  };
+
+  /* Replay integrity. Every measured domain must have replayed one capture per
+   * run through every column, and reproduced its own baseline row exactly. */
+  const identities = listenProfileValidationDomainIdentities(results);
+  const measured = identities.filter(({ present }) => present);
+  const replayPartitions = [...new Set(measured.flatMap(({ partitions }) => partitions))].sort();
+  book.apply("replay-trace-reuse", replayPartitions);
+  book.apply("replay-baseline-parity", replayPartitions);
+  const reusedFailures = measured.filter(({ traceReuseVerified }) => !traceReuseVerified);
+  if (reusedFailures.length > 0) {
+    book.fail("replay-trace-reuse", {
+      domainIds: reusedFailures.map(({ domain }) => domain),
+      baselineValue: true,
+      candidateValue: false,
+      explanation: `The ${reusedFailures.map(({ domain }) => domain).join(" and ")} matrix did not ` +
+        "confirm that every profile column replayed one retained capture, so a difference between " +
+        "columns cannot be attributed to the matcher.",
+    });
+  }
+  const parityFailures = measured.filter(({ baselineParityVerified }) => !baselineParityVerified);
+  if (parityFailures.length > 0) {
+    book.fail("replay-baseline-parity", {
+      domainIds: parityFailures.map(({ domain }) => domain),
+      baselineValue: true,
+      candidateValue: false,
+      explanation: `The ${parityFailures.map(({ domain }) => domain).join(" and ")} matrix did not ` +
+        `reproduce its capture-time ${baselineProfileId} replay, so the harness moved and no ` +
+        "candidate comparison built on it measures the profile.",
+    });
+  }
+
+  /* The isolated confirmation corpus. */
+  if (isolated) {
+    for (const renderer of isolated.renderers) {
+      const key = renderer.rendererKey;
+      const candidate = isolatedSummaryFor(renderer, profileId);
+      const baseline = isolatedSummaryFor(renderer, baselineProfileId);
+      const partitions = [...new Set(renderer.cases.map(({ partition }) => partition))];
+      const releasePartitions = partitions.filter((partition) => partition === "confirmation");
+      safety.isolatedDistinguishableFalseAdvances += candidate.summary.falseAdvanceCount;
+      safety.isolatedAmbiguousAdvances += candidate.summary.ambiguousAdvanceCount;
+
+      book.apply("safety-isolated-false-advance", partitions);
+      if (candidate.summary.falseAdvanceCount > 0) {
+        // The ambiguous cases are excluded by construction: an octave-related
+        // omission is classified ambiguous before it can reach this count, so
+        // every fixture named here is one the matcher could have distinguished.
+        const traceIds = renderer.cases
+          .filter((result) => !result.expectedCorrect &&
+            !result.mathematicallyAmbiguous &&
+            outcomeFor(result, profileId).advanced)
+          .map(({ traceId }) => traceId);
+        book.fail("safety-isolated-false-advance", {
+          domainIds: [key, ...traceIds],
+          baselineValue: baseline.summary.falseAdvanceCount,
+          candidateValue: candidate.summary.falseAdvanceCount,
+          explanation: `${profileId} advanced ${candidate.summary.falseAdvanceCount} ` +
+            `distinguishable-wrong ${key} fixture(s) (${traceIds.join(", ")}). A dedicated ` +
+            "wrong-note, extra-note, or omitted-bass fixture must never advance.",
+        });
+      }
+
+      // The release floors are absolute counts against the frozen corpus, so a
+      // corpus of another size leaves them unapplied rather than rescaled.
+      const gate = LISTEN_ISOLATED_RELEASE_GATE[key];
+      const releasable = releasePartitions.length === partitions.length;
+      if (releasable && renderer.correctTrialCount === gate.correctTrialCount) {
+        book.apply("release-isolated-recognition", releasePartitions);
+        if (candidate.correctAdvanceCount < gate.minimumCorrectAdvances) {
+          book.fail("release-isolated-recognition", {
+            domainIds: [key, ...(candidate.deltaFromBaseline?.lostCorrectTraceIds ?? [])],
+            baselineValue: baseline.correctAdvanceCount,
+            candidateValue: candidate.correctAdvanceCount,
+            explanation: `${profileId} advanced ${candidate.correctAdvanceCount} of ` +
+              `${renderer.correctTrialCount} correct ${key} fixtures, below the fixed floor of ` +
+              `${gate.minimumCorrectAdvances}.`,
+          });
+        }
+      }
+      if (
+        releasable &&
+        candidate.courseClearCorrectTrialCount === gate.courseClearCorrectTrialCount
+      ) {
+        book.apply("release-isolated-course-clear", releasePartitions);
+        if (candidate.courseClearAdvanceCount < gate.minimumCourseClearAdvances) {
+          book.fail("release-isolated-course-clear", {
+            domainIds: [key],
+            baselineValue: baseline.courseClearAdvanceCount,
+            candidateValue: candidate.courseClearAdvanceCount,
+            explanation: `${profileId} advanced ${candidate.courseClearAdvanceCount} of ` +
+              `${candidate.courseClearCorrectTrialCount} correct Course Clear ${key} fixtures, ` +
+              `below the fixed floor of ${gate.minimumCourseClearAdvances}.`,
+          });
+        }
+      }
+      if (releasable) {
+        book.apply("release-isolated-latency", releasePartitions);
+        const candidateP95 = candidate.summary.p95OnsetToAdvanceMs;
+        const baselineP95 = baseline.summary.p95OnsetToAdvanceMs;
+        if (candidateP95 === null) {
+          book.fail("release-isolated-latency", {
+            domainIds: [key],
+            baselineValue: baselineP95,
+            candidateValue: null,
+            explanation: `${profileId} advanced no correct ${key} fixture, so it has no ` +
+              "onset-to-advance percentile to compare against the 400 ms limit.",
+          });
+        } else if (candidateP95 >= LISTEN_ISOLATED_LATENCY_LIMIT_MS) {
+          book.fail("release-isolated-latency", {
+            domainIds: [key],
+            baselineValue: baselineP95,
+            candidateValue: candidateP95,
+            explanation: `${profileId} reached a ${key} p95 onset-to-advance latency of ` +
+              `${candidateP95} ms, at or above the ${LISTEN_ISOLATED_LATENCY_LIMIT_MS} ms limit.`,
+          });
+        } else if (
+          baselineP95 !== null &&
+          candidateP95 > baselineP95 + LISTEN_LATENCY_REGRESSION_TOLERANCE_MS
+        ) {
+          book.fail("release-isolated-latency", {
+            domainIds: [key],
+            baselineValue: baselineP95,
+            candidateValue: candidateP95,
+            explanation: `${profileId} raised the ${key} p95 onset-to-advance latency from ` +
+              `${baselineP95} ms to ${candidateP95} ms, more than the ` +
+              `${LISTEN_LATENCY_REGRESSION_TOLERANCE_MS} ms decoder hop that separates a moved ` +
+              "percentile from an unmoved one.",
+          });
+        }
+      }
+    }
+  }
+
+  /* The continuous-sequence corpus, which the sweeps have already read. */
+  let sequenceLateAdvance: ListenLateAdvanceDiagnostics | null = null;
+  if (sequence) {
+    const orderedNetByFamily = new Map<string, number>();
+    const independentNetByFamily = new Map<string, number>();
+    let orderedNetTotal = 0;
+    let independentNetTotal = 0;
+    const sequenceRuns: ListenSequenceRunResult[] = [];
+    for (const renderer of sequence.renderers) {
+      const key = renderer.rendererKey;
+      const candidate = sequenceSummaryFor(renderer, profileId);
+      const baseline = sequenceSummaryFor(renderer, baselineProfileId);
+      const delta = candidate.deltaFromBaseline;
+      if (!delta) {
+        throw new Error(`The sequence ${key} matrix reports no baseline delta for ${profileId}.`);
+      }
+      sequenceRuns.push(...renderer.cases.map((result) => sequenceRunFor(result, profileId)));
+      // Counted over every row rather than over the dedicated families, so a
+      // wrong advance in an ordinary passage — or a diagnosed one the candidate
+      // reproduces unchanged — is never reported as a corpus without one.
+      safety.sequenceFalseAdvances += candidate.traceSafety.falseAdvanceCount;
+      safety.sequenceSkippedAdvances += candidate.traceSafety.skippedAdvanceCount;
+      safety.sequenceDuplicateAdvances += candidate.traceSafety.duplicateAdvanceCount;
+      // The carried-bass rule is defined against its own fixture, so this one
+      // total stays with the summary that knows which passage that is.
+      safety.sequenceIncompleteCarriedBassAdvances += candidate.safety.incompleteCarriedBassAdvances;
+      for (const traceId of delta.regressedOrderedAdvanceTraceIds) {
+        regressedSequenceTraceIds.add(traceId);
+      }
+
+      // The dedicated safety families gate rather than score, and they gate at
+      // every speed: a profile that is safe on average is not safe.
+      const partitions = [...new Set(renderer.cases.map(({ partition }) => partition))];
+      const safetyPartitions = [...new Set(renderer.cases
+        .filter(({ scoreEligible }) => !scoreEligible)
+        .map(({ partition }) => partition))];
+      book.apply("safety-sequence-dedicated-families", safetyPartitions);
+      for (const speed of candidate.safety.speeds) {
+        const classified: Array<[string, number]> = [
+          ["false", speed.falseAdvanceCount],
+          ["skipped", speed.skippedAdvanceCount],
+          ["duplicate", speed.duplicateAdvanceCount],
+          ["incomplete-carried-bass", speed.incompleteCarriedBassAdvances],
+        ];
+        const unsafe = classified.filter(([, count]) => count > 0);
+        if (unsafe.length === 0) continue;
+        const baselineSpeed = baseline.safety.speeds
+          .find(({ intervalMs }) => intervalMs === speed.intervalMs);
+        const total = unsafe.reduce((sum, [, count]) => sum + count, 0);
+        book.fail("safety-sequence-dedicated-families", {
+          domainIds: [`${key}@${speed.intervalMs.toFixed(2)}ms`],
+          baselineValue: baselineSpeed === undefined
+            ? null
+            : baselineSpeed.falseAdvanceCount + baselineSpeed.skippedAdvanceCount +
+              baselineSpeed.duplicateAdvanceCount + baselineSpeed.incompleteCarriedBassAdvances,
+          candidateValue: total,
+          explanation: `${profileId} produced ${unsafe.map(([label, count]) => `${count} ${label}`)
+            .join(", ")} advance(s) in the dedicated ${key} safety families at ` +
+            `${speed.intervalMs.toFixed(2)} ms. These counts must be zero at every speed.`,
+        });
+      }
+
+      // Every row, not only the dedicated families: an ordinary passage can
+      // advance a wrong target too, and the family-scoped summary never sees it.
+      safety.sequenceIntroducedUnsafeTraceIds.push(
+        ...candidate.traceSafety.introducedUnsafeTraceIds,
+      );
+      safety.sequenceWorsenedUnsafeTraceIds.push(...candidate.traceSafety.worsenedUnsafeTraceIds);
+      book.apply("safety-sequence-introduced-advance", partitions);
+      const unsafeTotal = (run: ListenSequenceRunResult) => run.summary.falseAdvanceCount +
+        run.summary.skippedAdvanceCount + run.summary.duplicateAdvanceCount;
+      for (const { traceId, reasons } of candidate.traceSafety.reasons) {
+        const row = renderer.cases.find((result) => result.traceId === traceId);
+        book.fail("safety-sequence-introduced-advance", {
+          domainIds: [key, traceId],
+          baselineValue: row ? unsafeTotal(sequenceRunFor(row, baselineProfileId)) : null,
+          candidateValue: row ? unsafeTotal(sequenceRunFor(row, profileId)) : null,
+          explanation: `${profileId} is less safe than ${baselineProfileId} on the identical ` +
+            `${key} trace ${traceId}: ${reasons.join("; ")}.`,
+        });
+      }
+
+      const scoredPartitions = [...new Set(renderer.cases
+        .filter(({ scoreEligible }) => scoreEligible)
+        .map(({ partition }) => partition))];
+      book.apply("consistency-sequence-speed-recognition", scoredPartitions);
+      for (const speed of delta.bySpeed) {
+        if (speed.independentMatchCount >= 0) continue;
+        const candidateSpeed = candidate.bySpeed
+          .find(({ intervalMs }) => intervalMs === speed.intervalMs);
+        const baselineSpeed = baseline.bySpeed
+          .find(({ intervalMs }) => intervalMs === speed.intervalMs);
+        book.fail("consistency-sequence-speed-recognition", {
+          domainIds: [`${key}@${speed.intervalMs.toFixed(2)}ms`],
+          baselineValue: baselineSpeed?.totals.independentMatchCount ?? null,
+          candidateValue: candidateSpeed?.totals.independentMatchCount ?? null,
+          explanation: `${profileId} lost ${Math.abs(speed.independentMatchCount)} independent ` +
+            `recognition event(s) at ${speed.intervalMs.toFixed(2)} ms under ${key}. Independent ` +
+            "recognition may not decrease at any speed.",
+        });
+      }
+
+      book.apply("consistency-sequence-ordered-progress", scoredPartitions);
+      if (delta.orderedAdvanceCount < 0) {
+        book.fail("consistency-sequence-ordered-progress", {
+          domainIds: [key, ...delta.regressedOrderedAdvanceTraceIds],
+          baselineValue: baseline.totals.orderedAdvanceCount,
+          candidateValue: candidate.totals.orderedAdvanceCount,
+          explanation: `${profileId} lost ${Math.abs(delta.orderedAdvanceCount)} ordered advance(s) ` +
+            `under ${key}. Ordered advancement must hold under each renderer separately, so a gain ` +
+            "elsewhere cannot offset it.",
+        });
+      }
+      if (delta.completePassageCount < 0) {
+        book.fail("consistency-sequence-ordered-progress", {
+          domainIds: [key, ...delta.lostCompletePassageTraceIds],
+          baselineValue: baseline.totals.completePassageCount,
+          candidateValue: candidate.totals.completePassageCount,
+          explanation: `${profileId} completed ${Math.abs(delta.completePassageCount)} fewer ` +
+            `passage(s) under ${key} (${delta.lostCompletePassageTraceIds.join(", ")}).`,
+        });
+      }
+
+      book.apply("consistency-sequence-latency", scoredPartitions);
+      const candidateP95 = candidate.totals.p95OrderedAdvanceLatencyMs;
+      const baselineP95 = baseline.totals.p95OrderedAdvanceLatencyMs;
+      if (
+        candidateP95 !== null &&
+        baselineP95 !== null &&
+        candidateP95 > baselineP95 + LISTEN_LATENCY_REGRESSION_TOLERANCE_MS
+      ) {
+        book.fail("consistency-sequence-latency", {
+          domainIds: [key],
+          baselineValue: baselineP95,
+          candidateValue: candidateP95,
+          explanation: `${profileId} raised the ${key} p95 ordered-advance latency from ` +
+            `${baselineP95} ms to ${candidateP95} ms, more than one ` +
+            `${LISTEN_LATENCY_REGRESSION_TOLERANCE_MS} ms decoder hop.`,
+        });
+      }
+
+      // Signed, so a family that gains under one renderer and loses the same
+      // ground under the other nets out instead of counting as an improvement.
+      orderedNetTotal += delta.orderedAdvanceCount;
+      independentNetTotal += delta.independentMatchCount;
+      for (const family of delta.byFamily) {
+        orderedNetByFamily.set(
+          family.family,
+          (orderedNetByFamily.get(family.family) ?? 0) + family.orderedAdvanceCount,
+        );
+        independentNetByFamily.set(
+          family.family,
+          (independentNetByFamily.get(family.family) ?? 0) + family.independentMatchCount,
+        );
+      }
+    }
+    sequenceLateAdvance = listenLateAdvanceDiagnostics(sequenceRuns);
+
+    /*
+     * A claimed improvement must be broad, and it must be recognition rather
+     * than propagation. Both tests read net per-family deltas summed across
+     * renderers, because a family that gains under Direct and loses the same
+     * ground under Tone has not improved anywhere.
+     *
+     * An improved family is one whose net ordered advances or net independent
+     * recognition rose. The claim being tested is whichever of those the
+     * candidate actually makes, so a candidate whose ordered progress is flat
+     * but which recognizes more events is still held to the breadth rule.
+     *
+     * Cascade amplification is disproved by evidence in the same place as the
+     * claim: at least one family whose ordered advances rose must also have
+     * recognized more events independently. Independent recognition is measured
+     * per event without regard to whether the playhead had reached it, so it
+     * cannot be produced by an earlier recovery unblocking later targets. An
+     * independent gain in some other family would not disprove anything about
+     * the family whose ordered count moved, which is why the two sets are
+     * intersected rather than merely both being non-empty.
+     */
+    const scoredPartitions = [...new Set(sequence.renderers.flatMap((renderer) => renderer.cases
+      .filter(({ scoreEligible }) => scoreEligible)
+      .map(({ partition }) => partition)))];
+    book.apply("consistency-sequence-family-breadth", scoredPartitions);
+    const orderedImprovedFamilies = [...orderedNetByFamily]
+      .filter(([, net]) => net > 0).map(([family]) => family).sort();
+    const independentImprovedFamilies = new Set([...independentNetByFamily]
+      .filter(([, net]) => net > 0).map(([family]) => family));
+    const improvedFamilies = [...new Set([
+      ...orderedImprovedFamilies,
+      ...independentImprovedFamilies,
+    ])].sort();
+    if (orderedNetTotal > 0 || independentNetTotal > 0) {
+      if (improvedFamilies.length < LISTEN_FAMILY_BREADTH_MINIMUM) {
+        book.fail("consistency-sequence-family-breadth", {
+          domainIds: improvedFamilies,
+          baselineValue: LISTEN_FAMILY_BREADTH_MINIMUM,
+          candidateValue: improvedFamilies.length,
+          explanation: `${profileId} improved on ${improvedFamilies.length} sequence family ` +
+            `(${improvedFamilies.join(", ") || "none"}) once each family is netted across both ` +
+            `renderers. An improvement must be present in more than one family.`,
+        });
+      }
+      const corroborated = orderedImprovedFamilies
+        .filter((family) => independentImprovedFamilies.has(family));
+      if (orderedNetTotal > 0 && corroborated.length === 0) {
+        book.fail("consistency-sequence-family-breadth", {
+          domainIds: orderedImprovedFamilies,
+          baselineValue: 1,
+          candidateValue: 0,
+          explanation: `${profileId} gained ${orderedNetTotal} ordered advance(s), but no family ` +
+            `whose ordered advances rose (${orderedImprovedFamilies.join(", ") || "none"}) also ` +
+            "recognized more events independently. The gain is therefore cascade amplification " +
+            "following an earlier recovery rather than better recognition.",
+        });
+      }
+    }
+  }
+
+  /* The dynamics and articulation corpora, which the manifest splits. */
+  let dynamicsLateAdvance: ListenLateAdvanceDiagnostics | null = null;
+  if (dynamics) {
+    const dynamicsRuns: ListenSequenceRunResult[] = [];
+    for (const renderer of dynamics.renderers) {
+      const key = renderer.rendererKey;
+      const candidate = dynamicsSummaryFor(renderer, profileId);
+      const baseline = dynamicsSummaryFor(renderer, baselineProfileId);
+      dynamicsRuns.push(...renderer.cases.map((result) => dynamicsRunFor(result, profileId)));
+      safety.dynamicsIntroducedUnsafeTraceIds.push(...candidate.safety.introducedUnsafeTraceIds);
+      safety.dynamicsWorsenedUnsafeTraceIds.push(...candidate.safety.worsenedUnsafeTraceIds);
+      safety.dynamicsClearedUnsafeTraceIds.push(...candidate.safety.clearedUnsafeTraceIds);
+
+      const partitions = [...new Set(renderer.cases.map(({ partition }) => partition))];
+      book.apply("safety-dynamics-introduced-advance", partitions);
+      // Every worsened row is named, including one the baseline already advanced
+      // unsafely: a row that was unsafe before cannot become unsafe again, so
+      // asking only whether it is unsafe would report an added event as no change.
+      for (const { traceId, reasons } of candidate.safety.unsafeReasons) {
+        const row = renderer.cases.find((result) => result.traceId === traceId);
+        const unsafeTotal = (run: ListenSequenceRunResult) => run.summary.falseAdvanceCount +
+          run.summary.skippedAdvanceCount + run.summary.duplicateAdvanceCount;
+        book.fail("safety-dynamics-introduced-advance", {
+          domainIds: [key, traceId],
+          baselineValue: row ? unsafeTotal(dynamicsRunFor(row, baselineProfileId)) : null,
+          candidateValue: row ? unsafeTotal(dynamicsRunFor(row, profileId)) : null,
+          explanation: `${profileId} is less safe than ${baselineProfileId} on the identical ` +
+            `${key} run ${traceId}: ${reasons.join("; ")}.`,
+        });
+      }
+
+      for (const group of candidate.groups) {
+        const baselineGroup = baseline.groups.find((entry) => entry.key === group.key);
+        const delta = group.deltaFromBaseline;
+        if (!delta) continue;
+        // A group that spans both partitions is quoted by neither gate: the leaf
+        // rows below it are single-partition and carry the same evidence.
+        const code = group.evidenceRole === "confirmation"
+          ? "release"
+          : group.evidenceRole === "discovery"
+          ? "consistency"
+          : null;
+        if (code === null) continue;
+        if (group.kind === "piano-partition") {
+          const gateCode = `${code}-dynamics-piano-recognition` as ListenProfileGateCode;
+          book.apply(gateCode, group.partitions);
+          if (delta.independentMatchCount < 0) {
+            book.fail(gateCode, {
+              domainIds: [key, group.key],
+              baselineValue: baselineGroup?.totals.independentMatchCount ?? null,
+              candidateValue: group.totals.independentMatchCount,
+              explanation: `${profileId} lost ${Math.abs(delta.independentMatchCount)} independent ` +
+                `recognition event(s) on ${group.label} under ${key}. Each renderer and piano ` +
+                "aggregate must preserve or improve independent recognition.",
+            });
+          }
+          continue;
+        }
+        if (!DYNAMICS_LEAF_GROUP_KINDS.includes(group.kind)) continue;
+        const lossKey = listenProfileLayerLossKey(key, group.key);
+        // A waiver excuses this candidate on this row, and only while the loss
+        // stays within the one that was reviewed. A larger loss is a loss nobody
+        // has looked at, whatever was written about the smaller one.
+        const waiver = reviewedLayerLosses.get(`${profileId}/${lossKey}`);
+        const reviewed = waiver !== undefined &&
+          delta.independentMatchCount >= waiver.reviewedIndependentMatchDelta;
+        if (delta.independentMatchCount < 0 || delta.orderedAdvanceCount < 0) {
+          // Recorded whether or not it fails: an average must never be the only
+          // place a single layer's loss appears.
+          layerLosses.push({
+            rendererKey: key,
+            groupKey: group.key,
+            label: group.label,
+            partitions: group.partitions,
+            evidenceRole: group.evidenceRole,
+            independentMatchDelta: delta.independentMatchCount,
+            orderedAdvanceDelta: delta.orderedAdvanceCount,
+            traceIds: group.traceIds,
+            reviewed,
+          });
+        }
+        const gateCode = `${code}-dynamics-layer-loss` as ListenProfileGateCode;
+        book.apply(gateCode, group.partitions);
+        if (
+          delta.independentMatchCount < -LISTEN_LAYER_INDEPENDENT_LOSS_ALLOWANCE &&
+          !reviewed
+        ) {
+          book.fail(gateCode, {
+            domainIds: [key, group.key, ...group.traceIds],
+            baselineValue: baselineGroup?.totals.independentMatchCount ?? null,
+            candidateValue: group.totals.independentMatchCount,
+            explanation: `${profileId} lost ${Math.abs(delta.independentMatchCount)} independent ` +
+              `recognition event(s) on ${group.label} under ${key}, more than the ` +
+              `${LISTEN_LAYER_INDEPENDENT_LOSS_ALLOWANCE} a single row may lose without an ` +
+              "explicit reviewed explanation" +
+              (waiver
+                ? `. The reviewed explanation for ${lossKey} covers a loss of ` +
+                  `${waiver.reviewedIndependentMatchDelta}, which this loss exceeds.`
+                : ` naming ${profileId} and ${lossKey}.`),
+          });
+        }
+      }
+    }
+    dynamicsLateAdvance = listenLateAdvanceDiagnostics(dynamicsRuns);
+  }
+
+  /* The committed regressions, which are audio-free and always replayable. */
+  const regressions = replayListenSafetyRegressions(profile, profileId);
+  safety.regressionWorseThanBaselineCount = regressions.worseThanBaselineCount;
+  safety.regressionDeviationCount = regressions.deviationCount;
+  book.apply("safety-committed-regression", ["regression-only"]);
+  for (const failure of listenCommittedRegressionFailures(
+    regressions,
+    profileId,
+    baselineProfileId,
+  )) {
+    book.fail("safety-committed-regression", failure);
+  }
+
+  const gates = book.outcomes();
+  const failed = gates.filter((gate) => gate.applied && !gate.passed);
+  const failuresIn = (role: ListenProfileGateRole) => failed
+    .filter((gate) => gate.role === role)
+    .reduce((total, gate) => total + gate.failures.length, 0);
+  const eligibility: ListenProfileEligibility = failed.length > 0
+    ? "rejected"
+    : evidenceComplete
+    ? "eligible"
+    : "incomplete-evidence";
+  return {
+    profileId,
+    profile,
+    gates,
+    failedGateCodes: failed.map(({ code }) => code),
+    replayIntegrityFailureCount: failuresIn("replay-integrity"),
+    safetyFailureCount: failuresIn("safety"),
+    releaseFailureCount: failuresIn("release"),
+    discoveryConsistencyFailureCount: failuresIn("discovery-consistency"),
+    safety,
+    lateAdvance: { sequence: sequenceLateAdvance, dynamics: dynamicsLateAdvance },
+    layerLosses,
+    regressedSequenceTraceIds: [...regressedSequenceTraceIds].sort(),
+    eligibility,
+    eligible: eligibility === "eligible",
+  };
+}
+
+/**
+ * The one deterministic eligibility decision over the frozen candidate matrix.
+ *
+ * It reads measured results only. It selects no parameter value, ranks nothing,
+ * and never touches the production default: its entire output is which frozen
+ * candidates remain eligible and, for the rest, exactly which gate rejected them
+ * on which rows.
+ */
+export function evaluateListenProfileValidationGates(
+  input: ListenProfileValidationDomainResults & {
+    /**
+     * Leaf rows whose larger-than-allowed loss has an explicit reviewed
+     * explanation. Each entry names the candidate it was reviewed for, the row,
+     * the loss reviewed, and the reasoning. Every field is validated against the
+     * measured matrix, so a stale or mistyped waiver fails loudly rather than
+     * silently ceasing to excuse the row it was written for.
+     *
+     * The frozen confirmation run declares none: a waiver is a decision taken
+     * after seeing a measured loss, which by definition cannot precede the run.
+     */
+    reviewedLayerLosses?: readonly ListenReviewedLayerLoss[];
+  },
+): ListenProfileValidationGateReport {
+  assertComparableDomains(input);
+  const reference = input.isolated ?? input.sequence ?? input.dynamics;
+  if (!reference) throw new Error("A gate report needs at least one measured validation domain.");
+  const baselineProfileId = reference.baselineProfileId;
+  const candidateProfileIds = reference.candidateProfileIds;
+  const profiles = listenValidationProfileIdentities([baselineProfileId, ...candidateProfileIds]);
+  const reviewedLayerLosses = resolveReviewedLayerLosses(
+    input.reviewedLayerLosses ?? [],
+    candidateProfileIds,
+    input.dynamics,
+  );
+  const reasons = incompleteEvidenceReasons(input);
+  const evidenceComplete = reasons.length === 0;
+  const candidates = profiles
+    .filter(({ profileId }) => profileId !== baselineProfileId)
+    .map((identity) => evaluateCandidateGates(
+      identity,
+      baselineProfileId,
+      input,
+      reviewedLayerLosses,
+      evidenceComplete,
+    ));
+  const eligibleProfileIds = candidates
+    .filter(({ eligible }) => eligible)
+    .map(({ profileId }) => profileId);
+  const code: ListenProfileGateRecommendationCode = eligibleProfileIds.length > 0
+    ? "eligible-candidates"
+    : evidenceComplete
+    ? "no-safe-candidate"
+    : "incomplete-evidence";
+  return {
+    baselineProfileId,
+    candidateProfileIds,
+    profiles,
+    gates: LISTEN_PROFILE_GATES,
+    domains: listenProfileValidationDomainIdentities(input),
+    evidenceComplete,
+    incompleteEvidenceReasons: reasons,
+    reviewedLayerLosses: [...reviewedLayerLosses.values()],
+    candidates,
+    eligibleProfileIds,
+    recommendation: {
+      code,
+      eligibleProfileIds,
+      explanation: code === "eligible-candidates"
+        ? `${eligibleProfileIds.join(", ")} passed every applied gate over the complete frozen ` +
+          `matrix. Selection among them is a separate decision, and ${baselineProfileId} remains ` +
+          "the production default until it is taken."
+        : code === "no-safe-candidate"
+        ? `No frozen candidate passed every gate, so ${baselineProfileId} remains the production ` +
+          "default. Each candidate's failed gate codes name the rows that rejected it."
+        : "This run did not measure the complete frozen matrix, so it can reject a candidate but " +
+          `cannot clear one: ${reasons.join(" ")}`,
+    },
+  };
+}
+
+/** Everything one unified validation command measured, and what it decided. */
+export interface ListenProfileValidationResult {
+  isolated: ListenIsolatedProfileValidationResult;
+  sequence: ListenSequenceProfileValidationResult;
+  dynamics: ListenDynamicsProfileValidationResult;
+  gates: ListenProfileValidationGateReport;
+}
+
+/**
+ * Measures all three domains against the frozen candidates and gates them once.
+ *
+ * The three matrices keep their own capture, parity, and identity rules; this
+ * function only runs them in one pass and hands the results to the gate. It
+ * therefore cannot reach a verdict the three separate commands would not, which
+ * is the point: the unified command is the decision, not a fourth measurement.
+ */
+export async function evaluateListenProfileValidation(options: {
+  captureIsolated: ListenIsolatedValidationCaptureFn;
+  captureSequence: ListenSequenceValidationCaptureFn;
+  captureDynamics: ListenDynamicsValidationCaptureFn;
+  manifest?: ListenTraceManifest;
+  candidateProfileIds?: readonly ListenMatcherProfileId[];
+  rendererKeys?: readonly ListenTraceRendererKey[];
+  intervalsMs?: readonly number[];
+  suites?: readonly ListenDynamicsValidationSuite[];
+  reviewedLayerLosses?: readonly ListenReviewedLayerLoss[];
+  onProgress?: (completed: number, total: number, label: string) => void;
+}): Promise<ListenProfileValidationResult> {
+  const manifest = options.manifest ?? LISTEN_TRACE_MANIFEST;
+  assertValidListenTraceManifest(manifest);
+  const rendererKeys = options.rendererKeys ?? ["direct", "tone"];
+  const suites = options.suites ?? LISTEN_DYNAMICS_VALIDATION_SUITES;
+  const onProgress = options.onProgress ?? (() => undefined);
+  // The corpora are joined before anything is captured, so the command reports
+  // one honest total instead of restarting its progress three times.
+  const isolatedCount = listenIsolatedValidationCases(manifest, rendererKeys).length;
+  const sequenceCount = listenSequenceValidationCases(
+    manifest,
+    rendererKeys,
+    options.intervalsMs,
+  ).length;
+  const dynamicsCount = listenDynamicsValidationCases(manifest, rendererKeys, suites).length;
+  const total = isolatedCount + sequenceCount + dynamicsCount;
+  const phase = (offset: number) => (completed: number, _total: number, label: string) =>
+    onProgress(offset + completed, total, label);
+  const isolated = await evaluateListenIsolatedProfileValidation({
+    capture: options.captureIsolated,
+    manifest,
+    candidateProfileIds: options.candidateProfileIds,
+    rendererKeys,
+    onProgress: phase(0),
+  });
+  const sequence = await evaluateListenSequenceProfileValidation({
+    capture: options.captureSequence,
+    manifest,
+    candidateProfileIds: options.candidateProfileIds,
+    rendererKeys,
+    intervalsMs: options.intervalsMs,
+    onProgress: phase(isolatedCount),
+  });
+  const dynamics = await evaluateListenDynamicsProfileValidation({
+    capture: options.captureDynamics,
+    manifest,
+    candidateProfileIds: options.candidateProfileIds,
+    rendererKeys,
+    suites,
+    onProgress: phase(isolatedCount + sequenceCount),
+  });
+  return {
+    isolated,
+    sequence,
+    dynamics,
+    gates: evaluateListenProfileValidationGates({
+      isolated,
+      sequence,
+      dynamics,
+      reviewedLayerLosses: options.reviewedLayerLosses,
+    }),
+  };
+}
+
+/**
+ * Runs the complete production-candidate matrix in the browser.
+ *
+ * All three corpora share one inference session, so the model is loaded once and
+ * every trace in the run is decoded by the same one.
+ */
+export function runListenProfileValidation(
+  onProgress: (completed: number, total: number, label: string) => void = () => undefined,
+  rendererKeys: readonly ListenTraceRendererKey[] = ["direct", "tone"],
+  intervalsMs?: readonly number[],
+  suites: readonly ListenDynamicsValidationSuite[] = LISTEN_DYNAMICS_VALIDATION_SUITES,
+): Promise<ListenProfileValidationResult> {
+  return withOnlineAmtBenchmarkSession((session) => evaluateListenProfileValidation({
+    captureIsolated: (validationCase) =>
+      captureListenIsolatedValidationTrace(validationCase, session),
+    captureSequence: (validationCase) =>
+      captureListenSequenceValidationTrace(validationCase, session),
+    captureDynamics: (validationCase) =>
+      captureListenDynamicsValidationTrace(validationCase, session),
+    rendererKeys,
+    intervalsMs,
+    suites,
+    onProgress,
+  }));
+}
+
+/**
+ * The exported shape of a unified validation run.
+ *
+ * The gate report is exported whole, because it carries the domain identities,
+ * the profile values, the safety counts, and every gate reason a release
+ * decision has to quote. Beside it each domain contributes its per-profile
+ * scores; the per-fixture dumps stay in the three domain commands, which is
+ * where a diagnosis reads them.
+ */
+export function conciseListenProfileValidationResult(result: ListenProfileValidationResult) {
+  return {
+    gates: result.gates,
+    isolated: {
+      manifest: result.isolated.manifest,
+      partitions: result.isolated.partitions,
+      renderers: result.isolated.renderers.map((renderer) => ({
+        rendererKey: renderer.rendererKey,
+        renderer: renderer.renderer,
+        caseCount: renderer.caseCount,
+        correctTrialCount: renderer.correctTrialCount,
+        profiles: renderer.profiles.map((profile) => ({
+          profileId: profile.profileId,
+          correctAdvanceCount: profile.correctAdvanceCount,
+          courseClearCorrectTrialCount: profile.courseClearCorrectTrialCount,
+          courseClearAdvanceCount: profile.courseClearAdvanceCount,
+          distinguishableFalseAdvanceCount: profile.summary.falseAdvanceCount,
+          ambiguousAdvanceCount: profile.summary.ambiguousAdvanceCount,
+          p95OnsetToAdvanceMs: profile.summary.p95OnsetToAdvanceMs,
+          acceptance: profile.summary.acceptance,
+          byCaseKind: profile.byCaseKind,
+          deltaFromBaseline: profile.deltaFromBaseline,
+        })),
+      })),
+    },
+    sequence: {
+      manifest: result.sequence.manifest,
+      evidenceRole: result.sequence.evidenceRole,
+      partitions: result.sequence.partitions,
+      renderers: result.sequence.renderers.map((renderer) => ({
+        rendererKey: renderer.rendererKey,
+        renderer: renderer.renderer,
+        scoredCaseCount: renderer.scoredCaseCount,
+        safetyCaseCount: renderer.safetyCaseCount,
+        intervalsMs: renderer.intervalsMs,
+        families: renderer.families,
+        profiles: renderer.profiles.map((profile) => ({
+          profileId: profile.profileId,
+          totals: profile.totals,
+          regressionTotals: profile.regressionTotals,
+          bySpeed: profile.bySpeed,
+          byFamily: profile.byFamily,
+          safety: profile.safety,
+          traceSafety: profile.traceSafety,
+          deltaFromBaseline: profile.deltaFromBaseline,
+        })),
+      })),
+    },
+    dynamics: {
+      manifest: result.dynamics.manifest,
+      evidenceRole: result.dynamics.evidenceRole,
+      partitions: result.dynamics.partitions,
+      suites: result.dynamics.suites,
+      renderers: result.dynamics.renderers.map((renderer) => ({
+        rendererKey: renderer.rendererKey,
+        renderer: renderer.renderer,
+        scoredCaseCount: renderer.scoredCaseCount,
+        regressionCaseCount: renderer.regressionCaseCount,
+        pianos: renderer.pianos,
+        profiles: renderer.profiles.map((profile) => ({
+          profileId: profile.profileId,
+          groups: profile.groups,
+          equalPiano: profile.equalPiano,
+          regressionTotals: profile.regressionTotals,
+          safety: {
+            runCount: profile.safety.runCount,
+            falseAdvanceCount: profile.safety.falseAdvanceCount,
+            skippedAdvanceCount: profile.safety.skippedAdvanceCount,
+            duplicateAdvanceCount: profile.safety.duplicateAdvanceCount,
+            lateAdvanceCount: profile.safety.lateAdvanceCount,
+            introducedUnsafeTraceIds: profile.safety.introducedUnsafeTraceIds,
+            worsenedUnsafeTraceIds: profile.safety.worsenedUnsafeTraceIds,
+            clearedUnsafeTraceIds: profile.safety.clearedUnsafeTraceIds,
+            unsafeReasons: profile.safety.unsafeReasons,
+            passed: profile.safety.passed,
+          },
+          deltaFromBaseline: profile.deltaFromBaseline,
+        })),
+        regressionCases: renderer.regressionCases,
+      })),
+    },
   };
 }
