@@ -39,11 +39,12 @@ delay are reported per domain beside safety and never as safety.
 
 #### Construction smoke
 
-Measured at Chrome 151.0.7922.169 on Linux, model `online_amt_streaming.onnx`,
-renderers `bundled-piano-web-audio-v1` and `bundled-piano-tone-v2`. Manifest
-version 1, hash `0ed1e71d`; the complete 268-trace isolated corpus with the
-sequence corpus narrowed to 333.33 ms and the dynamics corpus narrowed to the
-articulation suite, so the run is deliberately incomplete evidence.
+Measured at commit `10a32a7`, Chrome 151.0.7922.169 on Linux, model
+`online_amt_streaming.onnx`, renderers `bundled-piano-web-audio-v1` and
+`bundled-piano-tone-v2`. Manifest version 1, hash `0ed1e71d`; the complete
+268-trace isolated corpus with the sequence corpus narrowed to 333.33 ms and the
+dynamics corpus narrowed to the articulation suite, so the run is deliberately
+incomplete evidence.
 
 | Domain | Captured | Renderers | Partitions | Identity |
 | --- | ---: | --- | --- | --- |
