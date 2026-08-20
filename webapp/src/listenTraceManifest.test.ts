@@ -11,6 +11,7 @@ import { PIANO_IDS, pianoDefinition } from "./pianoRegistry";
 import {
   LISTEN_CANDIDATE_METRIC_ORDER,
   LISTEN_DYNAMIC_BANDS,
+  LISTEN_TRACE_CORPUS_HASH,
   LISTEN_TRACE_MANIFEST_CENSUS,
   LISTEN_TRACE_MANIFEST_TRACE_COUNT,
   canonicalListenMetricValue,
@@ -31,7 +32,9 @@ import {
   listenDynamicBand,
   listenIsolatedCaseKind,
   listenTraceDomainMeans,
+  listenTraceCorpusHash,
   listenTraceManifestHash,
+  listenTraceMusicalInputHash,
   listenTraceWeightsForPartition,
   listenTracesInPartition,
   listenTracesInSuite,
@@ -456,6 +459,96 @@ test("pins the manifest, its weights, and the metric order to one hash", () => {
       : trace
   ));
   assert.notEqual(listenTraceManifestHash(renamed), LISTEN_TRACE_MANIFEST_HASH);
+});
+
+test("pins pitches, attack timing, holds, and same-family corpus ordering", () => {
+  const input = {
+    targets: [[60], [62]],
+    attacks: [
+      {
+        targetIndex: 0,
+        scheduledAtMs: 220,
+        expectedAdvance: true,
+        targetStart: null,
+        gainReferenceChordSize: null,
+        notes: [{ midi: 60, attackTimeMs: 220, holdMs: 700 }],
+      },
+      {
+        targetIndex: 1,
+        scheduledAtMs: 720,
+        expectedAdvance: true,
+        targetStart: null,
+        gainReferenceChordSize: null,
+        notes: [{ midi: 62, attackTimeMs: 738, holdMs: 650 }],
+      },
+    ],
+    attackLayers: ["mp", "ff"],
+    durationMs: 1_700,
+    releaseMs: 120,
+  } as const;
+  const digest = listenTraceMusicalInputHash(input);
+  assert.notEqual(listenTraceMusicalInputHash({
+    ...input,
+    targets: [[60], [63]],
+  }), digest, "target pitch");
+  assert.notEqual(listenTraceMusicalInputHash({
+    ...input,
+    attacks: [input.attacks[0], {
+      ...input.attacks[1],
+      notes: [{ ...input.attacks[1].notes[0], midi: 63 }],
+    }],
+  }), digest, "performed pitch");
+  assert.notEqual(listenTraceMusicalInputHash({
+    ...input,
+    attacks: [input.attacks[0], {
+      ...input.attacks[1],
+      scheduledAtMs: 721,
+      notes: [{ ...input.attacks[1].notes[0], attackTimeMs: 739 }],
+    }],
+  }), digest, "attack timing");
+  assert.notEqual(listenTraceMusicalInputHash({
+    ...input,
+    attacks: [input.attacks[0], {
+      ...input.attacks[1],
+      notes: [{ ...input.attacks[1].notes[0], holdMs: 651 }],
+    }],
+  }), digest, "hold duration");
+
+  assert.equal(listenTraceCorpusHash(), LISTEN_TRACE_CORPUS_HASH);
+  assert.equal(summarizeListenTraceManifest().corpusHash, LISTEN_TRACE_CORPUS_HASH);
+  const pitchChanged = mutatedManifest((trace) => (
+    trace.id === "sequence/direct/ascending-scale/500ms"
+      ? { ...trace, musicalInputHash: digest }
+      : trace
+  ));
+  assert.notEqual(listenTraceCorpusHash(pitchChanged), LISTEN_TRACE_CORPUS_HASH);
+  assert.ok(validateListenTraceManifest(pitchChanged).some(({ code }) => code === "corpus-hash"));
+
+  const ascendingId = "sequence/direct/ascending-scale/1000ms";
+  const descendingId = "sequence/direct/descending-scale/1000ms";
+  const ascendingHash = findListenTrace(ascendingId)?.musicalInputHash;
+  const descendingHash = findListenTrace(descendingId)?.musicalInputHash;
+  assert.ok(ascendingHash && descendingHash && ascendingHash !== descendingHash);
+  const sameFamilyReordered = mutatedManifest((trace) => (
+    trace.id === ascendingId
+      ? { ...trace, musicalInputHash: descendingHash! }
+      : trace.id === descendingId
+        ? { ...trace, musicalInputHash: ascendingHash! }
+        : trace
+  ));
+  assert.notEqual(listenTraceCorpusHash(sameFamilyReordered), LISTEN_TRACE_CORPUS_HASH);
+
+  const reorderedTraces = [...LISTEN_TRACE_MANIFEST.traces];
+  const ascendingIndex = reorderedTraces.findIndex(({ id }) => id === ascendingId);
+  const descendingIndex = reorderedTraces.findIndex(({ id }) => id === descendingId);
+  assert.ok(ascendingIndex >= 0 && descendingIndex >= 0);
+  [reorderedTraces[ascendingIndex], reorderedTraces[descendingIndex]] =
+    [reorderedTraces[descendingIndex], reorderedTraces[ascendingIndex]];
+  assert.notEqual(
+    listenTraceCorpusHash({ ...LISTEN_TRACE_MANIFEST, traces: reorderedTraces }),
+    LISTEN_TRACE_CORPUS_HASH,
+    "same-family trace order",
+  );
 });
 
 test("freezes the candidate metric order", () => {

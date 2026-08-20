@@ -1,8 +1,8 @@
 import { spawn } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
-import { basename, join, resolve, sep } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 
 // Measured results are only comparable within one browser build, so the browser
 // stays explicit rather than discovered. CHROME_PATH names it on machines where
@@ -24,6 +24,25 @@ const LISTEN_MULTIDOMAIN_SWEEP_SUMMARY_MODE = CONFIGURATION_FILTER ===
   "listen-matcher-multidomain-sweep-summary";
 const LISTEN_MULTIDOMAIN_SWEEP_MODE = CONFIGURATION_FILTER ===
   "listen-matcher-multidomain-sweep" || LISTEN_MULTIDOMAIN_SWEEP_SUMMARY_MODE;
+// Full evidence commands can archive their complete JSON directly. The output
+// environment variable is honored for every command. Task 08's positional path
+// remains supported; validation matrices also accept a path after their optional
+// corpus-filter argument, including renderer-scoped variants.
+const POSITIONAL_LISTEN_VALIDATION_OUTPUT_FILTERS = new Set([
+  "listen-sequence-profile-validation",
+  "listen-sequence-profile-validation-legacy",
+  "listen-sequence-profile-validation-tone",
+  "listen-dynamics-profile-validation",
+  "listen-dynamics-profile-validation-legacy",
+  "listen-dynamics-profile-validation-tone",
+]);
+const LISTEN_BENCHMARK_OUTPUT_PATH = process.env.LISTEN_BENCHMARK_OUTPUT_PATH ?? (
+  CONFIGURATION_FILTER === "listen-matcher-multidomain-sweep"
+    ? process.argv[4]
+    : POSITIONAL_LISTEN_VALIDATION_OUTPUT_FILTERS.has(CONFIGURATION_FILTER)
+    ? process.argv[5]
+    : undefined
+);
 const LISTEN_PROFILE_VALIDATION_SUMMARY_MODE = CONFIGURATION_FILTER ===
   "listen-profile-validation-summary";
 // The unified production-candidate gate: all three matrices in one pass, then
@@ -707,9 +726,14 @@ async function runConfiguration(configuration) {
         : LISTEN_MULTIDOMAIN_SWEEP_MODE
         ? `(async () => {
             const result = window.listenMatcherMultiDomainSweepResult;
-            const { conciseListenMatcherMultiDomainSweepResult } =
+            const {
+              conciseListenMatcherMultiDomainSweepResult,
+              fullListenMatcherMultiDomainSweepResult,
+            } =
               await import("/src/listenMatcherSweepBenchmark.ts");
-            return conciseListenMatcherMultiDomainSweepResult(result);
+            return ${LISTEN_MULTIDOMAIN_SWEEP_SUMMARY_MODE}
+              ? conciseListenMatcherMultiDomainSweepResult(result)
+              : fullListenMatcherMultiDomainSweepResult(result);
           })()`
         : LISTEN_THRESHOLD_SWEEP_MODE
         ? `(() => {
@@ -1274,6 +1298,7 @@ for (let index = 0; index < selectedConfigurations.length; index += 1) {
           present: domain.present,
           manifestVersion: domain.manifestVersion,
           manifestHash: domain.manifestHash,
+          manifestCorpusHash: domain.manifestCorpusHash,
           capturedTraceCount: domain.capturedTraceCount,
           rendererKeys: domain.rendererKeys,
           partitions: domain.partitions,
@@ -1340,6 +1365,7 @@ for (let index = 0; index < selectedConfigurations.length; index += 1) {
             bySpeed: profile.bySpeed,
             byFamily: profile.byFamily,
             safety: profile.safety,
+            lateAdvances: profile.lateAdvances,
             deltaFromBaseline: profile.deltaFromBaseline,
           })),
           unsafeAdvances: renderer.unsafeAdvances,
@@ -1753,7 +1779,9 @@ for (let index = 0; index < selectedConfigurations.length; index += 1) {
             `unsafe=${profile.falseAdvanceCount}/${profile.skippedAdvanceCount}/` +
             `${profile.duplicateAdvanceCount} ` +
             `late-at=${profile.lateAdvances
-              .map(({ targetIndex, advancedAtMs }) => `${targetIndex}@${advancedAtMs ?? "n/a"}`)
+              .map(({ targetIndex, advanceTimeMs, sourceAttackIndex }) => (
+                `${targetIndex}@${advanceTimeMs}<-attack${sourceAttackIndex}`
+              ))
               .join(",") || "none"}`,
           );
         }
@@ -1818,8 +1846,25 @@ for (let index = 0; index < selectedConfigurations.length; index += 1) {
     );
   }
 }
-console.log(JSON.stringify(
+const serializedResults = JSON.stringify(
   results,
+  null,
+  LISTEN_DYNAMICS_CONSTANT_MODE || LISTEN_DYNAMICS_MIXED_MODE ? 0 : 2,
+);
+if (LISTEN_BENCHMARK_OUTPUT_PATH) {
+  const outputPath = resolve(LISTEN_BENCHMARK_OUTPUT_PATH);
+  await mkdir(dirname(outputPath), { recursive: true });
+  await writeFile(outputPath, `${serializedResults}\n`, "utf8");
+  console.error(`Archived benchmark result at ${outputPath}`);
+}
+// Do not duplicate the 3.4 MB Task 08 candidate archive on stdout when it was
+// written to a file. Without an output path the non-summary command still emits
+// the full result, while the explicit summary command remains compact.
+const stdoutResults = LISTEN_MULTIDOMAIN_SWEEP_MODE && LISTEN_BENCHMARK_OUTPUT_PATH
+  ? results.map(({ candidateArchive: _candidateArchive, ...summary }) => summary)
+  : results;
+console.log(JSON.stringify(
+  stdoutResults,
   null,
   LISTEN_DYNAMICS_CONSTANT_MODE || LISTEN_DYNAMICS_MIXED_MODE ? 0 : 2,
 ));

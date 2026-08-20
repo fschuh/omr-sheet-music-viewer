@@ -51,11 +51,13 @@ import {
   type ListenSafetySummary,
 } from "./listenSafetyRegression";
 import {
+  DeterministicHasher,
   LISTEN_CANDIDATE_METRIC_ORDER,
   LISTEN_TRACE_MANIFEST,
   assertValidListenTraceManifest,
   listenCandidateParetoFrontier,
   listenTraceDomainMeans,
+  listenTraceCorpusHash,
   listenTraceManifestHash,
   listenTraceWeightsForPartition,
   listenTracesInPartition,
@@ -545,6 +547,7 @@ export interface ListenMultiDomainSweepResult {
   manifest: {
     version: number;
     hash: string;
+    corpusHash: string;
     traceCount: number;
     capturedTraceCount: number;
     scoredTraceCount: number;
@@ -1198,6 +1201,7 @@ export async function evaluateListenMatcherMultiDomainSweep(options: {
     manifest: {
       version: manifest.version,
       hash: listenTraceManifestHash(manifest),
+      corpusHash: listenTraceCorpusHash(manifest),
       traceCount: manifest.traces.length,
       capturedTraceCount: descriptors.length,
       scoredTraceCount: scoredTraceIds.size,
@@ -1295,5 +1299,113 @@ export function conciseListenMatcherMultiDomainSweepResult(result: ListenMultiDo
       .reduce((counts, reason) => counts.set(reason, (counts.get(reason) ?? 0) + 1), new Map<string, number>())]
       .map(([reason, profileCount]) => ({ reason, profileCount }))
       .sort((left, right) => left.reason.localeCompare(right.reason)),
+  };
+}
+
+export interface ListenMultiDomainCandidateArchiveRecord {
+  profile: ListenMatcherSweepProfile;
+  metrics: ListenCandidateMetrics;
+  safetyVerdict: {
+    passed: boolean;
+    rejectionCodes: string[];
+    dedicatedFalseAdvanceCount: number;
+    dedicatedSkippedAdvanceCount: number;
+    dedicatedDuplicateAdvanceCount: number;
+    dedicatedIncompleteCarriedBassAdvances: number;
+    regressionRunFalseAdvanceCount: number;
+    regressionRunSkippedAdvanceCount: number;
+    regressionRunDuplicateAdvanceCount: number;
+    regressionRunLateAdvanceCount: number;
+    discoveryRegressions: ListenMultiDomainSafetyVerdict["discoveryRegressions"];
+    committedRegressionDeviationCount: number;
+    committedRegressionWorseThanBaselineCount: number;
+    committedRegressionPassed: boolean;
+  };
+  totals: ListenMultiDomainProfileResult["totals"];
+}
+
+export interface ListenMultiDomainCandidateArchive {
+  formatVersion: 1;
+  candidateCount: number;
+  digest: {
+    algorithm: "fnv1a-32-canonical-json";
+    value: string;
+  };
+  candidates: ListenMultiDomainCandidateArchiveRecord[];
+}
+
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, entry]) => entry !== undefined)
+    .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0);
+  return `{${entries.map(([key, entry]) => (
+    `${JSON.stringify(key)}:${canonicalJson(entry)}`
+  )).join(",")}}`;
+}
+
+/** Digest recipe pinned by the frozen Task 08 candidate archive. */
+export function listenMultiDomainCandidateArchiveDigest(
+  candidates: readonly ListenMultiDomainCandidateArchiveRecord[],
+): string {
+  const hasher = new DeterministicHasher();
+  // Canonical JSON is already structurally delimited, so preserve the archive's
+  // historical digest by omitting the hasher's field-terminator byte.
+  hasher.text(canonicalJson({ formatVersion: 1, candidates }), false);
+  return hasher.digest;
+}
+
+/**
+ * All evaluated profiles in stable identifier order. This is the Task 08 full
+ * result missing from the original export: every row carries the exact profile,
+ * ranking metrics, pass/reject verdict, rejection codes, and safety counters.
+ */
+export function listenMultiDomainCandidateArchive(
+  result: ListenMultiDomainSweepResult,
+): ListenMultiDomainCandidateArchive {
+  const candidates = [...result.candidates]
+    .sort((left, right) => (
+      left.profile.id < right.profile.id ? -1 : left.profile.id > right.profile.id ? 1 : 0
+    ))
+    .map((candidate): ListenMultiDomainCandidateArchiveRecord => ({
+      profile: { ...candidate.profile },
+      metrics: { ...candidate.metrics },
+      safetyVerdict: {
+        passed: candidate.safety.passed,
+        rejectionCodes: [...candidate.safety.rejectionReasons],
+        dedicatedFalseAdvanceCount: candidate.safety.dedicatedFalseAdvanceCount,
+        dedicatedSkippedAdvanceCount: candidate.safety.dedicatedSkippedAdvanceCount,
+        dedicatedDuplicateAdvanceCount: candidate.safety.dedicatedDuplicateAdvanceCount,
+        dedicatedIncompleteCarriedBassAdvances:
+          candidate.safety.dedicatedIncompleteCarriedBassAdvances,
+        regressionRunFalseAdvanceCount: candidate.safety.regressionRunFalseAdvanceCount,
+        regressionRunSkippedAdvanceCount: candidate.safety.regressionRunSkippedAdvanceCount,
+        regressionRunDuplicateAdvanceCount: candidate.safety.regressionRunDuplicateAdvanceCount,
+        regressionRunLateAdvanceCount: candidate.safety.regressionRunLateAdvanceCount,
+        discoveryRegressions: candidate.safety.discoveryRegressions.map((entry) => ({ ...entry })),
+        committedRegressionDeviationCount: candidate.safety.regressions.deviationCount,
+        committedRegressionWorseThanBaselineCount:
+          candidate.safety.regressions.worseThanBaselineCount,
+        committedRegressionPassed: candidate.safety.regressions.passed,
+      },
+      totals: { ...candidate.totals },
+    }));
+  return {
+    formatVersion: 1,
+    candidateCount: candidates.length,
+    digest: {
+      algorithm: "fnv1a-32-canonical-json",
+      value: listenMultiDomainCandidateArchiveDigest(candidates),
+    },
+    candidates,
+  };
+}
+
+/** Full deterministic browser export; summary mode intentionally uses the concise exporter. */
+export function fullListenMatcherMultiDomainSweepResult(result: ListenMultiDomainSweepResult) {
+  return {
+    ...conciseListenMatcherMultiDomainSweepResult(result),
+    candidateArchive: listenMultiDomainCandidateArchive(result),
   };
 }

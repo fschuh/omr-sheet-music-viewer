@@ -1110,7 +1110,8 @@ export function ListenBenchmarkPage() {
             frozen multi-domain candidates then replay that one retained decoded trace. The
             complete isolated corpus is untouched <code>confirmation</code> evidence, so no
             threshold was selected from these numbers. Manifest{" "}
-            {isolatedValidationResult.manifest.version}/{isolatedValidationResult.manifest.hash},{" "}
+            {isolatedValidationResult.manifest.version}/{isolatedValidationResult.manifest.hash}/
+            {isolatedValidationResult.manifest.corpusHash},{" "}
             {isolatedValidationResult.manifest.capturedTraceCount} traces captured.
           </p>
           <div className="benchmark-table-wrap">
@@ -1301,7 +1302,8 @@ export function ListenBenchmarkPage() {
               single-renderer sweeps have read this corpus, so every row is{" "}
               <code>{sequenceValidationResult.evidenceRole}</code> evidence and confirms nothing.
               The dedicated safety families gate each column instead of scoring it. Manifest{" "}
-              {sequenceValidationResult.manifest.version}/{sequenceValidationResult.manifest.hash},{" "}
+              {sequenceValidationResult.manifest.version}/{sequenceValidationResult.manifest.hash}/
+              {sequenceValidationResult.manifest.corpusHash},{" "}
               {sequenceValidationResult.manifest.capturedTraceCount} passages captured.
             </p>
             <div className="benchmark-table-wrap">
@@ -1584,8 +1586,9 @@ export function ListenBenchmarkPage() {
         {multiDomainSweepResult ? (
           <>
             <p>
-              Manifest version {multiDomainSweepResult.manifest.version}, hash{" "}
-              <code>{multiDomainSweepResult.manifest.hash}</code>:{" "}
+              Manifest version {multiDomainSweepResult.manifest.version}, protocol/corpus hashes{" "}
+              <code>{multiDomainSweepResult.manifest.hash}/
+                {multiDomainSweepResult.manifest.corpusHash}</code>:{" "}
               {multiDomainSweepResult.manifest.capturedTraceCount} traces captured,{" "}
               {multiDomainSweepResult.manifest.scoredTraceCount} scored.{" "}
               {multiDomainSweepResult.profilesRejectedBySafety} /{" "}
@@ -1761,7 +1764,8 @@ export function ListenBenchmarkPage() {
               <code>mixed</code> group is never confirmation. The diagnosed rows gate each
               column instead of scoring it, and late advances are reported apart from safety.
               Manifest {dynamicsValidationResult.manifest.version}/
-              {dynamicsValidationResult.manifest.hash},{" "}
+              {dynamicsValidationResult.manifest.hash}/
+              {dynamicsValidationResult.manifest.corpusHash},{" "}
               {dynamicsValidationResult.manifest.capturedTraceCount} runs captured across{" "}
               {dynamicsValidationResult.suites.join(", ")}.
             </p>

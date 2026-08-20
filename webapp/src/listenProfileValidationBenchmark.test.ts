@@ -63,6 +63,7 @@ import {
   listenIsolatedValidationCases,
   listenCommittedRegressionFailures,
   listenLateAdvanceDiagnostics,
+  listenLateAdvanceForensics,
   listenNewUnsafeAdvances,
   listenProfileGateDefinition,
   listenProfileLayerLossKey,
@@ -622,6 +623,16 @@ test("every sequence profile column replays the identical retained trace", async
   assert.equal(concise.evidenceRole, "discovery");
   assert.equal(concise.renderers[0].traceIdentities.length, direct.caseCount);
   assert.equal(concise.renderers[0].profiles[0].profileId, "baseline-v1");
+  for (const profile of direct.profiles) {
+    assert.equal(
+      profile.lateAdvances.length,
+      profile.totals.lateAdvanceCount + profile.regressionTotals.lateAdvanceCount,
+    );
+  }
+  assert.deepEqual(
+    concise.renderers[0].profiles.map(({ lateAdvances }) => lateAdvances),
+    direct.profiles.map(({ lateAdvances }) => lateAdvances),
+  );
 });
 
 test("sequence aggregation is per speed and per family, and safety never scores", () => {
@@ -982,6 +993,16 @@ test("every dynamics profile column replays the identical retained trace", async
   assert.equal(tone.regressionCases[0].traceId, "dynamics-constant/tone/salamander/v05");
   assert.equal(tone.regressionCases[0].layer, "v05");
   assert.equal(tone.regressionCases[0].profiles.length, 5);
+  for (const profile of tone.regressionCases[0].profiles) {
+    assert.equal(profile.lateAdvances.length, profile.lateAdvanceCount);
+    for (const forensic of profile.lateAdvances) {
+      assert.equal(forensic.traceId, tone.regressionCases[0].traceId);
+      assert.ok(Number.isInteger(forensic.sourceAttackIndex));
+      assert.ok(forensic.sourceAttackPitches.length > 0);
+      assert.ok(forensic.sourceToTargetDistance > 0);
+      assert.ok(forensic.attributionDelayMs > 0);
+    }
+  }
   // Both committed regressions are replayed under every column, and the
   // late-advance case is not counted as a safety failure.
   for (const profile of tone.profiles) {
@@ -1003,6 +1024,13 @@ test("every dynamics profile column replays the identical retained trace", async
   assert.equal(concise.renderers[1].traceIdentities.length, tone.caseCount);
   assert.equal(concise.renderers[1].profiles[0].profileId, "baseline-v1");
   assert.equal(concise.renderers[1].regressionCases.length, 1);
+  assert.deepEqual(
+    concise.renderers[1].regressionCases[0].profiles.map(({ lateAdvances }) => lateAdvances),
+    tone.regressionCases[0].profiles.map(({ lateAdvances }) => lateAdvances),
+  );
+  for (const profile of tone.profiles) {
+    assert.equal(profile.lateAdvances.length, profile.safety.lateAdvanceCount);
+  }
 });
 
 test("a dynamics capture that answers with another run, renderer, or instrument is refused", async () => {
@@ -1322,7 +1350,11 @@ const GATE_CANDIDATE_PROFILE_ID: ListenMatcherProfileId = "early-open-v2";
 const GATE_COLUMN = listenValidationProfileIdentities(
   resolveListenValidationProfileIds([GATE_CANDIDATE_PROFILE_ID]),
 );
-const GATE_MANIFEST = Object.freeze({ version: 1, hash: "gate-test" });
+const GATE_MANIFEST = Object.freeze({
+  version: 1,
+  hash: "gate-test",
+  corpusHash: "gate-corpus-test",
+});
 
 /** A two-candidate matrix, for proving that a per-candidate rule is per candidate. */
 const TWO_CANDIDATE_COLUMN = listenValidationProfileIdentities(
@@ -1815,6 +1847,7 @@ test("a clean complete matrix makes the candidate eligible without selecting any
   assert.equal(domains.get("isolated")?.traceIdentities.length, 224);
   assert.deepEqual(domains.get("sequence")?.rendererKeys, ["direct", "tone"]);
   assert.equal(domains.get("dynamics")?.manifestHash, GATE_MANIFEST.hash);
+  assert.equal(domains.get("dynamics")?.manifestCorpusHash, GATE_MANIFEST.corpusHash);
   for (const domain of report.domains) {
     assert.equal(domain.present, true, domain.domain);
     assert.equal(domain.identityDigest.length, 8, domain.domain);
@@ -2309,26 +2342,48 @@ test("a new unsafe dynamics advance rejects the candidate on any partition", () 
 });
 
 test("late advances are reported with distance and delay, and never gate", () => {
-  const lateEvent = (index: number, scheduledAttackTimeMs: number, advancedAtMs: number) => ({
+  const lateEvent = (
+    index: number,
+    scheduledAttackTimeMs: number,
+    advancedAtMs: number,
+    targetPitches: number[],
+  ) => ({
     index,
     scheduledAttackTimeMs,
     lateAdvance: true,
     advancedAtMs,
+    targetPitches,
   } as unknown as ListenSequenceEventDiagnostic);
-  const runs = [{
-    events: [lateEvent(1, 1000, 1330), lateEvent(4, 2000, 2660)],
-    attacks: [
-      { index: 2, targetIndex: 2, advancementTargetIndices: [1] },
-      { index: 7, targetIndex: 7, advancementTargetIndices: [4] },
-    ],
-  } as unknown as ListenSequenceRunResult];
-  const diagnostics = listenLateAdvanceDiagnostics(runs);
+  const entries = [{
+    traceId: "sequence/direct/late-forensics/500ms",
+    run: {
+      sequenceId: "late-forensics",
+      events: [lateEvent(1, 1000, 1330, [60]), lateEvent(4, 2000, 2660, [64, 67])],
+      attacks: [
+        { index: 2, targetIndex: 2, playedPitches: [60], advancementTargetIndices: [1] },
+        { index: 7, targetIndex: 7, playedPitches: [64, 67], advancementTargetIndices: [4] },
+      ],
+    } as unknown as ListenSequenceRunResult,
+  }];
+  const diagnostics = listenLateAdvanceDiagnostics(entries);
   assert.equal(diagnostics.lateAdvanceCount, 2);
+  assert.deepEqual(diagnostics.records[0], {
+    traceId: "sequence/direct/late-forensics/500ms",
+    targetIndex: 1,
+    targetPitches: [60],
+    targetScheduledAttackTimeMs: 1000,
+    advanceTimeMs: 1330,
+    sourceAttackIndex: 2,
+    sourceAttackPitches: [60],
+    sourceToTargetDistance: 1,
+    attributionDelayMs: 330,
+  });
   assert.equal(diagnostics.meanSourceDistance, 2);
   assert.equal(diagnostics.maximumSourceDistance, 3);
   assert.equal(diagnostics.meanAttributionDelayMs, 495);
   assert.equal(diagnostics.maximumAttributionDelayMs, 660);
   assert.equal(listenLateAdvanceDiagnostics([]).lateAdvanceCount, 0);
+  assert.deepEqual(listenLateAdvanceDiagnostics([]).records, []);
   assert.equal(listenLateAdvanceDiagnostics([]).meanSourceDistance, null);
   // A candidate that advances correct content one repetition behind is a lag,
   // not a safety failure, so it stays eligible with the lag on the record.
@@ -2343,6 +2398,41 @@ test("late advances are reported with distance and delay, and never gate", () =>
   });
   assert.equal(report.candidates[0].eligible, true);
   assert.equal(gateOutcome(report, "safety-sequence-dedicated-families").passed, true);
+});
+
+test("late-advance exports refuse incomplete source attribution", () => {
+  const lateEvent = {
+    index: 1,
+    scheduledAttackTimeMs: 1000,
+    lateAdvance: true,
+    advancedAtMs: 1330,
+    targetPitches: [60],
+  } as unknown as ListenSequenceEventDiagnostic;
+  const missingSource = {
+    events: [lateEvent],
+    attacks: [],
+  } as unknown as ListenSequenceRunResult;
+  assert.throws(
+    () => listenLateAdvanceForensics("sequence/direct/missing-source/500ms", missingSource),
+    /without complete source attribution/,
+  );
+
+  const missingAdvanceTime = {
+    events: [{ ...lateEvent, advancedAtMs: null }],
+    attacks: [{
+      index: 2,
+      targetIndex: 2,
+      playedPitches: [60],
+      advancementTargetIndices: [1],
+    }],
+  } as unknown as ListenSequenceRunResult;
+  assert.throws(
+    () => listenLateAdvanceForensics(
+      "sequence/direct/missing-advance-time/500ms",
+      missingAdvanceTime,
+    ),
+    /without complete source attribution/,
+  );
 });
 
 test("the committed regressions gate every candidate without replaying any audio", () => {

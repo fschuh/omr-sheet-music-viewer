@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
   LISTEN_BENCHMARK_RENDERER,
@@ -22,6 +23,7 @@ import {
   listenRecognitionTraceHash,
 } from "./listenBaselineParity";
 import {
+  LISTEN_TRACE_CORPUS_HASH,
   LISTEN_TRACE_MANIFEST_HASH,
   listenTracesInPartition,
   type ListenCandidateMetrics,
@@ -38,17 +40,24 @@ import {
 import {
   LISTEN_MULTIDOMAIN_MAX_CANDIDATES,
   LISTEN_SWEEP_DISCOVERY_BASELINE_PROFILE,
+  conciseListenMatcherMultiDomainSweepResult,
   evaluateListenMatcherMultiDomainSweep,
+  fullListenMatcherMultiDomainSweepResult,
   generateListenMatcherSweepProfiles,
+  listenMultiDomainCandidateArchive,
+  listenMultiDomainCandidateArchiveDigest,
   listenMultiDomainSweepTraces,
   listenThresholdSweepParetoFrontier,
   rankListenThresholdSweepCandidates,
   runListenThresholdSweep,
   selectListenMultiDomainCandidates,
+  type ListenMultiDomainCandidateArchive,
   type ListenMultiDomainCapture,
   type ListenMultiDomainProfileResult,
   type ListenThresholdSweepProfileResult,
 } from "./listenMatcherSweepBenchmark";
+
+const TASK_08_CANDIDATE_ARCHIVE_DIGEST = "53ee8a67";
 
 function recognitionFrame(
   relevantPitches: readonly number[],
@@ -515,6 +524,7 @@ test("the multi-domain sweep scores the manifest's frozen weighting and never re
   });
   assert.deepEqual(requested, listenMultiDomainSweepTraces().map(({ id }) => id));
   assert.equal(result.manifest.hash, LISTEN_TRACE_MANIFEST_HASH);
+  assert.equal(result.manifest.corpusHash, LISTEN_TRACE_CORPUS_HASH);
   assert.equal(result.manifest.capturedTraceCount, 176);
   assert.equal(result.manifest.scoredTraceCount, 139);
   assert.equal(result.manifest.regressionRunCount, 37);
@@ -569,6 +579,69 @@ test("the multi-domain sweep scores the manifest's frozen weighting and never re
   assert.ok(result.paretoFrontier.every(({ safety }) => safety.passed));
   assert.ok(result.selected.length <= LISTEN_MULTIDOMAIN_MAX_CANDIDATES);
   assert.ok(result.selected.every((candidate) => result.paretoFrontier.includes(candidate)));
+
+  const archive = listenMultiDomainCandidateArchive(result);
+  assert.equal(archive.candidateCount, result.profilesEvaluated);
+  assert.equal(archive.candidates.length, result.candidates.length);
+  assert.deepEqual(
+    archive.candidates.map(({ profile }) => profile.id),
+    [...archive.candidates.map(({ profile }) => profile.id)].sort(),
+  );
+  for (const record of archive.candidates) {
+    assert.equal(record.metrics.profileId, record.profile.id);
+    assert.equal(record.safetyVerdict.passed, record.metrics.safe);
+    assert.ok(Array.isArray(record.safetyVerdict.rejectionCodes));
+  }
+  assert.deepEqual(
+    listenMultiDomainCandidateArchive({
+      ...result,
+      candidates: [...result.candidates].reverse(),
+    }),
+    archive,
+    "candidate input order must not change the archive",
+  );
+  const metricChanged = {
+    ...result,
+    candidates: result.candidates.map((candidate, index) => index === 0 ? {
+      ...candidate,
+      metrics: {
+        ...candidate.metrics,
+        equalDomainIndependentRate: (candidate.metrics.equalDomainIndependentRate ?? 0) + 0.01,
+      },
+    } : candidate),
+  };
+  assert.notEqual(
+    listenMultiDomainCandidateArchive(metricChanged).digest.value,
+    archive.digest.value,
+  );
+  assert.equal(
+    fullListenMatcherMultiDomainSweepResult(result).candidateArchive.digest.value,
+    archive.digest.value,
+  );
+  assert.equal(
+    "candidateArchive" in conciseListenMatcherMultiDomainSweepResult(result),
+    false,
+  );
+});
+
+test("the frozen Task 08 artifact pins the production candidate digest recipe", async () => {
+  const artifact = JSON.parse(await readFile(
+    new URL(
+      "../../benchmark-results/listen-matcher-multidomain-sweep-task08.json",
+      import.meta.url,
+    ),
+    "utf8",
+  )) as Array<{ candidateArchive: ListenMultiDomainCandidateArchive }>;
+  assert.equal(artifact.length, 1);
+  const archive = artifact[0].candidateArchive;
+  assert.equal(archive.candidateCount, 1_000);
+  assert.equal(archive.candidates.length, 1_000);
+  assert.equal(archive.digest.algorithm, "fnv1a-32-canonical-json");
+  assert.equal(archive.digest.value, TASK_08_CANDIDATE_ARCHIVE_DIGEST);
+  assert.equal(
+    listenMultiDomainCandidateArchiveDigest(archive.candidates),
+    TASK_08_CANDIDATE_ARCHIVE_DIGEST,
+  );
 });
 
 test("the multi-domain sweep rejects a profile that is unsafe on a dedicated safety family", async () => {

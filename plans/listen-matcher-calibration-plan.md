@@ -1145,6 +1145,15 @@ now replaying seven named profiles instead of three. The unit suite is 313
 main-suite tests plus the dynamics pretest, and the production build passes.
 `tools/online_amt/LISTEN_BENCHMARK.md` records the full result.
 
+**August 20 evidence repair:** The discovery/regression sweep was rerun without reading
+confirmation data after adding the separately pinned musical-corpus identity
+`10ae2e0b`. It reproduced 721 rejected profiles, the same 30-profile safe Pareto
+frontier, and the same four selected profile IDs. The full 1,000-row result is frozen at
+`benchmark-results/listen-matcher-multidomain-sweep-task08.json`; every row includes its
+profile, metrics, safety verdict, and rejection codes. Its canonical candidate digest is
+`fnv1a-32-canonical-json:53ee8a67`, and the archived file SHA-256 is
+`fa09a935ee36b14786659933152bed65498b7433007f888104f79357b7050aeb`.
+
 ### Task 09 — Add isolated candidate-matrix replay
 
 **Status:** Completed August 19, 2026. **Prerequisites:** Task 08 complete.
@@ -1300,6 +1309,16 @@ of an unusable column order or a mismatched capture. The unit suite is 327
 main-suite tests plus the dynamics pretest, and the production build passes.
 `tools/online_amt/LISTEN_BENCHMARK.md` records the measured matrix.
 
+**August 20 evidence repair:** The complete paired-renderer matrix was rerun twice in
+fresh browser processes after late-advance attribution was added. The 156-trace export
+is frozen at `benchmark-results/listen-sequence-profile-validation-task10.json` with
+18 forensic records naming the manifest trace, target, advance time, causing attack
+and pitches, source-to-target distance, and attribution delay. Its archived file
+SHA-256 is `e969060b9011d86f1eb7cbb551077fbff69d03a8b01d4b548f499eaba51c927e`;
+after excluding only the host-dependent `maximumInferenceMs` field, both runs have
+canonical evidence SHA-256
+`ed9a336516a26fa2daf6a67314138a47a47beafdc7c20ce86fbe90d5ff11acd0`.
+
 ### Task 11 — Add dynamics and articulation candidate-matrix replay
 
 **Status:** Completed August 19, 2026. **Prerequisites:** Task 10 complete.
@@ -1401,6 +1420,20 @@ aggregation weighting four Splendid layers like sixteen Salamander ones, and the
 leaf visibility of a layer regression that a corpus aggregate nets out. The unit
 suite is 332 main-suite tests plus the dynamics pretest, and the production build
 passes. `tools/online_amt/LISTEN_BENCHMARK.md` records the measured matrix.
+
+**August 20 evidence repair:** The complete paired-renderer matrix was rerun twice in
+fresh browser processes after late-advance attribution was added. The 52-trace export
+is frozen at `benchmark-results/listen-dynamics-profile-validation-task11.json` with
+25 non-overlapping profile-level forensic records, including the Tone Salamander
+`v05` regression. The regression-case view repeats 9 of those records, producing 34
+serialized instances without adding evidence. Its
+archived file SHA-256 is
+`1028cd52275c1c91838c8b920ef2d90324ff180b38a88096dba6408970890042`;
+after excluding only host-dependent `maximumInferenceMs` and floating-point audio
+diagnostics `peak` and `rms`, both runs have canonical evidence SHA-256
+`8b5039ac0fe0d5396cd02ee626800c075f3dffa101abd6579827d289570a0bc6`.
+The rerun preserves the existing discovery, confirmation, and regression-only labels
+and performs no profile selection.
 
 ### Task 12 — Build the unified production-candidate gate and automation
 

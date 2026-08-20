@@ -73,6 +73,7 @@ import {
 import {
   LISTEN_TRACE_MANIFEST,
   assertValidListenTraceManifest,
+  listenTraceCorpusHash,
   listenTraceManifestHash,
   listenTracesInSuite,
   type ListenDynamicBand,
@@ -400,6 +401,7 @@ export interface ListenIsolatedProfileValidationResult {
   manifest: {
     version: number;
     hash: string;
+    corpusHash: string;
     traceCount: number;
     isolatedTraceCount: number;
     capturedTraceCount: number;
@@ -807,6 +809,7 @@ export async function evaluateListenIsolatedProfileValidation(options: {
     manifest: {
       version: manifest.version,
       hash: listenTraceManifestHash(manifest),
+      corpusHash: listenTraceCorpusHash(manifest),
       traceCount: manifest.traces.length,
       isolatedTraceCount: listenTracesInSuite("isolated", manifest).length,
       capturedTraceCount: validationCases.length,
@@ -957,6 +960,53 @@ export interface ListenSequenceProfileRun {
   run: ListenSequenceRunResult;
 }
 
+/** Complete attribution for one correct-content advance caused by a later attack. */
+export interface ListenLateAdvanceForensicRecord {
+  traceId: string;
+  targetIndex: number;
+  targetPitches: number[];
+  targetScheduledAttackTimeMs: number;
+  advanceTimeMs: number;
+  sourceAttackIndex: number;
+  sourceAttackPitches: number[];
+  sourceToTargetDistance: number;
+  attributionDelayMs: number;
+}
+
+/**
+ * Resolves every late event to the physical attack that caused it. A result is
+ * refused if replay classified a late advance without retaining its source or
+ * advancement time, because exporting an unattributed count would recreate the
+ * incomplete Task 10/11 evidence this matrix is meant to replace.
+ */
+export function listenLateAdvanceForensics(
+  traceId: string,
+  run: ListenSequenceRunResult,
+): ListenLateAdvanceForensicRecord[] {
+  return run.events.flatMap((event): ListenLateAdvanceForensicRecord[] => {
+    if (!event.lateAdvance) return [];
+    const source = run.attacks.find((attack) => (
+      attack.advancementTargetIndices.includes(event.index)
+    ));
+    if (!source || event.advancedAtMs === null) {
+      throw new Error(
+        `${traceId} target ${event.index} is a late advance without complete source attribution.`,
+      );
+    }
+    return [{
+      traceId,
+      targetIndex: event.index,
+      targetPitches: [...event.targetPitches],
+      targetScheduledAttackTimeMs: event.scheduledAttackTimeMs,
+      advanceTimeMs: event.advancedAtMs,
+      sourceAttackIndex: source.index,
+      sourceAttackPitches: [...source.playedPitches],
+      sourceToTargetDistance: Math.abs(source.targetIndex - event.index),
+      attributionDelayMs: event.advancedAtMs - event.scheduledAttackTimeMs,
+    }];
+  });
+}
+
 export interface ListenSequenceValidationCaseResult {
   traceId: string;
   partition: ListenTracePartition;
@@ -1078,6 +1128,8 @@ export interface ListenSequenceProfileValidationSummary {
    * target too, and the family-scoped summary above would never see it.
    */
   traceSafety: ListenValidationTraceSafety;
+  /** Every late advance, with its causing physical attack and attribution delay. */
+  lateAdvances: ListenLateAdvanceForensicRecord[];
   /** Null for the baseline row itself. */
   deltaFromBaseline: ListenSequenceProfileDelta | null;
 }
@@ -1098,6 +1150,7 @@ export interface ListenSequenceProfileValidationResult {
   manifest: {
     version: number;
     hash: string;
+    corpusHash: string;
     traceCount: number;
     sequenceTraceCount: number;
     capturedTraceCount: number;
@@ -1433,6 +1486,10 @@ export function summarizeListenSequenceProfileValidation(
           : [aggregateListenSequenceRuns(runsFor(selected), intervalMs, family)];
       })),
       safety: summarizeListenSequenceSafety(runsFor(cases)),
+      lateAdvances: cases.flatMap((result) => listenLateAdvanceForensics(
+        result.traceId,
+        sequenceRunFor(result, identity.profileId),
+      )),
       completedTraceIds: new Set(scored
         .filter((result) => sequenceRunFor(result, identity.profileId).summary.complete)
         .map(({ traceId }) => traceId)),
@@ -1459,6 +1516,7 @@ export function summarizeListenSequenceProfileValidation(
       candidate: sequenceRunFor(result, column.identity.profileId),
       baseline: sequenceRunFor(result, baselineId),
     }))),
+    lateAdvances: column.lateAdvances,
     deltaFromBaseline: column === baseline ? null : {
       ...sequenceMetricDelta(column.totals, baseline.totals),
       bySpeed: column.bySpeed.map(({ intervalMs, totals }, index) => ({
@@ -1583,6 +1641,7 @@ export async function evaluateListenSequenceProfileValidation(options: {
     manifest: {
       version: manifest.version,
       hash: listenTraceManifestHash(manifest),
+      corpusHash: listenTraceCorpusHash(manifest),
       traceCount: manifest.traces.length,
       sequenceTraceCount: listenTracesInSuite("sequence", manifest).length,
       capturedTraceCount: validationCases.length,
@@ -1657,6 +1716,7 @@ export function conciseListenSequenceProfileValidationResult(
         familySpeedSummaries: profile.familySpeedSummaries,
         safety: profile.safety,
         traceSafety: profile.traceSafety,
+        lateAdvances: profile.lateAdvances,
         deltaFromBaseline: profile.deltaFromBaseline,
       })),
       incompletePassages: renderer.cases
@@ -1979,6 +2039,8 @@ export interface ListenDynamicsProfileValidationSummary {
    */
   regressionTotals: ListenSequenceValidationTotals;
   safety: ListenDynamicsSafetySummary;
+  /** Every late advance across this profile column, fully attributed. */
+  lateAdvances: ListenLateAdvanceForensicRecord[];
   /** Null for the baseline row itself. Group deltas live on each group. */
   deltaFromBaseline: ListenDynamicsProfileDelta | null;
 }
@@ -2007,12 +2069,8 @@ export interface ListenDynamicsRegressionCaseReport {
     falseAdvanceCount: number;
     skippedAdvanceCount: number;
     duplicateAdvanceCount: number;
-    /** Each late advance with the moment the playhead actually moved. */
-    lateAdvances: Array<{
-      targetIndex: number;
-      scheduledAttackTimeMs: number;
-      advancedAtMs: number | null;
-    }>;
+    /** Each late advance with the physical attack that caused it. */
+    lateAdvances: ListenLateAdvanceForensicRecord[];
     unsafeAdvances: Array<{
       targetIndex: number;
       falseAdvance: boolean;
@@ -2042,6 +2100,7 @@ export interface ListenDynamicsProfileValidationResult {
   manifest: {
     version: number;
     hash: string;
+    corpusHash: string;
     traceCount: number;
     dynamicsConstantTraceCount: number;
     dynamicsMixedTraceCount: number;
@@ -2586,13 +2645,7 @@ function dynamicsRegressionCaseReport(
       falseAdvanceCount: run.summary.falseAdvanceCount,
       skippedAdvanceCount: run.summary.skippedAdvanceCount,
       duplicateAdvanceCount: run.summary.duplicateAdvanceCount,
-      lateAdvances: run.events
-        .filter((event) => event.lateAdvance)
-        .map((event) => ({
-          targetIndex: event.index,
-          scheduledAttackTimeMs: event.scheduledAttackTimeMs,
-          advancedAtMs: event.advancedAtMs,
-        })),
+      lateAdvances: listenLateAdvanceForensics(result.traceId, run),
       unsafeAdvances: run.events
         .filter((event) => event.falseAdvance || event.skipped || event.duplicate)
         .map((event) => ({
@@ -2641,6 +2694,10 @@ export function summarizeListenDynamicsProfileValidation(
       regressionCases.map((result) => dynamicsRunFor(result, identity.profileId)),
     ),
     safety: listenDynamicsSafetySummary(cases, identity.profileId, identity.profile),
+    lateAdvances: cases.flatMap((result) => listenLateAdvanceForensics(
+      result.traceId,
+      dynamicsRunFor(result, identity.profileId),
+    )),
   }));
   const baseline = columns[0];
   const summaries = columns.map((column): ListenDynamicsProfileValidationSummary => ({
@@ -2653,6 +2710,7 @@ export function summarizeListenDynamicsProfileValidation(
     equalPiano: column.equalPiano,
     regressionTotals: column.regressionTotals,
     safety: column.safety,
+    lateAdvances: column.lateAdvances,
     deltaFromBaseline: column === baseline ? null : {
       equalPiano: column.equalPiano.map((equal, index) => ({
         suite: equal.suite,
@@ -2797,6 +2855,7 @@ export async function evaluateListenDynamicsProfileValidation(options: {
     manifest: {
       version: manifest.version,
       hash: listenTraceManifestHash(manifest),
+      corpusHash: listenTraceCorpusHash(manifest),
       traceCount: manifest.traces.length,
       dynamicsConstantTraceCount: listenTracesInSuite("dynamics-constant", manifest).length,
       dynamicsMixedTraceCount: listenTracesInSuite("dynamics-mixed", manifest).length,
@@ -2905,6 +2964,7 @@ export function conciseListenDynamicsProfileValidationResult(
             })),
           },
         },
+        lateAdvances: profile.lateAdvances,
         deltaFromBaseline: profile.deltaFromBaseline,
       })),
       regressionCases: renderer.regressionCases,
@@ -3279,6 +3339,7 @@ export interface ListenProfileGateOutcome {
  */
 export interface ListenLateAdvanceDiagnostics {
   lateAdvanceCount: number;
+  records: ListenLateAdvanceForensicRecord[];
   meanSourceDistance: number | null;
   maximumSourceDistance: number | null;
   meanAttributionDelayMs: number | null;
@@ -3352,6 +3413,7 @@ export interface ListenProfileValidationDomainIdentity {
   present: boolean;
   manifestVersion: number | null;
   manifestHash: string | null;
+  manifestCorpusHash: string | null;
   capturedTraceCount: number;
   rendererKeys: ListenTraceRendererKey[];
   partitions: ListenTracePartition[];
@@ -3420,28 +3482,19 @@ function identityDigest(parts: readonly string[]): string {
  * target's own attack, so the distance says how far behind the playhead ran.
  */
 export function listenLateAdvanceDiagnostics(
-  runs: readonly ListenSequenceRunResult[],
+  entries: readonly { traceId: string; run: ListenSequenceRunResult }[],
 ): ListenLateAdvanceDiagnostics {
-  let lateAdvanceCount = 0;
-  const distances: number[] = [];
-  const delays: number[] = [];
-  for (const run of runs) {
-    const attacks = run.attacks ?? [];
-    for (const event of run.events) {
-      if (!event.lateAdvance) continue;
-      lateAdvanceCount += 1;
-      const source = attacks.find((attack) => attack.advancementTargetIndices.includes(event.index));
-      if (source) distances.push(Math.abs(source.targetIndex - event.index));
-      if (event.advancedAtMs !== null) {
-        delays.push(event.advancedAtMs - event.scheduledAttackTimeMs);
-      }
-    }
-  }
+  const records = entries.flatMap(({ traceId, run }) => (
+    listenLateAdvanceForensics(traceId, run)
+  ));
+  const distances = records.map(({ sourceToTargetDistance }) => sourceToTargetDistance);
+  const delays = records.map(({ attributionDelayMs }) => attributionDelayMs);
   const mean = (values: readonly number[]) => values.length === 0
     ? null
     : values.reduce((total, value) => total + value, 0) / values.length;
   return {
-    lateAdvanceCount,
+    lateAdvanceCount: records.length,
+    records,
     meanSourceDistance: mean(distances),
     maximumSourceDistance: distances.length === 0 ? null : Math.max(...distances),
     meanAttributionDelayMs: mean(delays),
@@ -3598,7 +3651,7 @@ function domainIdentity(
   input: {
     partitions: ListenTracePartition[];
     rendererKeys: ListenTraceRendererKey[];
-    manifest: { version: number; hash: string; capturedTraceCount: number };
+    manifest: { version: number; hash: string; corpusHash: string; capturedTraceCount: number };
     traceReuseVerified: boolean;
     baselineParityVerified: boolean;
     traceIdentities: ListenProfileValidationDomainIdentity["traceIdentities"];
@@ -3610,6 +3663,7 @@ function domainIdentity(
       present: false,
       manifestVersion: null,
       manifestHash: null,
+      manifestCorpusHash: null,
       capturedTraceCount: 0,
       rendererKeys: [],
       partitions: [],
@@ -3625,6 +3679,7 @@ function domainIdentity(
     present: true,
     manifestVersion: input.manifest.version,
     manifestHash: input.manifest.hash,
+    manifestCorpusHash: input.manifest.corpusHash,
     capturedTraceCount: input.manifest.capturedTraceCount,
     rendererKeys: input.rendererKeys,
     partitions: input.partitions,
@@ -3766,7 +3821,7 @@ function assertComparableDomains(results: ListenProfileValidationDomainResults):
     domain: string;
     baselineProfileId: ListenMatcherProfileId;
     candidateProfileIds: readonly ListenMatcherProfileId[];
-    manifest: { version: number; hash: string };
+    manifest: { version: number; hash: string; corpusHash: string };
   }> = [];
   if (results.isolated) present.push({ domain: "isolated", ...results.isolated });
   if (results.sequence) present.push({ domain: "sequence", ...results.sequence });
@@ -3793,11 +3848,13 @@ function assertComparableDomains(results: ListenProfileValidationDomainResults):
     }
     if (
       other.manifest.version !== first.manifest.version ||
-      other.manifest.hash !== first.manifest.hash
+      other.manifest.hash !== first.manifest.hash ||
+      other.manifest.corpusHash !== first.manifest.corpusHash
     ) {
       throw new Error(
-        `The ${other.domain} matrix used manifest ${other.manifest.version}/${other.manifest.hash} ` +
-        `while the ${first.domain} matrix used ${first.manifest.version}/${first.manifest.hash}.`,
+        `The ${other.domain} matrix used manifest ${other.manifest.version}/` +
+        `${other.manifest.hash}/${other.manifest.corpusHash} while the ${first.domain} matrix ` +
+        `used ${first.manifest.version}/${first.manifest.hash}/${first.manifest.corpusHash}.`,
       );
     }
   }
@@ -4067,7 +4124,7 @@ function evaluateCandidateGates(
     const independentNetByFamily = new Map<string, number>();
     let orderedNetTotal = 0;
     let independentNetTotal = 0;
-    const sequenceRuns: ListenSequenceRunResult[] = [];
+    const sequenceRuns: Array<{ traceId: string; run: ListenSequenceRunResult }> = [];
     for (const renderer of sequence.renderers) {
       const key = renderer.rendererKey;
       const candidate = sequenceSummaryFor(renderer, profileId);
@@ -4076,7 +4133,10 @@ function evaluateCandidateGates(
       if (!delta) {
         throw new Error(`The sequence ${key} matrix reports no baseline delta for ${profileId}.`);
       }
-      sequenceRuns.push(...renderer.cases.map((result) => sequenceRunFor(result, profileId)));
+      sequenceRuns.push(...renderer.cases.map((result) => ({
+        traceId: result.traceId,
+        run: sequenceRunFor(result, profileId),
+      })));
       // Counted over every row rather than over the dedicated families, so a
       // wrong advance in an ordinary passage — or a diagnosed one the candidate
       // reproduces unchanged — is never reported as a corpus without one.
@@ -4280,12 +4340,15 @@ function evaluateCandidateGates(
   /* The dynamics and articulation corpora, which the manifest splits. */
   let dynamicsLateAdvance: ListenLateAdvanceDiagnostics | null = null;
   if (dynamics) {
-    const dynamicsRuns: ListenSequenceRunResult[] = [];
+    const dynamicsRuns: Array<{ traceId: string; run: ListenSequenceRunResult }> = [];
     for (const renderer of dynamics.renderers) {
       const key = renderer.rendererKey;
       const candidate = dynamicsSummaryFor(renderer, profileId);
       const baseline = dynamicsSummaryFor(renderer, baselineProfileId);
-      dynamicsRuns.push(...renderer.cases.map((result) => dynamicsRunFor(result, profileId)));
+      dynamicsRuns.push(...renderer.cases.map((result) => ({
+        traceId: result.traceId,
+        run: dynamicsRunFor(result, profileId),
+      })));
       safety.dynamicsIntroducedUnsafeTraceIds.push(...candidate.safety.introducedUnsafeTraceIds);
       safety.dynamicsWorsenedUnsafeTraceIds.push(...candidate.safety.worsenedUnsafeTraceIds);
       safety.dynamicsClearedUnsafeTraceIds.push(...candidate.safety.clearedUnsafeTraceIds);
@@ -4664,6 +4727,7 @@ export function conciseListenProfileValidationResult(result: ListenProfileValida
           byFamily: profile.byFamily,
           safety: profile.safety,
           traceSafety: profile.traceSafety,
+          lateAdvances: profile.lateAdvances,
           deltaFromBaseline: profile.deltaFromBaseline,
         })),
       })),
@@ -4696,6 +4760,7 @@ export function conciseListenProfileValidationResult(result: ListenProfileValida
             unsafeReasons: profile.safety.unsafeReasons,
             passed: profile.safety.passed,
           },
+          lateAdvances: profile.lateAdvances,
           deltaFromBaseline: profile.deltaFromBaseline,
         })),
         regressionCases: renderer.regressionCases,

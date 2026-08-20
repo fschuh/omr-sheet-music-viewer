@@ -17,15 +17,25 @@
  * derived weights, and the metric order into one digest, and
  * `LISTEN_TRACE_MANIFEST_HASH` pins it: any of those changes breaks the pin and
  * starts a new discovery/confirmation version rather than amending this one.
+ * `listenTraceCorpusHash` separately pins every trace's ordered musical inputs,
+ * so fixture pitches, attacks, timings, holds, layers, and row order cannot
+ * change under the same protocol identity.
  *
  * This module owns the protocol only. It runs no benchmark, replays no trace,
  * and never imports the sweep. The rejected retrigger and inference-reset
  * corpora are deliberately absent: they select no thresholds.
  */
 
-import { bundledListenBenchmarkCases, isMathematicallyAmbiguousCase } from "./listenBenchmark";
 import {
+  ISOLATED_LISTEN_BENCHMARK_DURATION_MS,
+  ISOLATED_LISTEN_BENCHMARK_PRE_ROLL_MS,
+  bundledListenBenchmarkCases,
+  isMathematicallyAmbiguousCase,
+} from "./listenBenchmark";
+import {
+  LISTEN_BENCHMARK_DEFAULT_HOLD_MS,
   LISTEN_BENCHMARK_PIANO,
+  LISTEN_BENCHMARK_RELEASE_MS,
   LISTEN_BENCHMARK_RENDERER,
   LISTEN_BENCHMARK_TONE_RENDERER,
 } from "./listenBenchmarkAudio";
@@ -35,9 +45,17 @@ import {
   LISTEN_SEQUENCE_INTERVALS_MS,
   bundledListenSequences,
   courseClearArticulationDefinitions,
+  materializeListenSequence,
   type ListenSequenceArticulation,
+  type ListenSequenceDefinition,
 } from "./listenSequenceBenchmark";
-import { PIANO_IDS, pianoDefinition, type PianoId, type PianoLayerId } from "./pianoRegistry";
+import {
+  PIANO_IDS,
+  crescendoDecrescendoLayers,
+  pianoDefinition,
+  type PianoId,
+  type PianoLayerId,
+} from "./pianoRegistry";
 
 /** Bumped whenever any assignment, weight, metric, or tie-break rule changes. */
 export const LISTEN_TRACE_MANIFEST_VERSION = 1;
@@ -121,6 +139,12 @@ export interface ListenTraceDescriptor {
   /** The measured run a committed regression was minimized from. */
   derivedFromTraceId: string | null;
   /**
+   * Deterministic identity of the ordered score targets, physical attacks,
+   * attack/release timing, holds, and per-attack velocity layers rendered by
+   * this row. The separately pinned corpus hash folds these into the protocol.
+   */
+  musicalInputHash: string;
+  /**
    * Rendered content identity. Two suites can schedule the same passage on the
    * same instrument at the same speed; such traces must share one partition, or
    * a confirmation row would be a re-measurement of a discovery row.
@@ -150,7 +174,8 @@ export const LISTEN_TRACE_MANIFEST_AMENDMENT_RULE =
   "never change inside a version. Any such change starts a new discovery and validation " +
   "round, which is an edit to this module rather than a relabelled manifest object: bump " +
   "LISTEN_TRACE_MANIFEST_VERSION, restate LISTEN_TRACE_MANIFEST_CENSUS, re-pin " +
-  "LISTEN_TRACE_MANIFEST_HASH, and rerun discovery before reading any confirmation outcome.";
+  "LISTEN_TRACE_MANIFEST_HASH and LISTEN_TRACE_CORPUS_HASH, and rerun discovery before reading " +
+  "any confirmation outcome.";
 
 /**
  * Constant layers that may tune thresholds: one per loudness band for each
@@ -231,6 +256,128 @@ function contentKey(parts: {
   ].join("/");
 }
 
+/** Canonical musical data rendered by one trace, independent of its partition metadata. */
+export interface ListenTraceMusicalInput {
+  targets: readonly (readonly number[])[];
+  attacks: readonly {
+    targetIndex: number;
+    scheduledAtMs: number;
+    expectedAdvance: boolean;
+    targetStart: boolean | null;
+    gainReferenceChordSize: number | null;
+    notes: readonly {
+      midi: number;
+      attackTimeMs: number;
+      holdMs: number;
+    }[];
+  }[];
+  /** Velocity/sample layer selected for each physical attack, in attack order. */
+  attackLayers: readonly string[];
+  durationMs: number;
+  releaseMs: number;
+}
+
+/** Shared FNV-1a hasher for the repository's deterministic protocol identities. */
+export class DeterministicHasher {
+  private hash = 0x811c_9dc5;
+  private readonly scratch = new DataView(new ArrayBuffer(8));
+
+  private byte(value: number): void {
+    this.hash = Math.imul(this.hash ^ (value & 0xff), 0x0100_0193) >>> 0;
+  }
+
+  text(value: string, terminate = true): void {
+    for (let index = 0; index < value.length; index += 1) {
+      const code = value.charCodeAt(index);
+      this.byte(code & 0xff);
+      this.byte(code >>> 8);
+    }
+    if (terminate) this.byte(0);
+  }
+
+  number(value: number): void {
+    this.scratch.setFloat64(0, value);
+    for (let index = 0; index < 8; index += 1) this.byte(this.scratch.getUint8(index));
+  }
+
+  get digest(): string {
+    return (this.hash >>> 0).toString(16).padStart(8, "0");
+  }
+}
+
+/**
+ * Order-sensitive FNV-1a identity of everything musical that one trace renders.
+ * Array lengths and field labels are included so structurally different inputs
+ * cannot collapse through separators or missing optional values.
+ */
+export function listenTraceMusicalInputHash(input: ListenTraceMusicalInput): string {
+  const hasher = new DeterministicHasher();
+  hasher.text("targets");
+  hasher.number(input.targets.length);
+  for (const pitches of input.targets) {
+    hasher.number(pitches.length);
+    for (const pitch of pitches) hasher.number(pitch);
+  }
+  hasher.text("attacks");
+  hasher.number(input.attacks.length);
+  for (const attack of input.attacks) {
+    hasher.number(attack.targetIndex);
+    hasher.number(attack.scheduledAtMs);
+    hasher.number(attack.expectedAdvance ? 1 : 0);
+    hasher.number(attack.targetStart === null ? -1 : attack.targetStart ? 1 : 0);
+    hasher.number(attack.gainReferenceChordSize ?? -1);
+    hasher.number(attack.notes.length);
+    for (const note of attack.notes) {
+      hasher.number(note.midi);
+      hasher.number(note.attackTimeMs);
+      hasher.number(note.holdMs);
+    }
+  }
+  hasher.text("attack-layers");
+  hasher.number(input.attackLayers.length);
+  for (const layer of input.attackLayers) hasher.text(layer);
+  hasher.text("duration");
+  hasher.number(input.durationMs);
+  hasher.text("release");
+  hasher.number(input.releaseMs);
+  return hasher.digest;
+}
+
+function sequenceMusicalInputHash(
+  definition: ListenSequenceDefinition,
+  intervalMs: number,
+  attackLayers: readonly string[],
+): string {
+  const sequence = materializeListenSequence(definition, intervalMs);
+  if (attackLayers.length !== sequence.attacks.length) {
+    throw new Error(
+      `${definition.id} has ${sequence.attacks.length} attacks but ${attackLayers.length} layers.`,
+    );
+  }
+  return listenTraceMusicalInputHash({
+    targets: sequence.targets.map(({ pitches }) => pitches),
+    attacks: sequence.attacks.map((attack) => ({
+      targetIndex: attack.targetIndex,
+      scheduledAtMs: attack.scheduledAtMs,
+      expectedAdvance: attack.expectedAdvance,
+      targetStart: attack.targetStart ?? null,
+      gainReferenceChordSize: attack.gainReferenceChordSize ?? null,
+      notes: attack.notes.map((note) => ({
+        midi: note.midi,
+        attackTimeMs: note.attackTimeMs,
+        holdMs: note.releaseTimeMs - note.attackTimeMs,
+      })),
+    })),
+    attackLayers,
+    durationMs: sequence.durationMs,
+    releaseMs: LISTEN_BENCHMARK_RELEASE_MS,
+  });
+}
+
+function repeatedLayer(layer: string, definition: ListenSequenceDefinition): string[] {
+  return Array.from({ length: definition.attacks.length }, () => layer);
+}
+
 function descriptor(
   values: Omit<ListenTraceDescriptor, "scoreEligible" | "contentKey"> & { contentKey?: string },
 ): ListenTraceDescriptor {
@@ -276,28 +423,36 @@ export function listenIsolatedCaseKind(
 function sequenceTraces(): ListenTraceDescriptor[] {
   const definitions = bundledListenSequences();
   return RENDERERS.flatMap(({ key, version }) => definitions.flatMap((definition) => (
-    LISTEN_SEQUENCE_INTERVALS_MS.map((intervalMs) => descriptor({
-      id: `sequence/${key}/${definition.id}/${speedLabel(intervalMs)}`,
-      // Both single-renderer sweeps have been run and reported, so no sequence
-      // trace can be described as held out. The dedicated safety passages gate
-      // instead of scoring.
-      partition: definition.family === "safety" ? "regression-only" : "discovery",
-      suite: "sequence",
-      renderer: version,
-      rendererKey: key,
-      domain: definition.family,
-      sourceId: definition.id,
-      sequenceFamily: definition.family,
-      articulation: definition.articulation ?? null,
-      piano: DEFAULT_BENCHMARK_PIANO,
-      layer: DEFAULT_BENCHMARK_LAYER,
-      dynamicBand: listenDynamicBand(DEFAULT_BENCHMARK_PIANO, DEFAULT_BENCHMARK_LAYER),
-      dynamicProfile: "constant",
-      intervalMs,
-      caseKind: null,
-      fixtureVersion: null,
-      derivedFromTraceId: null,
-    }))
+    LISTEN_SEQUENCE_INTERVALS_MS.map((intervalMs) => {
+      const musicalInputHash = sequenceMusicalInputHash(
+        definition,
+        intervalMs,
+        repeatedLayer(DEFAULT_BENCHMARK_LAYER, definition),
+      );
+      return descriptor({
+        id: `sequence/${key}/${definition.id}/${speedLabel(intervalMs)}`,
+        // Both single-renderer sweeps have been run and reported, so no sequence
+        // trace can be described as held out. The dedicated safety passages gate
+        // instead of scoring.
+        partition: definition.family === "safety" ? "regression-only" : "discovery",
+        suite: "sequence",
+        renderer: version,
+        rendererKey: key,
+        domain: definition.family,
+        sourceId: definition.id,
+        sequenceFamily: definition.family,
+        articulation: definition.articulation ?? null,
+        piano: DEFAULT_BENCHMARK_PIANO,
+        layer: DEFAULT_BENCHMARK_LAYER,
+        dynamicBand: listenDynamicBand(DEFAULT_BENCHMARK_PIANO, DEFAULT_BENCHMARK_LAYER),
+        dynamicProfile: "constant",
+        intervalMs,
+        caseKind: null,
+        fixtureVersion: null,
+        derivedFromTraceId: null,
+        musicalInputHash,
+      });
+    })
   )));
 }
 
@@ -306,6 +461,11 @@ function articulationTraces(): ListenTraceDescriptor[] {
   return RENDERERS.flatMap(({ key, version }) => definitions.map((definition) => {
     const articulation = definition.articulation;
     if (!articulation) throw new Error(`${definition.id} has no articulation profile.`);
+    const musicalInputHash = sequenceMusicalInputHash(
+      definition,
+      COURSE_CLEAR_ARTICULATION_INTERVAL_MS,
+      repeatedLayer(DEFAULT_BENCHMARK_LAYER, definition),
+    );
     return descriptor({
       id: `articulation/${key}/${articulation}`,
       partition: DISCOVERY_ARTICULATIONS[key].includes(articulation)
@@ -326,6 +486,7 @@ function articulationTraces(): ListenTraceDescriptor[] {
       caseKind: null,
       fixtureVersion: null,
       derivedFromTraceId: null,
+      musicalInputHash,
     });
   }));
 }
@@ -346,6 +507,9 @@ function regressionSourceContentKeys(): Set<string> {
 
 function constantDynamicsTraces(): ListenTraceDescriptor[] {
   const regressionSources = regressionSourceContentKeys();
+  const definition = courseClearArticulationDefinitions()
+    .find(({ id }) => id === DYNAMICS_SOURCE_ID);
+  if (!definition) throw new Error(`The dynamics passage ${DYNAMICS_SOURCE_ID} is unavailable.`);
   return RENDERERS.flatMap(({ key, version }) => PIANO_IDS.flatMap((piano) => (
     pianoDefinition(piano).benchmarkLayers.map((layer) => {
       const key1 = contentKey({
@@ -379,6 +543,11 @@ function constantDynamicsTraces(): ListenTraceDescriptor[] {
         caseKind: null,
         fixtureVersion: null,
         derivedFromTraceId: null,
+        musicalInputHash: sequenceMusicalInputHash(
+          definition,
+          COURSE_CLEAR_ARTICULATION_INTERVAL_MS,
+          repeatedLayer(layer, definition),
+        ),
         contentKey: key1,
       });
     })
@@ -386,6 +555,9 @@ function constantDynamicsTraces(): ListenTraceDescriptor[] {
 }
 
 function mixedDynamicsTraces(): ListenTraceDescriptor[] {
+  const definition = courseClearArticulationDefinitions()
+    .find(({ id }) => id === DYNAMICS_SOURCE_ID);
+  if (!definition) throw new Error(`The dynamics passage ${DYNAMICS_SOURCE_ID} is unavailable.`);
   return RENDERERS.flatMap(({ key, version }) => PIANO_IDS.map((piano) => descriptor({
     id: `dynamics-mixed/${key}/${piano}`,
     partition: DISCOVERY_MIXED_PIANO[key] === piano ? "discovery" : "confirmation",
@@ -404,6 +576,11 @@ function mixedDynamicsTraces(): ListenTraceDescriptor[] {
     caseKind: null,
     fixtureVersion: null,
     derivedFromTraceId: null,
+    musicalInputHash: sequenceMusicalInputHash(
+      definition,
+      COURSE_CLEAR_ARTICULATION_INTERVAL_MS,
+      crescendoDecrescendoLayers(piano, definition.attacks.length),
+    ),
   })));
 }
 
@@ -412,6 +589,8 @@ function isolatedTraces(): ListenTraceDescriptor[] {
   return RENDERERS.flatMap(({ key, version }) => cases.map((benchmarkCase, index) => {
     const caseKind = listenIsolatedCaseKind(benchmarkCase.target, benchmarkCase.played);
     const sourceId = `isolated-case-${String(index + 1).padStart(3, "0")}`;
+    const target = [...benchmarkCase.target].sort((left, right) => left - right);
+    const played = [...benchmarkCase.played].sort((left, right) => left - right);
     return descriptor({
       // The complete isolated corpus is untouched confirmation evidence: no
       // threshold may be chosen from the numbers the release gates quote.
@@ -432,6 +611,24 @@ function isolatedTraces(): ListenTraceDescriptor[] {
       caseKind,
       fixtureVersion: null,
       derivedFromTraceId: null,
+      musicalInputHash: listenTraceMusicalInputHash({
+        targets: [target],
+        attacks: [{
+          targetIndex: 0,
+          scheduledAtMs: ISOLATED_LISTEN_BENCHMARK_PRE_ROLL_MS,
+          expectedAdvance: samePitches(target, played),
+          targetStart: null,
+          gainReferenceChordSize: null,
+          notes: played.map((midi) => ({
+            midi,
+            attackTimeMs: ISOLATED_LISTEN_BENCHMARK_PRE_ROLL_MS,
+            holdMs: LISTEN_BENCHMARK_DEFAULT_HOLD_MS,
+          })),
+        }],
+        attackLayers: [DEFAULT_BENCHMARK_LAYER],
+        durationMs: ISOLATED_LISTEN_BENCHMARK_DURATION_MS,
+        releaseMs: LISTEN_BENCHMARK_RELEASE_MS,
+      }),
     });
   }));
 }
@@ -466,6 +663,11 @@ function regressionFixtureTraces(traces: readonly ListenTraceDescriptor[]): List
       caseKind: null,
       fixtureVersion: fixture.origin.sourceRecognitionStructureHash,
       derivedFromTraceId: source?.id ?? null,
+      musicalInputHash: sequenceMusicalInputHash(
+        fixture.definition,
+        fixture.intervalMs,
+        repeatedLayer(fixture.origin.layer, fixture.definition),
+      ),
       contentKey: `regression/${fixture.id}`,
     });
   });
@@ -820,33 +1022,6 @@ export function listenCandidateParetoFrontier(
  * Manifest identity
  * ------------------------------------------------------------------------- */
 
-class ManifestHasher {
-  private hash = 0x811c_9dc5;
-  private readonly scratch = new DataView(new ArrayBuffer(8));
-
-  private byte(value: number): void {
-    this.hash = Math.imul(this.hash ^ (value & 0xff), 0x0100_0193) >>> 0;
-  }
-
-  text(value: string): void {
-    for (let index = 0; index < value.length; index += 1) {
-      const code = value.charCodeAt(index);
-      this.byte(code & 0xff);
-      this.byte(code >>> 8);
-    }
-    this.byte(0);
-  }
-
-  number(value: number): void {
-    this.scratch.setFloat64(0, value);
-    for (let index = 0; index < 8; index += 1) this.byte(this.scratch.getUint8(index));
-  }
-
-  get digest(): string {
-    return (this.hash >>> 0).toString(16).padStart(8, "0");
-  }
-}
-
 /**
  * FNV-1a over the version, every trace assignment, every derived weight, and the
  * metric order. Prose is excluded, so a clarified comment does not invalidate a
@@ -855,7 +1030,7 @@ class ManifestHasher {
 export function listenTraceManifestHash(
   manifest: ListenTraceManifest = LISTEN_TRACE_MANIFEST,
 ): string {
-  const hasher = new ManifestHasher();
+  const hasher = new DeterministicHasher();
   hasher.number(manifest.version);
   hasher.number(manifest.traces.length);
   const weights = new Map(
@@ -897,6 +1072,28 @@ export function listenTraceManifestHash(
  * metric order breaks this pin on purpose: see LISTEN_TRACE_MANIFEST_AMENDMENT_RULE.
  */
 export const LISTEN_TRACE_MANIFEST_HASH = "0ed1e71d";
+
+/**
+ * Corpus identity is separate from the historical protocol hash because the
+ * latter already names the Task 07/08 reports. Together, the two pins bind the
+ * protocol to the musical definition behind every positional or source-ID row.
+ */
+export function listenTraceCorpusHash(
+  manifest: ListenTraceManifest = LISTEN_TRACE_MANIFEST,
+): string {
+  const hasher = new DeterministicHasher();
+  hasher.number(manifest.version);
+  hasher.number(manifest.traces.length);
+  for (const trace of manifest.traces) {
+    hasher.text(trace.id);
+    hasher.text(trace.sequenceFamily ?? "");
+    hasher.text(trace.musicalInputHash);
+  }
+  return hasher.digest;
+}
+
+/** Pinned identity of the ordered musical corpus behind manifest version 1. */
+export const LISTEN_TRACE_CORPUS_HASH = "10ae2e0b";
 
 /* ------------------------------------------------------------------------- *
  * Census
@@ -1047,6 +1244,14 @@ export function validateListenTraceManifest(
         "manifest-hash",
         `Version ${manifest.version} hashes to ${hash}, not the pinned ` +
           `${LISTEN_TRACE_MANIFEST_HASH}. ${LISTEN_TRACE_MANIFEST_AMENDMENT_RULE}`,
+      ));
+    }
+    const corpusHash = listenTraceCorpusHash(manifest);
+    if (corpusHash !== LISTEN_TRACE_CORPUS_HASH) {
+      problems.push(problem(
+        "corpus-hash",
+        `Version ${manifest.version}'s musical corpus hashes to ${corpusHash}, not the pinned ` +
+          `${LISTEN_TRACE_CORPUS_HASH}. ${LISTEN_TRACE_MANIFEST_AMENDMENT_RULE}`,
       ));
     }
   }
@@ -1276,6 +1481,7 @@ export function summarizeListenTraceManifest(
 ): {
   version: number;
   hash: string;
+  corpusHash: string;
   traceCount: number;
   partitions: Array<{ partition: ListenTracePartition; traceCount: number; suites: Array<{ suite: ListenTraceSuite; traceCount: number }> }>;
   valid: boolean;
@@ -1283,6 +1489,7 @@ export function summarizeListenTraceManifest(
   return {
     version: manifest.version,
     hash: listenTraceManifestHash(manifest),
+    corpusHash: listenTraceCorpusHash(manifest),
     traceCount: manifest.traces.length,
     partitions: LISTEN_TRACE_PARTITIONS.map((partition) => {
       const traces = listenTracesInPartition(partition, manifest);

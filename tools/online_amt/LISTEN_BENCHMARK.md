@@ -427,6 +427,12 @@ decoded results. The `listen-sequence-profile-validation-tone` command reproduce
 the paired run's Tone rows exactly, and a focused single-speed smoke reproduces
 the corresponding rows of the full run.
 
+The August 20 attribution repair is frozen in
+`benchmark-results/listen-sequence-profile-validation-task10.json`: its 18
+late-advance records include target timing, causing attack and pitches, distance,
+and delay. `benchmark-results/README.md` pins both the exact file SHA-256 and the
+cross-run canonical evidence digest.
+
 Nothing here changes a candidate value, a manifest assignment, or the production
 default, which remains `baseline-v1`.
 
@@ -561,6 +567,14 @@ Measured at commit `da418d6`, model `online_amt_streaming.onnx`, renderers
 `bundled-piano-web-audio-v1` and `bundled-piano-tone-v2`. Manifest version 1,
 hash `0ed1e71d`; 176 traces captured, 139 scored, 37 gating runs plus the 2
 committed regressions. Grid size 1,000, unchanged.
+
+The August 20 evidence repair separately pins the musical corpus as `10ae2e0b`
+and freezes the rerun's complete 1,000-row export at
+`benchmark-results/listen-matcher-multidomain-sweep-task08.json`. Its canonical
+candidate digest is `fnv1a-32-canonical-json:53ee8a67`; every row includes the
+profile, metric vector, safety verdict, and rejection codes. The discovery-only
+rerun reproduced every count and selected ID below without reading confirmation
+data.
 
 #### What the search rejected
 
@@ -1985,6 +1999,14 @@ trailing argument names one or more suites — `dynamics-constant`,
 safe here because the two committed regressions are replayed against every
 profile column independently of which rows were captured, so a suite-limited run
 still cannot report a clean safety verdict while regressing a diagnosed case.
+
+The August 20 attribution repair is frozen in
+`benchmark-results/listen-dynamics-profile-validation-task11.json`: its 34
+serialized late-advance instances represent 25 non-overlapping profile-level records;
+the regression-case view repeats 9 already present in the profile view. Every record
+includes target timing, causing attack and pitches, distance, and delay.
+`benchmark-results/README.md` pins both the exact file SHA-256 and the cross-run
+canonical evidence digest.
 
 Unlike the isolated matrix, this corpus is **not** uniformly held out: manifest
 version 1 assigned three constant layers per piano and renderer, one mixed run
