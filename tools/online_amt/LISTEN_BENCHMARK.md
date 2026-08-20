@@ -74,8 +74,8 @@ narrowed smoke rather than baselines for anything wider.
 #### Outcome-identity reproducibility
 
 The per-trace, per-profile outcome identities did not exist at `10a32a7`, so the
-values below are separate evidence measured later, on the change that adds them
-(parent commit `c3c2001`), Chrome 151.0.7922.169 on Linux, model
+values below are separate evidence measured later, at commit `1b8feef`, which
+adds them, Chrome 151.0.7922.169 on Linux, model
 `online_amt_streaming.onnx`. The smoke, corpora, renderers, and manifest are the
 same as above, and the identity digests were reproduced unchanged, which is what
 makes the two measurements comparable at all.
