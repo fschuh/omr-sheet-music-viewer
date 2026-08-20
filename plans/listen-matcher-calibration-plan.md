@@ -1491,6 +1491,10 @@ decision.
 - Compare decoded-structure identities, discrete outcomes, summaries, gate codes,
   failure identities, and recommendation inputs. Record raw PCM/FNV hashes as
   diagnostics but do not require them to match across browser processes.
+  Archive both complete exports and compare them with
+  `node tools/online_amt/verify_listen_benchmark_evidence.mjs --compare <first-run.json>
+  <second-run.json>`; this canonical comparison excludes only host-dependent
+  `maximumInferenceMs` and floating-point audio diagnostics `peak` and `rms`.
 - Do not alter candidate values, fixtures, attribution, or gates after viewing the
   first run. Any such change invalidates both repetitions and restarts this task.
 - Record Direct/Tone, speed/family, piano/layer, mixed-dynamics, articulation,

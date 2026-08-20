@@ -2540,6 +2540,15 @@ test("domains that did not measure one frozen matrix are refused rather than gat
   assert.throws(
     () => evaluateListenProfileValidationGates({
       ...clean,
+      dynamics: gateDynamicsResult(clean.dynamics.renderers, {
+        manifest: { ...clean.dynamics.manifest, corpusHash: "another-corpus" },
+      }),
+    }),
+    /another-corpus.*while the isolated matrix used/,
+  );
+  assert.throws(
+    () => evaluateListenProfileValidationGates({
+      ...clean,
       sequence: gateSequenceResult(clean.sequence.renderers, {
         candidateProfileIds: ["steady-open-v2"],
       }),

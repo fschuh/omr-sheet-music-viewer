@@ -47,10 +47,10 @@ node tools/online_amt/run_browser_benchmarks.mjs \
 
 Measured at commit `10a32a7`, Chrome 151.0.7922.169 on Linux, model
 `online_amt_streaming.onnx`, renderers `bundled-piano-web-audio-v1` and
-`bundled-piano-tone-v2`. Manifest version 1, hash `0ed1e71d`; the complete
-268-trace isolated corpus with the sequence corpus narrowed to 333.33 ms and the
-dynamics corpus narrowed to the articulation suite, so the run is deliberately
-incomplete evidence.
+`bundled-piano-tone-v2`. Manifest version 1, protocol hash `0ed1e71d`, musical
+corpus hash `10ae2e0b`; the complete 268-trace isolated corpus with the sequence
+corpus narrowed to 333.33 ms and the dynamics corpus narrowed to the articulation
+suite, so the run is deliberately incomplete evidence.
 
 | Domain | Captured | Renderers | Partitions | Identity |
 | --- | ---: | --- | --- | --- |
@@ -74,6 +74,16 @@ narrowed smoke rather than baselines for anything wider.
 The frozen automated confirmation does not compare against these digests at all.
 It runs the complete matrix twice and compares its two repetitions with each
 other, which is the only comparison in which both sides captured the same traces.
+Archive each repetition separately, then make that comparison reproducible with:
+
+```text
+node tools/online_amt/verify_listen_benchmark_evidence.mjs \
+  --compare benchmark-results/<first-run>.json benchmark-results/<second-run>.json
+```
+
+The comparison ignores only host-dependent `maximumInferenceMs` and floating-point
+audio diagnostics `peak` and `rms`. It compares every corpus identity, musical
+outcome, summary, gate code, failure identity, and recommendation input.
 
 The `baseline-v1` columns reproduce the recorded Task 09 isolated matrix exactly
 — 104/106 and 52/54 under Direct, 100/106 and 48/54 under Tone — and the gate

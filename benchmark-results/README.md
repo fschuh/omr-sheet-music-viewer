@@ -15,6 +15,18 @@ schemas, and non-overlapping late-advance counts with:
 node tools/online_amt/verify_listen_benchmark_evidence.mjs
 ```
 
+Compare two fresh-browser repetitions of a complete Task 13 confirmation run with:
+
+```text
+node tools/online_amt/verify_listen_benchmark_evidence.mjs \
+  --compare benchmark-results/<first-run>.json benchmark-results/<second-run>.json
+```
+
+This mode canonicalizes both files, reports the first meaningful mismatch, and
+exits nonzero when they differ. It excludes only `maximumInferenceMs`, `peak`, and
+`rms`; decoded-structure identities, discrete outcomes, summaries, gate codes,
+failure identities, and recommendation inputs must match exactly.
+
 ## Task 08 discovery/regression sweep
 
 `listen-matcher-multidomain-sweep-task08.json` is the full Task 08 discovery/regression
