@@ -107,9 +107,24 @@ node tools/online_amt/verify_listen_benchmark_evidence.mjs \
   --compare benchmark-results/<first-run>.json benchmark-results/<second-run>.json
 ```
 
-The comparison ignores only host-dependent `maximumInferenceMs` and floating-point
-audio diagnostics `peak` and `rms`. It compares every corpus identity, musical
-outcome, summary, gate code, failure identity, and recommendation input.
+The comparison ignores only host-dependent `maximumInferenceMs`, floating-point
+audio diagnostics `peak` and `rms`, and the two process-local hashes described
+below. It compares every corpus identity, musical outcome, summary, gate code,
+failure identity, and recommendation input.
+
+Every captured trace carries `processLocalPcmHash`, the FNV-1a hash of the PCM it
+was rendered from, and `processLocalTraceHash`, the FNV-1a hash of the complete
+decoded trace including confidences and raw scores. Both are required to be
+present and well formed: a run that recorded neither could not show what it
+rendered and decoded, and a placeholder repeating across two runs would read as a
+diagnostic that agreed. The PCM signature is recomputed from the waveform the
+trace retained and compared whole, chunk hash for chunk hash, so a waveform
+substituted after capture — including one of exactly the same length — is refused
+rather than archived under the hash of audio the trace no longer holds. Neither is compared between processes, because Task 04
+measured that Chrome's offline audio rendering and ONNX Runtime do not reproduce
+their last bits in a fresh process. They are also left out of each domain's
+`identityDigest`, so the single value a repetition is compared on first is the
+decoded-structure identity alone.
 
 Before comparing the two files to each other it holds each of them to the frozen
 matrix: exactly one `listen-profile-validation` result, `evidenceComplete`,
@@ -117,7 +132,8 @@ registry version 2, `baseline-v1` plus the four frozen `v2` candidates at their
 frozen threshold values, all eighteen gates with their stated requirements, all
 three domains under both renderers, 268 isolated, 156 sequence, and 52 dynamics
 traces named for their suite and renderer, manifest version 1 / `0ed1e71d` /
-`10ae2e0b`, trace reuse and baseline parity verified per domain, and each domain
+`10ae2e0b`, trace reuse and baseline parity verified per domain, both
+process-local hashes recorded on every captured trace, and each domain
 spanning exactly the partitions its frozen corpus spans. Outcome coverage is read
 rather than counted: every captured trace must carry one row per profile column,
 in the frozen column order and under the renderer and partition it was captured

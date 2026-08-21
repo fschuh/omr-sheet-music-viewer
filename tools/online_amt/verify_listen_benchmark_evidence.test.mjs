@@ -62,6 +62,10 @@ function domainIdentity(expected) {
       rendererKey,
       recognitionStructureHash: digest(`structure ${traceId}`),
       frameCount: 40 + index,
+      // Recorded per trace and excluded from the comparison, exactly as a
+      // measured repetition carries them.
+      processLocalPcmHash: digest(`pcm ${traceId}`),
+      processLocalTraceHash: digest(`raw ${traceId}`),
     });
     for (const profileId of COLUMN) {
       outcomeIdentities.push({
@@ -232,6 +236,14 @@ function repetitions() {
   second[0].sequence.maximumInferenceMs = 25;
   second[0].dynamics.peak = 0.76;
   second[0].dynamics.rms = 0.21;
+  // Neither Chrome's offline rendering nor ONNX Runtime reproduces its last
+  // bits, so a real second run differs on every process-local hash it records.
+  for (const domain of second[0].gates.domains) {
+    for (const identity of domain.traceIdentities) {
+      identity.processLocalPcmHash = digest(`pcm ${identity.traceId} second`);
+      identity.processLocalTraceHash = digest(`raw ${identity.traceId} second`);
+    }
+  }
   return { first, second };
 }
 
@@ -297,11 +309,47 @@ test("cross-run comparison ignores only the documented host-dependent fields", (
   assert.deepEqual(firstEvidenceDifference(first, second), mismatch.difference);
 });
 
+test("process-local hashes are required per trace and excluded from the comparison", async () => {
+  const { first, second } = repetitions();
+  const firstRows = first[0].gates.domains.flatMap(({ traceIdentities }) => traceIdentities);
+  const secondRows = second[0].gates.domains.flatMap(({ traceIdentities }) => traceIdentities);
+  assert.equal(
+    firstRows.length,
+    CONFIRMATION_EVIDENCE.domains.reduce((total, { capturedTraceCount }) => (
+      total + capturedTraceCount
+    ), 0),
+  );
+  // Every captured trace records both, and every one of them differs between
+  // the two processes, which is the case the exclusion exists for.
+  assert.ok(firstRows.every(({ processLocalPcmHash, processLocalTraceHash }) => (
+    /^[0-9a-f]{8}$/.test(processLocalPcmHash) && /^[0-9a-f]{8}$/.test(processLocalTraceHash)
+  )));
+  assert.ok(firstRows.every((row, index) => (
+    row.processLocalPcmHash !== secondRows[index].processLocalPcmHash &&
+    row.processLocalTraceHash !== secondRows[index].processLocalTraceHash
+  )));
+  // The decoded-structure identity the comparison does read is unaffected: the
+  // diagnostics are not part of the digest a repetition is compared on.
+  assert.deepEqual(
+    first[0].gates.domains.map(({ identityDigest: value }) => value),
+    second[0].gates.domains.map(({ identityDigest: value }) => value),
+  );
+  const messages = await compareArchives(first, second);
+  assert.match(messages[0], /Benchmark repetitions match/);
+  assert.match(
+    messages[0],
+    /omitted=maximumInferenceMs,peak,rms,processLocalPcmHash,processLocalTraceHash/,
+  );
+});
+
 test("compare CLI passes matching repetitions and identifies a meaningful mismatch", async () => {
   const { first, second } = repetitions();
   const messages = await compareArchives(first, second);
   assert.match(messages[0], /Benchmark repetitions match: evidence=[a-f0-9]{64}/);
-  assert.match(messages[0], /omitted=maximumInferenceMs,peak,rms/);
+  assert.match(
+    messages[0],
+    /omitted=maximumInferenceMs,peak,rms,processLocalPcmHash,processLocalTraceHash/,
+  );
   // The confirmation contract is reported too, so the archived log says which
   // matrix the two repetitions were, not only that they agreed.
   assert.match(messages[1], /manifest=1\/0ed1e71d\/10ae2e0b registry=2/);
@@ -928,6 +976,18 @@ const INCOMPLETE_EVIDENCE_CASES = [
       for (const row of sequence.outcomeIdentities.slice(0, 5)) row.rendererKey = "not-a-renderer";
     },
     expect: /sequence domain captured "sequence\/direct\/000" under renderer "not-a-renderer" and partition "discovery", which the frozen matrix does not contain/,
+  },
+  {
+    what: "a captured trace with no recorded process-local PCM hash",
+    break: (run) => { delete run[0].gates.domains[0].traceIdentities[3].processLocalPcmHash; },
+    expect: /isolated domain captured "isolated\/tone\/003" with process-local PCM hash <missing> and trace hash "[0-9a-f]{8}", which are not both recorded diagnostics/,
+  },
+  {
+    what: "a captured trace whose raw trace hash is a placeholder rather than a measurement",
+    break: (run) => {
+      run[0].gates.domains[1].traceIdentities[2].processLocalTraceHash = "unsigned";
+    },
+    expect: /sequence domain captured "sequence\/direct\/002" with process-local PCM hash "[0-9a-f]{8}" and trace hash "unsigned", which are not both recorded diagnostics/,
   },
   {
     what: "a trace captured under a partition the frozen matrix does not contain",

@@ -338,8 +338,24 @@ const REQUIRED_FORENSIC_FIELDS = [
   "attributionDelayMs",
 ];
 
-/** Fields that are diagnostic rather than cross-process confirmation evidence. */
-const CROSS_RUN_OMITTED_FIELDS = new Set(["maximumInferenceMs", "peak", "rms"]);
+/**
+ * Fields that are diagnostic rather than cross-process confirmation evidence.
+ *
+ * `maximumInferenceMs` is a wall-clock maximum and `peak`/`rms` are measured off
+ * floating-point audio. The two process-local hashes are excluded for the reason
+ * Task 04 established: neither Chrome's offline audio rendering nor ONNX Runtime
+ * reproduces its last bits in a fresh process, so the raw PCM and raw trace
+ * hashes legitimately differ between two repetitions of the same matrix. They
+ * are still required to be present on every captured trace, so the archive
+ * records what this process actually rendered and decoded.
+ */
+const CROSS_RUN_OMITTED_FIELDS = new Set([
+  "maximumInferenceMs",
+  "peak",
+  "rms",
+  "processLocalPcmHash",
+  "processLocalTraceHash",
+]);
 
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
@@ -734,6 +750,22 @@ export function confirmationEvidenceProblems(result, label) {
         `${where} captured ${JSON.stringify(misnamed.traceId)} under renderer ` +
           `${JSON.stringify(misnamed.rendererKey)}, which is not a ` +
           `${expected.suites.join(", ")} trace of that renderer`,
+      );
+    }
+    // Required to be present, never compared between processes: an archive that
+    // recorded no raw identity at all cannot show that its columns replayed one
+    // waveform, and a placeholder that repeats across two runs would read as a
+    // diagnostic that agreed.
+    const undiagnosed = traceIdentities.find((identity) => (
+      !DIGEST_PATTERN.test(String(identity?.processLocalPcmHash)) ||
+      !DIGEST_PATTERN.test(String(identity?.processLocalTraceHash))
+    ));
+    if (undiagnosed !== undefined) {
+      report(
+        `${where} captured ${JSON.stringify(undiagnosed.traceId)} with process-local PCM hash ` +
+          `${printable(undiagnosed.processLocalPcmHash)} and trace hash ` +
+          `${printable(undiagnosed.processLocalTraceHash)}, which are not both recorded ` +
+          `diagnostics`,
       );
     }
     if (domain.traceReuseVerified !== true) report(`${where} did not verify trace reuse`);

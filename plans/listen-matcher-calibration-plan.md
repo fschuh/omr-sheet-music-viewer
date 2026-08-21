@@ -1475,6 +1475,28 @@ profile values, all domain identities, safety counts, and gate reasons.
 automated domains and returns eligibility without performing a parameter search or
 mutating the production default.
 
+**August 20 handoff amendment:** Task 13 requires the process-local PCM and raw
+trace hashes to be recorded diagnostically, and the unified export carried only
+decoded-structure hashes and outcome digests, so the requirement had no field to
+name. Each captured trace now carries `processLocalPcmHash`, the FNV-1a hash of
+the PCM it was rendered from, and `processLocalTraceHash`, the FNV-1a hash of the
+complete decoded trace including confidences and raw scores. Both are required to
+be present and well formed — every replay matrix recomputes the audio signature
+from the retained waveform and refuses a trace that cannot supply it or no longer
+matches it, and the verifier refuses an archive whose captured traces do not carry
+them — and both are excluded from cross-process equality and from each
+domain's `identityDigest`, because Task 04 measured that neither survives a fresh
+browser process. This amendment changes no candidate value, gate, corpus, or
+threshold, and is committed before any Task 13 measurement so both repetitions
+run on one commit. Six new tests cover it: that each matrix records the hashes of
+the trace it read, that a trace which cannot supply them is refused by all three,
+that the corpus identity digest is unmoved by them, that the verifier refuses an
+archive whose captured trace records no PCM hash, that it refuses one whose raw
+trace hash is a placeholder rather than a measurement, and that two repetitions
+differing on every process-local hash still compare equal. The unit suite is 464
+tests including the evidence verifier's, plus the dynamics pretest, and the
+production build passes.
+
 ### Task 13 — Execute the frozen automated confirmation
 
 **Status:** Required. **Prerequisites:** Task 12 complete.
@@ -1484,17 +1506,47 @@ decision.
 
 **Work:**
 
-- Record the commit, model ID, profile registry version, candidate values,
-  renderers, fixtures, gates, and expected historical baseline before running.
+- Record and freeze the preflight record before the first run. A repetition is
+  only evidence if a reader can tell what it measured, so the record names the
+  measured commit and that its worktree was clean; the Chrome executable and its
+  exact version, the operating system, and the Node version; the model path and
+  its SHA-256, not merely its filename; the profile registry version, the
+  candidate values, the renderer identifiers, the manifest and corpus hashes, the
+  eighteen gates, the exact commands below, and the expected historical baseline.
+  Both runs, the unit suite, and the production build use that one clean commit
+  and that one environment. Any change to source, model, renderer, fixture, gate,
+  or browser version restarts both repetitions rather than amending one.
 - Run the complete `listen-profile-validation` matrix twice on a clean local
-  benchmark server.
+  benchmark server, started from `webapp` with `npm run dev:wasm-benchmark`.
+  The archive path is passed through the environment, because for this command
+  the positional arguments after the corpus filter are read as corpus speeds and
+  dynamics suites (`tools/online_amt/run_browser_benchmarks.mjs`), and a path
+  placed there would narrow the matrix into a focused smoke instead:
+
+  ```bash
+  LISTEN_BENCHMARK_OUTPUT_PATH=benchmark-results/listen-profile-validation-task13-run1.json \
+    node tools/online_amt/run_browser_benchmarks.mjs \
+    http://127.0.0.1:5174/online-amt-benchmark.html \
+    listen-profile-validation
+
+  LISTEN_BENCHMARK_OUTPUT_PATH=benchmark-results/listen-profile-validation-task13-run2.json \
+    node tools/online_amt/run_browser_benchmarks.mjs \
+    http://127.0.0.1:5174/online-amt-benchmark.html \
+    listen-profile-validation
+  ```
+
+  Record the SHA-256 of both archived files, and the canonical comparison digest
+  the `--compare` command below reports, once the runs are complete.
 - Compare decoded-structure identities, discrete outcomes, summaries, gate codes,
-  failure identities, and recommendation inputs. Record raw PCM/FNV hashes as
-  diagnostics but do not require them to match across browser processes.
-  Archive both complete exports and compare them with
+  failure identities, and recommendation inputs. Every captured trace carries its
+  process-local `processLocalPcmHash` and `processLocalTraceHash` as required
+  diagnostics; both are excluded from cross-process equality, and neither enters
+  the domain `identityDigest` a repetition is compared on first.
+  Compare the two archives with
   `node tools/online_amt/verify_listen_benchmark_evidence.mjs --compare <first-run.json>
   <second-run.json>`; this canonical comparison excludes only host-dependent
-  `maximumInferenceMs` and floating-point audio diagnostics `peak` and `rms`.
+  `maximumInferenceMs`, floating-point audio diagnostics `peak` and `rms`, and
+  those two process-local hashes.
   That command refuses either file unless it is one complete `listen-profile-validation`
   run of the frozen matrix — `evidenceComplete`, registry version 2, `baseline-v1`
   plus the four frozen candidates at their frozen threshold values, all eighteen
@@ -1525,7 +1577,8 @@ decision.
 
 **Verification:** Both repetitions satisfy Task 04 cross-process parity, baseline
 parity passes, the full unit suite/build pass on the measured commit, and the
-report contains enough metadata to reproduce the run.
+report contains enough metadata to reproduce the run: the frozen preflight record,
+the archived SHA-256 of each run, and the canonical comparison digest they share.
 
 **Complete when:** The frozen automated confirmation matrix is repeated,
 documented, and yields a stable eligibility set without any post-result retuning.

@@ -31,6 +31,7 @@ import {
   LISTEN_BENCHMARK_PIANO,
   LISTEN_BENCHMARK_RENDERER,
   LISTEN_BENCHMARK_TONE_RENDERER,
+  signatureForBenchmarkPcm,
   type ListenBenchmarkRendererConfiguration,
 } from "./listenBenchmarkAudio";
 import {
@@ -110,6 +111,86 @@ import {
 /** The reference row every candidate is compared against. */
 export const LISTEN_PROFILE_VALIDATION_BASELINE_PROFILE_ID: ListenMatcherProfileId =
   LISTEN_BASELINE_PROFILE_ID;
+
+/**
+ * The process-local audio and trace hashes one measured row carries.
+ *
+ * Task 04 established that neither `OfflineAudioContext` PCM nor the raw
+ * recognition hash reproduces bit for bit in a fresh browser process, so the
+ * cross-process comparison is stated over decoded structure and discrete
+ * outcomes instead. That left the unified export with no record of the raw
+ * identities at all, and a Task 13 repetition is required to record them: within
+ * one run they prove every profile column read one identical waveform and one
+ * unmutated trace, and between runs a mismatch here beside matching structure is
+ * the ordinary platform noise rather than a result. They are therefore required
+ * to be present and well formed, and are excluded by name from the canonical
+ * cross-process comparison.
+ */
+export interface ListenProfileProcessLocalHashes {
+  /** FNV-1a over the rendered PCM bytes, from the capture-time signature. */
+  processLocalPcmHash: string;
+  /** FNV-1a over the complete decoded trace, confidences and raw scores included. */
+  processLocalTraceHash: string;
+}
+
+const LISTEN_PROFILE_HASH_PATTERN = /^[0-9a-f]{8}$/;
+
+/**
+ * Reads one trace's process-local hashes, refusing a trace that cannot supply
+ * them.
+ *
+ * The refusal is here rather than in a comment because an unsigned or
+ * re-pointed trace would otherwise reach the archive carrying a placeholder,
+ * and a placeholder that repeats across two runs looks exactly like a
+ * diagnostic that agreed. The signature is recomputed from the retained PCM and
+ * compared whole, hash for hash, so a trace whose waveform was replaced after it
+ * was signed is refused instead of exported under the old hash — including a
+ * replacement of exactly the same length, which no shape comparison would catch.
+ */
+export function listenProfileProcessLocalHashes(
+  traceId: string,
+  trace: ListenRecognitionTrace,
+  recognitionHash: string,
+): ListenProfileProcessLocalHashes {
+  const signature = trace.audioSignature;
+  if (!signature) {
+    throw new Error(
+      `${traceId} was captured without an audio signature, so its process-local PCM hash ` +
+        `cannot be recorded.`,
+    );
+  }
+  if (!LISTEN_PROFILE_HASH_PATTERN.test(signature.pcmHash)) {
+    throw new Error(
+      `${traceId} carries malformed PCM hash ${JSON.stringify(signature.pcmHash)}.`,
+    );
+  }
+  if (!LISTEN_PROFILE_HASH_PATTERN.test(recognitionHash)) {
+    throw new Error(
+      `${traceId} carries malformed recognition hash ${JSON.stringify(recognitionHash)}.`,
+    );
+  }
+  // The signature is recomputed rather than sanity-checked against the retained
+  // PCM's shape. A length comparison passes for any waveform of the same length,
+  // which would export the capture-time hash of audio the trace no longer holds
+  // — precisely the substitution this guard exists to catch.
+  const measured = signatureForBenchmarkPcm(trace.pcm, trace.sampleRate, trace.chunkSize);
+  if (
+    measured.pcmHash !== signature.pcmHash ||
+    measured.sampleRate !== signature.sampleRate ||
+    measured.chunkSize !== signature.chunkSize ||
+    measured.frameCount !== signature.frameCount ||
+    measured.pcmByteLength !== signature.pcmByteLength ||
+    measured.chunkHashes.length !== signature.chunkHashes.length ||
+    measured.chunkHashes.some((hash, index) => hash !== signature.chunkHashes[index])
+  ) {
+    throw new Error(
+      `${traceId} retained PCM signing as ${measured.pcmHash} over ${measured.frameCount} ` +
+        `samples but carries the signature ${signature.pcmHash} over ${signature.frameCount}, ` +
+        `so its recorded PCM hash does not describe the trace being exported.`,
+    );
+  }
+  return { processLocalPcmHash: signature.pcmHash, processLocalTraceHash: recognitionHash };
+}
 
 /**
  * Resolves the profile column order: the baseline first, then the frozen
@@ -354,6 +435,12 @@ export interface ListenIsolatedValidationCaseResult {
   recognitionStructureHash: string;
   frameCount: number;
   pcmLength: number;
+  /**
+   * Recorded so the archive holds the raw identities, and excluded by name from
+   * the cross-process comparison, which no fresh browser process reproduces.
+   */
+  processLocalPcmHash: string;
+  processLocalTraceHash: string;
   maximumInferenceMs: number;
   /** Every profile's outcome, in the frozen column order, from this one trace. */
   profiles: ListenIsolatedProfileOutcome[];
@@ -599,6 +686,7 @@ export function replayListenIsolatedProfileMatrix(
     recognitionStructureHash: capture.recognitionStructureHash,
     frameCount: trace.frames.length,
     pcmLength: trace.pcm.length,
+    ...listenProfileProcessLocalHashes(descriptor.id, trace, capture.recognitionHash),
     maximumInferenceMs: trace.maximumInferenceMs,
     profiles: outcomes,
   };
@@ -1025,6 +1113,12 @@ export interface ListenSequenceValidationCaseResult {
   recognitionStructureHash: string;
   frameCount: number;
   pcmLength: number;
+  /**
+   * Recorded so the archive holds the raw identities, and excluded by name from
+   * the cross-process comparison, which no fresh browser process reproduces.
+   */
+  processLocalPcmHash: string;
+  processLocalTraceHash: string;
   maximumInferenceMs: number;
   maximumProcessingBacklogMs: number;
   /** Every profile's run, in the frozen column order, from this one trace. */
@@ -1333,6 +1427,7 @@ export function replayListenSequenceProfileMatrix(
     recognitionStructureHash: capture.recognitionStructureHash,
     frameCount: trace.frames.length,
     pcmLength: trace.pcm.length,
+    ...listenProfileProcessLocalHashes(descriptor.id, trace, capture.recognitionHash),
     maximumInferenceMs: trace.maximumInferenceMs,
     maximumProcessingBacklogMs: trace.maximumProcessingBacklogMs,
     profiles: runs,
@@ -1884,6 +1979,12 @@ export interface ListenDynamicsValidationCaseResult {
   recognitionStructureHash: string;
   frameCount: number;
   pcmLength: number;
+  /**
+   * Recorded so the archive holds the raw identities, and excluded by name from
+   * the cross-process comparison, which no fresh browser process reproduces.
+   */
+  processLocalPcmHash: string;
+  processLocalTraceHash: string;
   peak: number;
   rms: number;
   maximumInferenceMs: number;
@@ -2347,6 +2448,7 @@ export function replayListenDynamicsProfileMatrix(
     recognitionStructureHash: capture.recognitionStructureHash,
     frameCount: trace.frames.length,
     pcmLength: trace.pcm.length,
+    ...listenProfileProcessLocalHashes(descriptor.id, trace, capture.recognitionHash),
     peak: trace.audioDiagnostics.peak,
     rms: trace.audioDiagnostics.rms,
     maximumInferenceMs: trace.maximumInferenceMs,
@@ -3461,6 +3563,15 @@ export interface ListenProfileValidationDomainIdentity {
     rendererKey: ListenTraceRendererKey;
     recognitionStructureHash: string;
     frameCount: number;
+    /**
+     * The raw PCM and trace hashes this process measured. They are required to
+     * be present, so the archive records what was actually rendered and decoded,
+     * and they are deliberately left out of `identityDigest` and out of the
+     * canonical cross-process comparison, because Task 04 measured that neither
+     * survives a fresh browser process.
+     */
+    processLocalPcmHash: string;
+    processLocalTraceHash: string;
   }>;
   identityDigest: string;
   /**
@@ -3896,6 +4007,8 @@ function listenProfileValidationDomainIdentities(
         rendererKey: renderer.rendererKey,
         recognitionStructureHash: result.recognitionStructureHash,
         frameCount: result.frameCount,
+        processLocalPcmHash: result.processLocalPcmHash,
+        processLocalTraceHash: result.processLocalTraceHash,
       }))),
       outcomeIdentities: isolated.renderers.flatMap((renderer) => renderer.cases
         .flatMap((result) => result.profiles.map((outcome) => ({
@@ -3919,6 +4032,8 @@ function listenProfileValidationDomainIdentities(
         rendererKey: renderer.rendererKey,
         recognitionStructureHash: result.recognitionStructureHash,
         frameCount: result.frameCount,
+        processLocalPcmHash: result.processLocalPcmHash,
+        processLocalTraceHash: result.processLocalTraceHash,
       }))),
       outcomeIdentities: sequence.renderers.flatMap((renderer) => renderer.cases
         .flatMap((result) => result.profiles.map(({ profileId, run }) => ({
@@ -3942,6 +4057,8 @@ function listenProfileValidationDomainIdentities(
         rendererKey: renderer.rendererKey,
         recognitionStructureHash: result.recognitionStructureHash,
         frameCount: result.frameCount,
+        processLocalPcmHash: result.processLocalPcmHash,
+        processLocalTraceHash: result.processLocalTraceHash,
       }))),
       outcomeIdentities: dynamics.renderers.flatMap((renderer) => renderer.cases
         .flatMap((result) => result.profiles.map(({ profileId, run }) => ({

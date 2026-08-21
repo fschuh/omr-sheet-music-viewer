@@ -4,6 +4,7 @@ import { ExactChordMatcher } from "./chordMatcher";
 import {
   LISTEN_BENCHMARK_RENDERER,
   LISTEN_BENCHMARK_TONE_RENDERER,
+  signatureForBenchmarkPcm,
 } from "./listenBenchmarkAudio";
 import {
   ISOLATED_LISTEN_BENCHMARK_PRE_ROLL_MS,
@@ -85,6 +86,7 @@ import {
   listenUnsafeAdvanceIdentities,
   listenValidationEvidenceRole,
   listenValidationTraceSafety,
+  replayListenDynamicsProfileMatrix,
   replayListenIsolatedProfileMatrix,
   replayListenSequenceProfileMatrix,
   resolveListenValidationProfileIds,
@@ -164,6 +166,7 @@ function softAttackTrace(
     relevantPitches: [...pitches],
     renderer: { ...renderer },
     audioDiagnostics: { frameCount: 512, durationMs: 32, peak: 0.5, rms: 0.1 },
+    audioSignature: signatureForBenchmarkPcm(new Float32Array(512)),
     pcm: new Float32Array(512),
     frames: [
       recognitionFrame(PRE_ROLL_MS - 32, []),
@@ -408,6 +411,119 @@ test("a profile matrix rejects an unusable column order", () => {
   );
 });
 
+/* ------------------------------------------------------------------------- *
+ * Process-local diagnostics
+ * ------------------------------------------------------------------------- */
+
+/**
+ * The raw PCM and trace hashes are recorded per trace and never compared across
+ * processes. Task 04 measured that neither survives a fresh browser process, so
+ * requiring them to match would fail every honest repetition; recording nothing
+ * would leave the archive unable to show what was rendered and decoded at all.
+ */
+test("every replayed matrix records the process-local hashes of the trace it read", () => {
+  const isolatedCase = listenIsolatedValidationCases(LISTEN_TRACE_MANIFEST, ["direct"])[0];
+  const isolatedTrace = softAttackTrace(isolatedCase.playedPitches, 0.99);
+  const isolated = replayListenIsolatedProfileMatrix(
+    capture(isolatedCase, isolatedTrace),
+    listenValidationProfileIdentities(resolveListenValidationProfileIds()),
+  );
+  assert.equal(isolated.processLocalPcmHash, isolatedTrace.audioSignature?.pcmHash);
+  assert.equal(isolated.processLocalTraceHash, listenRecognitionTraceHash(isolatedTrace));
+
+  const sequenceValidationCase = listenSequenceValidationCases(
+    LISTEN_TRACE_MANIFEST,
+    ["direct"],
+    [1_000],
+  )[0];
+  const sequenceCaptured = sequenceCapture(sequenceValidationCase);
+  const sequence = replayListenSequenceProfileMatrix(
+    sequenceCaptured,
+    listenValidationProfileIdentities(resolveListenValidationProfileIds()),
+  );
+  assert.equal(sequence.processLocalPcmHash, sequenceCaptured.trace.audioSignature?.pcmHash);
+  assert.equal(
+    sequence.processLocalTraceHash,
+    listenRecognitionTraceHash(sequenceCaptured.trace),
+  );
+
+  const dynamicsValidationCase = listenDynamicsValidationCases(
+    LISTEN_TRACE_MANIFEST,
+    ["direct"],
+  )[0];
+  const dynamicsCaptured = dynamicsCapture(dynamicsValidationCase);
+  const dynamics = replayListenDynamicsProfileMatrix(
+    dynamicsCaptured,
+    listenValidationProfileIdentities(resolveListenValidationProfileIds()),
+  );
+  assert.equal(dynamics.processLocalPcmHash, dynamicsCaptured.trace.audioSignature?.pcmHash);
+  assert.equal(
+    dynamics.processLocalTraceHash,
+    listenRecognitionTraceHash(dynamicsCaptured.trace),
+  );
+});
+
+test("a trace that cannot supply its process-local hashes is refused by every matrix", () => {
+  const column = listenValidationProfileIdentities(resolveListenValidationProfileIds());
+  const isolatedCase = listenIsolatedValidationCases(LISTEN_TRACE_MANIFEST, ["direct"])[0];
+  const unsigned = capture(isolatedCase, softAttackTrace(isolatedCase.playedPitches, 0.99));
+  // An unsigned trace would otherwise be archived under a placeholder, and a
+  // placeholder repeating across two runs reads exactly like agreement.
+  delete (unsigned.trace as { audioSignature?: unknown }).audioSignature;
+  assert.throws(
+    () => replayListenIsolatedProfileMatrix(unsigned, column),
+    /without an audio signature/,
+  );
+
+  const sequenceValidationCase = listenSequenceValidationCases(
+    LISTEN_TRACE_MANIFEST,
+    ["direct"],
+    [1_000],
+  )[0];
+  const unsignedSequence = sequenceCapture(sequenceValidationCase);
+  delete (unsignedSequence.trace as { audioSignature?: unknown }).audioSignature;
+  assert.throws(
+    () => replayListenSequenceProfileMatrix(unsignedSequence, column),
+    /without an audio signature/,
+  );
+
+  const dynamicsValidationCase = listenDynamicsValidationCases(
+    LISTEN_TRACE_MANIFEST,
+    ["direct"],
+  )[0];
+  const unsignedDynamics = dynamicsCapture(dynamicsValidationCase);
+  delete (unsignedDynamics.trace as { audioSignature?: unknown }).audioSignature;
+  assert.throws(
+    () => replayListenDynamicsProfileMatrix(unsignedDynamics, column),
+    /without an audio signature/,
+  );
+
+  // A trace whose waveform was replaced after it was signed is refused rather
+  // than exported under the hash of audio it no longer holds. The replacement
+  // here is exactly as long as the original and differs in one sample, which is
+  // the substitution a comparison of PCM length and byte length cannot see.
+  const rewritten = capture(isolatedCase, softAttackTrace(isolatedCase.playedPitches, 0.99));
+  const original = rewritten.trace.audioSignature;
+  assert.ok(original);
+  const mutated = new Float32Array(rewritten.trace.pcm);
+  mutated[257] = 0.5;
+  (rewritten.trace as { pcm: Float32Array }).pcm = mutated;
+  assert.equal(mutated.length, original.frameCount);
+  assert.equal(mutated.byteLength, original.pcmByteLength);
+  assert.throws(
+    () => replayListenIsolatedProfileMatrix(rewritten, column),
+    /retained PCM signing as [0-9a-f]{8} over 512 samples but carries the signature [0-9a-f]{8} over 512/,
+  );
+
+  // A replacement of a different length is refused by the same comparison.
+  const relengthened = capture(isolatedCase, softAttackTrace(isolatedCase.playedPitches, 0.99));
+  (relengthened.trace as { pcm: Float32Array }).pcm = new Float32Array(1_024);
+  assert.throws(
+    () => replayListenIsolatedProfileMatrix(relengthened, column),
+    /does not describe the trace being exported/,
+  );
+});
+
 test("renderer summaries reproduce the historical isolated gate per profile", () => {
   const validationCases = listenIsolatedValidationCases(LISTEN_TRACE_MANIFEST, ["direct"]).slice(0, 4);
   const profiles = listenValidationProfileIdentities(resolveListenValidationProfileIds());
@@ -486,6 +602,7 @@ function sequenceTrace(
     relevantPitches: [...sequence.relevantPitches],
     renderer: { ...renderer },
     audioDiagnostics: { frameCount: 512, durationMs: 32, peak: 0.5, rms: 0.1 },
+    audioSignature: signatureForBenchmarkPcm(new Float32Array(512)),
     pcm: new Float32Array(512),
     frames,
     maximumInferenceMs: 4,
@@ -494,6 +611,18 @@ function sequenceTrace(
 }
 
 const BASELINE_THRESHOLDS = listenValidationProfileIdentities(["baseline-v1"])[0].profile;
+
+/**
+ * Distinct per trace, as a real capture's process-local diagnostics are, and
+ * unrelated to the decoded-structure identity a repetition is compared on.
+ */
+function processLocalHashes(traceId: string): {
+  processLocalPcmHash: string;
+  processLocalTraceHash: string;
+} {
+  return { processLocalPcmHash: `pcm-${traceId}`, processLocalTraceHash: `raw-${traceId}` };
+}
+
 
 function sequenceCapture(
   validationCase: ListenSequenceValidationCase,
@@ -1223,6 +1352,7 @@ function fabricatedDynamicsCase(options: {
   const column = options.column ?? DYNAMICS_COLUMN;
   return {
     traceId: options.traceId,
+    ...processLocalHashes(options.traceId),
     partition: options.partition,
     scoreEligible: options.scoreEligible ?? options.partition !== "regression-only",
     suite: options.suite,
@@ -1483,6 +1613,7 @@ function gateIsolatedCase(options: {
 }): ListenIsolatedValidationCaseResult {
   return {
     traceId: options.traceId,
+    ...processLocalHashes(options.traceId),
     partition: options.partition,
     caseIndex: options.caseIndex,
     caseKind: options.caseKind,
@@ -1638,6 +1769,7 @@ function gateSequenceCase(options: {
   const sequenceId = options.sequenceId ?? `${options.family}-passage`;
   return {
     traceId: options.traceId,
+    ...processLocalHashes(options.traceId),
     partition: options.partition,
     scoreEligible: options.scoreEligible ?? options.partition !== "regression-only",
     sequenceId,
@@ -1970,6 +2102,64 @@ test("a clean complete matrix makes the candidate eligible without selecting any
     assert.equal(domain.present, true, domain.domain);
     assert.equal(domain.identityDigest.length, 8, domain.domain);
   }
+});
+
+/**
+ * The two halves of the PCM/FNV rule, stated over the export a repetition is
+ * actually compared on: the raw identities are carried on every captured trace,
+ * and the corpus digest the comparison reads is computed without them.
+ */
+test("the corpus identity a repetition is compared on excludes its process-local hashes", () => {
+  const rehash = <T extends { traceId: string }>(row: T): T => ({
+    ...row,
+    processLocalPcmHash: `pcm-${row.traceId}-second`,
+    processLocalTraceHash: `raw-${row.traceId}-second`,
+  });
+  const first = evaluateListenProfileValidationGates(cleanGateInput());
+  const second = cleanGateInput();
+  const repeated = evaluateListenProfileValidationGates({
+    isolated: {
+      ...second.isolated,
+      renderers: second.isolated.renderers.map((renderer) => ({
+        ...renderer,
+        cases: renderer.cases.map(rehash),
+      })),
+    },
+    sequence: {
+      ...second.sequence,
+      renderers: second.sequence.renderers.map((renderer) => ({
+        ...renderer,
+        cases: renderer.cases.map(rehash),
+      })),
+    },
+    dynamics: {
+      ...second.dynamics,
+      renderers: second.dynamics.renderers.map((renderer) => ({
+        ...renderer,
+        cases: renderer.cases.map(rehash),
+      })),
+    },
+  });
+  // Every captured trace carries the raw identities this process measured.
+  for (const domain of first.domains) {
+    assert.ok(domain.traceIdentities.length > 0, domain.domain);
+    assert.ok(domain.traceIdentities.every((identity) => (
+      identity.processLocalPcmHash === `pcm-${identity.traceId}` &&
+      identity.processLocalTraceHash === `raw-${identity.traceId}`
+    )), domain.domain);
+  }
+  assert.ok(repeated.domains.every(({ traceIdentities }) => traceIdentities.every((identity) => (
+    identity.processLocalPcmHash === `pcm-${identity.traceId}-second`
+  ))));
+  // And the digests the comparison reads are unmoved by all of it.
+  assert.deepEqual(
+    repeated.domains.map(({ identityDigest }) => identityDigest),
+    first.domains.map(({ identityDigest }) => identityDigest),
+  );
+  assert.deepEqual(
+    repeated.domains.map(({ outcomeDigest }) => outcomeDigest),
+    first.domains.map(({ outcomeDigest }) => outcomeDigest),
+  );
 });
 
 test("each fixed isolated floor rejects exactly one advance below itself", () => {
@@ -3563,6 +3753,7 @@ function completeCorpusGateReport(): ListenProfileValidationGateReport {
         rendererKey,
         renderer: validationCase.renderer.version,
         recognitionStructureHash: validationCase.descriptor.id,
+        ...processLocalHashes(validationCase.descriptor.id),
         frameCount: 4,
         pcmLength: 512,
         maximumInferenceMs: 4,
@@ -3598,6 +3789,7 @@ function completeCorpusGateReport(): ListenProfileValidationGateReport {
         rendererKey,
         renderer: validationCase.renderer.version,
         recognitionStructureHash: validationCase.descriptor.id,
+        ...processLocalHashes(validationCase.descriptor.id),
         frameCount: 54,
         pcmLength: 512,
         maximumInferenceMs: 4,
@@ -3648,6 +3840,7 @@ function completeCorpusGateReport(): ListenProfileValidationGateReport {
         rendererKey,
         renderer: validationCase.renderer.version,
         recognitionStructureHash: validationCase.descriptor.id,
+        ...processLocalHashes(validationCase.descriptor.id),
         frameCount: 54,
         pcmLength: 512,
         peak: 0.4,
