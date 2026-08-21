@@ -7,6 +7,289 @@
 Entries are kept newest first so renderer and recognition changes remain
 comparable over time.
 
+### Frozen automated confirmation — August 21, 2026
+
+The complete `listen-profile-validation` matrix run twice in fresh browser
+processes and compared with itself. This is the confirmatory automated evidence
+the production decision rests on. It changes no candidate value, no fixture, no
+gate, and no production default: `baseline-v1` remains the default, and this run
+is the reason it does.
+
+**Result: `no-safe-candidate`.** All four frozen `v2` candidates are rejected.
+Both repetitions reached that decision independently and their archives are
+canonically identical.
+
+#### Frozen preflight record
+
+Frozen before the first repetition. Both runs, the unit suite, and the production
+build used this one clean commit and this one environment; nothing in source,
+model, renderer, fixture, gate, or browser changed between them.
+
+| Item | Value |
+| --- | --- |
+| Commit | `456dea2`, worktree clean at measurement |
+| Operating system | Ubuntu 26.04 LTS, Linux 7.0.0-29-generic x86_64 |
+| Node | v24.13.0 |
+| Chrome | `/usr/bin/google-chrome`, 151.0.7922.169 |
+| Model | `webapp/public/models/online_amt_streaming.onnx`, SHA-256 `a77be8262d3742ce4d9e7d29146d8b17f5755650a7d2aee952bf5bf5ed190ac4` |
+| Renderers | `bundled-piano-web-audio-v1` (Direct), `bundled-piano-tone-v2` (Tone) |
+| Manifest | version 1, protocol `0ed1e71d`, musical corpus `10ae2e0b` |
+| Registry | version 2; `baseline-v1` plus `early-open-v2`, `steady-open-v2`, `early-held-v2`, `steady-held-v2` |
+| Gates | the eighteen frozen gates, each applied to every candidate |
+| Unit suite | 464 tests, 464 pass, 0 fail |
+| Production build | passes |
+| Expected historical baseline | isolated Direct 104/106 and 52/54, Tone 100/106 and 48/54 |
+
+The model hash is recorded rather than the filename alone, because a replaced
+model of the same name would reproduce every identifier in this table while
+measuring something else.
+
+#### Commands and archives
+
+```bash
+npm --prefix webapp run dev:wasm-benchmark
+
+LISTEN_BENCHMARK_OUTPUT_PATH=benchmark-results/listen-profile-validation-task13-run1.json \
+  node tools/online_amt/run_browser_benchmarks.mjs \
+  http://127.0.0.1:5174/online-amt-benchmark.html \
+  listen-profile-validation
+
+LISTEN_BENCHMARK_OUTPUT_PATH=benchmark-results/listen-profile-validation-task13-run2.json \
+  node tools/online_amt/run_browser_benchmarks.mjs \
+  http://127.0.0.1:5174/online-amt-benchmark.html \
+  listen-profile-validation
+
+node tools/online_amt/verify_listen_benchmark_evidence.mjs --compare \
+  benchmark-results/listen-profile-validation-task13-run1.json \
+  benchmark-results/listen-profile-validation-task13-run2.json
+```
+
+The archive path is passed through the environment because the positional
+arguments after the corpus filter are read as corpus speeds and dynamics suites;
+a path placed there would have narrowed the matrix into a focused smoke. Each
+repetition takes about ten minutes.
+
+| Artifact | SHA-256 |
+| --- | --- |
+| `listen-profile-validation-task13-run1.json` | `3ac11d4abe8231d3c3c61abf4e597d2651dd952ad905ee9b9033eef31b5d38d3` |
+| `listen-profile-validation-task13-run2.json` | `28a170b856df67b50842aefb243791c67b1dfa9dedbde3fdc036c607401daf79` |
+
+The two files differ byte for byte and are nevertheless the same evidence. Their
+shared canonical comparison digest is
+`8acc59b1b863ef89fb9fe6b1a0d365730c841df1b3c513c3541f9d20336c65e2`, computed with
+only `maximumInferenceMs`, `peak`, `rms`, `processLocalPcmHash`, and
+`processLocalTraceHash` excluded.
+
+#### Cross-process parity
+
+| Domain | Captured | Partitions | Identity | Outcome digest | Outcome rows |
+| --- | ---: | --- | --- | --- | ---: |
+| Isolated | 268 | `confirmation` | `bff20df8` | `be407330` | 1,340 |
+| Sequence | 156 | `discovery`, `regression-only` | `e9f09643` | `2cfc6561` | 780 |
+| Dynamics | 52 | `confirmation`, `discovery`, `regression-only` | `bfe48fdc` | `b57ea970` | 260 |
+
+Trace reuse and baseline parity are verified in every domain, and every captured
+trace carries one outcome row per profile column — 2,380 rows over 476 traces.
+The isolated corpus reproduces the identity and outcome digests the August 19
+gate entry recorded for the same complete 268-trace corpus, `bff20df8` and
+`be407330`, measured then under a narrowed smoke of the other two domains.
+
+The Task 04 property holds and is visible in the archives: 311 of the 476
+captured traces recorded a different `processLocalPcmHash` and
+`processLocalTraceHash` in the second process, while every decoded-structure
+identity and every discrete musical outcome matched. Chrome's offline rendering
+and ONNX Runtime do not reproduce their last bits in a fresh process; what this
+task depends on is that the decoded structure and the matcher's discrete outcomes
+do, and they did.
+
+#### Verdicts
+
+Every candidate was judged by all eighteen gates. The rejections are isolated
+`confirmation` evidence — the partition Task 07 held back — and they are the same
+in both repetitions.
+
+| Candidate | Verdict | Failed gates |
+| --- | --- | --- |
+| `early-open-v2` | rejected | `safety-isolated-false-advance`, `release-isolated-course-clear` |
+| `steady-open-v2` | rejected | `safety-isolated-false-advance`, `release-isolated-course-clear` |
+| `early-held-v2` | rejected | `safety-isolated-false-advance`, `release-isolated-recognition`, `release-isolated-course-clear` |
+| `steady-held-v2` | rejected | `safety-isolated-false-advance`, `release-isolated-recognition`, `release-isolated-course-clear` |
+
+The safety failure is one omitted-bass fixture per renderer — `isolated/direct/122`
+and `isolated/tone/124` — which every candidate advances and `baseline-v1` does
+not. The dedicated wrong-note fixtures still never advance under any profile
+(0/2 in both renderers), so the loss is confined to the omitted-bass family, at
+1 of 18 fixtures per renderer. One fixture is enough: a dedicated safety fixture
+that advances is a failure at any rate, and the gate reports it per row rather
+than as a corpus rate. Ambiguous harmonic advances rise from 4 to 5 of 8 under
+Direct and stay at 5 of 8 under Tone; they are reported separately, as the gate
+requires, and never stand in for a dedicated fixture.
+
+No candidate is automated-eligible, so the eligibility set is empty and the
+recommendation is `no-safe-candidate`. `baseline-v1` remains the production
+default, and the live-input work in Task 14 and Task 15 has no automated-eligible
+profile to carry forward.
+
+#### Isolated corpus — confirmation evidence
+
+The release gates read these rows and only these rows. Direct's floor is 104/106
+overall and 52/54 Course Clear; Tone's is 101/106 and 52/54.
+
+| Renderer | Profile | Correct | Course Clear | Wrong | Omitted bass | Ambiguous | p95 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Direct | `baseline-v1` | 104 / 106 | 52 / 54 | 0 / 2 | 0 / 18 | 4 / 8 | 196 ms |
+| Direct | `early-open-v2` | 106 / 106 | 54 / 54 | 0 / 2 | 1 / 18 | 5 / 8 | 196 ms |
+| Direct | `steady-open-v2` | 106 / 106 | 54 / 54 | 0 / 2 | 1 / 18 | 5 / 8 | 196 ms |
+| Direct | `early-held-v2` | 104 / 106 | 52 / 54 | 0 / 2 | 1 / 18 | 5 / 8 | 196 ms |
+| Direct | `steady-held-v2` | 104 / 106 | 52 / 54 | 0 / 2 | 1 / 18 | 5 / 8 | 196 ms |
+| Tone | `baseline-v1` | 100 / 106 | 48 / 54 | 0 / 2 | 0 / 18 | 5 / 8 | 228 ms |
+| Tone | `early-open-v2` | 102 / 106 | 50 / 54 | 0 / 2 | 1 / 18 | 5 / 8 | 228 ms |
+| Tone | `steady-open-v2` | 102 / 106 | 50 / 54 | 0 / 2 | 1 / 18 | 5 / 8 | 228 ms |
+| Tone | `early-held-v2` | 100 / 106 | 48 / 54 | 0 / 2 | 1 / 18 | 5 / 8 | 228 ms |
+| Tone | `steady-held-v2` | 100 / 106 | 48 / 54 | 0 / 2 | 1 / 18 | 5 / 8 | 228 ms |
+
+`baseline-v1` reproduces the recorded Task 09 matrix exactly, which is the
+baseline parity this task's verification required. The open pair improves Direct
+to a clean sweep and gains two Tone fixtures, but Tone's 50/54 Course Clear is
+still below its 52/54 floor; the held pair gains nothing on either renderer and
+misses the Tone recognition floor at 100/106 as well. Latency is unchanged by
+profile in both renderers and well inside the 400 ms limit — no candidate was
+rejected for latency.
+
+#### Continuous sequences — discovery-consistency evidence
+
+The whole sequence corpus is `discovery` and `regression-only`. Nothing below can
+be quoted as generalization; it is here because a candidate that regressed these
+rows would be rejected, and none did.
+
+| Renderer | Profile | Independent | Ordered | Complete | Late | False / skipped / duplicate | p95 ordered |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Direct | `baseline-v1` | 291 / 456 | 283 | 33 / 60 | 8 | 0 / 0 / 0 | 214.7 ms |
+| Direct | `early-open-v2` | 308 / 456 | 365 | 43 / 60 | 0 | 0 / 0 / 0 | 209.3 ms |
+| Direct | `steady-open-v2` | 306 / 456 | 357 | 41 / 60 | 5 | 0 / 0 / 0 | 212.0 ms |
+| Direct | `early-held-v2` | 307 / 456 | 362 | 42 / 60 | 0 | 0 / 0 / 0 | 209.3 ms |
+| Direct | `steady-held-v2` | 305 / 456 | 354 | 40 / 60 | 5 | 0 / 0 / 0 | 212.0 ms |
+| Tone | `baseline-v1` | 292 / 456 | 310 | 38 / 60 | 0 | 1 / 0 / 0 | 228.0 ms |
+| Tone | `early-open-v2` | 297 / 456 | 315 | 39 / 60 | 0 | 0 / 0 / 0 | 228.0 ms |
+| Tone | `steady-open-v2` | 297 / 456 | 315 | 39 / 60 | 0 | 0 / 0 / 0 | 228.0 ms |
+| Tone | `early-held-v2` | 294 / 456 | 314 | 38 / 60 | 0 | 0 / 0 / 0 | 228.0 ms |
+| Tone | `steady-held-v2` | 294 / 456 | 314 | 38 / 60 | 0 | 0 / 0 / 0 | 228.0 ms |
+
+Independent recognition, per speed, as `independent / ordered`:
+
+| Renderer | Profile | 1000 ms | 500 ms | 333 ms | 250 ms | 167 ms | 125 ms |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Direct | `baseline-v1` | 67 / 57 | 68 / 64 | 66 / 34 | 67 / 44 | 9 / 39 | 14 / 45 |
+| Direct | `early-open-v2` | 69 / 61 | 71 / 71 | 73 / 73 | 71 / 63 | 9 / 47 | 15 / 50 |
+| Direct | `steady-open-v2` | 69 / 61 | 71 / 71 | 71 / 65 | 71 / 63 | 9 / 47 | 15 / 50 |
+| Direct | `early-held-v2` | 69 / 61 | 71 / 71 | 72 / 70 | 71 / 63 | 9 / 47 | 15 / 50 |
+| Direct | `steady-held-v2` | 69 / 61 | 71 / 71 | 70 / 62 | 71 / 63 | 9 / 47 | 15 / 50 |
+| Tone | `baseline-v1` | 66 / 54 | 69 / 61 | 67 / 50 | 66 / 54 | 10 / 46 | 14 / 45 |
+| Tone | `early-open-v2` | 67 / 54 | 71 / 62 | 68 / 55 | 67 / 54 | 10 / 45 | 14 / 45 |
+| Tone | `steady-open-v2` | 67 / 54 | 71 / 62 | 68 / 55 | 67 / 54 | 10 / 45 | 14 / 45 |
+| Tone | `early-held-v2` | 66 / 54 | 69 / 61 | 68 / 55 | 67 / 54 | 10 / 45 | 14 / 45 |
+| Tone | `steady-held-v2` | 66 / 54 | 69 / 61 | 68 / 55 | 67 / 54 | 10 / 45 | 14 / 45 |
+
+Independent recognition never falls at any speed under either renderer, which is
+what `consistency-sequence-speed-recognition` requires. Ordered advances do slip
+by one at Tone 167 ms, from 46 to 45, under all four candidates;
+`consistency-sequence-ordered-progress` reads the per-renderer aggregate, where
+Tone still rises from 310 to 315, so the gate passes and the slip is recorded
+here rather than hidden by it.
+
+By family, the Direct gains span more than one family. Under `early-open-v2`,
+`course-clear` rises from 65 to 102 ordered advances, `alternating` from 29 to 36,
+`repeated-note` from 29 to 36, `three-note-chord` from 0 to 22, and
+`shared-sustained` from 0 to 6, with independent recognition rising alongside in
+each, while `scales`, `rolled-chord`, and `two-note-chord` are unchanged; the
+other three candidates move the same families by slightly smaller amounts. Under
+Tone the movement is smaller: `course-clear` 62 to 66 ordered under all four
+candidates, `known-weak` recognition 9 to 11 and `rolled-chord` 16/22 to 17/23
+under the open pair, everything else level. Each candidate lost ordered advances
+on exactly one passage, `sequence/tone/course-clear-27/167ms`, which the archive
+lists as a regressed passage even though the per-renderer consistency gates still
+pass on the aggregate.
+
+#### Dynamics and articulation — mixed corpus, partly held back
+
+Whole-corpus rows are `mixed` by construction and confirm nothing. The held-back
+`confirmation` rows are the ones `release-dynamics-piano-recognition` and
+`release-dynamics-layer-loss` read, and both gates passed for every candidate.
+
+| Renderer | Profile | Confirmation independent | Ordered | Splendid | Salamander |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Direct | `baseline-v1` | 391 / 432 | 77 | 27 / 27 | 340 / 378 |
+| Direct | `early-open-v2` | 407 / 432 | 116 | 27 / 27 | 354 / 378 |
+| Direct | `steady-open-v2` | 407 / 432 | 116 | 27 / 27 | 354 / 378 |
+| Direct | `early-held-v2` | 403 / 432 | 116 | 27 / 27 | 350 / 378 |
+| Direct | `steady-held-v2` | 403 / 432 | 116 | 27 / 27 | 350 / 378 |
+| Tone | `baseline-v1` | 392 / 432 | 146 | 50 / 54 | 297 / 324 |
+| Tone | `early-open-v2` | 413 / 432 | 280 | 52 / 54 | 313 / 324 |
+| Tone | `steady-open-v2` | 413 / 432 | 280 | 52 / 54 | 313 / 324 |
+| Tone | `early-held-v2` | 409 / 432 | 247 | 50 / 54 | 311 / 324 |
+| Tone | `steady-held-v2` | 409 / 432 | 247 | 50 / 54 | 311 / 324 |
+
+No individual layer, mixed run, or articulation lost a single independent event
+under any candidate: the archive's layer-loss list is empty for all four, and no
+waiver was declared. The mixed-dynamics suite is level or better everywhere —
+Direct 51/54 to 52/54 independent with ordered unchanged at 23, Tone 49/54 to
+50-51/54 — 51 under the open pair, 50 under the held pair — with ordered 17 to 36.
+Articulation moves in one place that matters: Direct
+`legato`, a held-back `confirmation` row, goes from 24 recognized and 3 ordered
+under `baseline-v1` to 26 and 20 under every candidate. The largest single
+mixed-run movement, Tone `salamander` from 4 ordered to 23, is a `discovery` row
+and is reported as such. Detached, normal, and sustained-shared rows are level or
+better by at most two events: Tone `detached` gains two, from 23 to 25, under
+every candidate, and the rest gain one or none.
+
+#### Committed regressions, safety, and late advances
+
+Both diagnosed cases behave as their diagnoses said they would, and
+`safety-committed-regression` passed for every candidate.
+
+- Tone plus Salamander `v05` stays a late recovery, never an unsafe advance:
+  zero false, skipped, and duplicate advances under all five profiles, and 23
+  ordered advances in every column. `baseline-v1` records one late advance,
+  recovering target 23 at 25,440 ms from an attack two positions later; all four
+  candidates record two, the first at 24,448 ms from the immediately following
+  attack — an earlier recovery at a shorter source-to-target distance. That is a
+  deviation from the pinned baseline advancement, reported as a deviation, and it
+  is not gated as safety.
+- The Task 06 Tone 333 ms false advance is the only false advance the sequence
+  and dynamics domains recorded at all, and it belongs to `baseline-v1`, on
+  `sequence/tone/course-clear-27/333ms`. Every candidate clears it: that trace is
+  listed under `clearedUnsafeTraceIds` for all four, with no unsafe trace
+  introduced or worsened anywhere in either sequence or dynamics.
+- Dedicated sequence safety families hold at zero for every profile at every
+  speed under both renderers, including incomplete carried-bass advances, and
+  fresh bass remains required.
+- Late-advance counts are reported beside safety and never as safety. Under
+  Direct, `baseline-v1` carries 8 sequence late advances and the `early` pair
+  carries none; the `steady` pair carries 5. In dynamics, each candidate carries
+  6 late advances against the baseline's 1. All six are the same repeated
+  `[62, 74, 82]` chord recovered one attack late on three Tone Salamander runs —
+  `v05`, `v13`, and the mixed run — each at source distance 1 and about 1.22 s of
+  attribution delay, against the baseline's single record at distance 2 and
+  2.22 s.
+
+#### What this settles
+
+The multi-domain candidates are better at hearing a correct passage and worse at
+refusing an incomplete one. Every candidate raises independent recognition in the
+sequence and dynamics domains and never lowers it in the isolated corpus, clears
+the one baseline false advance, and turns Tone's held-back ordered advancement
+from 146 to as much as 280 — and every candidate also advances an omitted-bass
+fixture that `baseline-v1` refuses, in both renderers.
+The 0.99 extra-note gate they share does not compensate for the more permissive
+onset and active-target gates on a target whose bass is simply missing.
+
+That is a discovery result about the frozen search, not a tuning opportunity: no
+threshold may be adjusted in response to these numbers without restarting
+discovery. `baseline-v1` remains the production default with no change to the
+registry, and the next round of profiles, if there is one, has to be selected
+against isolated omitted-bass evidence rather than against sequence and dynamics
+advancement alone.
+
 ### Unified production-candidate gate — August 19, 2026
 
 The isolated, continuous-sequence, dynamics, and articulation matrices, measured

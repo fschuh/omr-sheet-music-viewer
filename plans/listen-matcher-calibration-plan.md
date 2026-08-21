@@ -1499,7 +1499,7 @@ production build passes.
 
 ### Task 13 — Execute the frozen automated confirmation
 
-**Status:** Required. **Prerequisites:** Task 12 complete.
+**Status:** Completed August 21, 2026. **Prerequisites:** Task 12 complete.
 
 **Objective:** Produce the confirmatory automated evidence used in the production
 decision.
@@ -1582,6 +1582,44 @@ the archived SHA-256 of each run, and the canonical comparison digest they share
 
 **Complete when:** The frozen automated confirmation matrix is repeated,
 documented, and yields a stable eligibility set without any post-result retuning.
+
+**August 21 execution record:** The preflight record was frozen before the first
+repetition and is reproduced in `tools/online_amt/LISTEN_BENCHMARK.md`. Both
+repetitions, the 464-test unit suite, and the production build ran at commit
+`456dea2` with a clean worktree, Chrome 151.0.7922.169 on Ubuntu 26.04, Node
+v24.13.0, and model `online_amt_streaming.onnx`
+(SHA-256 `a77be8262d3742ce4d9e7d29146d8b17f5755650a7d2aee952bf5bf5ed190ac4`).
+Nothing was changed after the first run was viewed.
+
+The two archives are `benchmark-results/listen-profile-validation-task13-run1.json`
+(SHA-256 `3ac11d4a…5d38d3`) and `-run2.json` (SHA-256 `28a170b8…01daf79`); their
+shared canonical comparison digest is `8acc59b1…336c65e2`. The verifier accepted
+both as complete frozen repetitions and reported them equal. Cross-process parity
+holds in the Task 04 sense: 311 of the 476 captured traces recorded different
+process-local PCM and raw-trace hashes in the second process, while every
+decoded-structure identity (`bff20df8`, `e9f09643`, `bfe48fdc`), every outcome
+digest (`be407330`, `2cfc6561`, `b57ea970`), and all 2,380 discrete outcome rows
+matched. Baseline parity passed in every domain, and `baseline-v1` reproduced the
+recorded isolated matrix exactly: Direct 104/106 and 52/54, Tone 100/106 and
+48/54.
+
+The eligibility set is empty and the recommendation is `no-safe-candidate`. All
+four candidates are rejected on held-back isolated `confirmation` rows:
+`safety-isolated-false-advance` for every one of them, because each advances one
+omitted-bass fixture per renderer (`isolated/direct/122`, `isolated/tone/124`)
+that `baseline-v1` refuses, plus `release-isolated-course-clear` for all four
+(Tone 50/54 for the open pair, 48/54 for the held pair, against a 52/54 floor)
+and `release-isolated-recognition` for `early-held-v2` and `steady-held-v2`
+(Tone 100/106 against a 101/106 floor). No candidate failed a replay-integrity,
+sequence, dynamics, latency, or discovery-consistency gate; every candidate
+cleared the Task 06 Tone false advance and left the `v05` case a late recovery
+with zero unsafe advances. `DEFAULT_LISTEN_MATCHER_PROFILE_ID` was not changed,
+and the registry was not touched.
+
+Task 16 therefore has no automated-eligible profile to roll out from this
+generation. Selecting different thresholds in response to these numbers would be
+post-result retuning; a further candidate set requires a new discovery round
+whose search accounts for isolated omitted-bass evidence.
 
 ### Task 14 — Build the structured developer live-input harness
 

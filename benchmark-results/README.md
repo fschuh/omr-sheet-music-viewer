@@ -164,3 +164,59 @@ LISTEN_BENCHMARK_OUTPUT_PATH=benchmark-results/listen-dynamics-profile-validatio
   http://127.0.0.1:5174/online-amt-benchmark.html \
   listen-dynamics-profile-validation
 ```
+
+## Task 13 frozen automated confirmation evidence
+
+`listen-profile-validation-task13-run1.json` and
+`listen-profile-validation-task13-run2.json` are the two repetitions of the
+complete frozen confirmation matrix, measured August 21, 2026 at commit `456dea2`
+with a clean worktree, Chrome 151.0.7922.169 on Ubuntu 26.04, Node v24.13.0, and
+model `online_amt_streaming.onnx`
+(SHA-256 `a77be8262d3742ce4d9e7d29146d8b17f5755650a7d2aee952bf5bf5ed190ac4`). Each
+run captured all 476 traces — 268 isolated, 156 sequence, 52 dynamics — under both
+renderers and replayed `baseline-v1` plus the four frozen `v2` candidates against
+every one of them, for 2,380 per-trace outcome rows.
+
+- Protocol manifest: version 1, `0ed1e71d`
+- Musical corpus: `10ae2e0b`
+- Registry version: 2
+- Identity / outcome digests: isolated `bff20df8` / `be407330`, sequence
+  `e9f09643` / `2cfc6561`, dynamics `bfe48fdc` / `b57ea970`
+- Run 1 file SHA-256: `3ac11d4abe8231d3c3c61abf4e597d2651dd952ad905ee9b9033eef31b5d38d3`
+- Run 2 file SHA-256: `28a170b856df67b50842aefb243791c67b1dfa9dedbde3fdc036c607401daf79`
+- Canonical comparison digest, shared by both:
+  `sha256-canonical-json-without-maximumInferenceMs-peak-rms-processLocalPcmHash-processLocalTraceHash:8acc59b1b863ef89fb9fe6b1a0d365730c841df1b3c513c3541f9d20336c65e2`
+
+The two files differ byte for byte and carry the same evidence: 311 of the 476
+traces recorded different process-local PCM and raw-trace hashes in the second
+browser process, while every decoded-structure identity, every discrete matcher
+outcome, every summary, gate code, failure identity, and recommendation input
+matched. Both runs decided `no-safe-candidate`, rejecting all four candidates on
+held-back isolated `confirmation` rows: every candidate advances one omitted-bass
+fixture per renderer (`isolated/direct/122`, `isolated/tone/124`), and none reaches
+the 52/54 Tone Course Clear floor. The production default is unchanged.
+
+Compare the two archives with:
+
+```text
+node tools/online_amt/verify_listen_benchmark_evidence.mjs --compare \
+  benchmark-results/listen-profile-validation-task13-run1.json \
+  benchmark-results/listen-profile-validation-task13-run2.json
+```
+
+Reproduce either archive while the benchmark dev server is running. The output
+path must be passed through the environment: the positional arguments after the
+corpus filter are read as corpus speeds and dynamics suites, so a path placed
+there narrows the matrix into a focused smoke.
+
+```text
+LISTEN_BENCHMARK_OUTPUT_PATH=benchmark-results/listen-profile-validation-task13-run1.json \
+  node tools/online_amt/run_browser_benchmarks.mjs \
+  http://127.0.0.1:5174/online-amt-benchmark.html \
+  listen-profile-validation
+```
+
+A fresh repetition reproduces the identity and outcome digests above and compares
+equal to both archives; it will not reproduce their file hashes, because the
+excluded host-timing, audio-diagnostic, and process-local fields differ per
+process by design.
