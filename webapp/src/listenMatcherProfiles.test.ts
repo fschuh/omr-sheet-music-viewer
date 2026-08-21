@@ -7,11 +7,13 @@ import {
   getListenMatcherProfile,
   isListenMatcherProfile,
   isListenMatcherProfileId,
+  listenMatcherOverrideAfterDebugPanelChange,
   LISTEN_MATCHER_PROFILE_IDS,
   LISTEN_MATCHER_PROFILES,
   LISTEN_MATCHER_REGISTRY_VERSION,
   LISTEN_MULTIDOMAIN_CANDIDATE_PROFILE_IDS,
   matcherOptionsForListenMatcherProfile,
+  resolveEffectiveListenMatcherProfile,
   type ListenMatcherProfile,
   type ListenMatcherProfileId,
 } from "./listenMatcherProfiles";
@@ -233,5 +235,58 @@ test("conversion refuses an unknown profile identifier instead of silently defau
   assert.deepEqual(
     matcherOptionsForListenMatcherProfile("early-open-v2"),
     matcherOptionsForListenMatcherProfile(LISTEN_MATCHER_PROFILES["early-open-v2"]),
+  );
+});
+
+test("a session override resolves to that registry profile", () => {
+  for (const profileId of LISTEN_MATCHER_PROFILE_IDS) {
+    const resolved = resolveEffectiveListenMatcherProfile(profileId);
+    assert.equal(resolved.id, profileId);
+    assert.deepEqual(resolved, LISTEN_MATCHER_PROFILES[profileId]);
+  }
+});
+
+test("no override, and an override outside the registry, both resolve to the default", () => {
+  const expected = LISTEN_MATCHER_PROFILES[DEFAULT_LISTEN_MATCHER_PROFILE_ID];
+
+  assert.deepEqual(resolveEffectiveListenMatcherProfile(), expected);
+  assert.deepEqual(resolveEffectiveListenMatcherProfile(null), expected);
+  // An unusable selection must leave listen mode on the safe profile rather
+  // than throwing, the way an incompatible stored calibration record has to.
+  for (const invalid of ["", "baseline", "sensitive-v2", "o0p450-t0p500-a0p200-x0p990-b1"]) {
+    assert.deepEqual(
+      resolveEffectiveListenMatcherProfile(invalid as never),
+      expected,
+    );
+  }
+});
+
+test("an overridden profile still converts to the fixed policy timings", () => {
+  const overridden = matcherOptionsForListenMatcherProfile(
+    resolveEffectiveListenMatcherProfile("early-open-v2"),
+  );
+  const target = matcherOptionsForListenMatcherProfile("early-open-v2");
+
+  assert.deepEqual(overridden, target);
+  for (const [key, value] of Object.entries(FIXED_LISTEN_MATCHER_POLICY)) {
+    assert.deepEqual(overridden[key as keyof typeof overridden], value);
+  }
+  assert.equal(overridden.requireFreshBassOnset, true);
+});
+
+test("switching the debug panel off clears the override, and switching it on keeps it", () => {
+  for (const profileId of LISTEN_MATCHER_PROFILE_IDS) {
+    assert.equal(listenMatcherOverrideAfterDebugPanelChange(false, profileId), null);
+    assert.equal(listenMatcherOverrideAfterDebugPanelChange(true, profileId), profileId);
+  }
+  assert.equal(listenMatcherOverrideAfterDebugPanelChange(false, null), null);
+  assert.equal(listenMatcherOverrideAfterDebugPanelChange(true, null), null);
+  // The cleared value must resolve back to the shipped default, not merely be
+  // dropped from the picker.
+  assert.equal(
+    resolveEffectiveListenMatcherProfile(
+      listenMatcherOverrideAfterDebugPanelChange(false, "early-open-v2"),
+    ).id,
+    DEFAULT_LISTEN_MATCHER_PROFILE_ID,
   );
 });

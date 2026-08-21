@@ -1510,6 +1510,73 @@ button:disabled {
   line-height: 1.45;
 }
 
+.settings-profile-override {
+  border: none;
+  border-top: 1px solid #ddd7cf;
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 18px 26px 22px;
+}
+
+.settings-profile-override legend {
+  color: #342e29;
+  font-size: 0.9rem;
+  font-weight: 600;
+  padding: 0;
+}
+
+.settings-profile-note {
+  color: #746c63;
+  font-size: 0.79rem;
+  line-height: 1.45;
+  margin: 6px 0 12px;
+}
+
+.settings-profile-row {
+  align-items: flex-start;
+  cursor: pointer;
+  display: flex;
+  gap: 12px;
+  padding: 7px 0;
+}
+
+.settings-profile-row input {
+  accent-color: #8f4d2a;
+  flex: 0 0 auto;
+  height: 17px;
+  margin: 2px 0 0;
+  width: 17px;
+}
+
+.settings-profile-row span {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.settings-profile-row strong {
+  color: #342e29;
+  font-family: ui-monospace, "SFMono-Regular", "Menlo", monospace;
+  font-size: 0.85rem;
+}
+
+.settings-profile-row small {
+  color: #746c63;
+  font-size: 0.79rem;
+  line-height: 1.45;
+}
+
+.settings-profile-rejected strong {
+  color: #a2401f;
+}
+
+.settings-profile-thresholds {
+  font-family: ui-monospace, "SFMono-Regular", "Menlo", monospace;
+  font-size: 0.74rem;
+  opacity: 0.85;
+}
+
 .settings-select-row {
   align-items: center;
   border-top: 1px solid #ddd7cf;

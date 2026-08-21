@@ -2,6 +2,12 @@ import { useEffect, useState } from "react";
 import { playbackCommandNames, type PlaybackCommand } from "./playback";
 import { PIANO_IDS, PIANO_REGISTRY, type PianoId } from "./pianoRegistry";
 import {
+  DEFAULT_LISTEN_MATCHER_PROFILE_ID,
+  LISTEN_MATCHER_PROFILE_IDS,
+  LISTEN_MATCHER_PROFILES,
+  type ListenMatcherProfileId,
+} from "./listenMatcherProfiles";
+import {
   defaultPlaybackShortcuts,
   formatKeyboardShortcut,
   formatMidiShortcut,
@@ -11,10 +17,71 @@ import {
   type PlaybackShortcuts,
 } from "./shortcuts";
 
+/**
+ * What each registry profile is, as the measured evidence describes it.
+ *
+ * These strings are presentation only: nothing here selects a profile or feeds a
+ * threshold. They exist so the picker cannot present a profile the automated
+ * gate rejected as if it were an ordinary choice. The source of truth is the
+ * benchmark history in `tools/online_amt/LISTEN_BENCHMARK.md`, and this map has
+ * to be revisited whenever a new confirmation run changes a verdict.
+ */
+const LISTEN_MATCHER_PROFILE_STATUS: Readonly<
+  Record<ListenMatcherProfileId, { label: string; detail: string; rejected: boolean }>
+> = Object.freeze({
+  "baseline-v1": {
+    label: "Production default",
+    detail: "The profile listen mode ships with. Advances no dedicated safety fixture.",
+    rejected: false,
+  },
+  "balanced-v1": {
+    label: "First-generation reference",
+    detail: "Selected by the original Direct-only sweep. Never measured on the isolated " +
+      "confirmation corpus, so its safety on omitted-bass fixtures is unknown.",
+    rejected: false,
+  },
+  "sensitive-v1": {
+    label: "First-generation reference",
+    detail: "Same thresholds as early-open-v2, which the August 21 confirmation rejected.",
+    rejected: true,
+  },
+  "early-open-v2": {
+    label: "Rejected by automated confirmation",
+    detail: "Advances an omitted-bass fixture under both renderers; Tone Course Clear 50/54, " +
+      "below the 52/54 floor.",
+    rejected: true,
+  },
+  "steady-open-v2": {
+    label: "Rejected by automated confirmation",
+    detail: "Advances an omitted-bass fixture under both renderers; Tone Course Clear 50/54, " +
+      "below the 52/54 floor.",
+    rejected: true,
+  },
+  "early-held-v2": {
+    label: "Rejected by automated confirmation",
+    detail: "Advances an omitted-bass fixture under both renderers; Tone 100/106 and 48/54, " +
+      "below both isolated floors.",
+    rejected: true,
+  },
+  "steady-held-v2": {
+    label: "Rejected by automated confirmation",
+    detail: "Advances an omitted-bass fixture under both renderers; Tone 100/106 and 48/54, " +
+      "below both isolated floors.",
+    rejected: true,
+  },
+});
+
+function formatListenMatcherThresholds(profileId: ListenMatcherProfileId): string {
+  const profile = LISTEN_MATCHER_PROFILES[profileId];
+  return `onset ${profile.onsetThreshold} · target ${profile.targetNoteThreshold} · ` +
+    `active ${profile.activeTargetThreshold} · unexpected ${profile.extraNoteThreshold}`;
+}
+
 interface SettingsPageProps {
   shortcuts: PlaybackShortcuts;
   playbackPiano: PianoId;
   debugPanelEnabled: boolean;
+  listenMatcherProfileOverride: ListenMatcherProfileId | null;
   nativeAvailable: boolean;
   midiPorts: string[];
   midiError: string | null;
@@ -23,6 +90,7 @@ interface SettingsPageProps {
   onChangeShortcuts: (shortcuts: PlaybackShortcuts) => void;
   onChangePlaybackPiano: (pianoId: PianoId) => void;
   onChangeDebugPanelEnabled: (enabled: boolean) => void;
+  onChangeListenMatcherProfileOverride: (profileId: ListenMatcherProfileId | null) => void;
   onBeginMidiCapture: (command: PlaybackCommand) => void;
   onCancelMidiCapture: () => void;
   onRefreshMidiInputs: () => void;
@@ -33,6 +101,7 @@ export function SettingsPage({
   shortcuts,
   playbackPiano,
   debugPanelEnabled,
+  listenMatcherProfileOverride,
   nativeAvailable,
   midiPorts,
   midiError,
@@ -41,6 +110,7 @@ export function SettingsPage({
   onChangeShortcuts,
   onChangePlaybackPiano,
   onChangeDebugPanelEnabled,
+  onChangeListenMatcherProfileOverride,
   onBeginMidiCapture,
   onCancelMidiCapture,
   onRefreshMidiInputs,
@@ -257,6 +327,63 @@ export function SettingsPage({
             <small>Displays the right-side panel with note highlighting, overlays, diagnostics, and document data.</small>
           </span>
         </label>
+        {debugPanelEnabled ? (
+          <fieldset className="settings-profile-override">
+            <legend>Listen matcher profile</legend>
+            <p className="settings-profile-note">
+              Overrides the profile listen mode runs with, for this session only. It is not
+              saved, and it is cleared when the debug panel is switched off. Timing and
+              advancement rules are the same for every profile; only confidence thresholds
+              change.
+            </p>
+            <label className="settings-profile-row">
+              <input
+                type="radio"
+                name="listen-matcher-profile"
+                value=""
+                checked={listenMatcherProfileOverride === null}
+                onChange={() => onChangeListenMatcherProfileOverride(null)}
+              />
+              <span>
+                <strong>No override</strong>
+                <small>Use the production default ({DEFAULT_LISTEN_MATCHER_PROFILE_ID}).</small>
+              </span>
+            </label>
+            {LISTEN_MATCHER_PROFILE_IDS.map((profileId) => {
+              const status = LISTEN_MATCHER_PROFILE_STATUS[profileId];
+              return (
+                <label
+                  key={profileId}
+                  className={status.rejected
+                    ? "settings-profile-row settings-profile-rejected"
+                    : "settings-profile-row"}
+                >
+                  <input
+                    type="radio"
+                    name="listen-matcher-profile"
+                    value={profileId}
+                    checked={listenMatcherProfileOverride === profileId}
+                    onChange={() => onChangeListenMatcherProfileOverride(profileId)}
+                  />
+                  <span>
+                    <strong>
+                      {profileId}
+                      {status.rejected ? " ⚠" : ""}
+                    </strong>
+                    <small>{status.label} — {status.detail}</small>
+                    <small className="settings-profile-thresholds">
+                      {formatListenMatcherThresholds(profileId)}
+                    </small>
+                  </span>
+                </label>
+              );
+            })}
+            <p className="settings-profile-note">
+              Selecting a profile stops listen mode and rebuilds the matcher, so a passage in
+              progress is never judged by two profiles at once.
+            </p>
+          </fieldset>
+        ) : null}
       </section>
     </section>
   );

@@ -3,6 +3,7 @@ import test from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { SettingsPage } from "./SettingsPage";
 import { defaultPlaybackShortcuts } from "./shortcuts";
+import { LISTEN_MATCHER_PROFILE_IDS } from "./listenMatcherProfiles";
 
 test("renders every playback command with its default keyboard key and empty MIDI slot", () => {
   const markup = renderToStaticMarkup(
@@ -10,6 +11,7 @@ test("renders every playback command with its default keyboard key and empty MID
       shortcuts={defaultPlaybackShortcuts()}
       playbackPiano="splendid"
       debugPanelEnabled={false}
+      listenMatcherProfileOverride={null}
       nativeAvailable
       midiPorts={["Bluetooth MIDI bridge"]}
       midiError={null}
@@ -18,6 +20,7 @@ test("renders every playback command with its default keyboard key and empty MID
       onChangeShortcuts={() => undefined}
       onChangePlaybackPiano={() => undefined}
       onChangeDebugPanelEnabled={() => undefined}
+      onChangeListenMatcherProfileOverride={() => undefined}
       onBeginMidiCapture={() => undefined}
       onCancelMidiCapture={() => undefined}
       onRefreshMidiInputs={() => undefined}
@@ -48,6 +51,7 @@ test("disables MIDI assignment when initialization fails", () => {
       shortcuts={defaultPlaybackShortcuts()}
       playbackPiano="salamander"
       debugPanelEnabled
+      listenMatcherProfileOverride={null}
       nativeAvailable
       midiPorts={[]}
       midiError="MIDI initialization timed out."
@@ -56,6 +60,7 @@ test("disables MIDI assignment when initialization fails", () => {
       onChangeShortcuts={() => undefined}
       onChangePlaybackPiano={() => undefined}
       onChangeDebugPanelEnabled={() => undefined}
+      onChangeListenMatcherProfileOverride={() => undefined}
       onBeginMidiCapture={() => undefined}
       onCancelMidiCapture={() => undefined}
       onRefreshMidiInputs={() => undefined}
@@ -66,4 +71,79 @@ test("disables MIDI assignment when initialization fails", () => {
   assert.match(markup, /MIDI initialization timed out\./);
   assert.equal(markup.match(/aria-label="MIDI shortcut for[^>]+disabled/g)?.length, 10);
   assert.match(markup, /type="checkbox" checked=""/);
+});
+
+function renderSettings(
+  overrides: Partial<Parameters<typeof SettingsPage>[0]> = {},
+): string {
+  return renderToStaticMarkup(
+    <SettingsPage
+      shortcuts={defaultPlaybackShortcuts()}
+      playbackPiano="splendid"
+      debugPanelEnabled
+      listenMatcherProfileOverride={null}
+      nativeAvailable
+      midiPorts={[]}
+      midiError={null}
+      midiRefreshing={false}
+      midiCaptureCommand={null}
+      onChangeShortcuts={() => undefined}
+      onChangePlaybackPiano={() => undefined}
+      onChangeDebugPanelEnabled={() => undefined}
+      onChangeListenMatcherProfileOverride={() => undefined}
+      onBeginMidiCapture={() => undefined}
+      onCancelMidiCapture={() => undefined}
+      onRefreshMidiInputs={() => undefined}
+      {...overrides}
+    />,
+  );
+}
+
+test("the matcher profile override is hidden until the debug panel is enabled", () => {
+  const hidden = renderSettings({ debugPanelEnabled: false });
+
+  assert.doesNotMatch(hidden, /Listen matcher profile/);
+  assert.doesNotMatch(hidden, /name="listen-matcher-profile"/);
+  assert.match(renderSettings(), /<legend>Listen matcher profile<\/legend>/);
+});
+
+test("the override offers every registry profile plus an explicit no-override default", () => {
+  const markup = renderSettings();
+
+  assert.equal(markup.match(/name="listen-matcher-profile"/g)?.length, 8);
+  for (const profileId of LISTEN_MATCHER_PROFILE_IDS) {
+    assert.match(markup, new RegExp(`value="${profileId}"`));
+  }
+  assert.match(markup, /<strong>No override<\/strong>/);
+  assert.match(markup, /Use the production default \(baseline-v1\)/);
+  // The thresholds are shown because a tester needs to know what the profile
+  // changed, but they are text: nothing here can be edited into the matcher.
+  assert.match(markup, /onset 0.6 · target 0.5 · active 0.35 · unexpected 0.97/);
+});
+
+test("every profile the confirmation run rejected is labelled as rejected", () => {
+  const markup = renderSettings();
+  const rejected = ["sensitive-v1", "early-open-v2", "steady-open-v2", "early-held-v2", "steady-held-v2"];
+
+  assert.equal(markup.match(/settings-profile-rejected/g)?.length, rejected.length);
+  assert.equal(markup.match(/Rejected by automated confirmation/g)?.length, 4);
+  assert.match(markup, /Same thresholds as early-open-v2/);
+  assert.match(markup, /Never measured on the isolated confirmation corpus/);
+  for (const profileId of ["baseline-v1", "balanced-v1"]) {
+    const row = markup.slice(markup.indexOf(`value="${profileId}"`));
+    assert.doesNotMatch(row.slice(0, row.indexOf("</label>")), /⚠/);
+  }
+});
+
+test("no override is selected by default, and an active override is the checked row", () => {
+  const noOverride = renderSettings();
+  const overridden = renderSettings({ listenMatcherProfileOverride: "early-open-v2" });
+
+  // React renders the checked attribute before value, so the checked row is the
+  // one carrying both: matching value alone would pass for every row.
+  assert.match(noOverride, /checked="" value=""/);
+  assert.doesNotMatch(noOverride, /checked="" value="[a-z]/);
+  assert.match(overridden, /checked="" value="early-open-v2"/);
+  assert.doesNotMatch(overridden, /checked="" value=""/);
+  assert.equal(overridden.match(/name="listen-matcher-profile" checked=""/g)?.length, 1);
 });

@@ -256,8 +256,41 @@ export function listenMatcherThresholds(
  * Resolves the profile listen mode should run with. Calibration will later add a
  * stored selection ahead of the default; production must never accept arbitrary
  * thresholds from a URL parameter or a stored JSON object.
+ *
+ * The optional override is the debug-surface selection: it is held in session
+ * memory only, is never written to storage, and is cleared whenever the debug
+ * panel is switched off, so a device that is merely reloaded is back on the
+ * default. It names a registry identifier rather than carrying thresholds,
+ * which is what keeps this from becoming the sensitivity slider the plan rules
+ * out.
+ *
+ * An identifier that is not in the registry resolves to the default instead of
+ * throwing, matching how an incompatible stored calibration record must behave:
+ * an unusable selection leaves the user on the safe profile rather than
+ * breaking listen mode.
  */
-export function resolveEffectiveListenMatcherProfile(): ListenMatcherProfile {
+/**
+ * The override that survives a debug-panel change.
+ *
+ * The picker lives inside the debug card, so an override left active behind a
+ * hidden control would keep changing advancement behaviour with nothing on
+ * screen saying so. Switching the panel off therefore returns listen mode to the
+ * default, and this is a function rather than a line in a click handler so the
+ * rule is tested rather than asserted in a comment.
+ */
+export function listenMatcherOverrideAfterDebugPanelChange(
+  debugPanelEnabled: boolean,
+  currentOverride: ListenMatcherProfileId | null,
+): ListenMatcherProfileId | null {
+  return debugPanelEnabled ? currentOverride : null;
+}
+
+export function resolveEffectiveListenMatcherProfile(
+  override?: ListenMatcherProfileId | null,
+): ListenMatcherProfile {
+  if (override != null && isListenMatcherProfileId(override)) {
+    return LISTEN_MATCHER_PROFILES[override];
+  }
   return LISTEN_MATCHER_PROFILES[DEFAULT_LISTEN_MATCHER_PROFILE_ID];
 }
 

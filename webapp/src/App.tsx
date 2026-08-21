@@ -22,7 +22,9 @@ import { pianoSampler, pitchToMidi } from "./piano";
 import { BrowserOnlineAmtRecognizer } from "./onlineAmtRecognizer";
 import {
   matcherOptionsForListenMatcherProfile,
+  listenMatcherOverrideAfterDebugPanelChange,
   resolveEffectiveListenMatcherProfile,
+  type ListenMatcherProfileId,
 } from "./listenMatcherProfiles";
 import { ExactChordMatcher } from "./chordMatcher";
 import { KeyboardRecognitionTracker } from "./keyboardRecognition";
@@ -416,7 +418,11 @@ export function App() {
     );
   }
   const recognizerRef = useRef<NoteRecognizer | null>(null);
-  const listenMatcherProfile = resolveEffectiveListenMatcherProfile();
+  // Debug-surface only, and deliberately not persisted: a reload, and switching
+  // the debug panel off, both return listen mode to the production default.
+  const [listenMatcherProfileOverride, setListenMatcherProfileOverride] =
+    useState<ListenMatcherProfileId | null>(null);
+  const listenMatcherProfile = resolveEffectiveListenMatcherProfile(listenMatcherProfileOverride);
   const chordMatcherRef = useRef(new ExactChordMatcher(
     matcherOptionsForListenMatcherProfile(listenMatcherProfile),
   ));
@@ -466,6 +472,28 @@ export function App() {
     setRealtimeFrame(null);
     setPlaybackAudioError(null);
   }, []);
+  /**
+   * Applies the debug-surface profile override.
+   *
+   * The matcher carries per-target state, so switching thresholds underneath a
+   * passage in progress would let one advancement decision be made from two
+   * profiles. Listen mode is therefore stopped and the matcher rebuilt, the same
+   * way changing the playback piano tears down the audio path it reconfigures.
+   */
+  const applyListenMatcherProfileOverride = useCallback((
+    profileId: ListenMatcherProfileId | null,
+  ) => {
+    if (profileId === listenMatcherProfileOverride) return;
+    recognizerRef.current?.stop();
+    stopRealtime();
+    pianoSampler.stop();
+    playbackStateRef.current = initialPlaybackState;
+    setPlaybackState(initialPlaybackState);
+    chordMatcherRef.current = new ExactChordMatcher(
+      matcherOptionsForListenMatcherProfile(resolveEffectiveListenMatcherProfile(profileId)),
+    );
+    setListenMatcherProfileOverride(profileId);
+  }, [listenMatcherProfileOverride, stopRealtime]);
   const routeForPosition = useCallback((position: StructuralPosition | null): PerformanceRoute | null => {
     if (!realtimeModel.score) return null;
     return expandPerformanceRoute(realtimeModel.score, {
@@ -1710,6 +1738,7 @@ export function App() {
           shortcuts={shortcuts}
           playbackPiano={playbackPiano}
           debugPanelEnabled={debugPanelEnabled}
+          listenMatcherProfileOverride={listenMatcherProfileOverride}
           nativeAvailable={nativeAvailable}
           midiPorts={midiPorts}
           midiError={midiError}
@@ -1730,7 +1759,11 @@ export function App() {
             setDebugPanelEnabled(enabled);
             saveDebugPanelEnabled(enabled);
             if (!enabled) setShowWorkerLogs(false);
+            applyListenMatcherProfileOverride(
+              listenMatcherOverrideAfterDebugPanelChange(enabled, listenMatcherProfileOverride),
+            );
           }}
+          onChangeListenMatcherProfileOverride={applyListenMatcherProfileOverride}
           onBeginMidiCapture={beginMidiCapture}
           onCancelMidiCapture={cancelMidiCapture}
           onRefreshMidiInputs={handleRefreshMidiInputs}
@@ -1832,7 +1865,11 @@ export function App() {
               </button>
               <dl className="diagnostics-data">
                 <RefreshRateDiagnostic />
-                <dt>Listen matcher profile</dt><dd>{listenMatcherProfile.id}</dd>
+                <dt>Listen matcher profile</dt>
+                <dd>
+                  {listenMatcherProfile.id}
+                  {listenMatcherProfileOverride ? " (debug override)" : ""}
+                </dd>
               </dl>
               <h2>Highlighting</h2>
               <button
