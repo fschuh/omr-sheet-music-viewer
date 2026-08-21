@@ -1487,8 +1487,8 @@ matches it, and the verifier refuses an archive whose captured traces do not car
 them — and both are excluded from cross-process equality and from each
 domain's `identityDigest`, because Task 04 measured that neither survives a fresh
 browser process. This amendment changes no candidate value, gate, corpus, or
-threshold, and is committed before any Task 13 measurement so both repetitions
-run on one commit. Six new tests cover it: that each matrix records the hashes of
+threshold, and landed at commit `85bf432`, before any Task 13 measurement, so
+both repetitions run on one commit. Six new tests cover it: that each matrix records the hashes of
 the trace it read, that a trace which cannot supply them is refused by all three,
 that the corpus identity digest is unmoved by them, that the verifier refuses an
 archive whose captured trace records no PCM hash, that it refuses one whose raw
