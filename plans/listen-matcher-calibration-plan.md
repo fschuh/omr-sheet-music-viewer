@@ -690,8 +690,10 @@ safe subset of it is convenient. When a task changes a measured browser result,
 record the command, commit, renderer/model identity, result hashes, and concise
 summary in the appropriate benchmark report before closing the pass.
 
-Tasks 01-06 are complete. Tasks 18-20 are conditional: execute them only if Task
-17 concludes `calibration-justified`. If Task 17 concludes
+Tasks 01-13 and 16 are complete. Task 14 is still required; Task 15 is deferred
+with a `no-safe-candidate` record until a discovery round produces a candidate
+eligible for it. Tasks 18-20 are conditional: execute them only if Task 17
+concludes `calibration-justified`. If Task 17 concludes
 `fixed-profile-sufficient`, mark Tasks 18-20 skipped with that decision as their
 completion evidence. Task 21 is a separate later research branch and is not
 required to ship the validated global profile or the approved-profile calibration
@@ -1657,7 +1659,10 @@ corpus.
 
 ### Task 15 — Execute the acoustic and digital live validation corpus
 
-**Status:** Required; requires a person, instruments, and microphone setups.
+**Status:** Recorded `no-safe-candidate` on August 22, 2026 and not executed for
+this generation of candidates; required again as soon as a discovery round
+produces an automated-eligible profile. Requires a person, instruments, and
+microphone setups.
 **Prerequisites:** Task 14 complete and at least one automated-eligible candidate
 from Task 13. If none is eligible, record `no-safe-candidate` and proceed directly
 to Task 16 without changing the default.
@@ -1693,8 +1698,9 @@ ready for the selection rule.
 
 ### Task 16 — Select and roll out the global production profile
 
-**Status:** Required. **Prerequisites:** Tasks 13 and 15 complete, or Task 13 has
-already produced `no-safe-candidate`.
+**Status:** Completed August 22, 2026. **Prerequisites:** Tasks 13 and 15
+complete, or Task 13 has already produced `no-safe-candidate`; Task 13 produced
+`no-safe-candidate` on August 21.
 
 **Objective:** Make one auditable global-default decision and establish a rollback
 baseline.
@@ -1723,6 +1729,49 @@ regressions. Confirm ordinary listen mode reports and uses the selected ID.
 **Complete when:** Production either uses one fully validated named default or
 explicitly retains baseline with `no-safe-candidate`; the decision is documented,
 and rollback requires changing only the default ID.
+
+**August 22 decision record:** The decision is `no-safe-candidate` and
+`DEFAULT_LISTEN_MATCHER_PROFILE_ID` remains `baseline-v1`. The registry, every
+profile value, every gate, and every fixture are untouched; the pass changed
+documentation and one registry comment only.
+
+The Candidate selection rule was applied in its stated order and stopped at its
+first step. Task 13 left the eligibility set empty, so no profile reached the
+ranking, and no tie-break on distance from `baseline-v1` was needed. The Task 15
+live corpus was not collected: its own prerequisite makes it conditional on an
+automated-eligible candidate, and live sessions for four profiles already
+rejected on held-back isolated evidence could not have made any of them
+shippable. The live outcome is recorded as `no-safe-candidate` rather than as
+live evidence.
+
+The blockers are recorded per gate: `safety-isolated-false-advance` for all four
+candidates on `isolated/direct/122` and `isolated/tone/124`,
+`release-isolated-course-clear` for all four against the fixed 52/54 Tone floor,
+and `release-isolated-recognition` for `early-held-v2` and `steady-held-v2`
+against the fixed 101/106 Tone floor. The known limitations of the retained
+default are recorded beside them: it keeps the Task 06 Tone 333 ms false advance
+that every candidate cleared, sits at 94.3% isolated correct advancement under
+Tone, and is the least sensitive profile measured.
+
+Verification ran on the development Windows machine at commit `65da882` with
+Chrome 152.0.7977.55 on Windows 11 (10.0.26200), Node v22.12.0, and the unchanged
+model (SHA-256 `a77be8262d…d190ac4`, re-hashed locally). The 472-test unit suite,
+its two-test dynamics pretest, and the production build pass. The canonical paired isolated smoke matched its
+recorded baseline under both renderers. The complete 156-trace sequence
+validation and the 52-trace dynamics and articulation matrix verified trace reuse
+and baseline parity and reproduced every recorded August 19 row for all five
+profile columns under both renderers, with the dedicated safety counters at zero
+everywhere. Both committed regressions reproduce from rendered audio —
+decoded-structure hashes `b043076d` and `ab28401f` — with `baseline-v1`
+satisfying each pinned outcome. Every decoded-structure hash and discrete outcome
+reproduced on a different browser build and operating system from the frozen
+archives, while the rendered `peak`/`rms` diagnostics differed in their last bits,
+which is the Task 04 identity rule behaving as specified. Ordinary listen mode
+resolves and reports `baseline-v1`: the application builds its matcher from
+`resolveEffectiveListenMatcherProfile`, and the Diagnostics panel prints the
+effective identifier. `tools/online_amt/LISTEN_BENCHMARK.md` records the decision,
+its evidence, and the rollback instruction; the README and benchmark index name
+the shipped identifier.
 
 ### Task 17 — Run the calibration feasibility experiment and make a go/no-go decision
 

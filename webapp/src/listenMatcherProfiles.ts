@@ -225,6 +225,18 @@ export const LISTEN_MATCHER_PROFILES: Readonly<
  * The profile uncalibrated users, changed devices, invalid calibration records,
  * and rollback fall back to. Changing it is one reviewed production decision,
  * taken only after the frozen candidates pass their confirmation and live gates.
+ *
+ * The August 21, 2026 frozen automated confirmation rejected all four `v2`
+ * candidates: each advances an omitted-bass safety fixture `baseline-v1`
+ * refuses, and none holds the held-out Tone recognition floors. The production
+ * decision recorded the following day is therefore `no-safe-candidate`, and this
+ * constant is unchanged. Moving it now to a value picked in response to those
+ * measurements would be post-result retuning; a different default needs a new
+ * discovery round whose search accounts for isolated omitted-bass evidence.
+ *
+ * This constant is also the rollback. Every released profile stays in the
+ * registry, so reverting a future default is one edit here rather than a
+ * reconstruction of its values from the benchmark history.
  */
 export const DEFAULT_LISTEN_MATCHER_PROFILE_ID: ListenMatcherProfileId = "baseline-v1";
 

@@ -7,7 +7,7 @@ the current conclusions remain easy to find.
 | Area | Current conclusion | Detailed report |
 | --- | --- | --- |
 | Runtime | Production's single-threaded optimized browser WASM configuration keeps pace with the 32 ms input cadence and preserves model-output parity. | [Runtime benchmark](RUNTIME_BENCHMARK.md) |
-| Listening | Direct v1 passes isolated acceptance at 98.1%; Tone v2 falls to 94.3% but improves aggregate continuous ordered advances from 331 to 355. Both retain zero false/skipped/duplicate advances in the dedicated safety families. | [Listening benchmark](LISTEN_BENCHMARK.md) |
+| Listening | Production runs the named matcher profile `baseline-v1`; the August 21 frozen confirmation rejected all four candidates and decided `no-safe-candidate`. Direct v1 passes isolated acceptance at 98.1%; Tone v2 falls to 94.3% but improves aggregate continuous ordered advances from 331 to 355. Both retain zero false/skipped/duplicate advances in the dedicated safety families. | [Listening benchmark](LISTEN_BENCHMARK.md) |
 | Piano dynamics | All 20 recorded layers render distinctly under both renderers. Constant-layer recognition is 90.9% independent for legacy and 89.2% for Tone on the equal-piano aggregate, with zero false, skipped, and duplicate advances after the Tone Salamander `v05` event was diagnosed as a late advance on correct pitch content. | [Piano dynamics benchmark](PIANO_DYNAMICS_BENCHMARK.md) |
 
 ## Listening renderers
@@ -26,6 +26,16 @@ The August 15 paired baseline records both renderers against the same isolated
 and continuous corpora. These deterministic results remain a regression gate;
 acoustic-piano and other live-input trials are still required before production
 matcher changes.
+
+## Production matcher profile
+
+Listen mode advances on the thresholds of one named profile from the versioned
+registry in `webapp/src/listenMatcherProfiles.ts`. The production default is
+`DEFAULT_LISTEN_MATCHER_PROFILE_ID`, currently `baseline-v1`, and the
+[August 22 production profile decision](LISTEN_BENCHMARK.md#production-profile-decision--august-22-2026)
+is the entry that records why. Changing or rolling back the default is one edit
+to that constant: every historical profile stays in the registry so a released
+value can be reproduced and reverted without reconstructing it from this history.
 
 ## Reports
 

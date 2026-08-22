@@ -63,6 +63,21 @@ Normal playhead sounds are suppressed while listening without changing the saved
 speaker preference. The audition button or default `P` shortcut explicitly plays
 the current chord, including while muted; matching pauses through the sample decay.
 
+Advancement thresholds come from one named matcher profile in the versioned
+registry in `webapp/src/listenMatcherProfiles.ts`. Timing, target ordering, and
+advancement semantics are identical for every profile, so a profile only
+reinterprets model confidence. The shipped default is `baseline-v1`. The frozen
+automated confirmation of August 21, 2026 replayed four candidate profiles over
+476 recorded traces under both benchmark renderers, repeated the whole matrix in
+a second browser process, and rejected all four: each advances an omitted-bass
+safety fixture that `baseline-v1` refuses, and none holds the held-out Tone
+recognition floors. The decision is `no-safe-candidate`, so the default is
+unchanged and no live-instrument corpus was collected for a candidate. Every
+historical profile stays in the registry, so changing or rolling back the default
+is one edit to `DEFAULT_LISTEN_MATCHER_PROFILE_ID`. With the debug panel enabled,
+Settings offers a session-only profile override for hearing a profile on real
+input, and the Diagnostics panel names the profile listen mode is running.
+
 The adapted PitchPlease spectral implementation and its historical benchmark
 remain in `webapp/src/vendor/pitchplease/`. The `online_amt` export procedure,
 runtime parity checks, WASM configuration matrix, and latest listening benchmark
@@ -77,7 +92,7 @@ advances. Automated listening runs keep the historical direct sample mixer and a
 app-equivalent Tone.js sampler/compressor/limiter renderer as separately labelled,
 side-by-side configurations. The same page records manual acoustic- and
 digital-piano trials; those real-input trials are still required before changing
-the preliminary `online_amt` matcher profile.
+the `online_amt` matcher profile, and no candidate has yet earned them.
 
 ## Development
 
