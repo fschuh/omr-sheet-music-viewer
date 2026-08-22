@@ -741,6 +741,29 @@ all, not whether one particular combination wins. A bass-specific onset gate
 remains the fallback if no existing-grid profile both stays safe and recovers
 enough, and Task 22 measures its cost before Task 26 decides.
 
+That cost has a second side the round must not overlook. The repeated chord
+`[62, 74, 82]` is recovered late on three Tone Salamander runs — `v05`, `v13`, and
+the mixed run — and no measured profile recognises it on the attack that sounds
+it: `baseline-v1` recovers at source distance 2 and 2.22 s of attribution delay,
+and all four candidates at distance 1 and 1.22 s. A full attack of playhead lag on
+a repeated chord is therefore the shipped behaviour, not a candidate regression,
+and the candidates halved it with a confidence-only change, which places the cause
+inside what a profile may alter rather than in the fixed timing policy. Repetitions
+here are about 992 ms apart, far outside `refractoryMs` at 180 and
+`duplicateOnsetMs` at 120, so refractory suppression does not explain it.
+
+That matters because the two defects pull the same gate in opposite directions
+within one confidence band. The hallucinated bass onset sits in `[0.50, 0.60)` and
+needs the bass held at 0.60 to be refused; a real re-struck attack, whose evidence
+is weak precisely because the note is already ringing, needs the gate lower to be
+accepted, and a repeated identical chord carries every pitch over so it needs a
+fresh onset on all three including the bass. One scalar cannot serve both, which
+is the strongest available argument for separating bass qualification from the
+general gate — and the reason Task 22 measures both sides before Task 26 chooses.
+Note that score-rise retrigger detection is not the alternative: it is the prior
+attempt at this same problem and remains a non-goal, having produced 22 false or
+duplicate events to recover two attacks.
+
 An onset decoded on a pitch that was never sounded is also, in the end, a
 model-evidence defect surfacing as a threshold problem. That matters for where
 the residual work goes if round two does not produce a shippable profile.
@@ -2104,7 +2127,7 @@ repeatable held-out benefit and no safety loss, or `normalization-not-justified`
 with no production change. Implementation/rollout of a justified transformation
 requires a new plan rather than silently extending Tasks 18-20.
 
-### Task 22 — Diagnose the omitted-bass false advance and measure the cost of a high bass gate
+### Task 22 — Map the onset confidence band on both sides of the incumbent gate
 
 **Status:** Required. **Prerequisites:** Task 16 complete.
 
@@ -2112,6 +2135,12 @@ requires a new plan rather than silently extending Tasks 18-20.
 measured decision input, and establish what holding the bass to the incumbent's
 onset gate would cost before Task 26 decides whether a bass-specific axis is
 needed at all.
+
+The cost has two sides and this task measures both. A gate at 0.60 refuses the
+hallucinated bass onset that rejected round one, and it also refuses real attacks
+whose evidence is weak — which is what leaves the repeated `[62, 74, 82]` chord
+recovering a full attack late. Both live in the same confidence band, so a
+measurement of one side alone would recommend a gate the other side cannot afford.
 
 **Work:**
 
@@ -2140,6 +2169,31 @@ needed at all.
 - Report the same distributions over the sequence, dynamics, and articulation
   discovery traces, so the cost of a high bass gate is known outside the isolated
   suite.
+- Measure the other side of the same band: the repeated `[62, 74, 82]` target that
+  no measured profile recognises on the attack that sounds it. Report, for all
+  three Tone Salamander runs where it recurs — `v05`, `v13`, and the mixed run —
+  the decoded onset confidence on each of the three pitches at every repetition,
+  including the repetitions that did not advance. State where those values sit
+  relative to the incumbent's 0.60 gate, the candidates' 0.45 and 0.50 gates, and
+  the `[0.50, 0.60)` hallucination corridor.
+- Separate the bass pitch from the upper voices in that report. A repeated
+  identical chord carries every pitch over from the previous target and so needs a
+  genuinely fresh onset on all three, the bass included, which is the point where a
+  bass-specific gate would help the omitted-bass case and hurt this one.
+- Record what this costs today rather than only what a change would cost. Task 13
+  measured `baseline-v1` recovering the chord at source distance 2 and 2.22 s of
+  attribution delay, and all four candidates at distance 1 and 1.22 s. No profile
+  reaches distance 0, so a full attack of playhead lag on a repeated chord is the
+  current shipped behaviour, not a candidate regression.
+- Treat this as a late-advance performance measurement, not a safety case. The
+  `v05` classification from Task 05 is unchanged: correct content recovered late,
+  zero false, skipped, and duplicate advances. This task adds no gate and reopens
+  no diagnosis.
+- Do not propose retrigger detection as the remedy. Re-enabling score-rise
+  retrigger detection is a standing non-goal, and it is the prior attempt at this
+  exact problem: its best measured candidate created 22 false or duplicate events
+  to recover two attacks. The open route is where the confidence band is set, which
+  is what this task measures.
 - Measure existing-grid counterfactuals rather than a control that does not exist
   yet, and name every coordinate. Replay the four high-onset, open-active profiles
   `o0p600-t0p500-a0p200-x0p900-b1`, `o0p600-t0p500-a0p200-x0p940-b1`,
@@ -2177,9 +2231,11 @@ deterministically from the captured traces. The full unit suite and the producti
 build pass.
 
 **Complete when:** Both failures are pinned, the hallucinated-onset mechanism is
-recorded as the only one in play, and the cost of a 0.60 bass gate and the
-version-1 behaviour of all sixteen named counterfactual profiles are measured
-numbers rather than assumptions.
+recorded as the only one in play, and the cost of a 0.60 bass gate, the version-1
+behaviour of all sixteen named counterfactual profiles, and the onset confidences
+of the repeated `[62, 74, 82]` attacks are measured numbers rather than
+assumptions — so Task 26 can see what a gate at any given height buys on one side
+of the band and gives up on the other.
 
 ### Task 23 — Freeze the round-two safety and correctness policy
 
@@ -2429,10 +2485,18 @@ its own, and add a bass-specific control only if the evidence demands it.
   calculation, boundary, safety restriction, candidate limit, and stop rule were
   all frozen in Task 24 and are not revisited here; only the corpus they run on
   changes, and no confirmation evidence is read.
+- Report ablation one's effect on the repeated `[62, 74, 82]` recovery beside its
+  safety result. Task 22 measures where those attacks sit in the confidence band,
+  and a profile that refuses the hallucinated bass onset by raising the gate may
+  push that recovery back out to source distance 2, which is the shipped
+  behaviour's own weakness. A candidate that buys isolated bass safety by giving
+  back a full attack of playhead lag on repeated chords has moved the cost rather
+  than removed it, and the selection rule's late-advance terms must be read on that
+  basis rather than as a tiebreak.
 - Ablation two refines the existing five-axis family and adds no new axis. Run it
   only when the Task 24 stop rule says ablation one produced no search-selected
-  candidate, or produced one whose cost under Task 22's measured distribution
-  exceeds what a bass gate would cost. Round one's four candidates are a
+  candidate, or produced one whose cost under Task 22's measured distributions —
+  on both sides of the band — exceeds what a bass gate would cost. Round one's four candidates are a
   two-by-two corner, onset in {0.45, 0.50} by active gate in {0.20, 0.275}, with
   `targetNoteThreshold` pinned at 0.50, so the open questions are the points
   between 0.275 and 0.35 and whether the target threshold is genuinely inert or
@@ -2442,6 +2506,13 @@ its own, and add a bass-specific control only if the evidence demands it.
   precedes the new axis deliberately: an axis that is only ever tested against the
   unrefined grid cannot be distinguished from grid resolution the existing family
   already had.
+- Judge the axis on the two-sided problem it exists to solve. A single onset gate
+  has to be high enough to refuse a phantom bass onset in `[0.50, 0.60)` and low
+  enough to accept a real re-struck attack that Task 22 will have located in the
+  same band; separating bass qualification from the general gate is the only
+  measured way to do both. Report each matched pair's effect on the omitted-bass
+  fixtures and on the repeated-chord recovery together, because an axis that fixes
+  one while giving back the other has not earned the parameter.
 - Emit ablation three as matched bass and no-bass variants over the identical
   refined grid, so the axis is judged against its own control rather than against
   ablation two's separate result.
