@@ -20,6 +20,7 @@ import {
 } from "./playback";
 import { pianoSampler, pitchToMidi } from "./piano";
 import { BrowserOnlineAmtRecognizer } from "./onlineAmtRecognizer";
+import { isMidiNoteMessage, MidiNoteRecognizer } from "./midiNoteRecognizer";
 import {
   matcherOptionsForListenMatcherProfile,
   listenMatcherOverrideAfterDebugPanelChange,
@@ -31,6 +32,7 @@ import { KeyboardRecognitionTracker } from "./keyboardRecognition";
 import {
   stoppedRecognizerLifecycle,
   type ListenModeFeedback,
+  type ListenInputSource,
   type NoteRecognizer,
   type RecognizerResult,
 } from "./noteRecognizer";
@@ -50,8 +52,10 @@ import {
 } from "./realtime";
 import {
   loadDebugPanelEnabled,
+  loadListenInputSource,
   loadPlaybackPiano,
   saveDebugPanelEnabled,
+  saveListenInputSource,
   savePlaybackPiano,
 } from "./preferences";
 import { pianoLayerForDynamic, type PianoId } from "./pianoRegistry";
@@ -230,13 +234,20 @@ export function App() {
   const [activePage, setActivePage] = useState<"viewer" | "settings">("viewer");
   const [debugPanelEnabled, setDebugPanelEnabled] = useState(loadDebugPanelEnabled);
   const [playbackPiano, setPlaybackPiano] = useState(loadPlaybackPiano);
+  const [listenInputSource, setListenInputSource] = useState(loadListenInputSource);
+  const listenInputSourceRef = useRef<ListenInputSource>(listenInputSource);
+  listenInputSourceRef.current = listenInputSource;
   const activePageRef = useRef(activePage);
   activePageRef.current = activePage;
   const [shortcuts, setShortcuts] = useState<PlaybackShortcuts>(loadPlaybackShortcuts);
   const shortcutsRef = useRef(shortcuts);
   shortcutsRef.current = shortcuts;
   const [midiPorts, setMidiPorts] = useState<string[]>([]);
+  const midiPortsRef = useRef(midiPorts);
+  midiPortsRef.current = midiPorts;
   const [midiError, setMidiError] = useState<string | null>(null);
+  const midiErrorRef = useRef(midiError);
+  midiErrorRef.current = midiError;
   const [midiRefreshing, setMidiRefreshing] = useState(false);
   const midiRefreshInProgressRef = useRef(false);
   const [midiCaptureCommand, setMidiCaptureCommand] = useState<PlaybackCommand | null>(null);
@@ -755,6 +766,7 @@ export function App() {
 
   const startListenMode = useCallback(async () => {
     if (!playbackStateRef.current.active || recognizerRef.current) return;
+    const inputSource = listenInputSourceRef.current;
     const operation = ++listenOperationRef.current;
     const generation = ++playheadGenerationRef.current;
     keyboardRecognitionRef.current.reset();
@@ -769,7 +781,12 @@ export function App() {
     );
     chordMatcherRef.current.setTarget(target, generation, performance.now());
     setListenFeedback({
-      lifecycle: { state: "initializing", microphone: "loading", analysis: "loading" },
+      lifecycle: {
+        state: "initializing",
+        inputSource,
+        input: "loading",
+        analysis: "loading",
+      },
       targetPitches: target,
       detectedTargetPitches: [],
       extraPitches: [],
@@ -779,7 +796,32 @@ export function App() {
       successPitches: [],
       processingTimeMs: null,
     });
-    const recognizer = new BrowserOnlineAmtRecognizer();
+    if (
+      inputSource === "midi" &&
+      (!nativeAvailable || midiErrorRef.current !== null || midiPortsRef.current.length === 0)
+    ) {
+      const message = !nativeAvailable
+        ? "MIDI input is available in the desktop app."
+        : midiErrorRef.current ?? "No MIDI inputs are connected. Open Settings and scan again.";
+      commitPlaybackState(
+        { ...playbackStateRef.current, listenModeEnabled: false },
+        false,
+      );
+      setListenFeedback((feedback) => ({
+        ...feedback,
+        lifecycle: {
+          state: "error",
+          inputSource: "midi",
+          input: "error",
+          analysis: "idle",
+          error: message,
+        },
+      }));
+      return;
+    }
+    const recognizer = inputSource === "midi"
+      ? new MidiNoteRecognizer()
+      : new BrowserOnlineAmtRecognizer();
     recognizer.setTarget(target);
     recognizerRef.current = recognizer;
     try {
@@ -820,7 +862,7 @@ export function App() {
       }
       // The lifecycle callback exposes the specific analyzer/device error.
     }
-  }, [commitPlaybackState, handleRecognizerResult, playbackTimeline]);
+  }, [commitPlaybackState, handleRecognizerResult, nativeAvailable, playbackTimeline]);
 
   const auditionCurrentNotes = useCallback(async () => {
     const moment = currentPlaybackMoment(playbackTimeline, playbackStateRef.current);
@@ -1114,13 +1156,6 @@ export function App() {
       const received = midiShortcutFromBytes(event.bytes);
       if (!received) return;
 
-      const activeRepeat = activeMidiRepeatRef.current;
-      if (activeRepeat && midiShortcutIsRelease(activeRepeat.shortcut, received)) {
-        stopMidiRepeat();
-        return;
-      }
-      if (activeRepeat && midiShortcutsEqual(activeRepeat.shortcut, received)) return;
-
       const captureCommand = midiCaptureCommandRef.current;
       if (captureCommand) {
         midiCaptureCommandRef.current = null;
@@ -1138,6 +1173,28 @@ export function App() {
         });
         return;
       }
+
+      const recognizer = recognizerRef.current;
+      if (
+        listenInputSourceRef.current === "midi" &&
+        playbackStateRef.current.listenModeEnabled &&
+        recognizer instanceof MidiNoteRecognizer &&
+        isMidiNoteMessage(event.bytes)
+      ) {
+        recognizer.handleMidiMessage(event.bytes, event.port);
+        const activeRepeat = activeMidiRepeatRef.current;
+        if (activeRepeat && midiShortcutIsRelease(activeRepeat.shortcut, received)) {
+          stopMidiRepeat();
+        }
+        return;
+      }
+
+      const activeRepeat = activeMidiRepeatRef.current;
+      if (activeRepeat && midiShortcutIsRelease(activeRepeat.shortcut, received)) {
+        stopMidiRepeat();
+        return;
+      }
+      if (activeRepeat && midiShortcutsEqual(activeRepeat.shortcut, received)) return;
 
       if (activePageRef.current !== "viewer") return;
       const command = commandForMidiShortcut(shortcutsRef.current, received);
@@ -1737,6 +1794,7 @@ export function App() {
         <SettingsPage
           shortcuts={shortcuts}
           playbackPiano={playbackPiano}
+          listenInputSource={listenInputSource}
           debugPanelEnabled={debugPanelEnabled}
           listenMatcherProfileOverride={listenMatcherProfileOverride}
           nativeAvailable={nativeAvailable}
@@ -1754,6 +1812,11 @@ export function App() {
             setPlaybackState(initialPlaybackState);
             setPlaybackPiano(pianoId);
             savePlaybackPiano(pianoId);
+          }}
+          onChangeListenInputSource={(inputSource) => {
+            stopListenMode();
+            setListenInputSource(inputSource);
+            saveListenInputSource(inputSource);
           }}
           onChangeDebugPanelEnabled={(enabled) => {
             setDebugPanelEnabled(enabled);

@@ -38,7 +38,8 @@ export class BrowserOnlineAmtRecognizer implements NoteRecognizer {
   private callbacks: NoteRecognizerCallbacks | null = null;
   private lifecycle: RecognizerLifecycle = {
     state: "stopped",
-    microphone: "idle",
+    inputSource: "microphone",
+    input: "idle",
     analysis: "idle",
   };
   private worker: Worker | null = null;
@@ -66,7 +67,8 @@ export class BrowserOnlineAmtRecognizer implements NoteRecognizer {
     this.paused = false;
     this.lifecycle = {
       state: "initializing",
-      microphone: "loading",
+      inputSource: "microphone",
+      input: "loading",
       analysis: "loading",
     };
     callbacks.onLifecycle(this.lifecycle);
@@ -89,7 +91,7 @@ export class BrowserOnlineAmtRecognizer implements NoteRecognizer {
           this.cleanupResources();
           this.updateLifecycle({
             state: "error",
-            microphone: "idle",
+            input: "idle",
             analysis: "error",
             error: message,
           });
@@ -137,7 +139,7 @@ export class BrowserOnlineAmtRecognizer implements NoteRecognizer {
         return;
       }
       this.stream = stream;
-      this.updateLifecycle({ microphone: "ready" });
+      this.updateLifecycle({ input: "ready" });
 
       const audioContext = new AudioContext({
         latencyHint: "interactive",
@@ -200,7 +202,7 @@ export class BrowserOnlineAmtRecognizer implements NoteRecognizer {
       this.cleanupResources();
       this.updateLifecycle({
         state: "error",
-        microphone: this.lifecycle.microphone === "ready" ? "ready" : "error",
+        input: this.lifecycle.input === "ready" ? "ready" : "error",
         analysis: this.lifecycle.analysis === "ready" ? "ready" : "error",
         error: message,
       });
@@ -249,7 +251,12 @@ export class BrowserOnlineAmtRecognizer implements NoteRecognizer {
     this.sessionToken += 1;
     this.cleanupResources();
     this.callbacks = null;
-    this.lifecycle = { state: "stopped", microphone: "idle", analysis: "idle" };
+    this.lifecycle = {
+      state: "stopped",
+      inputSource: "microphone",
+      input: "idle",
+      analysis: "idle",
+    };
   }
 
   private cleanupResources(): void {

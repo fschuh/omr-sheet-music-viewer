@@ -98,7 +98,8 @@ export class BrowserSpectralRecognizer implements NoteRecognizer {
   private callbacks: NoteRecognizerCallbacks | null = null;
   private lifecycle: RecognizerLifecycle = {
     state: "stopped",
-    microphone: "idle",
+    inputSource: "microphone",
+    input: "idle",
     analysis: "idle",
   };
   private stream: MediaStreamLike | null = null;
@@ -129,7 +130,12 @@ export class BrowserSpectralRecognizer implements NoteRecognizer {
     this.callbacks = callbacks;
     this.generation = generation;
     this.paused = false;
-    this.lifecycle = { state: "initializing", microphone: "loading", analysis: "loading" };
+    this.lifecycle = {
+      state: "initializing",
+      inputSource: "microphone",
+      input: "loading",
+      analysis: "loading",
+    };
     callbacks.onLifecycle(this.lifecycle);
 
     try {
@@ -147,7 +153,7 @@ export class BrowserSpectralRecognizer implements NoteRecognizer {
         return;
       }
       this.stream = stream;
-      this.updateLifecycle({ microphone: "ready" });
+      this.updateLifecycle({ input: "ready" });
 
       const audioContext = this.environment.createAudioContext();
       const source = audioContext.createMediaStreamSource(stream);
@@ -270,7 +276,12 @@ export class BrowserSpectralRecognizer implements NoteRecognizer {
     this.sessionToken += 1;
     this.cleanupResources();
     this.callbacks = null;
-    this.lifecycle = { state: "stopped", microphone: "idle", analysis: "idle" };
+    this.lifecycle = {
+      state: "stopped",
+      inputSource: "microphone",
+      input: "idle",
+      analysis: "idle",
+    };
   }
 
   private cleanupResources(): void {

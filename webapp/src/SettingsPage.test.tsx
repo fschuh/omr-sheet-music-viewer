@@ -4,12 +4,18 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { SettingsPage } from "./SettingsPage";
 import { defaultPlaybackShortcuts } from "./shortcuts";
 import { LISTEN_MATCHER_PROFILE_IDS } from "./listenMatcherProfiles";
+import {
+  LISTEN_INPUT_SOURCE_STORAGE_KEY,
+  loadListenInputSource,
+  saveListenInputSource,
+} from "./preferences";
 
 test("renders every playback command with its default keyboard key and empty MIDI slot", () => {
   const markup = renderToStaticMarkup(
     <SettingsPage
       shortcuts={defaultPlaybackShortcuts()}
       playbackPiano="splendid"
+      listenInputSource="microphone"
       debugPanelEnabled={false}
       listenMatcherProfileOverride={null}
       nativeAvailable
@@ -19,6 +25,7 @@ test("renders every playback command with its default keyboard key and empty MID
       midiCaptureCommand={null}
       onChangeShortcuts={() => undefined}
       onChangePlaybackPiano={() => undefined}
+      onChangeListenInputSource={() => undefined}
       onChangeDebugPanelEnabled={() => undefined}
       onChangeListenMatcherProfileOverride={() => undefined}
       onBeginMidiCapture={() => undefined}
@@ -39,6 +46,9 @@ test("renders every playback command with its default keyboard key and empty MID
   assert.match(markup, /Bluetooth MIDI bridge/);
   assert.match(markup, /<h3 id="debug-title">Debug<\/h3>/);
   assert.match(markup, /aria-label="Playback piano"/);
+  assert.match(markup, /aria-label="Listen input"/);
+  assert.match(markup, /Microphone \(default\)<\/option>/);
+  assert.match(markup, /MIDI keyboard<\/option>/);
   assert.match(markup, />Splendid Grand Piano<\/option>/);
   assert.match(markup, />Salamander Grand Piano<\/option>/);
   assert.match(markup, />Enable debug panel<\/strong>/);
@@ -50,6 +60,7 @@ test("disables MIDI assignment when initialization fails", () => {
     <SettingsPage
       shortcuts={defaultPlaybackShortcuts()}
       playbackPiano="salamander"
+      listenInputSource="midi"
       debugPanelEnabled
       listenMatcherProfileOverride={null}
       nativeAvailable
@@ -59,6 +70,7 @@ test("disables MIDI assignment when initialization fails", () => {
       midiCaptureCommand={null}
       onChangeShortcuts={() => undefined}
       onChangePlaybackPiano={() => undefined}
+      onChangeListenInputSource={() => undefined}
       onChangeDebugPanelEnabled={() => undefined}
       onChangeListenMatcherProfileOverride={() => undefined}
       onBeginMidiCapture={() => undefined}
@@ -80,6 +92,7 @@ function renderSettings(
     <SettingsPage
       shortcuts={defaultPlaybackShortcuts()}
       playbackPiano="splendid"
+      listenInputSource="microphone"
       debugPanelEnabled
       listenMatcherProfileOverride={null}
       nativeAvailable
@@ -89,6 +102,7 @@ function renderSettings(
       midiCaptureCommand={null}
       onChangeShortcuts={() => undefined}
       onChangePlaybackPiano={() => undefined}
+      onChangeListenInputSource={() => undefined}
       onChangeDebugPanelEnabled={() => undefined}
       onChangeListenMatcherProfileOverride={() => undefined}
       onBeginMidiCapture={() => undefined}
@@ -146,4 +160,29 @@ test("no override is selected by default, and an active override is the checked 
   assert.match(overridden, /checked="" value="early-open-v2"/);
   assert.doesNotMatch(overridden, /checked="" value=""/);
   assert.equal(overridden.match(/name="listen-matcher-profile" checked=""/g)?.length, 1);
+});
+
+test("listen input defaults to microphone and persists a valid MIDI selection", () => {
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  const values = new Map<string, string>();
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      localStorage: {
+        getItem: (key: string) => values.get(key) ?? null,
+        setItem: (key: string, value: string) => values.set(key, value),
+      },
+    },
+  });
+  try {
+    assert.equal(loadListenInputSource(), "microphone");
+    saveListenInputSource("midi");
+    assert.equal(values.get(LISTEN_INPUT_SOURCE_STORAGE_KEY), "midi");
+    assert.equal(loadListenInputSource(), "midi");
+    values.set(LISTEN_INPUT_SOURCE_STORAGE_KEY, "invalid");
+    assert.equal(loadListenInputSource(), "microphone");
+  } finally {
+    if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow);
+    else Reflect.deleteProperty(globalThis, "window");
+  }
 });

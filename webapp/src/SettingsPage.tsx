@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { playbackCommandNames, type PlaybackCommand } from "./playback";
 import { PIANO_IDS, PIANO_REGISTRY, type PianoId } from "./pianoRegistry";
+import type { ListenInputSource } from "./noteRecognizer";
 import {
   DEFAULT_LISTEN_MATCHER_PROFILE_ID,
   LISTEN_MATCHER_PROFILE_IDS,
@@ -80,6 +81,7 @@ function formatListenMatcherThresholds(profileId: ListenMatcherProfileId): strin
 interface SettingsPageProps {
   shortcuts: PlaybackShortcuts;
   playbackPiano: PianoId;
+  listenInputSource: ListenInputSource;
   debugPanelEnabled: boolean;
   listenMatcherProfileOverride: ListenMatcherProfileId | null;
   nativeAvailable: boolean;
@@ -89,6 +91,7 @@ interface SettingsPageProps {
   midiCaptureCommand: PlaybackCommand | null;
   onChangeShortcuts: (shortcuts: PlaybackShortcuts) => void;
   onChangePlaybackPiano: (pianoId: PianoId) => void;
+  onChangeListenInputSource: (inputSource: ListenInputSource) => void;
   onChangeDebugPanelEnabled: (enabled: boolean) => void;
   onChangeListenMatcherProfileOverride: (profileId: ListenMatcherProfileId | null) => void;
   onBeginMidiCapture: (command: PlaybackCommand) => void;
@@ -100,6 +103,7 @@ interface SettingsPageProps {
 export function SettingsPage({
   shortcuts,
   playbackPiano,
+  listenInputSource,
   debugPanelEnabled,
   listenMatcherProfileOverride,
   nativeAvailable,
@@ -109,6 +113,7 @@ export function SettingsPage({
   midiCaptureCommand,
   onChangeShortcuts,
   onChangePlaybackPiano,
+  onChangeListenInputSource,
   onChangeDebugPanelEnabled,
   onChangeListenMatcherProfileOverride,
   onBeginMidiCapture,
@@ -205,6 +210,26 @@ export function SettingsPage({
             {PIANO_IDS.map((pianoId) => (
               <option key={pianoId} value={pianoId}>{PIANO_REGISTRY[pianoId].displayName}</option>
             ))}
+          </select>
+        </label>
+        <label className="settings-select-row">
+          <span>
+            <strong>Listen input</strong>
+            <small>
+              MIDI uses Note On/Off messages from every connected input. While MIDI listen mode
+              is active, note messages play the score; other MIDI shortcut messages continue to
+              work.
+            </small>
+          </span>
+          <select
+            aria-label="Listen input"
+            value={listenInputSource}
+            onChange={(event) => (
+              onChangeListenInputSource(event.target.value as ListenInputSource)
+            )}
+          >
+            <option value="microphone">Microphone (default)</option>
+            <option value="midi" disabled={!nativeAvailable}>MIDI keyboard</option>
           </select>
         </label>
       </section>

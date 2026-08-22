@@ -637,11 +637,16 @@ export function DocumentViewer({
   );
   const listenStatus = useMemo(() => {
     const lifecycle = listenFeedback.lifecycle;
+    const inputLabel = lifecycle.inputSource === "midi" ? "MIDI input" : "Microphone";
     if (lifecycle.state === "error") return `Listen error: ${lifecycle.error ?? "Unknown error"}`;
     if (lifecycle.state === "initializing") {
-      const microphone = lifecycle.microphone === "ready" ? "Microphone ready" : "Requesting microphone";
-      const analysis = lifecycle.analysis === "ready" ? "Analyzer ready" : "Starting analyzer";
-      return `${microphone} · ${analysis}`;
+      const input = lifecycle.input === "ready"
+        ? `${inputLabel} ready`
+        : `Starting ${inputLabel.toLowerCase()}`;
+      const analysis = lifecycle.analysis === "ready"
+        ? "Recognition ready"
+        : "Starting recognition";
+      return `${input} · ${analysis}`;
     }
     if (lifecycle.state === "paused") return "Listening paused while the target chord plays";
     if (lifecycle.state !== "listening") return null;
@@ -655,7 +660,7 @@ export function DocumentViewer({
       ? ""
       : ` · ${Math.round(listenFeedback.processingTimeMs)} ms analysis`;
     return [
-      `Microphone ready · Analyzer ready · Target ${target}`,
+      `${inputLabel} ready · Target ${target}`,
       heard ? `Heard ${heard}` : "Waiting for a fresh onset",
       extras ? `Extra ${extras}` : "",
       targetSignals ? `Signal ${targetSignals}` : "",

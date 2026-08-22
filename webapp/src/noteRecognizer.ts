@@ -7,9 +7,12 @@ export type RecognizerRunState =
 
 export type RecognizerResourceState = "idle" | "loading" | "ready" | "error";
 
+export type ListenInputSource = "microphone" | "midi";
+
 export interface RecognizerLifecycle {
   state: RecognizerRunState;
-  microphone: RecognizerResourceState;
+  inputSource: ListenInputSource;
+  input: RecognizerResourceState;
   analysis: RecognizerResourceState;
   error?: string;
 }
@@ -101,6 +104,7 @@ export interface ListenModeFeedback {
 
 export const stoppedRecognizerLifecycle: RecognizerLifecycle = {
   state: "stopped",
-  microphone: "idle",
+  inputSource: "microphone",
+  input: "idle",
   analysis: "idle",
 };

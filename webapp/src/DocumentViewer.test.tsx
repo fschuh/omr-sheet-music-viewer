@@ -341,7 +341,12 @@ test("explains why realtime playback is disabled", () => {
 
 test("shows listen lifecycle, target detections, extras, and analysis time", () => {
   const markup = render(true, {
-    lifecycle: { state: "listening", microphone: "ready", analysis: "ready" },
+    lifecycle: {
+      state: "listening",
+      inputSource: "microphone",
+      input: "ready",
+      analysis: "ready",
+    },
     targetPitches: [60, 64],
     detectedTargetPitches: [60],
     extraPitches: [67],
@@ -357,10 +362,32 @@ test("shows listen lifecycle, target detections, extras, and analysis time", () 
     successPitches: [],
     processingTimeMs: 123.4,
   });
-  assert.match(markup, /Microphone ready · Analyzer ready · Target C4 E4/);
+  assert.match(markup, /Microphone ready · Target C4 E4/);
   assert.match(markup, /Heard C4 · Extra G4/);
   assert.match(markup, /Signal C4 82% E4 34% · 123 ms analysis/);
   assert.match(markup, /aria-label="Disable listen mode"/);
+});
+
+test("labels MIDI listen feedback as MIDI input", () => {
+  const markup = render(true, {
+    lifecycle: {
+      state: "listening",
+      inputSource: "midi",
+      input: "ready",
+      analysis: "ready",
+    },
+    targetPitches: [60],
+    detectedTargetPitches: [],
+    extraPitches: [],
+    targetPitchConfidences: [{ midi: 60, confidence: 0 }],
+    recognizedActivePitches: [],
+    attackPitches: [],
+    successPitches: [],
+    processingTimeMs: 0,
+  });
+
+  assert.match(markup, /MIDI input ready · Target C4/);
+  assert.doesNotMatch(markup, /Microphone ready/);
 });
 
 test("omits pages that were skipped because they contain no music", () => {

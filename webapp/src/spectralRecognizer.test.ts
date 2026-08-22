@@ -110,7 +110,7 @@ test("starts only after the microphone and spectrum analyzer are ready", async (
   });
 
   assert.equal(lifecycle.at(-1)?.state, "listening");
-  assert.equal(lifecycle.at(-1)?.microphone, "ready");
+  assert.equal(lifecycle.at(-1)?.input, "ready");
   assert.equal(lifecycle.at(-1)?.analysis, "ready");
   assert.equal(mock.analyser.fftSize, 16_384);
   assert.equal(mock.analyser.smoothingTimeConstant, 0);

@@ -49,13 +49,17 @@ toggle messages and message types without a release signal remain one-shot.
 On Windows, the repeat delay and rate follow the system keyboard settings; other
 platforms use a 400 ms delay and 75 ms interval.
 
-Listen mode is opt-in during note-by-note playback. Use the microphone button or
-the default `L` shortcut to request the system-default microphone and start the
-local `online_amt` recognizer. An AudioWorklet captures 512-sample mono chunks at
-16 kHz and a dedicated worker runs the stateful model through ONNX Runtime Web's
-single-threaded WASM backend. The 72 MB model is loaded only when listen mode is
-started. Audio is analyzed in memory and is never saved or transmitted. An exact
-fresh note or chord advances the playhead; confident extra notes prevent advancement.
+Listen mode is opt-in during note-by-note playback. **Settings** selects either
+the system-default microphone (the default) or MIDI keyboard input, and remembers
+the choice. The microphone path runs the local `online_amt` recognizer: an
+AudioWorklet captures 512-sample mono chunks at 16 kHz and a dedicated worker runs
+the stateful model through ONNX Runtime Web's single-threaded WASM backend. The
+72 MB model is loaded only when microphone listen mode is started. Audio is
+analyzed in memory and is never saved or transmitted. MIDI listen mode accepts
+Note On/Off messages from every connected input. While it is active, note messages
+are reserved for playing the score; Control Change and other MIDI shortcut types
+continue to work. Note-message shortcuts work normally outside MIDI listen mode.
+An exact fresh note or chord advances the playhead; extra notes prevent advancement.
 The original Web Audio FFT and harmonic-sieve implementation remains in the
 source tree and in the benchmark page for future experiments, but it is not the
 application default.
