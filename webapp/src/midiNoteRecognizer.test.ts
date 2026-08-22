@@ -4,6 +4,7 @@ import { ExactChordMatcher } from "./chordMatcher";
 import { matcherOptionsForListenMatcherProfile } from "./listenMatcherProfiles";
 import {
   isMidiNoteMessage,
+  isMidiNoteOnMessage,
   MidiNoteRecognizer,
   type MidiNoteRecognizerEnvironment,
 } from "./midiNoteRecognizer";
@@ -41,6 +42,9 @@ test("recognizes Note On and both forms of Note Off, but not control messages", 
   assert.equal(isMidiNoteMessage([0x9f, 60, 0]), true);
   assert.equal(isMidiNoteMessage([0xb0, 64, 127]), false);
   assert.equal(isMidiNoteMessage([0x90, 60]), false);
+  assert.equal(isMidiNoteOnMessage([0x90, 60, 1]), true);
+  assert.equal(isMidiNoteOnMessage([0x90, 60, 0]), false);
+  assert.equal(isMidiNoteOnMessage([0x80, 60, 64]), false);
 });
 
 test("feeds an exact MIDI chord through the shared listen matcher after settling", async () => {
@@ -94,4 +98,25 @@ test("tracks the same pitch independently across ports and channels", async () =
   recognizer.handleMidiMessage([0x81, 60, 0], "Second");
   assert.deepEqual(results.at(-1)?.recognizedActivePitches, []);
   assert.equal(results.at(-1)?.noteEvents?.[0]?.type, "offset");
+});
+
+test("a target-generation change cancels the previous chord's settle snapshot", async () => {
+  const environment = new FakeEnvironment();
+  const recognizer = new MidiNoteRecognizer(environment);
+  const results: RecognizerResult[] = [];
+  await recognizer.start(1, {
+    onLifecycle: () => undefined,
+    onResult: (result) => results.push(result),
+  });
+
+  recognizer.handleMidiMessage([0x90, 60, 100], "Keyboard");
+  assert.equal(results.length, 1);
+  recognizer.setGeneration(2);
+  environment.nowMs = 40;
+  environment.runTimers();
+  assert.equal(results.length, 1);
+
+  recognizer.handleMidiMessage([0x90, 60, 100], "Keyboard");
+  assert.equal(results.at(-1)?.generation, 2);
+  assert.equal(results.at(-1)?.noteEvents?.[0]?.type, "reOnset");
 });

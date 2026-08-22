@@ -20,7 +20,11 @@ import {
 } from "./playback";
 import { pianoSampler, pitchToMidi } from "./piano";
 import { BrowserOnlineAmtRecognizer } from "./onlineAmtRecognizer";
-import { isMidiNoteMessage, MidiNoteRecognizer } from "./midiNoteRecognizer";
+import {
+  isMidiNoteMessage,
+  isMidiNoteOnMessage,
+  MidiNoteRecognizer,
+} from "./midiNoteRecognizer";
 import {
   matcherOptionsForListenMatcherProfile,
   listenMatcherOverrideAfterDebugPanelChange,
@@ -219,6 +223,10 @@ function midiPitches(pitches: readonly string[]): number[] {
     const midi = pitchToMidi(pitch);
     return midi === null ? [] : [midi];
   }))).sort((left, right) => left - right);
+}
+
+function listenTargetKey(momentId: string | null | undefined, targetPitches: readonly number[]): string {
+  return `${momentId ?? ""}:${targetPitches.join(",")}`;
 }
 
 export function App() {
@@ -439,6 +447,7 @@ export function App() {
   ));
   const keyboardRecognitionRef = useRef(new KeyboardRecognitionTracker());
   const playheadGenerationRef = useRef(0);
+  const listenTargetKeyRef = useRef<string | null>(null);
   const listenOperationRef = useRef(0);
   const auditionOperationRef = useRef(0);
   const [listenFeedback, setListenFeedback] = useState<ListenModeFeedback>({
@@ -452,10 +461,36 @@ export function App() {
     successPitches: [],
     processingTimeMs: null,
   });
+  const retargetListenMode = useCallback((state: PlaybackState) => {
+    const recognizer = recognizerRef.current;
+    if (!state.listenModeEnabled || !recognizer) return;
+    const moment = currentPlaybackMoment(playbackTimeline, state);
+    const target = midiPitches(moment?.pitches ?? []);
+    const targetKey = listenTargetKey(moment?.id, target);
+    if (listenTargetKeyRef.current === targetKey) return;
+    const generation = ++playheadGenerationRef.current;
+    listenTargetKeyRef.current = targetKey;
+    recognizer.setTarget(target);
+    recognizer.setGeneration(generation);
+    chordMatcherRef.current.setTarget(target, generation, performance.now());
+    keyboardRecognitionRef.current.suppressVisibleUntilRelease();
+    setListenFeedback((feedback) => ({
+      ...feedback,
+      targetPitches: target,
+      detectedTargetPitches: [],
+      extraPitches: [],
+      targetPitchConfidences: target.map((midi) => ({ midi, confidence: 0 })),
+      recognizedActivePitches: [],
+      attackPitches: [],
+      processingTimeMs: null,
+    }));
+  }, [playbackTimeline]);
   const commitPlaybackState = useCallback(
     (next: PlaybackState, playNormalSound = true) => {
+      const previousMomentId = playbackStateRef.current.currentMomentId;
       playbackStateRef.current = next;
       setPlaybackState(next);
+      if (next.currentMomentId !== previousMomentId) retargetListenMode(next);
       if (!playNormalSound || !effectivePlaybackNoteSounds(next)) {
         pianoSampler.stop();
         setPlaybackAudioError(null);
@@ -471,7 +506,7 @@ export function App() {
           });
       }
     },
-    [playbackTimeline],
+    [playbackTimeline, retargetListenMode],
   );
   const stopRealtime = useCallback(() => {
     realtimeStartGenerationRef.current += 1;
@@ -711,6 +746,7 @@ export function App() {
     auditionOperationRef.current += 1;
     recognizerRef.current?.stop();
     recognizerRef.current = null;
+    listenTargetKeyRef.current = null;
     keyboardRecognitionRef.current.reset();
     const generation = ++playheadGenerationRef.current;
     chordMatcherRef.current.setTarget([], generation, performance.now());
@@ -823,6 +859,10 @@ export function App() {
       ? new MidiNoteRecognizer()
       : new BrowserOnlineAmtRecognizer();
     recognizer.setTarget(target);
+    listenTargetKeyRef.current = listenTargetKey(
+      currentPlaybackMoment(playbackTimeline, playbackStateRef.current)?.id,
+      target,
+    );
     recognizerRef.current = recognizer;
     try {
       await recognizer.start(generation, {
@@ -953,25 +993,13 @@ export function App() {
   handlePlaybackCommandRef.current = handlePlaybackCommand;
 
   useEffect(() => {
-    const recognizer = recognizerRef.current;
-    if (!playbackState.listenModeEnabled || !recognizer) return;
-    const generation = ++playheadGenerationRef.current;
-    const target = midiPitches(notePlaybackMoment?.pitches ?? []);
-    recognizer.setTarget(target);
-    recognizer.setGeneration(generation);
-    chordMatcherRef.current.setTarget(target, generation, performance.now());
-    keyboardRecognitionRef.current.suppressVisibleUntilRelease();
-    setListenFeedback((feedback) => ({
-      ...feedback,
-      targetPitches: target,
-      detectedTargetPitches: [],
-      extraPitches: [],
-      targetPitchConfidences: target.map((midi) => ({ midi, confidence: 0 })),
-      recognizedActivePitches: [],
-      attackPitches: [],
-      processingTimeMs: null,
-    }));
-  }, [notePlaybackMoment?.id, playbackPitchKey, playbackState.listenModeEnabled]);
+    retargetListenMode(playbackState);
+  }, [
+    notePlaybackMoment?.id,
+    playbackPitchKey,
+    playbackState,
+    retargetListenMode,
+  ]);
 
   const stopMidiRepeat = useCallback(() => {
     const activeRepeat = activeMidiRepeatRef.current;
@@ -1181,6 +1209,7 @@ export function App() {
         recognizer instanceof MidiNoteRecognizer &&
         isMidiNoteMessage(event.bytes)
       ) {
+        if (isMidiNoteOnMessage(event.bytes)) stopMidiRepeat();
         recognizer.handleMidiMessage(event.bytes, event.port);
         const activeRepeat = activeMidiRepeatRef.current;
         if (activeRepeat && midiShortcutIsRelease(activeRepeat.shortcut, received)) {

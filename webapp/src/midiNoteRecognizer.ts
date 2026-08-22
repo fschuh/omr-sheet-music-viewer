@@ -59,6 +59,10 @@ export function isMidiNoteMessage(bytes: readonly number[]): boolean {
   return parseMidiNoteMessage(bytes) !== null;
 }
 
+export function isMidiNoteOnMessage(bytes: readonly number[]): boolean {
+  return parseMidiNoteMessage(bytes)?.type === "on";
+}
+
 /**
  * Adapts exact MIDI note transitions to the same recognizer boundary used by
  * microphone analysis. A source key includes port and channel so releasing a
@@ -150,6 +154,10 @@ export class MidiNoteRecognizer implements NoteRecognizer {
   }
 
   setGeneration(generation: number): void {
+    // A settle snapshot belongs to the target generation that scheduled it.
+    // Navigation can change generations before its 40 ms timer fires.
+    if (this.settleTimer !== null) this.environment.clearTimeout(this.settleTimer);
+    this.settleTimer = null;
     this.generation = generation;
   }
 
