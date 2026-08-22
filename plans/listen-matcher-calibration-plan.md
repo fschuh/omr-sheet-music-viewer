@@ -747,22 +747,43 @@ the mixed run — and no measured profile recognises it on the attack that sound
 it: `baseline-v1` recovers at source distance 2 and 2.22 s of attribution delay,
 and all four candidates at distance 1 and 1.22 s. A full attack of playhead lag on
 a repeated chord is therefore the shipped behaviour, not a candidate regression,
-and the candidates halved it with a confidence-only change, which places the cause
-inside what a profile may alter rather than in the fixed timing policy. Repetitions
-here are about 992 ms apart, far outside `refractoryMs` at 180 and
-`duplicateOnsetMs` at 120, so refractory suppression does not explain it.
+and the candidates halved it with a confidence-only change, which places at least
+part of the cause inside what a profile may alter rather than in the fixed timing
+policy. Repetitions here are about 992 ms apart, far outside `refractoryMs` at 180
+and `duplicateOnsetMs` at 120, so refractory suppression does not explain it.
 
-That matters because the two defects pull the same gate in opposite directions
-within one confidence band. The hallucinated bass onset sits in `[0.50, 0.60)` and
-needs the bass held at 0.60 to be refused; a real re-struck attack, whose evidence
-is weak precisely because the note is already ringing, needs the gate lower to be
-accepted, and a repeated identical chord carries every pitch over so it needs a
-fresh onset on all three including the bass. One scalar cannot serve both, which
-is the strongest available argument for separating bass qualification from the
-general gate — and the reason Task 22 measures both sides before Task 26 chooses.
-Note that score-rise retrigger detection is not the alternative: it is the prior
-attempt at this same problem and remains a non-goal, having produced 22 false or
-duplicate events to recover two attacks.
+The minimized `v05` evidence does not support treating this as one bass-onset
+failure. On the first `[62, 74, 82]` attack, bass 62 is newly introduced and has a
+strong onset, while carried upper D5/74 has no fresh onset and only about 0.1935
+target evidence, just below the lowest measured active-target gate at 0.20. On the
+second repetition all three pitches carry; bass 62 has an onset around 0.5968,
+just below the incumbent's 0.60 gate, while D5/74 has about 0.4587 target evidence.
+The candidates can therefore recover at source distance 1 through a lower general
+onset gate plus active upper-voice completion, but no measured profile reaches
+distance 0. Task 22 must reproduce these qualification paths on `v05`, `v13`, and
+the mixed run rather than infer one mechanism from aggregate attribution.
+
+The omitted-bass defect and the second-repetition recovery may pull a bass gate in
+opposite directions: the hallucinated bass onset sits in `[0.50, 0.60)`, while a
+real re-struck bass can sit there too. The prior is already adverse: attack 24's
+genuine 0.5968 bass onset is inside the recorded hallucination corridor and is
+refused by a bass gate at 0.60. Task 22 still measures the full distributions, but
+it starts from one observed overlap rather than from a presumption that a clean
+threshold exists. A bass-specific onset gate is justified only if the larger
+sample establishes useful separation and its matched control cannot provide the
+same recovery.
+
+The upper-voice path has a similarly adverse prior. Reaching attack 23 through the
+existing scalar family requires an active-target gate below the recorded 0.1935
+D5/74 evidence, and round one's safety results make exclusion of such a permissive
+region the expected outcome to test, not a conclusion to assume. The recorded
+cause is the decoder's failure to emit a D5 re-onset across the first two
+repetitions — the same retrigger limitation the August 14 score-rise experiment
+could not correct safely. If scalar qualification cannot reach distance 0 safely,
+Task 29 routes that residual model-evidence defect to the required decoder/model
+plan instead of re-litigating it as another threshold round. Score-rise retrigger
+detection remains a non-goal, having produced 22 false or duplicate events to
+recover two attacks.
 
 An onset decoded on a pitch that was never sounded is also, in the end, a
 model-evidence defect surfacing as a threshold problem. That matters for where
@@ -839,8 +860,9 @@ decision as their completion evidence. Task 21 remains a separate later research
 branch and is reachable only through Task 17; if round two produces no approved
 alternative, Task 21's own prerequisite cannot be met, and Task 29 instead emits a
 written requirement for a new decoder and model-evidence plan. That requirement is
-this plan's output, not another task inside it, because model work is an explicit
-non-goal here.
+also emitted if an approved profile provides only partial repeated-chord recovery
+or lacks reproducing confirmation evidence. It is this plan's output, not another
+task inside it, because model work is an explicit non-goal here.
 
 ### Task 01 — Create the production-neutral matcher profile registry
 
@@ -1863,6 +1885,10 @@ and tempo variation.
 - Include low/middle/high single notes at soft/medium/loud dynamics; dyads,
   triads, and larger chords; repeated notes/chords; shared bass/upper notes;
   detached/normal/legato transitions; and playable 1000/500/333/250 ms passages.
+- Include in every setup a repeated-identical-chord trial that enters with carried
+  upper voices and a new bass, then repeats the full chord, plus its omitted-bass
+  and distinguishable-wrong counterparts. Report source distance and attribution
+  delay under Task 24's frozen vocabulary in addition to the ordinary live gates.
 - Include deliberate wrong single notes, wrong chord members, added notes, omitted
   bass, and a short silence/noise segment for every setup.
 - Capture each performance once and replay all eligible named profiles plus
@@ -2127,20 +2153,21 @@ repeatable held-out benefit and no safety loss, or `normalization-not-justified`
 with no production change. Implementation/rollout of a justified transformation
 requires a new plan rather than silently extending Tasks 18-20.
 
-### Task 22 — Map the onset confidence band on both sides of the incumbent gate
+### Task 22 — Map omitted-bass and repeated-chord qualification evidence
 
 **Status:** Required. **Prerequisites:** Task 16 complete.
 
-**Objective:** Turn Task 09's recorded observation into pinned regressions and a
-measured decision input, and establish what holding the bass to the incumbent's
-onset gate would cost before Task 26 decides whether a bass-specific axis is
-needed at all.
+**Objective:** Turn Task 09's omitted-bass observation into pinned regressions, and
+extend Task 05's completed late-recovery classification by separating the onset and
+active-target qualification paths that limit `[62, 74, 82]` before Task 24 freezes
+the round-two rule and Task 26 chooses a parameterization.
 
-The cost has two sides and this task measures both. A gate at 0.60 refuses the
-hallucinated bass onset that rejected round one, and it also refuses real attacks
-whose evidence is weak — which is what leaves the repeated `[62, 74, 82]` chord
-recovering a full attack late. Both live in the same confidence band, so a
-measurement of one side alone would recommend a gate the other side cannot afford.
+The cost has two sides, but this task does not assume they share one mechanism or
+one separable confidence band. It measures hallucinated and genuinely sounded bass
+onsets, upper-voice target evidence, and the exact matcher qualification path for
+each failed and successful repetition. That distinction decides whether the
+existing five-axis family, a bass-specific onset axis, or neither can address the
+late recovery without reopening the omitted-bass false advance.
 
 **Work:**
 
@@ -2162,24 +2189,40 @@ measurement of one side alone would recommend a gate the other side cannot affor
   onset confidence on the bass pitch, separately for genuinely sounded attacks and
   for hallucinated ones. State how many real bass attacks fall inside
   `[0.50, 0.60)` and would therefore be refused by any gate holding the bass at
-  0.60.
+  0.60. Treat the genuine 0.5968 D4/62 onset on `v05` attack 24 as the recorded
+  overlap prior, not as proof that the larger distributions are inseparable.
 - Report every distribution twice: by raw trace count and by unique musical-input
   pair. A fixture rendered at several speeds or layers is not several independent
   observations, and the second view is the one the decision reads.
 - Report the same distributions over the sequence, dynamics, and articulation
   discovery traces, so the cost of a high bass gate is known outside the isolated
   suite.
-- Measure the other side of the same band: the repeated `[62, 74, 82]` target that
-  no measured profile recognises on the attack that sounds it. Report, for all
-  three Tone Salamander runs where it recurs — `v05`, `v13`, and the mixed run —
-  the decoded onset confidence on each of the three pitches at every repetition,
-  including the repetitions that did not advance. State where those values sit
-  relative to the incumbent's 0.60 gate, the candidates' 0.45 and 0.50 gates, and
-  the `[0.50, 0.60)` hallucination corridor.
-- Separate the bass pitch from the upper voices in that report. A repeated
-  identical chord carries every pitch over from the previous target and so needs a
-  genuinely fresh onset on all three, the bass included, which is the point where a
-  bass-specific gate would help the omitted-bass case and hurt this one.
+- Measure the repeated `[62, 74, 82]` target that no measured profile recognises on
+  the attack that sounds it. For all three Tone Salamander runs where it recurs —
+  `v05`, `v13`, and the mixed run — report every pitch's decoded onset confidence,
+  target-pitch evidence, active membership, and matcher qualification path at every
+  repetition, including repetitions that did not advance. State where onset values
+  sit relative to the incumbent's 0.60 gate, the candidates' 0.45 and 0.50 gates,
+  and the `[0.50, 0.60)` hallucination corridor, and where upper-voice evidence sits
+  relative to every measured active-target gate.
+- Separate the transition into the repeated region from repetitions within it. On
+  the first problematic `v05` attack, bass 62 is new while upper 74 and 82 carry
+  from the preceding target; on later identical repetitions all three pitches
+  carry. Reproduce or correct the recorded first-attack D5/74 evidence near 0.1935,
+  the second-repetition bass onset near 0.5968, and the D5/74 evidence near 0.4587.
+  Do not describe the case as a bass-onset defect unless the per-pitch
+  qualification record establishes that conclusion.
+- For the first physical attack of the repeated target, report each run's lowest
+  limiting upper-voice target evidence and the minimum across `v05`, `v13`, and
+  mixed. Include zero rather than dropping it: zero means no scalar active-target
+  gate can recover that run. Task 24 freezes any below-0.20 diagnostic points
+  against this three-run minimum, not against `v05`'s 0.1935 alone.
+- Classify the limiting path for every run and repetition: fresh onset rejected,
+  active-target evidence rejected, unexpected-note rejection, or some other fixed
+  matcher policy. Report whether a hypothetical lower active-target gate could
+  reach source distance 0, whether a lower general or bass onset gate can only reach
+  distance 1, and which safety regressions each counterfactual would expose. These
+  are diagnostic counterfactuals, not candidates or policy changes.
 - Record what this costs today rather than only what a change would cost. Task 13
   measured `baseline-v1` recovering the chord at source distance 2 and 2.22 s of
   attribution delay, and all four candidates at distance 1 and 1.22 s. No profile
@@ -2187,13 +2230,17 @@ measurement of one side alone would recommend a gate the other side cannot affor
   current shipped behaviour, not a candidate regression.
 - Treat this as a late-advance performance measurement, not a safety case. The
   `v05` classification from Task 05 is unchanged: correct content recovered late,
-  zero false, skipped, and duplicate advances. This task adds no gate and reopens
-  no diagnosis.
+  zero false, skipped, and duplicate advances. This task does not reopen that
+  classification; it diagnoses the distinct evidence paths that produce the lag
+  and supplies a performance objective for the round-two selection rule.
 - Do not propose retrigger detection as the remedy. Re-enabling score-rise
   retrigger detection is a standing non-goal, and it is the prior attempt at this
   exact problem: its best measured candidate created 22 false or duplicate events
-  to recover two attacks. The open route is where the confidence band is set, which
-  is what this task measures.
+  to recover two attacks. Record the existing attribution that the decoder emitted
+  no D5/74 re-onset on the first two repetitions. Confidence qualification through
+  the existing gates and a measured bass-specific axis remain bounded experiments;
+  if neither reaches source distance 0 safely, that missing re-onset is a Task 29
+  decoder/model-plan input rather than permission for another threshold grid.
 - Measure existing-grid counterfactuals rather than a control that does not exist
   yet, and name every coordinate. Replay the four high-onset, open-active profiles
   `o0p600-t0p500-a0p200-x0p900-b1`, `o0p600-t0p500-a0p200-x0p940-b1`,
@@ -2216,26 +2263,31 @@ measurement of one side alone would recommend a gate the other side cannot affor
 - Measure all of this on version-1 evidence, which is what exists when this task
   runs. Whether the version-2 corpus and the Task 23 policy change any of it is
   Task 26's first ablation, not this task's question.
-- Report the relationship to Task 06 without merging the two. There a later chord
-  genuinely sounded the shared pitch; here the pitch was never played at all. They
-  share a policy — a target pitch qualifying on evidence that is not a fresh attack
-  of that pitch in that chord — and nothing else, so a fix for one is not evidence
-  for the other.
+- Report the relationship to Task 06 without merging the cases. There a later chord
+  genuinely sounded the shared pitch; in the omitted-bass fixtures the bass was
+  never played; in the repeated-chord case an upper voice may be carried while the
+  bass mechanism changes between the first and later repetitions. They share only
+  the broad policy of target qualification without a fresh attack on every target
+  pitch, so a fix for one is not evidence for either other case.
 - Change no threshold, no policy, no gate, and no default in this task.
 
 **Verification:** Each pinned regression reproduces from rendered audio under the
 renderer it was recorded on, with a stable decoded-structure hash, `baseline-v1`
 satisfying its pinned refusal and each `v2` candidate its pinned advance. The
-confidence distributions and the sixteen counterfactual replays recompute
-deterministically from the captured traces. The full unit suite and the production
-build pass.
+confidence distributions, per-pitch qualification records, and sixteen
+counterfactual replays recompute deterministically from the captured traces. A
+test distinguishes the first transition into `[62, 74, 82]` from its later exact
+repetitions, so it cannot regress to the false claim that every pitch carried on
+the first attack. The full unit suite and the production build pass.
 
-**Complete when:** Both failures are pinned, the hallucinated-onset mechanism is
-recorded as the only one in play, and the cost of a 0.60 bass gate, the version-1
-behaviour of all sixteen named counterfactual profiles, and the onset confidences
-of the repeated `[62, 74, 82]` attacks are measured numbers rather than
-assumptions — so Task 26 can see what a gate at any given height buys on one side
-of the band and gives up on the other.
+**Complete when:** Both omitted-bass failures are pinned, the hallucinated-onset
+mechanism is recorded, the cost of a 0.60 bass gate and the version-1 behaviour of
+all sixteen named counterfactual profiles are measured, and every `v05`, `v13`,
+and mixed repeated-chord attempt names its limiting onset or active-target
+qualification path, and the three-run minimum limiting upper-voice evidence is
+recorded without discarding a zero. Task 24 can then predeclare what constitutes no
+regression, material recovery, and full resolution without assuming that a bass
+axis solves an upper-voice evidence failure.
 
 ### Task 23 — Freeze the round-two safety and correctness policy
 
@@ -2295,14 +2347,15 @@ value is frozen for Task 25 to bind.
 
 ### Task 24 — Regenerate a per-domain archive and freeze the complete selection rule
 
-**Status:** Required research input. **Prerequisites:** The Task 08 corpus is
-reproducible. Independent of Tasks 22-23 and may run beside them.
+**Status:** Required research input. **Prerequisites:** Task 22 complete and the
+Task 08 corpus reproducible. Independent of Task 23 and may run beside it.
 
 **Objective:** Freeze every rule the later tasks apply — the regret calculation,
 its decision boundary, and the complete selection and ablation stop rules — and
 compute the version-1 control result they will be re-run against on the version-2
-corpus. This task does not decide round two's objective; Task 26 does, using this
-task's frozen calculation.
+corpus. This task does not decide whether the round needs one global profile or a
+complementary set; Task 26 does, using this task's frozen calculation. It does
+freeze how repeated-chord recovery participates in that decision.
 
 **Work:**
 
@@ -2338,6 +2391,56 @@ task's frozen calculation.
   materiality boundary a selected profile must clear, and the exact stop rule that
   ends Task 26's ablation sequence. A rule written after an ablation's results are
   visible is post-result retuning.
+- Freeze the repeated-chord performance rule as part of that selection rule, using
+  Task 22's recorded fields rather than an aggregate `lateAdvanceCount`. Evaluate
+  `v05`, `v13`, and the mixed run separately so improvement in one cannot offset a
+  regression in another. Predeclare a numeric no-regression boundary for source
+  distance and attribution delay, a numeric material-recovery boundary, and the
+  exact aggregation used by the ablation stop rule. Define the full-resolution
+  criterion narrowly as source distance 0 with zero false, skipped, or duplicate
+  advances on `v05`, `v13`, mixed, every discovery group that reproduces the
+  phenomenon, and at least one confirmation group that independently reproduces
+  it. Define reproduction before Task 25 authors the fixtures: under `baseline-v1`,
+  the first correct full-chord attack remains incomplete with at least one carried
+  required pitch receiving no fresh re-onset, and a later identical attack recovers
+  the correct target without a false, skipped, or duplicate advance. Every decoded
+  confirmation group meeting that predicate must pass; one passing group cannot
+  hide another reproducing group's failure. Task 26 may report
+  `discovery-full-resolution` only; Task 28 may promote that label to
+  `confirmed-full-resolution` only after at least one unseen group reproduces and
+  passes. Distance 2 to distance 1 is a material partial recovery only if it clears
+  the frozen boundary, and must never be reported as a complete fix.
+- Predeclare the non-reproducing confirmation outcome. A structurally valid unseen
+  group whose baseline reaches source distance 0, or whose evidence fails the
+  reproduction predicate for another reason, remains useful correctness and safety
+  evidence but is `inconclusive-for-repeated-recovery`; it neither supports nor
+  refutes `confirmed-full-resolution`. Do not replace it after decoding, and do not
+  restart the round solely because the decoder did not reproduce the phenomenon.
+  If no confirmation group reproduces it, the confirmation run may still decide
+  candidate eligibility, but `confirmed-full-resolution` is unavailable this round.
+  Freeze two orthogonal result fields so consumers do not collapse performance and
+  evidence availability: `repeatedRecoveryOutcome` is `unchanged`, `regressed`,
+  `material-partial-recovery`, `discovery-full-resolution`, or
+  `confirmed-full-resolution`; `confirmationReproductionStatus` is `reproduced`,
+  `inconclusive-no-reproduction`, or `not-run`.
+- Freeze how the same rule maps onto the newly authored repeated-chord groups that
+  Task 25 will place in discovery and confirmation. The baseline comparison is
+  paired within each musical-input group, and every group reports source distance,
+  attribution delay, and safety independently before any summary is calculated.
+  State whether material recovery is required in every stratum or by a predeclared
+  worst-stratum statistic; do not choose that aggregation after seeing the new
+  fixtures.
+- Freeze the exact active-target refinement points for Task 26 before its first
+  ablation. Use Task 22's minimum limiting upper-voice evidence across `v05`, `v13`,
+  and mixed, not the single `v05` value near 0.1935. If that minimum is nonzero and
+  the existing five-axis family is meant to test source distance 0, its diagnostic
+  grid must straddle the minimum below the existing 0.20 floor as well as refining
+  the region between 0.275 and 0.35. If the minimum is zero, record that no scalar
+  active gate can reach all three. If safety evidence justifies excluding the
+  below-0.20 region, record the exclusion here, pre-register that exclusion as the
+  expected outcome given round one's safety evidence, and state in advance that
+  round two cannot claim to have tested full resolution through the existing scalar
+  family.
 - Freeze the bass-support criterion with it, because Task 26 cannot invent one once
   it has seen a bass result, and keep its two levels distinct. The stop rule is
   evaluated over a whole ablation; the bass-support comparison is evaluated over
@@ -2358,16 +2461,23 @@ task's frozen calculation.
 aggregate exactly, including the 721 rejections, the 30-profile frontier, and the
 four selected identifiers, so the added detail is provably the same search. The
 regret computation and the selection rule are deterministic and unit-tested,
-including the stop rule against constructed ablation results, and assert that no
-`confirmation` trace is read.
+including the stop rule against constructed ablation results. Constructed
+repeated-chord cases prove that a regression in one run cannot be averaged away,
+that distance 1 receives neither full-resolution label, and that the next ablation
+runs or stops exactly at the frozen material-recovery boundary. Constructed
+confirmation cases prove that a non-reproducing group is inconclusive, that it is
+not swapped, and that zero reproducing confirmation groups cannot yield
+`confirmed-full-resolution`. Assert that no `confirmation` trace is read.
 
-**Complete when:** Every rule Tasks 26 and 27 apply is frozen and tested against a
-boundary fixed before any number was visible, and the version-1 control result is
-recorded as a control rather than as the round's objective.
+**Complete when:** Every rule Tasks 26 and 27 apply is frozen and tested before any
+Task 26 version-2 result is visible, and the version-1 control result is recorded as
+a control rather than as the round's objective. The repeated-chord rule,
+aggregation, resolution vocabulary, and active-target refinement points or their
+explicit exclusion are all frozen before Task 26 sees a version-2 result.
 
 ### Task 25 — Build the round-two corpus and freeze trace manifest version 2
 
-**Status:** Required. **Prerequisites:** Tasks 22-23 complete.
+**Status:** Required. **Prerequisites:** Tasks 22-24 complete.
 
 **Objective:** Author genuinely unseen confirmation evidence, because none
 survives, and repartition the observed corpus so the next search is gated by the
@@ -2405,6 +2515,24 @@ evidence that rejected the last one.
   articulation. Each group pairs a correct rendition with its omitted-bass and
   distinguishable-wrong counterparts, so a false advance and a lost correct advance
   are measured on the same material.
+- Make repeated-identical-chord groups an explicit required subset rather than
+  assuming the general variation happens to cover them. Author new musical inputs,
+  not transpositions or rerenders of `v05`: each correct case enters a chord whose
+  upper voices carry while its bass is newly introduced, then repeats that exact
+  chord enough times to measure source distance 0, 1, and 2. Pair it with
+  omitted-bass and distinguishable-wrong performances of the same score material.
+  Vary piano, renderer, dynamic, register, chord size, and articulation across the
+  subset so a `v05`-specific threshold cannot masquerade as general recovery.
+- Put at least one complete repeated-chord paired group in discovery and at least
+  one in confirmation, chosen at authoring time. Keep each group wholly inside one
+  partition under the existing paired-group rule. The confirmation group remains
+  structurally inspectable but undecoded until Task 28, exactly like every other
+  newly authored confirmation fixture.
+- Do not claim that an undecoded confirmation group reproduces the late-recovery
+  phenomenon. Task 25 can validate only that its score and performance pattern are
+  designed to exercise Task 24's predicate; whether the decoder actually omits the
+  carried-pitch re-onset is first knowable in Task 28. Record that uncertainty in
+  the manifest rather than attaching an expected result to the fixture.
 - Assign each paired group wholly to one partition. Splitting a group's members
   between discovery and confirmation puts near-duplicate material on both sides of
   the split and leaks the confirmation answer into the search.
@@ -2423,7 +2551,10 @@ evidence that rejected the last one.
   badly is discovered only in Task 28, and the correct response is to restart the
   round rather than to swap the fixture, because swapping it after seeing a result
   reintroduces exactly the fitting this rule prevents. Validate everything that can
-  be validated without decoding, now.
+  be validated without decoding, now. Distinguish a malformed or failed render from
+  a valid render that simply does not reproduce the decoder defect: the former
+  restarts the round, while the latter remains frozen and is reported
+  `inconclusive-for-repeated-recovery` under Task 24 rather than replaced.
 - Add the Task 22 regressions as `regression-only`.
 - Enforce the unseen property mechanically. A self-declared first-observed-round
   field is not a guarantee, because an old trace can simply be relabelled. Build an
@@ -2439,17 +2570,21 @@ evidence that rejected the last one.
 one-time assignment, no discovery/confirmation overlap, required domain coverage,
 zero score weight for `regression-only` and for the ambiguous diagnostic role,
 negative cases present in the confirmation partition, paired groups intact within a
-single partition, the pinned hash, rejection of the version-1 census presented
-under the version-2 label, and rejection by ledger of a confirmation row that any
-prior round captured however it is labelled. Discovery and regression-only fixtures
+single partition, repeated-chord paired groups present in both discovery and
+confirmation, the pinned hash, rejection of the version-1 census presented under
+the version-2 label, and rejection by ledger of a confirmation row that any prior
+round captured however it is labelled. Discovery and regression-only fixtures
 render reproducibly with stable decoded-structure hashes; confirmation fixtures
 pass structural validation with no decode recorded, and a test asserts that no
 capture path reads one.
 
 **Complete when:** Round two has a confirmation partition no round has measured or
-decoded, including negative cases, the observed corpus gates or diagnoses rather
-than scores the evidence that rejected round one, and every derived count is bound
-to the frozen census.
+decoded, including negative cases and a new repeated-chord paired group; discovery
+has a separately authored repeated-chord group for search; the observed corpus
+gates or diagnoses rather than scores the evidence that rejected round one; and
+every derived count is bound to the frozen census. The plan to exercise repeated
+recovery is structurally validated without claiming that an unseen decode will
+reproduce it.
 
 ### Task 26 — Stage the round-two grid and decide whether a bass-onset axis is required
 
@@ -2485,34 +2620,45 @@ its own, and add a bass-specific control only if the evidence demands it.
   calculation, boundary, safety restriction, candidate limit, and stop rule were
   all frozen in Task 24 and are not revisited here; only the corpus they run on
   changes, and no confirmation evidence is read.
-- Report ablation one's effect on the repeated `[62, 74, 82]` recovery beside its
-  safety result. Task 22 measures where those attacks sit in the confidence band,
-  and a profile that refuses the hallucinated bass onset by raising the gate may
-  push that recovery back out to source distance 2, which is the shipped
-  behaviour's own weakness. A candidate that buys isolated bass safety by giving
-  back a full attack of playhead lag on repeated chords has moved the cost rather
-  than removed it, and the selection rule's late-advance terms must be read on that
-  basis rather than as a tiebreak.
+- Report ablation one's effect on repeated-chord recovery beside its safety result,
+  using Task 22's per-pitch qualification fields and Task 24's frozen rule rather
+  than `lateAdvanceCount` alone. Report `v05`, `v13`, and mixed separately, followed
+  by each new discovery repeated-chord group. A profile that refuses a hallucinated
+  bass onset by raising the gate may push a real recovery back to source distance
+  2; a profile that opens active-target qualification may recover the first attack
+  while introducing a different safety regression. A candidate that buys one side
+  by giving back the other has moved the cost rather than removed it. Label distance
+  1 as partial recovery; label distance 0 across every decoded discovery group as
+  `discovery-full-resolution`, never as confirmed resolution, exactly as Task 24
+  froze those terms.
 - Ablation two refines the existing five-axis family and adds no new axis. Run it
-  only when the Task 24 stop rule says ablation one produced no search-selected
-  candidate, or produced one whose cost under Task 22's measured distributions —
-  on both sides of the band — exceeds what a bass gate would cost. Round one's four candidates are a
-  two-by-two corner, onset in {0.45, 0.50} by active gate in {0.20, 0.275}, with
-  `targetNoteThreshold` pinned at 0.50, so the open questions are the points
-  between 0.275 and 0.35 and whether the target threshold is genuinely inert or
-  merely too coarsely gridded.
+  only when the Task 24 stop rule authorises it. That frozen rule must cover both
+  reachable reasons: ablation one produced no search-selected candidate, or its
+  selected set failed the repeated-chord no-regression or material-recovery
+  condition. Task 26 does not choose between those reasons after seeing the result.
+  Round one's four candidates are a two-by-two corner, onset in {0.45, 0.50} by
+  active gate in {0.20, 0.275}, with `targetNoteThreshold` pinned at 0.50. Refine
+  the points between 0.275 and 0.35 and test whether the target threshold is
+  genuinely inert or merely too coarsely gridded. Also use the exact predeclared
+  active-target points below 0.20 that Task 24 froze to test the first-attempt
+  upper-voice limit, unless Task 24 recorded their safety-based exclusion or the
+  three-run minimum was zero. Under exclusion, record source-distance-zero recovery
+  through the existing scalar family as untested; under a zero minimum, record it as
+  unreachable by an active-target scalar rather than manufacturing a threshold.
 - Ablation three crosses that same refined grid with the bass-onset axis, and runs
   only when the stop rule says ablation two did not satisfy it either. Refinement
   precedes the new axis deliberately: an axis that is only ever tested against the
   unrefined grid cannot be distinguished from grid resolution the existing family
   already had.
-- Judge the axis on the two-sided problem it exists to solve. A single onset gate
-  has to be high enough to refuse a phantom bass onset in `[0.50, 0.60)` and low
-  enough to accept a real re-struck attack that Task 22 will have located in the
-  same band; separating bass qualification from the general gate is the only
-  measured way to do both. Report each matched pair's effect on the omitted-bass
-  fixtures and on the repeated-chord recovery together, because an axis that fixes
-  one while giving back the other has not earned the parameter.
+- Judge the axis on the two-sided problem it exists to solve without presuming the
+  result. If Task 22 shows a threshold region that separates hallucinated from real
+  bass onsets, a bass-specific gate may protect omitted-bass safety while the
+  general gate preserves repeated recovery. If those distributions overlap, a
+  static bass threshold may be incapable of doing both. If upper-voice active
+  evidence is limiting, the bass axis cannot by itself reach source distance 0.
+  Report each matched pair's effect on omitted-bass fixtures, every known repeated
+  run, and the new discovery repeated-chord groups together; an axis that fixes one
+  while giving back the other has not earned the parameter.
 - Emit ablation three as matched bass and no-bass variants over the identical
   refined grid, so the axis is judged against its own control rather than against
   ablation two's separate result.
@@ -2532,7 +2678,10 @@ its own, and add a bass-specific control only if the evidence demands it.
   grid and still adds no axis. Otherwise run ablation three. It ends at
   `bass-axis-supported` when the bass grid clears the stop rule and at least one
   selected bass profile either rescues its matched twin categorically on safety or
-  beats it by at least the frozen materiality boundary. It ends at
+  beats it by at least the frozen materiality boundary, while satisfying the frozen
+  repeated-chord no-regression rule. A repeated-chord benefit counts toward support
+  only when it clears Task 24's material-recovery boundary against that profile's
+  own matched twin. It ends at
   `bass-axis-unsupported` in every other case: the bass grid fails the stop rule,
   or it passes while no selected bass profile separates from its own twin.
 - Note what `bass-axis-unsupported` does and does not settle, because it routes to
@@ -2558,7 +2707,9 @@ its own, and add a bass-specific control only if the evidence demands it.
   lets both generations share one conversion.
 - Freeze one digest-bearing ablation artifact covering every ablation that ran: its
   grid version and size, its stop-rule inputs and verdict, the profiles it selected,
-  the matched-pair comparisons where ablation three ran, and the terminal outcome.
+  Task 22's three-run minimum limiting evidence, the per-run repeated-chord source
+  distances, delays, qualification paths, and resolution labels, the matched-pair
+  comparisons where ablation three ran, and the terminal outcome.
   Task 27 references this digest as `task26EvidenceDigest` in both branches, and
   under `no-supported-parameterization` it is where the passing bass grid's selected
   profiles live — so this artifact, not a placeholder search archive, is what keeps
@@ -2574,7 +2725,10 @@ its own, and add a bass-specific control only if the evidence demands it.
 13 rows, with identical decoded-structure hashes and identical discrete outcomes,
 under whichever threshold shape the recorded outcome selects. Both historical
 single-renderer sweeps and the round-one multi-domain sweep reproduce their
-recorded results against the immutable round-one generator. The full suite and the
+recorded results against the immutable round-one generator. Tests prove the
+repeated-chord no-regression and material-recovery boundaries control ablation
+transitions exactly, and that a bass-axis profile cannot be supported by an
+aggregate that hides a regression in one repeated run. The full suite and the
 production build pass.
 
 **Complete when:** The outcome is recorded as `existing-grid-sufficient`,
@@ -2584,7 +2738,9 @@ no ablation run that its predecessor's outcome did not authorise; the round's
 global-versus-spread verdict has been computed on version-2 discovery results with
 Task 24's frozen calculation; the contributions of the corpus change, the grid
 refinement, and any new axis are separately measured against matched controls; the
-production threshold shape has changed only under `bass-axis-supported`; the
+known and newly authored discovery repeated-chord groups have per-run resolution
+labels under the frozen rule; any untested route to source distance 0 is stated;
+the production threshold shape has changed only under `bass-axis-supported`; the
 round-one generator is untouched; each ablation's grid is versioned and frozen; and
 one digest-bearing ablation artifact records every ablation that ran, its stop-rule
 verdicts, its selected profiles, and the terminal outcome, for Task 27 to reference.
@@ -2747,6 +2903,21 @@ emit the eligibility manifest the live and decision tasks consume.
 - Report results on the newly authored confirmation fixtures separately from results
   on the repartitioned observed corpus. A result on genuinely unseen material must
   never be aggregated with a result on material the search could see.
+- Within that unseen report, give every repeated-chord paired group its own baseline
+  and candidate source distance, attribution delay, false/skipped/duplicate counts,
+  and per-pitch qualification path. Apply Task 24's reproduction predicate to the
+  baseline column before interpreting candidate recovery, without re-estimating any
+  boundary. A group that reproduces the phenomenon participates in the frozen
+  no-regression and resolution rules; a structurally valid group that does not is
+  marked `inconclusive-for-repeated-recovery`, remains correctness and safety
+  evidence, and is neither swapped nor treated as a reason to restart. Failure of a
+  reproducing group's confirmation no-regression condition makes a candidate
+  ineligible. Material partial recovery is labelled as such, and
+  `confirmed-full-resolution` is emitted only if every reproducing known,
+  discovery, and confirmation group passes and at least one confirmation group
+  reproduced the phenomenon. Keep the correct, omitted-bass, and
+  distinguishable-wrong members adjacent so a recovery cannot be reported without
+  its matched safety cost.
 - Report round-one and round-two gate outcomes side by side, including whether the
   policy change altered any verdict, and label discovery against confirmation
   evidence.
@@ -2766,17 +2937,25 @@ emit the eligibility manifest the live and decision tasks consume.
   fabricated evidence this chain exists to prevent. Both forms reference the
   candidate manifest's digest and bear their own; Tasks 14, 15, and 29 consume this
   artifact and must branch on `runStatus` rather than on an empty list.
+- Require every completed candidate entry to carry Task 24's
+  `repeatedRecoveryOutcome` and `confirmationReproductionStatus`, derived from the
+  per-group records and covered by the eligibility-manifest digest. The not-run
+  form carries no candidate entry and therefore no invented recovery result.
 - Do not alter candidate values, fixtures, attribution, or gates after viewing the
   first run, and do not change the production default in this task.
 
 **Verification:** Both repetitions satisfy the Task 04 identity rule, baseline
 parity passes in every domain, the full suite and the production build pass on the
 measured commit, and the report carries the preflight record, both archive hashes,
-and the shared comparison digest. Both digest links resolve — eligibility manifest
-to candidate manifest, candidate manifest to the Task 26 ablation artifact — and the
-terminal outcome, the null `notRunReason`, and the originating ablation agree across
-all three. A test asserts the Task 27 candidate manifest is byte-identical after
-this task ran.
+and the shared comparison digest. The newly authored repeated-chord confirmation
+groups were decoded exactly once, their individual rule outcomes reproduce in both
+runs, and no stratum is hidden by the summary. A zero-reproduction confirmation
+result withholds `confirmed-full-resolution`, preserves every fixture, and does not
+restart the round. Both digest links resolve —
+eligibility manifest to candidate manifest, candidate manifest to the Task 26
+ablation artifact — and the terminal outcome, the null `notRunReason`, and the
+originating ablation agree across all three. A test asserts the Task 27 candidate
+manifest is byte-identical after this task ran.
 
 Under the not-run branch, verify instead that no confirmation trace was decoded:
 the version-2 confirmation fixtures carry no recorded decoded-structure hash, the
@@ -2786,9 +2965,9 @@ build still pass.
 
 **Complete when:** Either the round-two matrix is repeated, documented, and yields
 a stable eligibility set with no post-result retuning, with the unseen-fixture
-results reported on their own; or the not-run branch is recorded with the
-confirmation partition provably untouched. In both branches an eligibility manifest
-is frozen and chained to the candidate manifest.
+results and repeated-chord resolution labels reported on their own; or the not-run
+branch is recorded with the confirmation partition provably untouched. In both
+branches an eligibility manifest is frozen and chained to the candidate manifest.
 
 ### Task 29 — Make the round-two production decision
 
@@ -2831,19 +3010,32 @@ approved-profile list that any later calibration depends on.
   candidate set, not every safe profile in the searched grid, so concluding that the
   scalar-threshold family is exhausted would require confirming every globally safe
   non-dominated profile needed to support that statement, which no branch does.
-- Route that outcome to a written new-plan requirement rather than to an existing
-  task. Task 21 requires Task 17, and Task 17 requires an approved alternative, so a
-  second no-candidate result leaves Task 21 unreachable and it must not be named as
-  the next step. Task 22's finding points elsewhere: an onset decoded on a pitch
-  that was never sounded is a model-evidence defect, and this plan's non-goals
-  exclude model work, so the residual belongs to a new decoder and model-evidence
-  plan. Produce that requirement — the observed defect, the evidence that
-  characterises it, and the acceptance question it must answer — as this task's
-  output. Do not append it as a task here.
+- Route the model-evidence residual to a written new-plan requirement rather than
+  to an existing task. Under a second no-candidate result, Task 21 is unreachable
+  because it requires Task 17 and Task 17 requires an approved alternative; do not
+  name it as the next step. Emit the same requirement alongside a promoted profile
+  whenever the round ends at material partial recovery or cannot award
+  `confirmed-full-resolution`, because shipping a safer threshold does not resolve
+  the recorded missing re-onset. The evidence statement must include both decoder
+  defects Task 22 carries: onset evidence on a bass pitch that was never sounded,
+  and no D5/74 re-onset across the first two physically repeated chords. The latter
+  is the same retrigger limitation the August 14 score-rise experiment could not
+  correct safely, not an unclassified threshold symptom. The acceptance question
+  is whether decoder/model evidence can expose the first real repeated attack for a
+  still-ringing required pitch while refusing an unsounded bass, reaching source
+  distance 0 without adding false, skipped, or duplicate advances on the paired
+  corpus. Model work remains a non-goal here, so produce the requirement as this
+  task's output and do not append it as a task in this plan.
 - Record what the round changed regardless of its verdict. Round one's candidates
   cleared the Task 06 false advance the shipped default still carries, improved 16
   of 21 leaf domains, and cut late advances from 8 to 2; a round that only tightens
-  gates and recovers none of that has not advanced the product.
+  gates and recovers none of that has not advanced the product. State the repeated-
+  chord result by copying both frozen eligibility fields:
+  `repeatedRecoveryOutcome` and `confirmationReproductionStatus`. Do not describe
+  source distance 1, `discovery-full-resolution`, or
+  `inconclusive-no-reproduction` as fixing `v05`, and carry any remaining
+  distance-zero limitation into the selected profile's documented known limitations
+  or the bounded no-candidate conclusion.
 - Do not add calibration persistence or user-facing calibration in this task.
 
 **Verification — when the eligibility manifest is `completed`:** Full unit suite,
@@ -2910,6 +3102,12 @@ The global matcher-profile phase is complete when:
 - `baseline-v1` replay exactly reproduces the previous production baseline.
 - The `v05` late recovery and the Tone 333 ms false advancement are diagnosed and
   covered by deterministic regressions with their distinct semantics.
+- Round two evaluates the `v05` mechanism through per-pitch onset and active-target
+  qualification, a preregistered repeated-chord recovery rule, and newly authored
+  discovery/confirmation paired groups. Any promoted profile states whether it
+  achieved only material partial recovery, lacked a reproducing confirmation group,
+  or reached `confirmed-full-resolution`; every unresolved missing re-onset is
+  carried into Task 29's decoder/model-plan requirement.
 - The multi-domain discovery/confirmation manifest, hierarchical weights, and
   safe Pareto selection are frozen and reproducible.
 - Newly selected candidates have immutable versioned IDs; the first-generation
