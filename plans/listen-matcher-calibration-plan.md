@@ -681,6 +681,103 @@ benchmark index and README only after the production default changes or
 calibration becomes user-visible. Preserve the older baselines and label their
 profile explicitly rather than rewriting them.
 
+## Second discovery round
+
+Task 13 rejected all four `v2` candidates and Task 16 recorded
+`no-safe-candidate`. Read the three rejecting gates separately, because only one
+of them is a regression against the incumbent:
+
+| Gate | `baseline-v1` | Candidates | Kind |
+| --- | ---: | ---: | --- |
+| `safety-isolated-false-advance` | refuses `isolated/direct/122`, `isolated/tone/124` | all four advance both | Real regression |
+| `release-isolated-course-clear` | Tone 48/54 | open pair 50/54, held pair 48/54, floor 52/54 | Absolute floor the incumbent also misses |
+| `release-isolated-recognition` | Tone 100/106 | held pair 100/106, floor 101/106 | Absolute floor the incumbent also misses |
+
+`LISTEN_ISOLATED_RELEASE_GATE` applies its floors to candidates only, so
+`baseline-v1` is grandfathered past a bar it does not meet, and
+`early-open-v2` and `steady-open-v2` were rejected under Tone while measuring
+strictly better than the shipped default on both isolated metrics. Those floors
+are not unreachable — the open pair moved Course Clear from 48 to 50 of the 52
+required — but as written they block shipping any safe improvement for as long as
+the incumbent sits below the same target. Replacing them is a versioned policy
+change, not a correction, and it must be frozen before the next search captures
+anything; making it afterwards would be the post-result retuning Task 13 forbids.
+
+The one genuine regression already has a recorded mechanism. Task 09 measured
+both fixtures: `isolated/direct/122` is `[48, 60, 68]` played as `[60, 68]`, and
+`isolated/tone/124` is `[56, 68, 75]` played as `[68, 75]`. Both targets are
+triads whose lowest note was omitted, so `target.size >= 3` holds and fresh bass
+is required, which excludes the sustained-evidence completion path by
+construction. Each was completed instead by a decoded onset on a bass pitch that
+was never sounded, whose confidence the `steady` and `baseline` split places in
+`[0.50, 0.60)` — exactly the gap between the candidates' onset gates at 0.45 and
+0.50 and the incumbent's at 0.60. That is why all four advance and `baseline-v1`
+refuses.
+
+This is not the Task 06 mechanism. There a later chord genuinely sounded the
+shared pitch; here the pitch was never played at all. The two share a policy — a
+target pitch qualifying on evidence that is not a fresh attack of that pitch in
+that chord — and nothing else, so a fix for one is not evidence for the other.
+
+The gain and the cost enter through different gates, but they are not cleanly
+separable. Task 09 attributed the Course Clear recovery to the 0.20 active-target
+gate rather than to the fresh-onset gate, while the omitted-bass false advance
+comes from the onset gate dropping into the `[0.50, 0.60)` hallucination corridor.
+That suggests holding the onset gate at the incumbent's 0.60 while opening the
+active gate to 0.20, and the Task 08 archive rules it out: all four grid profiles
+at onset 0.60, target 0.50, active 0.20 and fresh bass required were rejected in
+round one for `discovery-safety-regression`, and the `x0p990` variant for a
+committed regression as well. The `x0p970` variant adds a false advance on
+`sequence/tone/course-clear-27/167ms` and on `dynamics-constant/tone/salamander/v14`.
+Those rejections have nothing to do with isolated evidence; they were already
+visible in round one's own discovery corpus.
+
+The safe high-onset region is real but narrower than that. Of the 279 profiles
+that passed round-one safety, 60 hold the onset gate at 0.60, and their active
+gates are 0.275 or higher — twelve at 0.275, none at 0.20. So the first thing to
+run is still the unchanged grid, but the question it answers is whether the
+version-2 corpus and the new policy expose any safe existing-grid candidate at
+all, not whether one particular combination wins. A bass-specific onset gate
+remains the fallback if no existing-grid profile both stays safe and recovers
+enough, and Task 22 measures its cost before Task 26 decides.
+
+An onset decoded on a pitch that was never sounded is also, in the end, a
+model-evidence defect surfacing as a threshold problem. That matters for where
+the residual work goes if round two does not produce a shippable profile.
+
+The round-one selection rule also needs a decision rather than a repeat. Task
+07's frozen metric order ranks worst-domain and equal-domain average recognition
+first, which is a compromise-seeking rule built to find one global winner, and it
+returned four near neighbours of that winner: onset in {0.45, 0.50} crossed with
+the active gate in {0.20, 0.275}, with `targetNoteThreshold` pinned at 0.50 and
+the extra-note gate at 0.99 in every one. That is a two-by-two corner of one
+region, and the Tone-only sweep's own optimum sat outside it on the extra-note
+axis at 0.97. If the value of a second round is one better global default, keep
+the compromise rule. If the value is a set of approved profiles for per-source
+selection, the rule must instead select for spread across the safe frontier.
+Decide which from measured per-domain oracle regret, not from preference.
+
+One more constraint governs the whole round: round one consumed its own held-out
+evidence. Every version-1 isolated trace was captured and evaluated in Task 13
+across all five profile columns, so no unobserved isolated row exists, and a
+round-two confirmation partition cannot be carved out of the existing corpus.
+Once a trace has been measured it is discovery evidence permanently. Round two
+therefore has to author new fixtures, and the newly authored confirmation share
+must include negative cases rather than correct playing alone, because false
+advances are what reject candidates and a correct-only partition cannot see them.
+
+Calibration does not change any of this. The wizard sits downstream of the
+approval gate, not around it: it may choose only from profiles the automated and
+live release decision approved, and its own selection rule discards any profile
+that advances a negative trial. The approved list holds `baseline-v1` alone, and
+a wizard choosing among one profile is a no-op. Note that the registry is not
+that list — it retains every historical and rejected profile, so membership in it
+is not approval, and Task 29 emits the approved list as a separate artifact.
+Per-source selection is the right instrument for the two Tone release floors,
+which are domain-shift shaped, but it cannot rescue a profile rejected for a
+safety regression, and it cannot produce the first approved alternative. Round
+two is therefore a prerequisite of Task 17, not a substitute for it.
+
 ## Numbered execution tasks
 
 Execute exactly one numbered task per implementation pass. A pass begins by
@@ -690,14 +787,37 @@ safe subset of it is convenient. When a task changes a measured browser result,
 record the command, commit, renderer/model identity, result hashes, and concise
 summary in the appropriate benchmark report before closing the pass.
 
-Tasks 01-13 and 16 are complete. Task 14 is still required; Task 15 is deferred
-with a `no-safe-candidate` record until a discovery round produces a candidate
-eligible for it. Tasks 18-20 are conditional: execute them only if Task 17
-concludes `calibration-justified`. If Task 17 concludes
-`fixed-profile-sufficient`, mark Tasks 18-20 skipped with that decision as their
-completion evidence. Task 21 is a separate later research branch and is not
-required to ship the validated global profile or the approved-profile calibration
-selector.
+Task numbers are permanent identifiers. They are cited throughout
+`tools/online_amt/LISTEN_BENCHMARK.md`, `benchmark-results/README.md`, and the
+benchmark sources, so a later task is never renumbered to express ordering.
+Execution order comes from the stated prerequisites instead, which is why the
+second-round tasks are numbered after Task 21 but run before it.
+
+Tasks 01-13 and 16 are complete and closed the first discovery round with
+`no-safe-candidate`. Tasks 22-29 are the second round described above, and they
+run next: Tasks 22-24 diagnose and scope it, Task 25 builds its corpus, Task 26
+decides how much new parameter the evidence justifies, Task 27 searches, and
+Tasks 28-29 confirm and decide. The corpus precedes the axis deliberately, because
+Task 26's first ablation is the existing grid measured against Task 25's corpus.
+Tasks 27-29 form an immutable artifact chain — candidate manifest, then eligibility
+manifest referencing its digest, then approved-profile list referencing that one's
+— so no task edits an artifact an earlier task froze. Task 14 is still required and
+may be built in parallel with Tasks 22-27, since the harness reads whichever
+eligibility manifest a confirmation task last froze rather than any one round's
+candidate list. Task 15 stays deferred with its `no-safe-candidate` record until
+Task 28 produces an eligible candidate, at which point Task 29 requires it.
+
+Task 17 additionally requires Task 29's approved-profile list to hold more than
+`baseline-v1`. Calibration selects among approved profiles and cannot approve one,
+so with a single entry the wizard has nothing to choose between. Tasks 18-20 are
+conditional: execute them only if Task 17 concludes `calibration-justified`. If
+Task 17 concludes `fixed-profile-sufficient`, mark Tasks 18-20 skipped with that
+decision as their completion evidence. Task 21 remains a separate later research
+branch and is reachable only through Task 17; if round two produces no approved
+alternative, Task 21's own prerequisite cannot be met, and Task 29 instead emits a
+written requirement for a new decoder and model-evidence plan. That requirement is
+this plan's output, not another task inside it, because model work is an explicit
+non-goal here.
 
 ### Task 01 — Create the production-neutral matcher profile registry
 
@@ -1638,9 +1758,14 @@ validation.
 - Capture target pitches, deliberately played pitches, expected correctness,
   ambiguity, source/setup labels, register, chord size, dynamic, articulation,
   tempo, room/noise label, and trace-clock latency.
-- Capture target-independent decoded frames once and replay `baseline-v1` and
-  every automated-eligible candidate from Task 13; do not repeat a performance
-  per profile.
+- Capture target-independent decoded frames once and replay `baseline-v1` beside
+  every automated-eligible candidate; do not repeat a performance per profile.
+  Take the profile columns from a frozen eligibility-manifest artifact — the
+  confirmation task's output, which references its candidate manifest's digest and
+  marks each candidate automated-eligible or rejected — rather than naming a
+  particular round's candidates here. The harness must be generic across rounds,
+  so it reads whichever eligibility manifest the confirmation task most recently
+  froze, and it must not read or write the candidate manifest.
 - Keep data in memory until an explicit export. Export decoded events/confidences
   and entered metadata only; exclude raw audio buffers, raw device IDs, and
   manufacturer/serial identity.
@@ -1653,9 +1778,43 @@ validation.
 and one deliberate wrong note. Inspect the exported JSON and prove it contains no
 PCM/audio buffer or raw device identifier. Run unit tests and build.
 
+No eligibility manifest exists yet — the first is emitted by Task 28 — so this task
+builds and verifies against a fixture chain of all three artifacts. A two-artifact
+fixture will not do, because every candidate manifest requires a
+`task26EvidenceDigest` and that link would dangle:
+
+1. A schema-valid Task 26 ablation artifact recording terminal outcome
+   `bass-axis-unsupported` reached by the stop rule accepting no ablation, which is
+   the simplest coherent root.
+2. An empty candidate manifest carrying that artifact's digest as
+   `task26EvidenceDigest`, the same `task26TerminalOutcome`, and `notRunReason` of
+   `no-ablation-accepted`.
+3. An eligibility manifest under `runStatus: "not-run-no-confirmable-candidate"`
+   repeating that reason and referencing the candidate manifest's digest.
+
+That is a real artifact shape rather than a synthetic one: it is exactly what Tasks
+26 through 28 emit when the round has nothing it can both register and confirm. The
+fixture tests must verify that both digest links resolve and that the three
+artifacts agree semantically — one terminal outcome, one reason, no candidate
+entries, no confirmation-evidence fields — so a fixture satisfying each schema in
+isolation while disagreeing across the chain fails here rather than in Task 28.
+
+No artifact in the chain may carry `baseline-v1`, because the harness adds the
+baseline column itself while an eligibility manifest describes candidates only;
+putting the baseline in the manifest would define a second, conflicting schema. The
+fixture still exercises the schemas, the `runStatus` branch, the full digest chain,
+and a one-column smoke. That work may run in parallel with Tasks 22-27.
+
 **Complete when:** A single real performance produces reproducible frozen-matrix
 matcher results and a complete redacted export suitable for the live release
 corpus.
+
+Completion is conditional on what the confirmation task produces. If Task 28
+records no automated-eligible candidate, the fixture smoke completes this task,
+because no live corpus will be collected from it. If Task 28 records one or more,
+this task stays open until the smoke has been repeated against that frozen
+eligibility manifest with its real profile columns, and that repeat is a
+prerequisite of Task 15 rather than a step inside it.
 
 ### Task 15 — Execute the acoustic and digital live validation corpus
 
@@ -1664,8 +1823,11 @@ this generation of candidates; required again as soon as a discovery round
 produces an automated-eligible profile. Requires a person, instruments, and
 microphone setups.
 **Prerequisites:** Task 14 complete and at least one automated-eligible candidate
-from Task 13. If none is eligible, record `no-safe-candidate` and proceed directly
-to Task 16 without changing the default.
+on the current round's frozen eligibility manifest. Round one recorded
+`no-safe-candidate` against Task 13 and proceeded to Task 16; the same rule now
+applies to Task 28 and Task 29. This task is not bound to any one round's
+candidates — it replays whichever eligibility manifest the most recent confirmation
+task froze.
 
 **Objective:** Test whether automated-eligible candidates remain safe and useful
 under real instrument, microphone, room, register, dynamics, chord, articulation,
@@ -1775,7 +1937,13 @@ the shipped identifier.
 
 ### Task 17 — Run the calibration feasibility experiment and make a go/no-go decision
 
-**Status:** Required research decision. **Prerequisites:** Tasks 15-16 complete.
+**Status:** Required research decision. **Prerequisites:** Tasks 15 and 29
+complete, and Task 29's versioned approved-profile list holds at least one entry
+besides `baseline-v1`. Registry membership does not satisfy this: the registry
+retains every historical and rejected profile, so only the approved list counts.
+Task 24 scopes this experiment but does not satisfy its prerequisite either —
+renderer and piano are proxies for an acoustic path rather than instruments, and
+its archive is discovery evidence.
 
 **Objective:** Determine whether selecting an approved profile per instrument/setup
 generalizes better than the global default on untouched live trials.
@@ -1936,6 +2104,712 @@ repeatable held-out benefit and no safety loss, or `normalization-not-justified`
 with no production change. Implementation/rollout of a justified transformation
 requires a new plan rather than silently extending Tasks 18-20.
 
+### Task 22 — Diagnose the omitted-bass false advance and measure the cost of a high bass gate
+
+**Status:** Required. **Prerequisites:** Task 16 complete.
+
+**Objective:** Turn Task 09's recorded observation into pinned regressions and a
+measured decision input, and establish what holding the bass to the incumbent's
+onset gate would cost before Task 26 decides whether a bass-specific axis is
+needed at all.
+
+**Work:**
+
+- Start from what is already known rather than re-opening it. Task 09 recorded
+  that `isolated/direct/122` is `[48, 60, 68]` played as `[60, 68]` and that
+  `isolated/tone/124` is `[56, 68, 75]` played as `[68, 75]`. Both targets are
+  triads whose lowest note was omitted, so `target.size >= 3` holds, fresh bass is
+  required, and the sustained-evidence completion path cannot have credited the
+  bass. Each was completed by a decoded onset on a bass pitch that was never
+  sounded, with confidence in `[0.50, 0.60)`. The mechanism is the ordinary onset
+  path admitting a hallucinated onset; it is not the sustained-completion path,
+  and that alternative needs no further investigation.
+- Pin each original failure as a deterministic regression under the renderer that
+  produced it. `isolated/direct/122` failed under Direct and `isolated/tone/124`
+  under Tone. Record each fixture's cross-rendered counterpart as a diagnostic
+  rather than requiring it to reproduce the same outcome.
+- Measure the deciding cost. Across every matched correct and omitted-bass pair in
+  the isolated corpus, under both renderers, report the distribution of decoded
+  onset confidence on the bass pitch, separately for genuinely sounded attacks and
+  for hallucinated ones. State how many real bass attacks fall inside
+  `[0.50, 0.60)` and would therefore be refused by any gate holding the bass at
+  0.60.
+- Report every distribution twice: by raw trace count and by unique musical-input
+  pair. A fixture rendered at several speeds or layers is not several independent
+  observations, and the second view is the one the decision reads.
+- Report the same distributions over the sequence, dynamics, and articulation
+  discovery traces, so the cost of a high bass gate is known outside the isolated
+  suite.
+- Measure existing-grid counterfactuals rather than a control that does not exist
+  yet, and name every coordinate. Replay the four high-onset, open-active profiles
+  `o0p600-t0p500-a0p200-x0p900-b1`, `o0p600-t0p500-a0p200-x0p940-b1`,
+  `o0p600-t0p500-a0p200-x0p970-b1`, and `o0p600-t0p500-a0p200-x0p990-b1`. Replay
+  beside them the twelve profiles that hold onset at 0.60 and active at 0.275 with
+  fresh bass required and that passed round-one safety: target in
+  {0.350, 0.425, 0.500, 0.575} crossed with extra-note in {0.90, 0.94, 0.97}. The
+  0.99 extra-note column is absent from that set because none of it survived.
+  Report each profile's complete safety and regression evidence, not only the
+  Course Clear recovery and the two omitted-bass fixtures.
+- Do not assume the high-onset, open-active corner is available. The Task 08
+  archive already rejected all four of those open-active profiles for
+  `discovery-safety-regression`, the `x0p990` variant for a committed regression as
+  well, with the `x0p970` variant adding a false advance on
+  `sequence/tone/course-clear-27/167ms` and on
+  `dynamics-constant/tone/salamander/v14`. Of the 279 profiles that passed
+  round-one safety, 60 hold onset at 0.60 and none of those opens the active gate
+  past 0.275. Record whether an active gate of 0.275 preserves the recovery that
+  0.20 produced.
+- Measure all of this on version-1 evidence, which is what exists when this task
+  runs. Whether the version-2 corpus and the Task 23 policy change any of it is
+  Task 26's first ablation, not this task's question.
+- Report the relationship to Task 06 without merging the two. There a later chord
+  genuinely sounded the shared pitch; here the pitch was never played at all. They
+  share a policy — a target pitch qualifying on evidence that is not a fresh attack
+  of that pitch in that chord — and nothing else, so a fix for one is not evidence
+  for the other.
+- Change no threshold, no policy, no gate, and no default in this task.
+
+**Verification:** Each pinned regression reproduces from rendered audio under the
+renderer it was recorded on, with a stable decoded-structure hash, `baseline-v1`
+satisfying its pinned refusal and each `v2` candidate its pinned advance. The
+confidence distributions and the sixteen counterfactual replays recompute
+deterministically from the captured traces. The full unit suite and the production
+build pass.
+
+**Complete when:** Both failures are pinned, the hallucinated-onset mechanism is
+recorded as the only one in play, and the cost of a 0.60 bass gate and the
+version-1 behaviour of all sixteen named counterfactual profiles are measured
+numbers rather than assumptions.
+
+### Task 23 — Freeze the round-two safety and correctness policy
+
+**Status:** Required, and frozen before Task 25 captures any discovery trace and
+before any Task 26 ablation. It cannot precede all round-two measurement, because
+Task 22 measures distributions and Task 24 replays observed discovery evidence.
+**Prerequisites:** Task 22 complete.
+
+**Objective:** Replace isolated release floors that apply only to challengers, and
+that the incumbent does not meet, with a versioned policy that protects safety and
+still permits a safe incremental improvement to ship.
+
+**Work:**
+
+- Record the round-one observation as this task's reason. `LISTEN_ISOLATED_RELEASE_GATE`
+  states Tone floors of 101/106 overall and 52/54 on Course Clear and applies them
+  to candidates only. `baseline-v1` measures 100/106 and 48/54, so it is
+  grandfathered past a bar it does not meet, and `early-open-v2` and
+  `steady-open-v2` were rejected while measuring strictly better than the shipped
+  default on both. The floors are not unreachable — the open pair moved Course
+  Clear from 48 to 50 of the 52 required — but as written they block shipping any
+  safe improvement for as long as the incumbent sits below the same target.
+- Freeze a four-part policy. Safety gates stay absolute. Correctness eligibility is
+  paired non-regression against `baseline-v1` on the identical frozen corpus. The
+  absolute recognition targets remain, reported as product debt with the
+  incumbent's own distance from each stated beside it. Production promotion
+  additionally requires a predeclared material improvement somewhere, so parity
+  with baseline everywhere is not a reason to change the default.
+- Freeze what does not depend on the corpus: the target rates, the rounding rule
+  for deriving a count from a rate and a census, the material-improvement
+  thresholds, and the fail-closed semantics. Do not freeze corpus-specific counts
+  here. The manifest version-2 census does not exist until Task 25, which binds the
+  derived counts to the finalized census before capturing any discovery trace.
+- Make the gates fail closed at the run, not only at the archive. Today
+  `LISTEN_ISOLATED_RELEASE_GATE` is applied only when `renderer.correctTrialCount`
+  equals the count its floor is stated against, `passed` is
+  `applied && failures.length === 0`, and the eligibility filter reads
+  `applied && !passed` — which ignores an unapplied gate entirely, so a changed
+  census silently removes the constraint. Require instead that a validation run
+  declaring itself complete throws, or marks every candidate ineligible, when any
+  required gate is unapplied. The Task 13 archive verifier stays as a second line
+  of defence; it must not be the only one.
+- Call this a versioned policy change rather than a correction, and version it
+  exactly as the trace manifest is versioned, so a later change is a reviewed edit
+  to a module constant rather than a field on a passed object.
+
+**Verification:** Add tests for the versioned policy, for the incumbent being
+evaluated by every gate it is the reference for, for rejection of an unknown policy
+version, and for a complete run with a required gate unapplied failing rather than
+yielding an eligible candidate. Re-score the two frozen Task 13 archives under the
+policy without re-measuring them, and record which round-one rejections survive.
+
+**Complete when:** Every gate states what it is measured against, the incumbent is
+held to the same rules as its challengers, promotion requires a predeclared
+material gain, an unapplied required gate cannot pass, and every corpus-independent
+value is frozen for Task 25 to bind.
+
+### Task 24 — Regenerate a per-domain archive and freeze the complete selection rule
+
+**Status:** Required research input. **Prerequisites:** The Task 08 corpus is
+reproducible. Independent of Tasks 22-23 and may run beside them.
+
+**Objective:** Freeze every rule the later tasks apply — the regret calculation,
+its decision boundary, and the complete selection and ablation stop rules — and
+compute the version-1 control result they will be re-run against on the version-2
+corpus. This task does not decide round two's objective; Task 26 does, using this
+task's frozen calculation.
+
+**Work:**
+
+- Do not attempt the analysis from the existing archive.
+  `benchmark-results/listen-matcher-multidomain-sweep-task08.json` stores each of
+  its 1,000 rows as a profile, a flat `ListenCandidateMetrics` record, a safety
+  verdict, and totals; only the frontier and selected rows carry richer breakdowns.
+  A per-domain oracle over the full grid is not reconstructible from it.
+- Replay the exact frozen Task 08 discovery corpus at manifest version 1 and emit a
+  new versioned archive carrying per-leaf-domain results for every profile.
+  Changing nothing but the recorded level of detail keeps this a re-export of
+  already observed discovery evidence rather than a new search.
+- Restricting the analysis to the archived frontier is not an acceptable
+  substitute. That frontier was selected by the very metric order under question,
+  so regret measured across it cannot surface a domain champion the
+  compromise-seeking rule discarded, which is the whole spread question.
+- Choose each domain's oracle only from profiles that are globally safe across the
+  complete regression corpus. A domain champion that is unsafe elsewhere is not a
+  candidate for anything.
+- Predeclare the decision boundary numerically before looking at the result, in the
+  units the frozen metric order already uses.
+- Treat this task's own verdict as a version-1 control, not the round's answer.
+  Task 25 promotes 212 isolated correct traces into scoring as a new co-equal
+  domain, and a domain that did not exist here can move the oracle-regret outcome.
+  Record `one-global-profile-suffices` or `domain-spread-material` for the version-1
+  corpus, and hand the frozen calculation to Task 26, which applies it unchanged to
+  the version-2 discovery results for the verdict Task 27 acts on. Freezing the
+  calculation here and running it there is what keeps the rule pre-registered while
+  still deciding on the corpus the round actually searches.
+- Freeze the complete selection rule in this task. Task 26's ablations and Task
+  27's search both act on it, so it must state the global-safety requirement, the
+  complementarity objective for the spread case, the maximum candidate count, the
+  materiality boundary a selected profile must clear, and the exact stop rule that
+  ends Task 26's ablation sequence. A rule written after an ablation's results are
+  visible is post-result retuning.
+- Freeze the bass-support criterion with it, because Task 26 cannot invent one once
+  it has seen a bass result, and keep its two levels distinct. The stop rule is
+  evaluated over a whole ablation; the bass-support comparison is evaluated over
+  matched profile pairs, where a pair is one bass-axis profile and the profile
+  identical to it in every other coordinate with the bass threshold at its
+  compatibility default. State how pairs are formed and which metric the comparison
+  reads. A bass grid that passes the stop rule is supported only when at least one
+  selected bass profile either rescues its twin categorically on safety or beats it
+  by at least the frozen materiality boundary; an axis that merely rides along
+  inside a passing grid is not supported.
+- Treat the regret result as discovery evidence. It scopes the round, it confirms
+  nothing, and it may never be quoted as a calibration benefit. Renderer, piano, and
+  dynamic band are proxies for an acoustic path and not instruments, so
+  `domain-spread-material` is evidence that per-source selection is worth testing,
+  never that it works.
+
+**Verification:** The regenerated archive reproduces every recorded Task 08
+aggregate exactly, including the 721 rejections, the 30-profile frontier, and the
+four selected identifiers, so the added detail is provably the same search. The
+regret computation and the selection rule are deterministic and unit-tested,
+including the stop rule against constructed ablation results, and assert that no
+`confirmation` trace is read.
+
+**Complete when:** Every rule Tasks 26 and 27 apply is frozen and tested against a
+boundary fixed before any number was visible, and the version-1 control result is
+recorded as a control rather than as the round's objective.
+
+### Task 25 — Build the round-two corpus and freeze trace manifest version 2
+
+**Status:** Required. **Prerequisites:** Tasks 22-23 complete.
+
+**Objective:** Author genuinely unseen confirmation evidence, because none
+survives, and repartition the observed corpus so the next search is gated by the
+evidence that rejected the last one.
+
+**Work:**
+
+- Accept the constraint first. Every version-1 isolated trace was captured and
+  evaluated in Task 13 across all five profile columns, so no unobserved isolated
+  row exists anywhere in the corpus. A round-two confirmation partition cannot be
+  carved out of existing material; it has to be authored.
+- Repartition what is already observed, and give every case kind a destination.
+  The isolated correct fixtures become `discovery`. The omitted-bass and
+  distinguishable-wrong fixtures become `regression-only`. The ambiguous-harmonic
+  fixtures cannot remain `confirmation` either, and they must not score: assign
+  them an explicit non-scoring diagnostic role, reported beside safety and never
+  used to hide or offset a distinguishable false advance.
+- State the scoring census accurately. Task 13 recorded 106 correct, 18
+  omitted-bass, 8 ambiguous-harmonic, and 2 distinguishable-wrong rows per
+  renderer, so across both renderers the 268 observed isolated traces are 212
+  correct, 36 omitted-bass, 16 ambiguous-harmonic, and 4 distinguishable-wrong.
+  The 212 correct rows enter scoring, the 40 omitted-bass and distinguishable-wrong
+  rows become regression-only, and the 16 ambiguous-harmonic rows become
+  diagnostic. Assert this census in the manifest tests rather than restating it in
+  prose alone.
+- Predeclare the effect of that promotion rather than letting it arrive as a side
+  effect. The hierarchical weights give every suite equal top-level weight, so 212
+  isolated correct traces enter scoring as a co-equal domain where round one had no
+  isolated evidence in discovery at all. Record what that is expected to do to the
+  ranking before the search runs.
+- Bind the Task 23 rates to this census. Derive each corpus-specific count from the
+  frozen rate and rounding rule against the finalized version-2 census, and freeze
+  the derived counts here, before any discovery trace is captured.
+- Author new paired fixtures spanning piano, dynamic, register, chord size, and
+  articulation. Each group pairs a correct rendition with its omitted-bass and
+  distinguishable-wrong counterparts, so a false advance and a lost correct advance
+  are measured on the same material.
+- Assign each paired group wholly to one partition. Splitting a group's members
+  between discovery and confirmation puts near-duplicate material on both sides of
+  the split and leaks the confirmation answer into the search.
+- Split the new groups between `discovery` and `confirmation` at authoring time.
+  The confirmation share must include unseen negative cases and not only correct
+  ones: false advances are what reject candidates, and a correct-only confirmation
+  partition cannot detect them.
+- Do not decode the confirmation fixtures in this task. Validate them on schema,
+  musical-input identity, partition assignment, paired-group integrity, and the
+  presence of every required asset. Discovery and regression-only fixtures may be
+  rendered, decoded, and hashed here; confirmation fixtures are first decoded in
+  Task 28. Capturing decoded frames for a confirmation fixture before Task 26 has
+  chosen a parameterization would let the search be shaped by the material meant to
+  judge it.
+- Accept the cost of that rule explicitly: a confirmation fixture that renders
+  badly is discovered only in Task 28, and the correct response is to restart the
+  round rather than to swap the fixture, because swapping it after seeing a result
+  reintroduces exactly the fitting this rule prevents. Validate everything that can
+  be validated without decoding, now.
+- Add the Task 22 regressions as `regression-only`.
+- Enforce the unseen property mechanically. A self-declared first-observed-round
+  field is not a guarantee, because an old trace can simply be relabelled. Build an
+  immutable ledger from the prior manifests and archives, keyed on both content
+  identity and musical-input hash, and validate every version-2 confirmation row
+  against it so any trace a prior round captured is rejected regardless of what it
+  declares about itself.
+- Bump `listenTraceManifest` to version 2 with a restated census and a re-pinned
+  hash, as the module's own rule requires. Restate the hierarchical weights
+  unchanged: the partition changed, the weighting rule did not.
+
+**Verification:** Re-run the manifest tests against the version-2 census — complete
+one-time assignment, no discovery/confirmation overlap, required domain coverage,
+zero score weight for `regression-only` and for the ambiguous diagnostic role,
+negative cases present in the confirmation partition, paired groups intact within a
+single partition, the pinned hash, rejection of the version-1 census presented
+under the version-2 label, and rejection by ledger of a confirmation row that any
+prior round captured however it is labelled. Discovery and regression-only fixtures
+render reproducibly with stable decoded-structure hashes; confirmation fixtures
+pass structural validation with no decode recorded, and a test asserts that no
+capture path reads one.
+
+**Complete when:** Round two has a confirmation partition no round has measured or
+decoded, including negative cases, the observed corpus gates or diagnoses rather
+than scores the evidence that rejected round one, and every derived count is bound
+to the frozen census.
+
+### Task 26 — Stage the round-two grid and decide whether a bass-onset axis is required
+
+**Status:** Required, with one of four terminal outcomes recorded.
+**Prerequisites:** Tasks 22, 24, and 25 complete.
+
+**Objective:** Establish how much of round one's failure the existing grid fixes on
+its own, and add a bass-specific control only if the evidence demands it.
+
+**Work:**
+
+- Run the ablations in order, applying the Task 24 stop rule, and record each
+  before starting the next. Changing the corpus, the gates, the bass axis, the
+  active grid, the target grid, and the selection rule at once makes attribution
+  impossible.
+- Judge each ablation as discovery-safe and search-selected, never as eligible.
+  Production eligibility does not exist until Task 28 has measured the confirmation
+  partition, and using the word here would invite a search result to be read as a
+  release result.
+- Ablation one is the unchanged round-one 1,000-profile grid against the version-2
+  corpus and the Task 23 policy. Its question is whether the new corpus and policy
+  expose any safe existing-grid candidate, not whether one anticipated combination
+  wins. The high-onset, open-active corner is not available: all four profiles at
+  onset 0.60, target 0.50, active 0.20 with fresh bass required were rejected in
+  round one for `discovery-safety-regression`, and of the 279 profiles that passed
+  round-one safety the 60 holding onset at 0.60 all keep the active gate at 0.275
+  or higher. Report how the surviving high-onset profiles score, beside Task 22's
+  counterfactual replays.
+- Apply the Task 24 calculation to this ablation's version-2 discovery results to
+  obtain the round's actual global-versus-spread verdict. Task 24's own result is
+  a version-1 control: Task 25 promotes 212 isolated correct traces into scoring
+  as a new co-equal domain, which can move the oracle-regret outcome. The
+  calculation, boundary, safety restriction, candidate limit, and stop rule were
+  all frozen in Task 24 and are not revisited here; only the corpus they run on
+  changes, and no confirmation evidence is read.
+- Ablation two refines the existing five-axis family and adds no new axis. Run it
+  only when the Task 24 stop rule says ablation one produced no search-selected
+  candidate, or produced one whose cost under Task 22's measured distribution
+  exceeds what a bass gate would cost. Round one's four candidates are a
+  two-by-two corner, onset in {0.45, 0.50} by active gate in {0.20, 0.275}, with
+  `targetNoteThreshold` pinned at 0.50, so the open questions are the points
+  between 0.275 and 0.35 and whether the target threshold is genuinely inert or
+  merely too coarsely gridded.
+- Ablation three crosses that same refined grid with the bass-onset axis, and runs
+  only when the stop rule says ablation two did not satisfy it either. Refinement
+  precedes the new axis deliberately: an axis that is only ever tested against the
+  unrefined grid cannot be distinguished from grid resolution the existing family
+  already had.
+- Emit ablation three as matched bass and no-bass variants over the identical
+  refined grid, so the axis is judged against its own control rather than against
+  ablation two's separate result.
+- Keep the two levels of judgement distinct, as Task 24 froze them. The stop rule
+  is evaluated over a whole ablation and decides only whether to run the next one.
+  The bass-support comparison is evaluated over matched profile pairs — one
+  bass-axis profile against the profile identical to it in every other coordinate
+  with the bass threshold at its compatibility default. Ablation three runs only
+  after the refined no-bass grid has already failed the stop rule at grid level, so
+  the grid-level control is known to fail before it starts; the pair-level
+  comparison is what protects against an axis that contributes nothing.
+- Record exactly one terminal outcome, reached by these transitions. Ablation one
+  satisfies the stop rule, so stop at `existing-grid-sufficient`: run no further
+  ablation, do not change `ListenMatcherThresholds`, and leave the threshold shape
+  exactly as round one left it. Otherwise run ablation two; if it satisfies the
+  rule, stop at `existing-family-refinement-sufficient`, which adopts the refined
+  grid and still adds no axis. Otherwise run ablation three. It ends at
+  `bass-axis-supported` when the bass grid clears the stop rule and at least one
+  selected bass profile either rescues its matched twin categorically on safety or
+  beats it by at least the frozen materiality boundary. It ends at
+  `bass-axis-unsupported` in every other case: the bass grid fails the stop rule,
+  or it passes while no selected bass profile separates from its own twin.
+- Note what `bass-axis-unsupported` does and does not settle, because it routes to
+  the zero branch in both of its forms. Where the bass grid failed the stop rule,
+  nothing was selected. Where the bass grid passed but no selected profile separated
+  from its matched twin, profiles were selected — but every one of them needs the
+  axis this outcome prohibits from the production shape, and their no-bass
+  counterparts are the refined grid that already failed at ablation two. Either way
+  the round has nothing it can both register and confirm, so Task 27 emits an empty
+  candidate manifest, Task 28 does not run its confirmation matrix, and Task 29
+  records `round-two-grid-produced-no-eligible-improvement`. Reaching ablation three
+  establishes only that the existing family was insufficient; it never by itself
+  establishes that the axis helps.
+- Keep the axis out of the production threshold shape until it is supported. An
+  experimental implementation may exist to run ablation three — behind the
+  round-two generator, exercised by the sweep only — but `ListenMatcherThresholds`
+  and `matcherOptionsForListenMatcherProfile` gain the axis only under
+  `bass-axis-supported`. Under every other outcome the experiment is recorded with
+  its measurements and the production shape is left unchanged.
+- When the axis does enter the production shape, give it a compatibility default so
+  every existing profile's bass onset threshold defaults to that profile's own
+  general onset threshold. That reproduces each profile's behaviour identically and
+  lets both generations share one conversion.
+- Freeze one digest-bearing ablation artifact covering every ablation that ran: its
+  grid version and size, its stop-rule inputs and verdict, the profiles it selected,
+  the matched-pair comparisons where ablation three ran, and the terminal outcome.
+  Task 27 references this digest as `task26EvidenceDigest` in both branches, and
+  under `no-supported-parameterization` it is where the passing bass grid's selected
+  profiles live — so this artifact, not a placeholder search archive, is what keeps
+  that measurement available to a later round.
+- Under every outcome, keep the round-one generator immutable and versioned, and
+  add a separate round-two generator rather than extending it. A shared generator
+  that gains an axis or a grid point changes the historical grid size, rejection
+  census, frontier, and recommendation, all of which the historical sweep
+  regressions must continue to reproduce exactly. Record each ablation's grid size;
+  only the first is 1,000.
+
+**Verification:** Every registry profile reproduces its recorded Task 08 and Task
+13 rows, with identical decoded-structure hashes and identical discrete outcomes,
+under whichever threshold shape the recorded outcome selects. Both historical
+single-renderer sweeps and the round-one multi-domain sweep reproduce their
+recorded results against the immutable round-one generator. The full suite and the
+production build pass.
+
+**Complete when:** The outcome is recorded as `existing-grid-sufficient`,
+`existing-family-refinement-sufficient`, `bass-axis-supported`, or
+`bass-axis-unsupported`, with the stop rule's inputs shown at every transition and
+no ablation run that its predecessor's outcome did not authorise; the round's
+global-versus-spread verdict has been computed on version-2 discovery results with
+Task 24's frozen calculation; the contributions of the corpus change, the grid
+refinement, and any new axis are separately measured against matched controls; the
+production threshold shape has changed only under `bass-axis-supported`; the
+round-one generator is untouched; each ablation's grid is versioned and frozen; and
+one digest-bearing ablation artifact records every ablation that ran, its stop-rule
+verdicts, its selected profiles, and the terminal outcome, for Task 27 to reference.
+
+### Task 27 — Run the round-two search and freeze the candidate manifest
+
+**Status:** Required. **Prerequisites:** Tasks 22-26 complete.
+
+**Objective:** Search the ablation the evidence selected, over manifest version 2,
+and freeze a candidate set under new immutable identifiers — or, when the evidence
+produced no confirmable candidate, freeze that as the round's result.
+
+**Work — branch selection:**
+
+- Branch on Task 26's terminal outcome before doing anything else, not on whether
+  some ablation passed the stop rule. `existing-grid-sufficient`,
+  `existing-family-refinement-sufficient`, and `bass-axis-supported` take the
+  nonempty branch. `bass-axis-unsupported` takes the zero branch in both of its
+  forms — including the form where the bass grid passed the stop rule and selected
+  profiles, because every one of those profiles needs an axis this outcome keeps out
+  of the production shape, and their no-bass counterparts are the refined grid that
+  already failed at ablation two. A passing ablation is not by itself a registrable
+  candidate set.
+- Record the zero branch's reason code with it, because the two forms are not the
+  same finding: `no-ablation-accepted` when the stop rule accepted nothing, and
+  `no-supported-parameterization` when it accepted a grid whose only selected
+  profiles depend on an unsupported parameterization. Task 29 reads this code and
+  must not describe the second as discovery having selected nothing.
+- Do not lower the stop rule, and do not register a bass-axis profile under a
+  compatibility default in order to reach the nonempty branch. A round with nothing
+  it can both register and confirm is a result, and Task 29 is written to record it.
+- Both branches keep the Task 08 rule that a `confirmation` trace is never
+  captured, and that a unit test fails the capture function if one is ever
+  requested.
+- Both branches keep `DEFAULT_LISTEN_MATCHER_PROFILE_ID` at `baseline-v1`.
+
+**Work — zero branch only:**
+
+- Search nothing. Emit a candidate manifest with zero entries, add no `v3`
+  identifiers, leave the registry at version 2 and byte-identical, and record the
+  Task 26 outcome and the reason code that produced this branch.
+- Under `no-supported-parameterization`, leave what the passing bass grid selected
+  in Task 26's frozen ablation artifact and reference that artifact's digest as
+  `task26EvidenceDigest`. Those profiles are the evidence that the axis was tried
+  and did not separate, and a later round should not have to rediscover them — but
+  they belong to the ablation that measured them, not to a candidate manifest that
+  by definition has no entries. Write no placeholder Task 27 search archive to hold
+  them.
+- Emit no result archive. There is no search to archive, and a placeholder archive
+  would later read as a search that found nothing rather than one that never ran.
+
+**Work — nonempty branch only:**
+
+- Search the earliest Task 26 ablation the stop rule accepted. Adopting a later,
+  larger grid when an earlier one already suffices adds parameters the evidence did
+  not ask for.
+- Apply the selection rule exactly as Task 24 froze it, against the
+  global-versus-spread verdict Task 26 computed on version-2 discovery results.
+  Nothing about the objective, the complementarity measure, the candidate count, or
+  the materiality boundary is decided in this task.
+- Report the rejection census beside round one's, and state which axis each new
+  rejection is attributable to.
+- Add the selected profiles under new `v3` identifiers at registry version 3. Every
+  `v1` and `v2` entry stays byte-identical, including the four rejected candidates,
+  which remain replayable comparison columns.
+- Freeze the full result archive, its canonical candidate digest, its file SHA-256,
+  the generator version, the grid size, the manifest hash, and the commit before any
+  confirmation replay.
+
+**Work — both branches:**
+
+- Emit the frozen candidate manifest as the first link of an immutable artifact
+  chain: candidate identifiers, registry version, policy version, trace-manifest
+  version, generator version, ablation identifier, round identifier,
+  `task26TerminalOutcome`, `task26EvidenceDigest`, `notRunReason` — null on the
+  nonempty branch — and its own digest over all of them. It records candidacy only.
+  It carries no eligibility field, and no later task writes to it; Task 28 emits a
+  separate artifact that references this digest. The zero branch emits the same
+  shape with an empty candidate list, so every downstream consumer reads one schema.
+- Put the terminal outcome and the not-run reason inside this manifest's digest
+  rather than introducing them downstream. A reason that first appears in Task 28's
+  artifact could be relabelled from `no-supported-parameterization` to
+  `no-ablation-accepted` — a materially different finding — with every digest still
+  verifying. Anchoring both here, over the Task 26 evidence digest they were derived
+  from, makes that relabelling detectable.
+
+**Verification — nonempty branch:** Run the search twice in fresh browser processes
+and require identical frontier identifiers, metrics, rejection codes, and selected
+candidate identifiers under the Task 04 identity rules. The historical sweeps still
+reproduce. A test asserts the candidate manifest is immutable once written. Full
+suite and build pass.
+
+**Verification — zero branch:** Reproduce Task 26's terminal outcome rather than
+asserting it, so the branch rests on a rerun rather than on a recorded conclusion:
+under `no-ablation-accepted` reproduce the stop rule rejecting every ablation, and
+under `no-supported-parameterization` reproduce both the grid passing the stop rule
+and no selected profile separating from its matched twin. Assert that the candidate
+manifest holds zero entries and a stable digest across two emissions, that
+`LISTEN_MATCHER_REGISTRY_VERSION` is still 2 and every registry entry
+byte-identical, that no `v3` identifier exists, that no result archive was written,
+and that no confirmation trace was read. Full suite and build pass.
+
+**Complete when:** Either a reproducible round-two candidate set exists under new
+identifiers with a frozen, digest-bearing candidate manifest; or the zero branch is
+recorded with an empty digest-bearing manifest, an untouched registry, and no
+search archive. In both branches earlier generations are unchanged, the default is
+still baseline, and the confirmation partition remains unread by the selection
+path.
+
+### Task 28 — Execute the round-two frozen automated confirmation
+
+**Status:** Required. **Prerequisites:** Task 27 complete.
+
+**Objective:** Produce the confirmatory automated evidence for the round-two
+candidates, on the version-2 confirmation partition, under the Task 23 policy, and
+emit the eligibility manifest the live and decision tasks consume.
+
+**Work:**
+
+- Take the not-run branch first when Task 27's candidate manifest is empty. Do not
+  decode the confirmation fixtures, do not run the matrix, and do not touch the
+  corpus in any way. Emit the eligibility manifest under
+  `runStatus: "not-run-no-confirmable-candidate"`, carrying Task 27's reason code
+  and referencing the empty candidate manifest's digest, so the artifact chain stays
+  intact and Tasks 14, 15, and 29 read one schema in every branch. Assert that the
+  reason carried here matches `notRunReason` in the candidate manifest exactly, and
+  that `task26TerminalOutcome` and `task26EvidenceDigest` resolve; a mismatch is a
+  broken chain, not a detail to reconcile. This branch is the point of the whole
+  ordering: the version-2 confirmation fixtures are the round's only genuinely
+  unseen evidence, they can be spent exactly once, and spending them on a round that
+  produced no registrable candidate — whether discovery selected nothing, or
+  selected only profiles that depend on an unsupported axis — would burn them for
+  nothing. They
+  stay unobserved and remain valid confirmation evidence for a later round.
+- Otherwise resolve the chain before decoding anything, so the Task 26 evidence root
+  is mandatory in this branch too and not only in the not-run one. Assert that
+  `task26EvidenceDigest` resolves to the frozen ablation artifact, that
+  `task26TerminalOutcome` matches the outcome that artifact records, that
+  `notRunReason` is null, and that the candidate set came from the accepted ablation
+  that artifact names. A candidate manifest whose candidates do not trace back to an
+  accepted ablation is not confirmable evidence regardless of how well formed it is.
+- Then decode the confirmation fixtures, for the first time. Task 25 deliberately
+  left them undecoded, so this run is their first inference pass; a fixture that
+  fails to render or decode restarts the round rather than being replaced.
+  Everything below describes this branch.
+- Follow Task 13 exactly: freeze the preflight record before the first run, naming
+  the measured commit and its clean worktree, the browser and its version, the
+  operating system, the Node version, the model path and its SHA-256, the registry
+  version, the candidate manifest and its digest, the policy version, the
+  trace-manifest version and hash, the generator version, the exact commands, and
+  the expected baseline.
+- Run the complete validation matrix twice, archive both runs, record both SHA-256
+  values and the canonical comparison digest, and compare them with the evidence
+  verifier.
+- Update the verifier's completeness requirements to the round-two registry version,
+  manifest version, candidate manifest digest, policy version, and trace census, so
+  neither a round-one archive nor a narrowed smoke can be quoted as this task's
+  evidence. Include the Task 23 rule that a complete run with a required gate
+  unapplied fails rather than yielding an eligible candidate.
+- Report results on the newly authored confirmation fixtures separately from results
+  on the repartitioned observed corpus. A result on genuinely unseen material must
+  never be aggregated with a result on material the search could see.
+- Report round-one and round-two gate outcomes side by side, including whether the
+  policy change altered any verdict, and label discovery against confirmation
+  evidence.
+- Emit a new eligibility manifest rather than editing Task 27's artifact, and give
+  its schema an explicit `runStatus` discriminator so the two branches cannot be
+  confused with each other. Under `runStatus: "completed"` the candidate entries and
+  the confirmation-evidence fields — both archive hashes and the canonical
+  comparison digest — are required. Under
+  `runStatus: "not-run-no-confirmable-candidate"` the entry list must be empty and
+  those evidence fields are forbidden, while the candidate-manifest digest stays
+  required, as does a `reason` of `no-ablation-accepted` or
+  `no-supported-parameterization` carried through from Task 27. Keeping the status
+  binary and the distinction in `reason` means every consumer branches once on
+  `runStatus`; only Task 29's recorded conclusion reads the reason. One
+  undifferentiated schema would instead force the not-run branch to invent
+  placeholder archive hashes for a run that never happened, which is exactly the
+  fabricated evidence this chain exists to prevent. Both forms reference the
+  candidate manifest's digest and bear their own; Tasks 14, 15, and 29 consume this
+  artifact and must branch on `runStatus` rather than on an empty list.
+- Do not alter candidate values, fixtures, attribution, or gates after viewing the
+  first run, and do not change the production default in this task.
+
+**Verification:** Both repetitions satisfy the Task 04 identity rule, baseline
+parity passes in every domain, the full suite and the production build pass on the
+measured commit, and the report carries the preflight record, both archive hashes,
+and the shared comparison digest. Both digest links resolve — eligibility manifest
+to candidate manifest, candidate manifest to the Task 26 ablation artifact — and the
+terminal outcome, the null `notRunReason`, and the originating ablation agree across
+all three. A test asserts the Task 27 candidate manifest is byte-identical after
+this task ran.
+
+Under the not-run branch, verify instead that no confirmation trace was decoded:
+the version-2 confirmation fixtures carry no recorded decoded-structure hash, the
+manifest's first-observed ledger is unchanged, and the empty eligibility manifest
+chains to the empty candidate manifest's digest. The full suite and the production
+build still pass.
+
+**Complete when:** Either the round-two matrix is repeated, documented, and yields
+a stable eligibility set with no post-result retuning, with the unseen-fixture
+results reported on their own; or the not-run branch is recorded with the
+confirmation partition provably untouched. In both branches an eligibility manifest
+is frozen and chained to the candidate manifest.
+
+### Task 29 — Make the round-two production decision
+
+**Status:** Required. **Prerequisites:** Task 28 complete, and Tasks 14-15 complete
+if the eligibility manifest holds any automated-eligible candidate.
+
+**Objective:** Make one auditable global-default decision, and produce the
+approved-profile list that any later calibration depends on.
+
+**Work:**
+
+- If the eligibility manifest holds an eligible candidate, Task 15 is no longer
+  deferred: collect the live acoustic and digital corpus with the Task 14 harness
+  against that manifest, then apply the Candidate selection rule in its stated
+  order, with the Task 23 material-improvement requirement for promotion.
+- Change only `DEFAULT_LISTEN_MATCHER_PROFILE_ID`, keeping every earlier profile in
+  the registry for rollback and historical replay, and update the diagnostics,
+  README, benchmark index, and listening report with the selected identifier, its
+  evidence, its known limitations, and the rollback instruction.
+- Emit the versioned approved-profile list as the third link of the artifact chain,
+  referencing the eligibility manifest's digest. Define its membership exactly:
+  `baseline-v1`, plus every candidate that passed all automated gates and all
+  required live gates. It is not the set containing only the chosen default, and it
+  is not the registry — the registry retains every historical and rejected profile,
+  so membership there is not approval. A profile that passed automated gates but
+  failed or skipped its live gates is not a member. The selected default must be a
+  member. Only members may be offered by any later calibration path.
+- If no candidate passes, record the bounded conclusion and nothing wider, choosing
+  it by `runStatus` and, in the not-run branch, describing it by `reason`. A
+  confirmation matrix that ran and rejected every candidate is
+  `round-two-candidate-set-exhausted`. A `not-run-no-confirmable-candidate` state is
+  `round-two-grid-produced-no-eligible-improvement` under either reason, but the two
+  are not described alike: `no-ablation-accepted` means discovery selected nothing,
+  while `no-supported-parameterization` means discovery did select profiles and none
+  of them could be both registered and confirmed, because each depended on an axis
+  the ablation did not support. Do not write the second up as though nothing was
+  found; report what the passing bass grid selected and why it was not registrable.
+  In both not-run reasons, say explicitly that the version-2 confirmation fixtures
+  remain unobserved and stay available to a later round. Task 28 confirms the frozen
+  candidate set, not every safe profile in the searched grid, so concluding that the
+  scalar-threshold family is exhausted would require confirming every globally safe
+  non-dominated profile needed to support that statement, which no branch does.
+- Route that outcome to a written new-plan requirement rather than to an existing
+  task. Task 21 requires Task 17, and Task 17 requires an approved alternative, so a
+  second no-candidate result leaves Task 21 unreachable and it must not be named as
+  the next step. Task 22's finding points elsewhere: an onset decoded on a pitch
+  that was never sounded is a model-evidence defect, and this plan's non-goals
+  exclude model work, so the residual belongs to a new decoder and model-evidence
+  plan. Produce that requirement — the observed defect, the evidence that
+  characterises it, and the acceptance question it must answer — as this task's
+  output. Do not append it as a task here.
+- Record what the round changed regardless of its verdict. Round one's candidates
+  cleared the Task 06 false advance the shipped default still carries, improved 16
+  of 21 leaf domains, and cut late advances from 8 to 2; a round that only tightens
+  gates and recovers none of that has not advanced the product.
+- Do not add calibration persistence or user-facing calibration in this task.
+
+**Verification — when the eligibility manifest is `completed`:** Full unit suite,
+production build, canonical paired isolated smoke, complete sequence validation,
+dynamics and articulation matrix, and the safety regressions for whichever profile
+production ends on. This branch covers both a promoted candidate and a `completed`
+run that rejected every candidate, exactly as Task 16 verified the retained
+`baseline-v1` in round one; the confirmation corpus has already been spent either
+way, so the matrices cost nothing they were preserving. Confirm that ordinary
+listen mode resolves and reports that identifier — the selected profile, or
+`baseline-v1` where none was promoted — and that the approved-profile list contains
+exactly the profiles the evidence approved under the membership rule above, chained
+to the eligibility manifest's digest.
+
+**Verification — when the eligibility manifest is
+`not-run-no-confirmable-candidate`:** Run the full unit suite and the production
+build only. Confirm that `DEFAULT_LISTEN_MATCHER_PROFILE_ID` is still `baseline-v1`,
+that the approved-profile list is exactly `[baseline-v1]`, that all three digest
+links resolve — approved list to eligibility manifest, eligibility manifest to the
+empty candidate manifest, candidate manifest to the Task 26 ablation artifact — and
+that the terminal outcome and the reason agree at every step of that chain. The
+third link matters most under `no-supported-parameterization`, because the Task 26
+artifact is where the passing bass grid's measurements live, and a conclusion that
+cites them while its link to them dangles is not auditable. Confirm also that no
+live corpus was collected, and that the version-2
+confirmation partition is untouched: its first-observed ledger unchanged and no
+decoded-structure hash recorded for any confirmation fixture. Do not run the
+isolated, sequence, or dynamics matrices in this branch. There is no selected
+profile for them to validate, and running them over a corpus this round
+deliberately preserved would spend the evidence the not-run branch exists to keep.
+
+**Complete when:** Production either runs one fully validated named default or
+retains baseline with a conclusion bounded to what this round measured, an
+approved-profile list exists with defined membership, the residual work is carried
+either by a reachable task or by a written new-plan requirement, and rollback still
+requires changing only the default identifier.
+
 ## Production rollout and rollback
 
 The selected global profile must be one registry constant and one default ID.
@@ -1977,6 +2851,17 @@ The global matcher-profile phase is complete when:
   evidence.
 - Production build and the full unit/browser regression suite pass.
 - Rollback requires changing only the default profile ID.
+
+A round that ends without an eligible candidate does not satisfy these criteria;
+it closes that round only, and its conclusion must be bounded to what that round
+measured. A confirmation pass evaluates the frozen candidate set, not every safe
+profile in the searched grid, so `round-two-candidate-set-exhausted` and
+`round-two-grid-produced-no-eligible-improvement` are admissible while a claim
+that the scalar-threshold family as a whole is exhausted is not, unless every
+globally safe non-dominated profile needed to support it has been confirmed. The
+retained default's own known limitations are documented beside whichever
+conclusion is recorded, and the residual work is carried either by a task whose
+prerequisites can actually be met or by a written requirement for a new plan.
 
 The calibration phase is complete only when:
 
