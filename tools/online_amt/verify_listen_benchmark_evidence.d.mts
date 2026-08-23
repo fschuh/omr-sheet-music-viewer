@@ -42,12 +42,67 @@ export declare const CONFIRMATION_EVIDENCE: {
   manifestHash: string;
   manifestCorpusHash: string;
   registryVersion: number;
+  /** Null means the frozen archive must predate and omit a policy-version field. */
+  policyVersion: number | null;
   baselineProfileId: string;
   candidateProfileIds: string[];
   rendererKeys: string[];
   domains: ListenEvidenceDomainExpectation[];
   profiles: Record<string, ListenEvidenceProfileThresholds>;
   gates: ListenEvidenceGateDefinition[];
+};
+
+export declare const ROUND_TWO_POLICY_EVIDENCE: {
+  readonly version: number;
+  readonly targetCountRounding: "ceiling";
+  readonly recognitionTargetRates: Record<string, {
+    readonly isolatedCorrectAdvanceRate: number;
+    readonly courseClearCorrectAdvanceRate: number;
+  }>;
+  readonly materialImprovement: {
+    readonly minimumRateGain: number;
+    readonly rateComparisonEpsilon: number;
+    readonly minimumLatencyReductionMs: number;
+    readonly latencyComparisonEpsilonMs: number;
+    readonly minimumUnsafeEventReduction: number;
+  };
+  readonly safetyGatesAreAbsolute: true;
+  readonly correctnessEligibility: "paired-non-regression";
+  readonly absoluteTargetsAre: "product-debt";
+  readonly completeRunsFailClosed: true;
+};
+
+export declare function rescoreTask13ArchiveUnderRoundTwoPolicy(
+  result: unknown,
+  label?: string,
+): {
+  policyVersion: number;
+  sourcePolicyVersion: number | null;
+  sourceManifestVersion: number;
+  sourceRegistryVersion: number;
+  baselineProfileId: string;
+  reference: {
+    profileId: string;
+    pairedNonRegressionPassed: boolean;
+    recognitionTargets: Array<Record<string, unknown>>;
+    materialImprovementMet: boolean;
+    promotionEligible: boolean;
+  };
+  candidates: Array<{
+    profileId: string;
+    oldFailedGateCodes: string[];
+    failedGateCodes: string[];
+    removedRoundOneRejections: string[];
+    pairedCorrectness: Array<Record<string, unknown>>;
+    recognitionTargets: Array<Record<string, unknown>>;
+    materialImprovements: Array<Record<string, unknown>>;
+    materialImprovementMet: boolean;
+    unappliedRequiredGateCodes: string[];
+    eligible: boolean;
+    promotionEligible: boolean;
+  }>;
+  eligibleProfileIds: string[];
+  promotableProfileIds: string[];
 };
 
 /** The partitions a gate of each role, and of each domain, may have read. */

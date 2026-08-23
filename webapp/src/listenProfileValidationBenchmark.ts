@@ -73,6 +73,19 @@ import {
   type ListenMatcherThresholds,
 } from "./listenMatcherProfiles";
 import {
+  LISTEN_PROFILE_VALIDATION_POLICY,
+  assertValidListenProfileValidationPolicy,
+  assessListenMaterialLatencyReduction,
+  assessListenMaterialRateGain,
+  assessListenMaterialUnsafeEventReduction,
+  assessListenPairedCorrectness,
+  assessListenRecognitionTarget,
+  unappliedRequiredListenGateCodes,
+  type ListenMaterialImprovementAssessment,
+  type ListenPairedCorrectnessAssessment,
+  type ListenRecognitionTargetAssessment,
+} from "./listenProfileValidationPolicy";
+import {
   LISTEN_TRACE_MANIFEST,
   assertValidListenTraceManifest,
   listenTraceCorpusHash,
@@ -3263,15 +3276,19 @@ export const LISTEN_PROFILE_GATES: readonly ListenProfileGateDefinition[] = Obje
     code: "release-isolated-recognition" as const,
     role: "release" as const,
     domain: "isolated" as const,
-    label: "Isolated correct advancement holds its fixed floor",
-    requirement: "Direct remains at least 104/106 overall; Tone reaches at least 101/106.",
+    label: "Isolated correct advancement does not regress from baseline-v1",
+    requirement: "On each renderer, the profile advances at least as many correct fixtures as " +
+      "baseline-v1 on the identical frozen corpus. Absolute targets are reported separately as " +
+      "product debt and do not grandfather the incumbent past a challenger-only floor.",
   }),
   Object.freeze({
     code: "release-isolated-course-clear" as const,
     role: "release" as const,
     domain: "isolated" as const,
-    label: "Course Clear advancement holds its fixed floor",
-    requirement: "Both renderers remain at least 52/54 on the Course Clear fixtures.",
+    label: "Course Clear advancement does not regress from baseline-v1",
+    requirement: "On each renderer, the profile advances at least as many correct Course Clear " +
+      "fixtures as baseline-v1 on the identical frozen corpus. The 95% product target and the " +
+      "incumbent's distance from it are reported without deciding eligibility.",
   }),
   Object.freeze({
     code: "release-isolated-latency" as const,
@@ -3361,10 +3378,14 @@ export function listenProfileGateDefinition(
 }
 
 /**
- * The fixed isolated floors, stated as counts together with the corpus they were
- * measured on. The corpus size is part of the constant so a narrowed fixture
- * list cannot satisfy a 104-advance floor with 104 fixtures: a run whose corpus
- * is not this one leaves the gate unapplied instead of scoring it.
+ * The historical round-one isolated floors.
+ *
+ * The minimum counts remain only for verifying and re-scoring the frozen Task 13
+ * archive. The two trial counts also remain the manifest-version-1 completeness
+ * census used below; Task 25 replaces that census when it freezes manifest
+ * version 2. None of these counts is a round-two eligibility threshold: paired
+ * eligibility and rate-based product-debt targets live in
+ * `listenProfileValidationPolicy.ts`.
  */
 export const LISTEN_ISOLATED_RELEASE_GATE: Readonly<Record<ListenTraceRendererKey, Readonly<{
   correctTrialCount: number;
@@ -3490,6 +3511,21 @@ export interface ListenProfileCandidateSafetyCounts {
 
 export type ListenProfileEligibility = "eligible" | "rejected" | "incomplete-evidence";
 
+/** The round-two correctness and promotion decision beside the gate outcomes. */
+export interface ListenProfilePolicyAssessment {
+  /** Paired count comparisons that decide correctness eligibility. */
+  pairedCorrectness: ListenPairedCorrectnessAssessment[];
+  /** Absolute product targets and remaining debt; these never reject a profile. */
+  recognitionTargets: ListenRecognitionTargetAssessment[];
+  /** Every measured materiality axis, whether or not it reached its boundary. */
+  materialImprovements: ListenMaterialImprovementAssessment[];
+  materialImprovementMet: boolean;
+  /** Required gates a run claiming completeness failed to apply. */
+  unappliedRequiredGateCodes: ListenProfileGateCode[];
+  /** Eligibility plus a predeclared material gain; the production default is still separate. */
+  promotionEligible: boolean;
+}
+
 export interface ListenProfileCandidateGateReport {
   profileId: ListenMatcherProfileId;
   profile: ListenMatcherThresholds;
@@ -3509,6 +3545,7 @@ export interface ListenProfileCandidateGateReport {
   layerLosses: ListenProfileLayerLoss[];
   /** Sequence passages that lost ordered advances, listed even when the gate passed. */
   regressedSequenceTraceIds: string[];
+  policy: ListenProfilePolicyAssessment;
   eligibility: ListenProfileEligibility;
   eligible: boolean;
 }
@@ -3595,6 +3632,8 @@ export type ListenProfileGateRecommendationCode =
   | "incomplete-evidence";
 
 export interface ListenProfileValidationGateReport {
+  /** The reviewed policy contract this run was evaluated under. */
+  policyVersion: number;
   baselineProfileId: ListenMatcherProfileId;
   candidateProfileIds: readonly ListenMatcherProfileId[];
   /**
@@ -3617,11 +3656,16 @@ export interface ListenProfileValidationGateReport {
   incompleteEvidenceReasons: string[];
   /** Leaf losses the caller declared explicitly reviewed, echoed for the record. */
   reviewedLayerLosses: ListenReviewedLayerLoss[];
+  /** The incumbent is judged by the same gate and product-debt machinery as challengers. */
+  reference: ListenProfileCandidateGateReport;
   candidates: ListenProfileCandidateGateReport[];
   eligibleProfileIds: ListenMatcherProfileId[];
+  promotableProfileIds: ListenMatcherProfileId[];
   recommendation: {
     code: ListenProfileGateRecommendationCode;
     eligibleProfileIds: ListenMatcherProfileId[];
+    /** Eligible profiles that also clear the frozen material-improvement boundary. */
+    promotableProfileIds: ListenMatcherProfileId[];
     explanation: string;
   };
 }
@@ -3891,6 +3935,203 @@ function dynamicsSummaryFor(
   return summary;
 }
 
+/** A zero delta lets the incumbent travel through the same gate code as its challengers. */
+function sequenceDeltaAgainstBaseline(
+  profile: ListenSequenceProfileValidationSummary,
+  baseline: ListenSequenceProfileValidationSummary,
+): ListenSequenceProfileDelta {
+  return profile.deltaFromBaseline ?? {
+    ...sequenceMetricDelta(profile.totals, baseline.totals),
+    bySpeed: profile.bySpeed.map(({ intervalMs, totals }, index) => ({
+      intervalMs,
+      ...sequenceMetricDelta(totals, baseline.bySpeed[index].totals),
+    })),
+    byFamily: profile.byFamily.map(({ family, totals }, index) => ({
+      family,
+      ...sequenceMetricDelta(totals, baseline.byFamily[index].totals),
+    })),
+    safety: {
+      falseAdvanceCount: profile.safety.falseAdvanceCount - baseline.safety.falseAdvanceCount,
+      skippedAdvanceCount: profile.safety.skippedAdvanceCount - baseline.safety.skippedAdvanceCount,
+      duplicateAdvanceCount:
+        profile.safety.duplicateAdvanceCount - baseline.safety.duplicateAdvanceCount,
+      lateAdvanceCount: profile.safety.lateAdvanceCount - baseline.safety.lateAdvanceCount,
+      incompleteCarriedBassAdvances:
+        profile.safety.incompleteCarriedBassAdvances - baseline.safety.incompleteCarriedBassAdvances,
+    },
+    gainedCompletePassageTraceIds: [],
+    lostCompletePassageTraceIds: [],
+    regressedOrderedAdvanceTraceIds: [],
+  };
+}
+
+/** The baseline group's paired comparison is zero, not an absent correctness judgment. */
+function dynamicsGroupDeltaAgainstBaseline(
+  group: ListenDynamicsValidationGroup,
+  baseline: ListenDynamicsValidationGroup,
+): ListenDynamicsGroupDelta {
+  return group.deltaFromBaseline ?? {
+    ...sequenceMetricDelta(group.totals, baseline.totals),
+    gainedCompletePassageTraceIds: [],
+    lostCompletePassageTraceIds: [],
+    regressedOrderedAdvanceTraceIds: [],
+  };
+}
+
+function listenProfileUnsafeEventCount(
+  profileId: ListenMatcherProfileId,
+  results: ListenProfileValidationDomainResults,
+): number {
+  const isolated = results.isolated?.renderers.reduce((total, renderer) => (
+    total + isolatedSummaryFor(renderer, profileId).summary.falseAdvanceCount
+  ), 0) ?? 0;
+  const sequence = results.sequence?.renderers.reduce((total, renderer) => {
+    const profile = sequenceSummaryFor(renderer, profileId);
+    return total + profile.totals.falseAdvanceCount + profile.totals.skippedAdvanceCount +
+      profile.totals.duplicateAdvanceCount + profile.regressionTotals.falseAdvanceCount +
+      profile.regressionTotals.skippedAdvanceCount + profile.regressionTotals.duplicateAdvanceCount;
+  }, 0) ?? 0;
+  const dynamics = results.dynamics?.renderers.reduce((total, renderer) => {
+    const profile = dynamicsSummaryFor(renderer, profileId);
+    return total + profile.safety.falseAdvanceCount + profile.safety.skippedAdvanceCount +
+      profile.safety.duplicateAdvanceCount;
+  }, 0) ?? 0;
+  return isolated + sequence + dynamics;
+}
+
+/**
+ * Applies all corpus-independent round-two policy calculations to one profile.
+ * The manifest owns the censuses in the supplied results; this code owns only
+ * rate comparisons and the frozen materiality boundaries.
+ */
+function listenProfilePolicyAssessment(
+  profileId: ListenMatcherProfileId,
+  baselineProfileId: ListenMatcherProfileId,
+  results: ListenProfileValidationDomainResults,
+  gates: readonly ListenProfileGateOutcome[],
+  evidenceComplete: boolean,
+): Omit<ListenProfilePolicyAssessment, "promotionEligible"> {
+  const pairedCorrectness: ListenPairedCorrectnessAssessment[] = [];
+  const recognitionTargets: ListenRecognitionTargetAssessment[] = [];
+  const materialImprovements: ListenMaterialImprovementAssessment[] = [];
+
+  for (const renderer of results.isolated?.renderers ?? []) {
+    const profile = isolatedSummaryFor(renderer, profileId);
+    const baseline = isolatedSummaryFor(renderer, baselineProfileId);
+    const definitions = [
+      {
+        metric: "isolated-correct-advance-rate" as const,
+        census: renderer.correctTrialCount,
+        profileCount: profile.correctAdvanceCount,
+        baselineCount: baseline.correctAdvanceCount,
+      },
+      {
+        metric: "course-clear-correct-advance-rate" as const,
+        census: baseline.courseClearCorrectTrialCount,
+        profileCount: profile.courseClearAdvanceCount,
+        baselineCount: baseline.courseClearAdvanceCount,
+      },
+    ];
+    for (const definition of definitions) {
+      pairedCorrectness.push(assessListenPairedCorrectness({
+        rendererKey: renderer.rendererKey,
+        ...definition,
+      }));
+      recognitionTargets.push(assessListenRecognitionTarget({
+        rendererKey: renderer.rendererKey,
+        metric: definition.metric,
+        census: definition.census,
+        observedCount: definition.profileCount,
+      }));
+      const baselineRate = definition.census === 0
+        ? 0
+        : definition.baselineCount / definition.census;
+      const profileRate = definition.census === 0
+        ? 0
+        : definition.profileCount / definition.census;
+      materialImprovements.push(assessListenMaterialRateGain(
+        `isolated/${renderer.rendererKey}/${definition.metric}`,
+        baselineRate,
+        profileRate,
+      ));
+    }
+    if (profile.summary.p95OnsetToAdvanceMs !== null &&
+        baseline.summary.p95OnsetToAdvanceMs !== null) {
+      materialImprovements.push(assessListenMaterialLatencyReduction(
+        `isolated/${renderer.rendererKey}/p95-onset-to-advance-ms`,
+        baseline.summary.p95OnsetToAdvanceMs,
+        profile.summary.p95OnsetToAdvanceMs,
+      ));
+    }
+  }
+
+  for (const renderer of results.sequence?.renderers ?? []) {
+    const profile = sequenceSummaryFor(renderer, profileId);
+    const baseline = sequenceSummaryFor(renderer, baselineProfileId);
+    for (const [metric, baselineRate, profileRate] of [
+      ["independent-match-rate", baseline.totals.independentMatchRate,
+        profile.totals.independentMatchRate],
+      ["ordered-advance-rate", baseline.totals.orderedAdvanceRate,
+        profile.totals.orderedAdvanceRate],
+      ["complete-passage-rate", baseline.totals.completePassageRate,
+        profile.totals.completePassageRate],
+    ] as const) {
+      materialImprovements.push(assessListenMaterialRateGain(
+        `sequence/${renderer.rendererKey}/${metric}`,
+        baselineRate,
+        profileRate,
+      ));
+    }
+    if (profile.totals.p95OrderedAdvanceLatencyMs !== null &&
+        baseline.totals.p95OrderedAdvanceLatencyMs !== null) {
+      materialImprovements.push(assessListenMaterialLatencyReduction(
+        `sequence/${renderer.rendererKey}/p95-ordered-advance-ms`,
+        baseline.totals.p95OrderedAdvanceLatencyMs,
+        profile.totals.p95OrderedAdvanceLatencyMs,
+      ));
+    }
+  }
+
+  for (const renderer of results.dynamics?.renderers ?? []) {
+    const profile = dynamicsSummaryFor(renderer, profileId);
+    const baseline = dynamicsSummaryFor(renderer, baselineProfileId);
+    for (const profileSuite of profile.equalPiano) {
+      const baselineSuite = baseline.equalPiano.find(({ suite }) => suite === profileSuite.suite);
+      if (!baselineSuite) continue;
+      for (const [metric, baselineRate, profileRate] of [
+        ["independent-match-rate", baselineSuite.independentMatchRate,
+          profileSuite.independentMatchRate],
+        ["ordered-advance-rate", baselineSuite.orderedAdvanceRate,
+          profileSuite.orderedAdvanceRate],
+        ["complete-passage-rate", baselineSuite.completePassageRate,
+          profileSuite.completePassageRate],
+      ] as const) {
+        if (baselineRate === null || profileRate === null) continue;
+        materialImprovements.push(assessListenMaterialRateGain(
+          `dynamics/${renderer.rendererKey}/${profileSuite.suite}/${metric}`,
+          baselineRate,
+          profileRate,
+        ));
+      }
+    }
+  }
+
+  materialImprovements.push(assessListenMaterialUnsafeEventReduction(
+    "cross-domain/unsafe-event-count",
+    listenProfileUnsafeEventCount(baselineProfileId, results),
+    listenProfileUnsafeEventCount(profileId, results),
+  ));
+  const unapplied = unappliedRequiredListenGateCodes(evidenceComplete, gates)
+    .map((code) => code as ListenProfileGateCode);
+  return {
+    pairedCorrectness,
+    recognitionTargets,
+    materialImprovements,
+    materialImprovementMet: materialImprovements.some(({ material }) => material),
+    unappliedRequiredGateCodes: unapplied,
+  };
+}
+
 const DYNAMICS_LEAF_GROUP_KINDS: readonly ListenDynamicsGroupKind[] =
   Object.freeze(["layer", "mixed-run", "articulation"] as const);
 
@@ -4076,8 +4317,9 @@ function listenProfileValidationDomainIdentities(
  * Why a run may reject a candidate but may never clear one.
  *
  * Completeness is checked against the frozen corpora rather than against what
- * the run happened to capture, because the release floors are absolute counts:
- * 104 of 106 is a different claim on a corpus of 106 than on a corpus of 40.
+ * the run happened to capture. These are version-1 corpus census checks, not
+ * release thresholds: Task 25 replaces them with counts derived from manifest
+ * version 2 while binding the policy's rates to that finalized census.
  */
 function incompleteEvidenceReasons(results: ListenProfileValidationDomainResults): string[] {
   const { isolated, sequence, dynamics } = results;
@@ -4372,36 +4614,37 @@ function evaluateCandidateGates(
         });
       }
 
-      // The release floors are absolute counts against the frozen corpus, so a
-      // corpus of another size leaves them unapplied rather than rescaled.
-      const gate = LISTEN_ISOLATED_RELEASE_GATE[key];
+      // Round two uses paired correctness on the identical frozen corpus. The
+      // absolute target is assessed separately below as product debt for both
+      // this profile and the incumbent; it is not a challenger-only floor.
       const releasable = releasePartitions.length === partitions.length;
-      if (releasable && renderer.correctTrialCount === gate.correctTrialCount) {
+      if (releasable) {
         book.apply("release-isolated-recognition", releasePartitions);
-        if (candidate.correctAdvanceCount < gate.minimumCorrectAdvances) {
+        if (candidate.correctAdvanceCount < baseline.correctAdvanceCount) {
           book.fail("release-isolated-recognition", {
             domainIds: [key, ...(candidate.deltaFromBaseline?.lostCorrectTraceIds ?? [])],
             baselineValue: baseline.correctAdvanceCount,
             candidateValue: candidate.correctAdvanceCount,
             explanation: `${profileId} advanced ${candidate.correctAdvanceCount} of ` +
-              `${renderer.correctTrialCount} correct ${key} fixtures, below the fixed floor of ` +
-              `${gate.minimumCorrectAdvances}.`,
+              `${renderer.correctTrialCount} correct ${key} fixtures, below ${baselineProfileId}'s ` +
+              `paired ${baseline.correctAdvanceCount} on the identical frozen corpus.`,
           });
         }
       }
       if (
         releasable &&
-        candidate.courseClearCorrectTrialCount === gate.courseClearCorrectTrialCount
+        candidate.courseClearCorrectTrialCount === baseline.courseClearCorrectTrialCount
       ) {
         book.apply("release-isolated-course-clear", releasePartitions);
-        if (candidate.courseClearAdvanceCount < gate.minimumCourseClearAdvances) {
+        if (candidate.courseClearAdvanceCount < baseline.courseClearAdvanceCount) {
           book.fail("release-isolated-course-clear", {
             domainIds: [key],
             baselineValue: baseline.courseClearAdvanceCount,
             candidateValue: candidate.courseClearAdvanceCount,
             explanation: `${profileId} advanced ${candidate.courseClearAdvanceCount} of ` +
               `${candidate.courseClearCorrectTrialCount} correct Course Clear ${key} fixtures, ` +
-              `below the fixed floor of ${gate.minimumCourseClearAdvances}.`,
+              `below ${baselineProfileId}'s paired ${baseline.courseClearAdvanceCount} on the ` +
+              "identical frozen corpus.",
           });
         }
       }
@@ -4455,10 +4698,7 @@ function evaluateCandidateGates(
       const key = renderer.rendererKey;
       const candidate = sequenceSummaryFor(renderer, profileId);
       const baseline = sequenceSummaryFor(renderer, baselineProfileId);
-      const delta = candidate.deltaFromBaseline;
-      if (!delta) {
-        throw new Error(`The sequence ${key} matrix reports no baseline delta for ${profileId}.`);
-      }
+      const delta = sequenceDeltaAgainstBaseline(candidate, baseline);
       sequenceRuns.push(...renderer.cases.map((result) => ({
         traceId: result.traceId,
         run: sequenceRunFor(result, profileId),
@@ -4699,8 +4939,10 @@ function evaluateCandidateGates(
 
       for (const group of candidate.groups) {
         const baselineGroup = baseline.groups.find((entry) => entry.key === group.key);
-        const delta = group.deltaFromBaseline;
-        if (!delta) continue;
+        if (!baselineGroup) {
+          throw new Error(`The dynamics ${key} baseline has no ${group.key} group.`);
+        }
+        const delta = dynamicsGroupDeltaAgainstBaseline(group, baselineGroup);
         // A group that spans both partitions is quoted by neither gate: the leaf
         // rows below it are single-partition and carry the same evidence.
         const code = group.evidenceRole === "confirmation"
@@ -4787,19 +5029,33 @@ function evaluateCandidateGates(
 
   const gates = book.outcomes();
   const failed = gates.filter((gate) => gate.applied && !gate.passed);
+  const policy = listenProfilePolicyAssessment(
+    profileId,
+    baselineProfileId,
+    results,
+    gates,
+    evidenceComplete,
+  );
+  const pairedFailures = policy.pairedCorrectness.filter(({ passed }) => !passed);
+  const blockingGateCodes = [...new Set([
+    ...failed.map(({ code }) => code),
+    ...policy.unappliedRequiredGateCodes,
+  ])];
   const failuresIn = (role: ListenProfileGateRole) => failed
     .filter((gate) => gate.role === role)
     .reduce((total, gate) => total + gate.failures.length, 0);
-  const eligibility: ListenProfileEligibility = failed.length > 0
+  const eligibility: ListenProfileEligibility = failed.length > 0 ||
+      pairedFailures.length > 0 || policy.unappliedRequiredGateCodes.length > 0
     ? "rejected"
     : evidenceComplete
     ? "eligible"
     : "incomplete-evidence";
+  const eligible = eligibility === "eligible";
   return {
     profileId,
     profile,
     gates,
-    failedGateCodes: failed.map(({ code }) => code),
+    failedGateCodes: blockingGateCodes,
     replayIntegrityFailureCount: failuresIn("replay-integrity"),
     safetyFailureCount: failuresIn("safety"),
     releaseFailureCount: failuresIn("release"),
@@ -4808,8 +5064,12 @@ function evaluateCandidateGates(
     lateAdvance: { sequence: sequenceLateAdvance, dynamics: dynamicsLateAdvance },
     layerLosses,
     regressedSequenceTraceIds: [...regressedSequenceTraceIds].sort(),
+    policy: {
+      ...policy,
+      promotionEligible: eligible && policy.materialImprovementMet,
+    },
     eligibility,
-    eligible: eligibility === "eligible",
+    eligible,
   };
 }
 
@@ -4823,6 +5083,8 @@ function evaluateCandidateGates(
  */
 export function evaluateListenProfileValidationGates(
   input: ListenProfileValidationDomainResults & {
+    /** Must equal the one policy implementation this build declares. */
+    policyVersion?: number;
     /**
      * Leaf rows whose larger-than-allowed loss has an explicit reviewed
      * explanation. Each entry names the candidate it was reviewed for, the row,
@@ -4836,11 +5098,16 @@ export function evaluateListenProfileValidationGates(
     reviewedLayerLosses?: readonly ListenReviewedLayerLoss[];
   },
 ): ListenProfileValidationGateReport {
+  assertValidListenProfileValidationPolicy(input.policyVersion === undefined
+    ? LISTEN_PROFILE_VALIDATION_POLICY
+    : { ...LISTEN_PROFILE_VALIDATION_POLICY, version: input.policyVersion });
   assertComparableDomains(input);
-  const reference = input.isolated ?? input.sequence ?? input.dynamics;
-  if (!reference) throw new Error("A gate report needs at least one measured validation domain.");
-  const baselineProfileId = reference.baselineProfileId;
-  const candidateProfileIds = reference.candidateProfileIds;
+  const measuredReference = input.isolated ?? input.sequence ?? input.dynamics;
+  if (!measuredReference) {
+    throw new Error("A gate report needs at least one measured validation domain.");
+  }
+  const baselineProfileId = measuredReference.baselineProfileId;
+  const candidateProfileIds = measuredReference.candidateProfileIds;
   const profiles = listenValidationProfileIdentities([baselineProfileId, ...candidateProfileIds]);
   const reviewedLayerLosses = resolveReviewedLayerLosses(
     input.reviewedLayerLosses ?? [],
@@ -4849,17 +5116,21 @@ export function evaluateListenProfileValidationGates(
   );
   const reasons = incompleteEvidenceReasons(input);
   const evidenceComplete = reasons.length === 0;
-  const candidates = profiles
-    .filter(({ profileId }) => profileId !== baselineProfileId)
-    .map((identity) => evaluateCandidateGates(
-      identity,
-      baselineProfileId,
-      input,
-      reviewedLayerLosses,
-      evidenceComplete,
-    ));
+  const assessedProfiles = profiles.map((identity) => evaluateCandidateGates(
+    identity,
+    baselineProfileId,
+    input,
+    reviewedLayerLosses,
+    evidenceComplete,
+  ));
+  const reference = assessedProfiles.find(({ profileId }) => profileId === baselineProfileId);
+  if (!reference) throw new Error(`The policy report has no ${baselineProfileId} reference row.`);
+  const candidates = assessedProfiles.filter(({ profileId }) => profileId !== baselineProfileId);
   const eligibleProfileIds = candidates
     .filter(({ eligible }) => eligible)
+    .map(({ profileId }) => profileId);
+  const promotableProfileIds = candidates
+    .filter(({ policy }) => policy.promotionEligible)
     .map(({ profileId }) => profileId);
   const code: ListenProfileGateRecommendationCode = eligibleProfileIds.length > 0
     ? "eligible-candidates"
@@ -4867,6 +5138,7 @@ export function evaluateListenProfileValidationGates(
     ? "no-safe-candidate"
     : "incomplete-evidence";
   return {
+    policyVersion: LISTEN_PROFILE_VALIDATION_POLICY.version,
     baselineProfileId,
     candidateProfileIds,
     registryVersion: LISTEN_MATCHER_REGISTRY_VERSION,
@@ -4876,15 +5148,23 @@ export function evaluateListenProfileValidationGates(
     evidenceComplete,
     incompleteEvidenceReasons: reasons,
     reviewedLayerLosses: [...reviewedLayerLosses.values()],
+    reference,
     candidates,
     eligibleProfileIds,
+    promotableProfileIds,
     recommendation: {
       code,
       eligibleProfileIds,
+      promotableProfileIds,
       explanation: code === "eligible-candidates"
-        ? `${eligibleProfileIds.join(", ")} passed every applied gate over the complete frozen ` +
-          `matrix. Selection among them is a separate decision, and ${baselineProfileId} remains ` +
-          "the production default until it is taken."
+        ? promotableProfileIds.length > 0
+          ? `${eligibleProfileIds.join(", ")} passed every required gate over the complete frozen ` +
+            `matrix; ${promotableProfileIds.join(", ")} also met the versioned material-improvement ` +
+            `boundary and may be considered for promotion. Selection remains a separate decision, ` +
+            `and ${baselineProfileId} remains the production default until it is taken.`
+          : `${eligibleProfileIds.join(", ")} passed every required gate over the complete frozen ` +
+            `matrix, but none met the versioned material-improvement boundary. Parity is not a ` +
+            `reason to change the default, so ${baselineProfileId} remains in production.`
         : code === "no-safe-candidate"
         ? `No frozen candidate passed every gate, so ${baselineProfileId} remains the production ` +
           "default. Each candidate's failed gate codes name the rows that rejected it."

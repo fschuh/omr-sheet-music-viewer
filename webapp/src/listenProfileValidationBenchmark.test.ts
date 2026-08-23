@@ -26,9 +26,16 @@ import {
   type ListenMatcherProfileId,
 } from "./listenMatcherProfiles";
 import {
+  LISTEN_PROFILE_VALIDATION_POLICY,
+  LISTEN_PROFILE_VALIDATION_POLICY_VERSION,
+  LISTEN_PROMOTION_MATERIAL_IMPROVEMENT,
+  LISTEN_RECOGNITION_TARGET_RATES,
+} from "./listenProfileValidationPolicy";
+import {
   CONFIRMATION_EVIDENCE,
   GATE_SCOPE_BY_DOMAIN,
   GATE_SCOPE_BY_ROLE,
+  ROUND_TWO_POLICY_EVIDENCE,
 } from "../../tools/online_amt/verify_listen_benchmark_evidence.mjs";
 import {
   LISTEN_TRACE_CORPUS_HASH,
@@ -2057,6 +2064,7 @@ test("the frozen gate list is reported in full, with a role and a requirement ea
 
 test("a clean complete matrix makes the candidate eligible without selecting anything", () => {
   const report = evaluateListenProfileValidationGates(cleanGateInput());
+  assert.equal(report.policyVersion, LISTEN_PROFILE_VALIDATION_POLICY_VERSION);
   assert.equal(report.evidenceComplete, true);
   assert.deepEqual(report.incompleteEvidenceReasons, []);
   assert.deepEqual(report.eligibleProfileIds, [GATE_CANDIDATE_PROFILE_ID]);
@@ -2071,12 +2079,23 @@ test("a clean complete matrix makes the candidate eligible without selecting any
   assert.equal(report.profiles[1].profile.requireFreshBassOnset, true);
   const candidate = report.candidates[0];
   assert.equal(candidate.eligibility, "eligible");
+  assert.equal(candidate.policy.materialImprovementMet, true);
+  assert.equal(candidate.policy.promotionEligible, true);
+  assert.deepEqual(report.promotableProfileIds, [GATE_CANDIDATE_PROFILE_ID]);
+  assert.deepEqual(report.recommendation.promotableProfileIds, [GATE_CANDIDATE_PROFILE_ID]);
   assert.deepEqual(candidate.failedGateCodes, []);
   assert.equal(candidate.safetyFailureCount, 0);
   for (const gate of candidate.gates) {
     assert.equal(gate.applied, true, gate.code);
     assert.equal(gate.passed, true, gate.code);
   }
+  // The incumbent is not an implicit exception: it traverses every required
+  // gate, reports its own absolute target debt, and cannot promote on parity.
+  assert.equal(report.reference.profileId, "baseline-v1");
+  assert.equal(report.reference.eligible, true);
+  assert.equal(report.reference.policy.promotionEligible, false);
+  assert.equal(report.reference.gates.length, LISTEN_PROFILE_GATES.length);
+  assert.ok(report.reference.gates.every(({ applied, passed }) => applied && passed));
   // Each gate says which partitions it read, and release gates read only the
   // held-back ones while the sequence corpus stays labeled discovery.
   assert.deepEqual(gateOutcome(report, "release-isolated-recognition").partitions, ["confirmation"]);
@@ -2102,6 +2121,89 @@ test("a clean complete matrix makes the candidate eligible without selecting any
     assert.equal(domain.present, true, domain.domain);
     assert.equal(domain.identityDigest.length, 8, domain.domain);
   }
+});
+
+test("parity may be eligible but is never a reason to promote", () => {
+  const paritySequence = () => ({ independentMatchCount: 20, orderedAdvanceCount: 18 });
+  const parityDynamics = () => ({ independentMatchCount: 24, orderedAdvanceCount: 22 });
+  const parityRows: Partial<Record<ListenMatcherProfileId, GateIsolatedRow>> = {
+    "baseline-v1": { correctAdvances: 104, courseClearAdvances: 52 },
+    [GATE_CANDIDATE_PROFILE_ID]: { correctAdvances: 104, courseClearAdvances: 52 },
+  };
+  const report = evaluateListenProfileValidationGates({
+    isolated: gateIsolatedResult([
+      gateIsolatedRenderer("direct", parityRows),
+      gateIsolatedRenderer("tone", parityRows),
+    ]),
+    sequence: gateSequenceResult([
+      gateSequenceRenderer("direct", paritySequence),
+      gateSequenceRenderer("tone", paritySequence),
+    ]),
+    dynamics: gateDynamicsResult([
+      gateDynamicsRenderer("direct", parityDynamics),
+      gateDynamicsRenderer("tone", parityDynamics),
+    ]),
+  });
+  assert.deepEqual(report.eligibleProfileIds, [GATE_CANDIDATE_PROFILE_ID]);
+  assert.deepEqual(report.promotableProfileIds, []);
+  assert.equal(report.candidates[0].policy.materialImprovementMet, false);
+  assert.equal(report.candidates[0].policy.promotionEligible, false);
+  assert.match(report.recommendation.explanation, /Parity is not a reason to change the default/);
+});
+
+test("the evaluator rejects an unknown policy version", () => {
+  assert.throws(
+    () => evaluateListenProfileValidationGates({
+      ...cleanGateInput(),
+      policyVersion: LISTEN_PROFILE_VALIDATION_POLICY_VERSION + 1,
+    }),
+    /unknown-policy-version/,
+  );
+});
+
+test("a complete run with one required gate unapplied fails closed", () => {
+  const clean = cleanGateInput();
+  const direct = clean.isolated.renderers[0];
+  const candidate = direct.profiles.find(({ profileId }) => (
+    profileId === GATE_CANDIDATE_PROFILE_ID
+  ));
+  assert.ok(candidate);
+  const malformedDirect: ListenIsolatedRendererValidation = {
+    ...direct,
+    profiles: direct.profiles.map((profile) => profile.profileId === GATE_CANDIDATE_PROFILE_ID
+      ? { ...profile, courseClearCorrectTrialCount: profile.courseClearCorrectTrialCount + 1 }
+      : profile),
+  };
+  const report = evaluateListenProfileValidationGates({
+    ...clean,
+    isolated: gateIsolatedResult([malformedDirect, clean.isolated.renderers[1]]),
+  });
+  assert.equal(report.evidenceComplete, true);
+  const outcome = gateOutcome(report, "release-isolated-course-clear");
+  assert.equal(outcome.applied, true, "Tone still applied the gate");
+  // Gate outcomes aggregate renderer applications. To prove Direct was not
+  // silently ignored, remove both renderer applications from the candidate.
+  const malformedBoth = clean.isolated.renderers.map((renderer) => ({
+    ...renderer,
+    profiles: renderer.profiles.map((profile) => profile.profileId === GATE_CANDIDATE_PROFILE_ID
+      ? { ...profile, courseClearCorrectTrialCount: profile.courseClearCorrectTrialCount + 1 }
+      : profile),
+  }));
+  const failedClosed = evaluateListenProfileValidationGates({
+    ...clean,
+    isolated: gateIsolatedResult(malformedBoth),
+  });
+  const blocked = failedClosed.candidates[0];
+  assert.equal(failedClosed.evidenceComplete, true);
+  assert.equal(gateOutcome(failedClosed, "release-isolated-course-clear").applied, false);
+  assert.deepEqual(blocked.policy.unappliedRequiredGateCodes, [
+    "release-isolated-course-clear",
+  ]);
+  assert.ok(blocked.failedGateCodes.includes("release-isolated-course-clear"));
+  assert.equal(blocked.eligibility, "rejected");
+  assert.equal(blocked.eligible, false);
+  assert.equal(blocked.policy.promotionEligible, false);
+  assert.deepEqual(failedClosed.eligibleProfileIds, []);
 });
 
 /**
@@ -2162,7 +2264,7 @@ test("the corpus identity a repetition is compared on excludes its process-local
   );
 });
 
-test("each fixed isolated floor rejects exactly one advance below itself", () => {
+test("isolated correctness is paired non-regression and absolute targets are product debt", () => {
   const at = (rendererKey: ListenTraceRendererKey, row: GateIsolatedRow) => {
     const clean = cleanGateInput();
     return evaluateListenProfileValidationGates({
@@ -2179,9 +2281,10 @@ test("each fixed isolated floor rejects exactly one advance below itself", () =>
       ]),
     });
   };
+  // The old count floors remain available only to verify the Task 13 archive;
+  // the current evaluator compares the same corpus with its baseline column.
   assert.equal(LISTEN_ISOLATED_RELEASE_GATE.direct.minimumCorrectAdvances, 104);
   assert.equal(LISTEN_ISOLATED_RELEASE_GATE.tone.minimumCorrectAdvances, 101);
-  // Direct holds at 104 and fails at 103.
   assert.equal(
     gateOutcome(at("direct", { correctAdvances: 104, courseClearAdvances: 54 }), "release-isolated-recognition").passed,
     true,
@@ -2195,18 +2298,19 @@ test("each fixed isolated floor rejects exactly one advance below itself", () =>
   assert.equal(lowDirect.failures[0].candidateValue, 103);
   assert.equal(lowDirect.failures[0].code, "release-isolated-recognition");
   assert.ok(lowDirect.failures[0].domainIds.includes("direct"));
-  assert.match(lowDirect.failures[0].explanation, /below the fixed floor of 104/);
-  // Tone holds at its own 101 and fails at 100, so one renderer's floor is
-  // never applied to the other.
+  assert.match(lowDirect.failures[0].explanation, /below baseline-v1's paired 104/);
+  // Tone is held to the paired 104 in this synthetic matrix, not the historical
+  // 101 challenger floor. Matching 104 passes even though the choice of target
+  // rate is a separate product question.
   assert.equal(
-    gateOutcome(at("tone", { correctAdvances: 101, courseClearAdvances: 54 }), "release-isolated-recognition").passed,
+    gateOutcome(at("tone", { correctAdvances: 104, courseClearAdvances: 54 }), "release-isolated-recognition").passed,
     true,
   );
   assert.equal(
-    gateOutcome(at("tone", { correctAdvances: 100, courseClearAdvances: 54 }), "release-isolated-recognition").passed,
+    gateOutcome(at("tone", { correctAdvances: 103, courseClearAdvances: 54 }), "release-isolated-recognition").passed,
     false,
   );
-  // Course Clear holds at 52 and fails at 51 under both renderers.
+  // Course Clear uses the same paired rule.
   assert.equal(
     gateOutcome(at("direct", { correctAdvances: 106, courseClearAdvances: 52 }), "release-isolated-course-clear").passed,
     true,
@@ -2215,6 +2319,31 @@ test("each fixed isolated floor rejects exactly one advance below itself", () =>
     gateOutcome(at("tone", { correctAdvances: 106, courseClearAdvances: 51 }), "release-isolated-course-clear").passed,
     false,
   );
+
+  const task13ToneRows: Partial<Record<ListenMatcherProfileId, GateIsolatedRow>> = {
+    "baseline-v1": { correctAdvances: 100, courseClearAdvances: 48 },
+    [GATE_CANDIDATE_PROFILE_ID]: { correctAdvances: 102, courseClearAdvances: 50 },
+  };
+  const task13 = evaluateListenProfileValidationGates({
+    ...cleanGateInput(),
+    isolated: gateIsolatedResult([
+      gateIsolatedRenderer("direct", CLEAN_ISOLATED_ROWS),
+      gateIsolatedRenderer("tone", task13ToneRows),
+    ]),
+  });
+  const referenceDebt = task13.reference.policy.recognitionTargets
+    .filter(({ rendererKey }) => rendererKey === "tone")
+    .map(({ metric, targetCount, debtCount }) => [metric, targetCount, debtCount]);
+  assert.deepEqual(referenceDebt, [
+    ["isolated-correct-advance-rate", 101, 1],
+    ["course-clear-correct-advance-rate", 52, 4],
+  ]);
+  assert.equal(task13.reference.eligible, true);
+  assert.equal(task13.reference.policy.materialImprovementMet, false);
+  assert.equal(task13.reference.policy.promotionEligible, false);
+  assert.deepEqual(task13.candidates[0].policy.pairedCorrectness
+    .filter(({ rendererKey }) => rendererKey === "tone")
+    .map(({ deltaCount, passed }) => [deltaCount, passed]), [[2, true], [2, true]]);
 });
 
 test("the isolated latency gate holds at its ceiling and at one decoder hop of drift", () => {
@@ -3600,7 +3729,25 @@ test("per-pitch outcomes are read, and per-pitch confidences are not", () => {
  * verifier's contract is updated to match, deliberately.
  */
 test("the evidence verifier's frozen contract matches the code it describes", () => {
+  assert.equal(
+    ROUND_TWO_POLICY_EVIDENCE.version,
+    LISTEN_PROFILE_VALIDATION_POLICY_VERSION,
+  );
+  assert.equal(
+    ROUND_TWO_POLICY_EVIDENCE.targetCountRounding,
+    LISTEN_PROFILE_VALIDATION_POLICY.targetCountRounding,
+  );
+  assert.deepEqual(
+    ROUND_TWO_POLICY_EVIDENCE.recognitionTargetRates,
+    LISTEN_RECOGNITION_TARGET_RATES,
+  );
+  assert.deepEqual(
+    ROUND_TWO_POLICY_EVIDENCE.materialImprovement,
+    LISTEN_PROMOTION_MATERIAL_IMPROVEMENT,
+  );
+  assert.equal(ROUND_TWO_POLICY_EVIDENCE.completeRunsFailClosed, true);
   assert.equal(CONFIRMATION_EVIDENCE.registryVersion, LISTEN_MATCHER_REGISTRY_VERSION);
+  assert.equal(CONFIRMATION_EVIDENCE.policyVersion, null);
   assert.equal(
     CONFIRMATION_EVIDENCE.baselineProfileId,
     LISTEN_PROFILE_VALIDATION_BASELINE_PROFILE_ID,
@@ -3628,17 +3775,34 @@ test("the evidence verifier's frozen contract matches the code it describes", ()
     );
   }
 
-  // The eighteen gates, with their stated requirements, are the standard both
-  // archived repetitions were judged against.
+  // Task 13 remains a frozen round-one archive. Task 23 deliberately changed
+  // only the two challenger-only isolated floors into paired non-regression;
+  // the verifier must continue to describe what the archived run actually did
+  // while the current evaluator states the versioned policy change.
+  const historicalGates = CONFIRMATION_EVIDENCE.gates
+    .map(({ partitions: _partitions, ...gate }) => gate);
+  const currentGates = LISTEN_PROFILE_GATES.map((gate) => ({
+    code: gate.code,
+    role: gate.role,
+    domain: gate.domain,
+    label: gate.label,
+    requirement: gate.requirement,
+  }));
+  const changedCodes = new Set<ListenProfileGateCode>([
+    "release-isolated-recognition",
+    "release-isolated-course-clear",
+  ]);
   assert.deepEqual(
-    CONFIRMATION_EVIDENCE.gates.map(({ partitions: _partitions, ...gate }) => gate),
-    LISTEN_PROFILE_GATES.map((gate) => ({
-      code: gate.code,
-      role: gate.role,
-      domain: gate.domain,
-      label: gate.label,
-      requirement: gate.requirement,
-    })),
+    historicalGates.filter(({ code }) => !changedCodes.has(code as ListenProfileGateCode)),
+    currentGates.filter(({ code }) => !changedCodes.has(code)),
+  );
+  assert.match(
+    historicalGates.find(({ code }) => code === "release-isolated-recognition")?.requirement ?? "",
+    /104\/106.*101\/106/,
+  );
+  assert.match(
+    listenProfileGateDefinition("release-isolated-recognition").requirement,
+    /paired non-regression|at least as many correct fixtures/,
   );
 
   // The corpus sizes come from the frozen manifest rather than from a memory of

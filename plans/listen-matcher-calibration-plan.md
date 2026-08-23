@@ -2334,9 +2334,10 @@ axis solves an upper-voice evidence failure.
 
 ### Task 23 — Freeze the round-two safety and correctness policy
 
-**Status:** Required, and frozen before Task 25 captures any discovery trace and
-before any Task 26 ablation. It cannot precede all round-two measurement, because
-Task 22 measures distributions and Task 24 replays observed discovery evidence.
+**Status:** Completed August 23, 2026, and frozen before Task 25 captures any
+discovery trace and before any Task 26 ablation. It cannot precede all round-two
+measurement, because Task 22 measures distributions and Task 24 replays observed
+discovery evidence.
 **Prerequisites:** Task 22 complete.
 
 **Objective:** Replace isolated release floors that apply only to challengers, and
@@ -2387,6 +2388,46 @@ policy without re-measuring them, and record which round-one rejections survive.
 held to the same rules as its challengers, promotion requires a predeclared
 material gain, an unapplied required gate cannot pass, and every corpus-independent
 value is frozen for Task 25 to bind.
+
+**Completion evidence:** `webapp/src/listenProfileValidationPolicy.ts` freezes
+policy version 1 under the same edit-and-bump semantics as the trace manifest.
+The round-one isolated floors are now corpus-independent rates — 98% Direct
+overall, 95% Tone overall, and 95% Course Clear for either renderer — with
+ceiling as the only count-derivation rule. No version-2 count is stated here;
+Task 25 must bind those rates to its finalized census. Absolute target outcomes
+are reported as product debt for every column, including `baseline-v1`, while
+isolated eligibility uses paired non-regression on the identical corpus.
+
+Promotion is separate from eligibility and requires at least one frozen material
+gain: one percentage point on a recognition, ordered-advance, or complete-passage
+rate; one 32 ms decoder-hop latency reduction; or removal of one unsafe event,
+without failing any safety or correctness gate. The unified report now includes a
+reference row produced by running `baseline-v1` through the same gate code, every
+profile's target debt and materiality evidence, and separate eligible and
+promotable ID lists. Parity everywhere can be eligible but never promotable.
+Frozen `1e-12` rate and `1e-9` ms representation epsilons make exact count-derived
+boundary gains deterministic without admitting a distinguishably smaller gain.
+
+Required-gate coverage is fail-closed. A complete result with an unapplied gate
+records that code as blocking and makes the profile ineligible; partial runs still
+remain `incomplete-evidence` and can only reject. An unknown policy version and an
+in-place amendment of a known version are both rejected.
+
+The committed evidence verifier requires the immutable Task 13 archives to omit a
+policy stamp, as the unversioned round-one files actually do, and rejects a
+policy-versioned substitute. It re-scores both archives without rendering or
+inference and produces identical policy-version-1 results using the same isolated,
+sequence, dynamics, latency, and safety-reduction materiality axes as the live
+evaluator. The
+incumbent's Tone debt is 1 overall advance (100/106 against 101) and 4 Course Clear
+advances (48/54 against 52). The open pair loses only its old
+`release-isolated-course-clear` rejection; the held pair loses both
+`release-isolated-recognition` and `release-isolated-course-clear`. All four remain
+ineligible on the one genuine surviving rejection,
+`safety-isolated-false-advance`, covering `isolated/direct/122` and
+`isolated/tone/124`. No threshold, registry entry, matcher policy, production
+default, or frozen archive changed. Dedicated policy tests, validator integration
+tests, archive re-score tests, the full unit suite, and the production build pass.
 
 ### Task 24 — Regenerate a per-domain archive and freeze the complete selection rule
 

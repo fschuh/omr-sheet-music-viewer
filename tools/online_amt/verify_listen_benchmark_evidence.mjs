@@ -91,6 +91,8 @@ export const CONFIRMATION_EVIDENCE = {
   manifestHash: "0ed1e71d",
   manifestCorpusHash: "10ae2e0b",
   registryVersion: 2,
+  /** Task 13 predates Task 23 and is required to carry no policy-version field. */
+  policyVersion: null,
   baselineProfileId: "baseline-v1",
   candidateProfileIds: ["early-open-v2", "steady-open-v2", "early-held-v2", "steady-held-v2"],
   rendererKeys: ["direct", "tone"],
@@ -344,6 +346,322 @@ export const CONFIRMATION_EVIDENCE = {
   },
   ],
 };
+
+/**
+ * Task 23's corpus-independent policy, restated in the archive reader.
+ *
+ * The browser implementation owns the live decision. This copy exists so the
+ * two immutable Task 13 JSON files can be re-scored without rebuilding or
+ * re-running the browser code that produced them. A webapp unit test keeps the
+ * version, rates, rounding rule, and material boundaries equal to the policy
+ * module.
+ */
+export const ROUND_TWO_POLICY_EVIDENCE = Object.freeze({
+  version: 1,
+  targetCountRounding: "ceiling",
+  recognitionTargetRates: Object.freeze({
+    direct: Object.freeze({ isolatedCorrectAdvanceRate: 0.98, courseClearCorrectAdvanceRate: 0.95 }),
+    tone: Object.freeze({ isolatedCorrectAdvanceRate: 0.95, courseClearCorrectAdvanceRate: 0.95 }),
+  }),
+  materialImprovement: Object.freeze({
+    minimumRateGain: 0.01,
+    rateComparisonEpsilon: 1e-12,
+    minimumLatencyReductionMs: 32,
+    latencyComparisonEpsilonMs: 1e-9,
+    minimumUnsafeEventReduction: 1,
+  }),
+  safetyGatesAreAbsolute: true,
+  correctnessEligibility: "paired-non-regression",
+  absoluteTargetsAre: "product-debt",
+  completeRunsFailClosed: true,
+});
+
+function roundTwoTargetAssessment(rendererKey, metric, observedCount, census) {
+  const rates = ROUND_TWO_POLICY_EVIDENCE.recognitionTargetRates[rendererKey];
+  const targetRate = metric === "isolated-correct-advance-rate"
+    ? rates.isolatedCorrectAdvanceRate
+    : rates.courseClearCorrectAdvanceRate;
+  const targetCount = Math.ceil(targetRate * census);
+  const observedRate = census === 0 ? 0 : observedCount / census;
+  return {
+    rendererKey,
+    metric,
+    targetRate,
+    census,
+    targetCount,
+    observedCount,
+    observedRate,
+    reached: observedCount >= targetCount,
+    debtCount: Math.max(0, targetCount - observedCount),
+    debtRate: Math.max(0, targetRate - observedRate),
+  };
+}
+
+function roundTwoMaterialRate(id, baselineRate, profileRate) {
+  const improvement = profileRate - baselineRate;
+  return {
+    id,
+    kind: "rate-gain",
+    baselineValue: baselineRate,
+    profileValue: profileRate,
+    improvement,
+    threshold: ROUND_TWO_POLICY_EVIDENCE.materialImprovement.minimumRateGain,
+    material: improvement + ROUND_TWO_POLICY_EVIDENCE.materialImprovement.rateComparisonEpsilon >=
+      ROUND_TWO_POLICY_EVIDENCE.materialImprovement.minimumRateGain,
+  };
+}
+
+function roundTwoMaterialLatency(id, baselineMs, profileMs) {
+  const improvement = baselineMs - profileMs;
+  return {
+    id,
+    kind: "latency-reduction",
+    baselineValue: baselineMs,
+    profileValue: profileMs,
+    improvement,
+    threshold: ROUND_TWO_POLICY_EVIDENCE.materialImprovement.minimumLatencyReductionMs,
+    material: improvement +
+      ROUND_TWO_POLICY_EVIDENCE.materialImprovement.latencyComparisonEpsilonMs >=
+      ROUND_TWO_POLICY_EVIDENCE.materialImprovement.minimumLatencyReductionMs,
+  };
+}
+
+function roundTwoMaterialUnsafeEvents(id, baselineCount, profileCount) {
+  const improvement = baselineCount - profileCount;
+  return {
+    id,
+    kind: "unsafe-event-reduction",
+    baselineValue: baselineCount,
+    profileValue: profileCount,
+    improvement,
+    threshold: ROUND_TWO_POLICY_EVIDENCE.materialImprovement.minimumUnsafeEventReduction,
+    material: improvement >=
+      ROUND_TWO_POLICY_EVIDENCE.materialImprovement.minimumUnsafeEventReduction,
+  };
+}
+
+function roundTwoUnsafeEventCount(run, profileId) {
+  const find = (renderer) => renderer.profiles
+    .find((profile) => profile.profileId === profileId);
+  const isolated = run.isolated.renderers.reduce((total, renderer) => (
+    total + find(renderer).distinguishableFalseAdvanceCount
+  ), 0);
+  const sequence = run.sequence.renderers.reduce((total, renderer) => {
+    const profile = find(renderer);
+    return total + profile.totals.falseAdvanceCount + profile.totals.skippedAdvanceCount +
+      profile.totals.duplicateAdvanceCount + profile.regressionTotals.falseAdvanceCount +
+      profile.regressionTotals.skippedAdvanceCount + profile.regressionTotals.duplicateAdvanceCount;
+  }, 0);
+  const dynamics = run.dynamics.renderers.reduce((total, renderer) => {
+    const profile = find(renderer);
+    return total + profile.safety.falseAdvanceCount + profile.safety.skippedAdvanceCount +
+      profile.safety.duplicateAdvanceCount;
+  }, 0);
+  return isolated + sequence + dynamics;
+}
+
+/**
+ * Re-scores one complete Task 13 archive under Task 23 without re-measurement.
+ *
+ * The old report remains unchanged and verifiable under the rule it actually
+ * ran. This adjacent result removes only the two challenger-only absolute floor
+ * failures, recomputes paired isolated correctness from the archived profile
+ * rows, reports the old targets as product debt for every column, and keeps
+ * every safety/replay/consistency rejection exactly as recorded.
+ */
+export function rescoreTask13ArchiveUnderRoundTwoPolicy(result, label = "Task 13 archive") {
+  const problems = confirmationEvidenceProblems(result, label);
+  if (problems.length > 0) {
+    throw new Error(`Cannot re-score an incomplete Task 13 archive:\n  ${problems.join("\n  ")}`);
+  }
+  const run = result[0];
+  const isolatedByRenderer = new Map(run.isolated.renderers
+    .map((renderer) => [renderer.rendererKey, renderer]));
+  const sequenceByRenderer = new Map(run.sequence.renderers
+    .map((renderer) => [renderer.rendererKey, renderer]));
+  const dynamicsByRenderer = new Map(run.dynamics.renderers
+    .map((renderer) => [renderer.rendererKey, renderer]));
+  const profileSummary = (renderer, profileId) => {
+    const profile = renderer.profiles.find((entry) => entry.profileId === profileId);
+    if (!profile) throw new Error(`${label}: ${renderer.rendererKey} has no ${profileId} row.`);
+    return profile;
+  };
+  const referenceTargets = [];
+  for (const rendererKey of CONFIRMATION_EVIDENCE.rendererKeys) {
+    const renderer = isolatedByRenderer.get(rendererKey);
+    const baseline = profileSummary(renderer, run.gates.baselineProfileId);
+    referenceTargets.push(
+      roundTwoTargetAssessment(
+        rendererKey,
+        "isolated-correct-advance-rate",
+        baseline.correctAdvanceCount,
+        renderer.correctTrialCount,
+      ),
+      roundTwoTargetAssessment(
+        rendererKey,
+        "course-clear-correct-advance-rate",
+        baseline.courseClearAdvanceCount,
+        baseline.courseClearCorrectTrialCount,
+      ),
+    );
+  }
+
+  const candidates = run.gates.candidates.map((oldCandidate) => {
+    const pairedCorrectness = [];
+    const recognitionTargets = [];
+    const materialImprovements = [];
+    const pairedFailures = [];
+    for (const rendererKey of CONFIRMATION_EVIDENCE.rendererKeys) {
+      const renderer = isolatedByRenderer.get(rendererKey);
+      const baseline = profileSummary(renderer, run.gates.baselineProfileId);
+      const profile = profileSummary(renderer, oldCandidate.profileId);
+      for (const definition of [
+        {
+          metric: "isolated-correct-advance-rate",
+          census: renderer.correctTrialCount,
+          baselineCount: baseline.correctAdvanceCount,
+          profileCount: profile.correctAdvanceCount,
+        },
+        {
+          metric: "course-clear-correct-advance-rate",
+          census: baseline.courseClearCorrectTrialCount,
+          baselineCount: baseline.courseClearAdvanceCount,
+          profileCount: profile.courseClearAdvanceCount,
+        },
+      ]) {
+        const deltaCount = definition.profileCount - definition.baselineCount;
+        const paired = { rendererKey, ...definition, deltaCount, passed: deltaCount >= 0 };
+        pairedCorrectness.push(paired);
+        if (!paired.passed) pairedFailures.push(definition.metric);
+        recognitionTargets.push(roundTwoTargetAssessment(
+          rendererKey,
+          definition.metric,
+          definition.profileCount,
+          definition.census,
+        ));
+        materialImprovements.push(roundTwoMaterialRate(
+          `isolated/${rendererKey}/${definition.metric}`,
+          definition.census === 0 ? 0 : definition.baselineCount / definition.census,
+          definition.census === 0 ? 0 : definition.profileCount / definition.census,
+        ));
+      }
+      if (baseline.p95OnsetToAdvanceMs !== null && profile.p95OnsetToAdvanceMs !== null) {
+        materialImprovements.push(roundTwoMaterialLatency(
+          `isolated/${rendererKey}/p95-onset-to-advance-ms`,
+          baseline.p95OnsetToAdvanceMs,
+          profile.p95OnsetToAdvanceMs,
+        ));
+      }
+    }
+    for (const rendererKey of CONFIRMATION_EVIDENCE.rendererKeys) {
+      const renderer = sequenceByRenderer.get(rendererKey);
+      const baseline = profileSummary(renderer, run.gates.baselineProfileId);
+      const profile = profileSummary(renderer, oldCandidate.profileId);
+      for (const [metric, field] of [
+        ["independent-match-rate", "independentMatchRate"],
+        ["ordered-advance-rate", "orderedAdvanceRate"],
+        ["complete-passage-rate", "completePassageRate"],
+      ]) {
+        materialImprovements.push(roundTwoMaterialRate(
+          `sequence/${rendererKey}/${metric}`,
+          baseline.totals[field],
+          profile.totals[field],
+        ));
+      }
+      if (baseline.totals.p95OrderedAdvanceLatencyMs !== null &&
+          profile.totals.p95OrderedAdvanceLatencyMs !== null) {
+        materialImprovements.push(roundTwoMaterialLatency(
+          `sequence/${rendererKey}/p95-ordered-advance-ms`,
+          baseline.totals.p95OrderedAdvanceLatencyMs,
+          profile.totals.p95OrderedAdvanceLatencyMs,
+        ));
+      }
+    }
+    for (const rendererKey of CONFIRMATION_EVIDENCE.rendererKeys) {
+      const renderer = dynamicsByRenderer.get(rendererKey);
+      const baseline = profileSummary(renderer, run.gates.baselineProfileId);
+      const profile = profileSummary(renderer, oldCandidate.profileId);
+      for (const profileSuite of profile.equalPiano) {
+        const baselineSuite = baseline.equalPiano
+          .find(({ suite }) => suite === profileSuite.suite);
+        for (const [metric, field] of [
+          ["independent-match-rate", "independentMatchRate"],
+          ["ordered-advance-rate", "orderedAdvanceRate"],
+          ["complete-passage-rate", "completePassageRate"],
+        ]) {
+          if (baselineSuite[field] === null || profileSuite[field] === null) continue;
+          materialImprovements.push(roundTwoMaterialRate(
+            `dynamics/${rendererKey}/${profileSuite.suite}/${metric}`,
+            baselineSuite[field],
+            profileSuite[field],
+          ));
+        }
+      }
+    }
+    materialImprovements.push(roundTwoMaterialUnsafeEvents(
+      "cross-domain/unsafe-event-count",
+      roundTwoUnsafeEventCount(run, run.gates.baselineProfileId),
+      roundTwoUnsafeEventCount(run, oldCandidate.profileId),
+    ));
+    const supersededFloorCodes = new Set([
+      "release-isolated-recognition",
+      "release-isolated-course-clear",
+    ]);
+    const survivingRoundOneRejections = oldCandidate.failedGateCodes
+      .filter((code) => !supersededFloorCodes.has(code));
+    if (pairedCorrectness.some(({ metric, passed }) => (
+      metric === "isolated-correct-advance-rate" && !passed
+    ))) {
+      survivingRoundOneRejections.push("release-isolated-recognition");
+    }
+    if (pairedCorrectness.some(({ metric, passed }) => (
+      metric === "course-clear-correct-advance-rate" && !passed
+    ))) {
+      survivingRoundOneRejections.push("release-isolated-course-clear");
+    }
+    const unappliedRequiredGateCodes = oldCandidate.gates
+      .filter(({ applied }) => run.gates.evidenceComplete && !applied)
+      .map(({ code }) => code);
+    const failedGateCodes = [...new Set([
+      ...survivingRoundOneRejections,
+      ...unappliedRequiredGateCodes,
+    ])];
+    const eligible = failedGateCodes.length === 0 && pairedFailures.length === 0;
+    const materialImprovementMet = materialImprovements.some(({ material }) => material);
+    return {
+      profileId: oldCandidate.profileId,
+      oldFailedGateCodes: oldCandidate.failedGateCodes,
+      failedGateCodes,
+      removedRoundOneRejections: oldCandidate.failedGateCodes
+        .filter((code) => supersededFloorCodes.has(code) && !failedGateCodes.includes(code)),
+      pairedCorrectness,
+      recognitionTargets,
+      materialImprovements,
+      materialImprovementMet,
+      unappliedRequiredGateCodes,
+      eligible,
+      promotionEligible: eligible && materialImprovementMet,
+    };
+  });
+  return {
+    policyVersion: ROUND_TWO_POLICY_EVIDENCE.version,
+    sourcePolicyVersion: CONFIRMATION_EVIDENCE.policyVersion,
+    sourceManifestVersion: run.gates.domains[0].manifestVersion,
+    sourceRegistryVersion: run.gates.registryVersion,
+    baselineProfileId: run.gates.baselineProfileId,
+    reference: {
+      profileId: run.gates.baselineProfileId,
+      pairedNonRegressionPassed: true,
+      recognitionTargets: referenceTargets,
+      materialImprovementMet: false,
+      promotionEligible: false,
+    },
+    candidates,
+    eligibleProfileIds: candidates.filter(({ eligible }) => eligible).map(({ profileId }) => profileId),
+    promotableProfileIds: candidates
+      .filter(({ promotionEligible }) => promotionEligible).map(({ profileId }) => profileId),
+  };
+}
 
 const DIGEST_PATTERN = /^[0-9a-f]{8}$/;
 
@@ -750,7 +1068,20 @@ export function confirmationEvidenceProblems(result, label) {
   if (gates.registryVersion !== CONFIRMATION_EVIDENCE.registryVersion) {
     report(
       `was measured against profile registry version ${gates.registryVersion}, not ` +
-        `${CONFIRMATION_EVIDENCE.registryVersion}`,
+      `${CONFIRMATION_EVIDENCE.registryVersion}`,
+    );
+  }
+  if (CONFIRMATION_EVIDENCE.policyVersion === null) {
+    if (Object.hasOwn(gates, "policyVersion")) {
+      report(
+        `was measured under policy version ${JSON.stringify(gates.policyVersion)}, but the ` +
+          "frozen Task 13 evidence is the unversioned round-one policy",
+      );
+    }
+  } else if (gates.policyVersion !== CONFIRMATION_EVIDENCE.policyVersion) {
+    report(
+      `was measured under policy version ${JSON.stringify(gates.policyVersion)}, not ` +
+        `${CONFIRMATION_EVIDENCE.policyVersion}`,
     );
   }
   if (gates.baselineProfileId !== CONFIRMATION_EVIDENCE.baselineProfileId) {

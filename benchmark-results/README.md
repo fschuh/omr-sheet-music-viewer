@@ -260,3 +260,41 @@ A fresh repetition reproduces the identity and outcome digests above and compare
 equal to both archives; it will not reproduce their file hashes, because the
 excluded host-timing, audio-diagnostic, and process-local fields differ per
 process by design.
+
+## Task 23 round-two policy re-score
+
+Task 23 does not create or amend a measurement archive. The function
+`rescoreTask13ArchiveUnderRoundTwoPolicy` in the committed evidence verifier reads
+each immutable Task 13 file, first verifies it as a complete round-one repetition,
+and then emits an adjacent policy-version-1 decision from the archived summaries.
+Tests run that re-score over both files and require byte-identical decisions.
+Because Task 13 predates the versioned policy, its frozen contract requires the
+`policyVersion` field to be absent; a later policy-versioned archive is refused
+rather than silently treated as Task 13 evidence.
+
+The former corpus-specific floors are represented by frozen rates and ceiling:
+98% Direct overall, 95% Tone overall, and 95% Course Clear under either renderer.
+They still derive the version-1 targets 104/106, 101/106, and 52/54, but they now
+report product debt rather than challenger eligibility. `baseline-v1` is evaluated
+too: its Tone debt is 1 overall correct advance and 4 Course Clear advances.
+Materiality is recomputed over the same complete axis set as the live evaluator:
+isolated rates and latency, sequence rates and latency, dynamics equal-piano suite
+rates, and cross-domain unsafe-event reduction. Frozen representation epsilons
+make an exact count-derived one-percentage-point or 32 ms gain land on its stated
+boundary regardless of binary subtraction direction.
+
+The re-score removes these round-one rejection codes:
+
+| Candidate | Removed as asymmetric correctness floors | Rejections that survive |
+| --- | --- | --- |
+| `early-open-v2` | `release-isolated-course-clear` | `safety-isolated-false-advance` |
+| `steady-open-v2` | `release-isolated-course-clear` | `safety-isolated-false-advance` |
+| `early-held-v2` | `release-isolated-recognition`, `release-isolated-course-clear` | `safety-isolated-false-advance` |
+| `steady-held-v2` | `release-isolated-recognition`, `release-isolated-course-clear` | `safety-isolated-false-advance` |
+
+All four candidates are materially better somewhere in the archived correctness
+metrics, and all four remain ineligible because every one still advances both
+distinguishable omitted-bass regressions. The re-score therefore changes neither
+the Task 13 evidence nor the production decision; it records exactly which old
+rejections Task 23 supersedes before manifest version 2 binds the rates to its new
+census.

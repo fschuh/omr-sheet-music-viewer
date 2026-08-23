@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -11,6 +11,7 @@ import {
   confirmationEvidenceProblems,
   firstEvidenceDifference,
   main,
+  rescoreTask13ArchiveUnderRoundTwoPolicy,
 } from "./verify_listen_benchmark_evidence.mjs";
 
 const COLUMN = [
@@ -444,6 +445,11 @@ const INCOMPLETE_EVIDENCE_CASES = [
     what: "another profile registry version",
     break: (run) => { run[0].gates.registryVersion = 1; },
     expect: /profile registry version 1, not 2/,
+  },
+  {
+    what: "a policy-versioned archive substituted for the unversioned round-one evidence",
+    break: (run) => { run[0].gates.policyVersion = 2; },
+    expect: /policy version 2.*unversioned round-one policy/,
   },
   {
     what: "another baseline profile",
@@ -1030,6 +1036,75 @@ test("a file that is not an array of results is refused before anything is read"
 test("the frozen-evidence mode and the usage refusal are unchanged", async () => {
   await assert.rejects(() => main(["--compare", "only-one-path.json"]), /Usage:/);
   await assert.rejects(() => main(["--verify"]), /Usage:/);
+});
+
+test("both frozen Task 13 archives re-score identically under the round-two policy", async () => {
+  const paths = [
+    new URL("../../benchmark-results/listen-profile-validation-task13-run1.json", import.meta.url),
+    new URL("../../benchmark-results/listen-profile-validation-task13-run2.json", import.meta.url),
+  ];
+  const [first, second] = await Promise.all(paths.map(async (path) => (
+    JSON.parse((await readFile(path)).toString("utf8"))
+  )));
+  const rescoredFirst = rescoreTask13ArchiveUnderRoundTwoPolicy(first, "Task 13 run 1");
+  const rescoredSecond = rescoreTask13ArchiveUnderRoundTwoPolicy(second, "Task 13 run 2");
+  assert.deepEqual(rescoredSecond, rescoredFirst);
+  assert.equal(rescoredFirst.policyVersion, 1);
+  assert.equal(rescoredFirst.sourcePolicyVersion, null);
+  assert.equal(rescoredFirst.reference.pairedNonRegressionPassed, true);
+  assert.deepEqual(
+    rescoredFirst.reference.recognitionTargets
+      .filter(({ rendererKey }) => rendererKey === "tone")
+      .map(({ targetCount, debtCount }) => [targetCount, debtCount]),
+    [[101, 1], [52, 4]],
+  );
+  assert.deepEqual(rescoredFirst.eligibleProfileIds, []);
+  assert.deepEqual(rescoredFirst.promotableProfileIds, []);
+  for (const candidate of rescoredFirst.candidates) {
+    assert.deepEqual(candidate.failedGateCodes, ["safety-isolated-false-advance"]);
+    assert.equal(candidate.unappliedRequiredGateCodes.length, 0);
+    assert.equal(candidate.materialImprovementMet, true);
+    assert.equal(candidate.eligible, false);
+    assert.equal(candidate.promotionEligible, false);
+    assert.equal(candidate.materialImprovements.length, 27);
+    assert.deepEqual(
+      [...new Set(candidate.materialImprovements.map(({ kind }) => kind))].sort(),
+      ["latency-reduction", "rate-gain", "unsafe-event-reduction"],
+    );
+    assert.ok(candidate.materialImprovements.some(({ id }) => (
+      id === "dynamics/tone/dynamics-constant/independent-match-rate"
+    )));
+    assert.ok(candidate.materialImprovements.some(({ id }) => (
+      id === "cross-domain/unsafe-event-count"
+    )));
+  }
+  assert.deepEqual(
+    rescoredFirst.candidates.map(({ profileId, removedRoundOneRejections }) => (
+      [profileId, removedRoundOneRejections]
+    )),
+    [
+      ["early-open-v2", ["release-isolated-course-clear"]],
+      ["steady-open-v2", ["release-isolated-course-clear"]],
+      ["early-held-v2", ["release-isolated-recognition", "release-isolated-course-clear"]],
+      ["steady-held-v2", ["release-isolated-recognition", "release-isolated-course-clear"]],
+    ],
+  );
+
+  // The archive reader has its own plain-JavaScript policy implementation.
+  // Exercise its count-derived boundary directly rather than relying only on
+  // the TypeScript policy's regression test.
+  const boundaryArchive = structuredClone(first);
+  const directSequence = boundaryArchive[0].sequence.renderers
+    .find(({ rendererKey }) => rendererKey === "direct");
+  directSequence.profiles.find(({ profileId }) => profileId === "baseline-v1")
+    .totals.independentMatchRate = 56 / 100;
+  directSequence.profiles.find(({ profileId }) => profileId === "early-open-v2")
+    .totals.independentMatchRate = 57 / 100;
+  const boundary = rescoreTask13ArchiveUnderRoundTwoPolicy(boundaryArchive, "boundary archive")
+    .candidates.find(({ profileId }) => profileId === "early-open-v2")
+    .materialImprovements.find(({ id }) => id === "sequence/direct/independent-match-rate");
+  assert.ok(boundary.improvement < 0.01, "the fixture did not reproduce binary subtraction noise");
+  assert.equal(boundary.material, true);
 });
 
 /* --------------------------------------------------------------------- *
