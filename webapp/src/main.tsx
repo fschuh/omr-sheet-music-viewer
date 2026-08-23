@@ -20,7 +20,8 @@ if (
   query.has("listen-inference-reset") ||
   query.has("listen-dynamics-constant") ||
   query.has("listen-dynamics-mixed") ||
-  query.has("listen-dynamics-case")
+  query.has("listen-dynamics-case") ||
+  query.has("listen-bass-qualification")
 ) {
   void import("./ListenBenchmarkPage").then(({ ListenBenchmarkPage }) => {
     root.render(<StrictMode><ListenBenchmarkPage /></StrictMode>);

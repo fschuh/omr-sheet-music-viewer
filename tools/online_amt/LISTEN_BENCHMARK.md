@@ -7,6 +7,256 @@
 Entries are kept newest first so renderer and recognition changes remain
 comparable over time.
 
+### Bass-onset and repeated-chord qualification — corrective rerun August 23, 2026
+
+The corrective rerun of the second round's first measurement, originally
+completed August 22, 2026. It answers two questions that a single confidence
+axis has to answer at the same time: what a fresh-onset gate held at 0.60 on the
+bass costs in refused genuine attacks, and why the repeated Course Clear chord
+`[62, 74, 82]` is never recognized on the attack that sounds it. No threshold,
+policy, gate, or default changed, and nothing here selects a profile.
+
+```bash
+LISTEN_BENCHMARK_OUTPUT_PATH=benchmark-results/listen-bass-qualification-task22.json \
+  node tools/online_amt/run_browser_benchmarks.mjs \
+  http://127.0.0.1:5174/online-amt-benchmark.html listen-bass-qualification
+```
+
+Remeasured August 23, 2026 on this development machine at commit `a9b6173` plus
+this change, with Chrome 151.0.7922.173 on Linux, `bundled-piano-web-audio-v1` and
+`bundled-piano-tone-v2`, the unchanged `online_amt_streaming.onnx` model, and
+manifest version 1, hash `0ed1e71d`, corpus hash `10ae2e0b`. 445 traces were
+captured once each and replayed through twenty-one profile columns: the complete
+268-trace isolated corpus, all 139 `discovery` continuous traces, all 37
+`regression-only` continuous traces, and the held-back `v13` layer. Trace reuse
+and the corpus census are verified in the archive.
+
+Evidence is attributed to attacks by the repository's existing single-owner rule:
+a window runs from an attack's own scheduled time to the earlier of the
+attribution deadline and one epsilon before the next attack, so no instant is
+counted twice. This matters in practice — 248 of the measured windows are cut
+short by their successor, and the 32 ms frame cadence coincides with an attack
+schedule at 2,720 ms, 6,720 ms, and 10,720 ms. On this corpus the rule moves one
+value: the sustained bass evidence of `sequence/direct/course-clear-27/125ms`
+attack 19 falls from 0.0048 to 0.0016 once the frame at 2,720 ms is credited only
+to attack 20. No band, gate count, qualification path, recovery distance, or
+decoded-structure hash changes with it.
+
+#### What a 0.60 bass gate costs on isolated fixtures
+
+Eighteen Course Clear triads appear in the isolated corpus both played complete
+and played without their lowest note. Those matched pairs hold the genuine and
+the hallucinated evidence for the identical chord, and they separate cleanly:
+
+| Renderer | Genuine attacks | Weakest genuine bass onset | Genuine in `[0.50, 0.60)` | Refused by 0.60 |
+| --- | ---: | ---: | ---: | ---: |
+| Direct | 42 raw / 18 pairs | 0.7161 | 0 | 0 raw, 0 pairs |
+| Tone | 42 raw / 18 pairs | 0.9926 | 0 | 0 raw, 0 pairs |
+
+| Renderer | Hallucinated attacks | No bass onset at all | In `[0.50, 0.60)` | Refused by 0.60 | Refused by 0.50 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Direct | 18 raw / 16 pairs | 17 | 1 | 18 raw, 16 pairs | 17 raw, 15 pairs |
+| Tone | 18 raw / 16 pairs | 17 | 1 | 18 raw, 16 pairs | 17 raw, 15 pairs |
+
+On this corpus a bass gate at 0.60 costs nothing in either renderer and refuses
+every hallucinated onset, including the two that a 0.50 gate admits. Both
+distributions are reported twice, by raw trace count and by unique musical-input
+pair; a pair is banded by the instance a gate has to survive — the weakest
+genuine attack and the strongest hallucinated onset — so one strong rendering
+cannot hide the rendering that fails. Extending the population from the matched
+pairs to all 24 isolated triad chords moves nothing: the weakest genuine bass
+onset is 0.6811 under Direct and 0.9860 under Tone.
+
+#### The same measurement outside the isolated suite
+
+The continuous corpus is where the two sides overlap, and it overlaps in both
+directions. 774 genuine triad attacks were measured across 93 traces:
+
+| Renderer | Genuine attacks | No bass onset | In `[0.50, 0.60)` | Weakest onset | Refused by 0.60 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Direct | 378 raw / 21 pairs | 26 | 9 raw, 7 pairs | 0.5093 | 35 raw, 18 pairs |
+| Tone | 396 raw / 20 pairs | 35 | 6 raw, 4 pairs | 0.5182 | 41 raw, 19 pairs |
+
+Every suite contributes: 7 corridor attacks in the sequence corpus, 6 in the
+constant-layer dynamics matrix, 1 in the articulation matrix, and 1 in the mixed
+run, with weakest onsets of 0.5093, 0.5344, 0.5396, and 0.5217 respectively. All
+61 attacks that produced no bass onset at all are in the sequence corpus, at its
+faster speeds. The `v05` attack 24 onset of 0.5968 that Task 05 recorded is
+therefore not an isolated prior: it is one of fifteen genuine bass attacks inside
+the corridor, spread over both renderers and all four continuous suites.
+
+The other direction is worse for a scalar gate. The four continuous attacks that
+do not sound the bass and still decode one are the dedicated `carried-bass-safety`
+and `shared-sustained-bass` families, where the bass is *still sounding* from the
+previous attack while the upper voices are re-struck:
+
+| Trace | Attack | Target | Played | Bass onset |
+| --- | ---: | --- | --- | ---: |
+| `sequence/direct/carried-bass-safety/125ms` | 1 | `[48, 60, 64]` | `[60, 64]` | 0.6415 |
+| `sequence/tone/carried-bass-safety/125ms` | 1 | `[48, 60, 64]` | `[60, 64]` | 0.9999 |
+| `sequence/direct/shared-sustained-bass/125ms` | 1 | `[48, 62, 65]` | `[62, 65]` | 0.9997 |
+| `sequence/tone/shared-sustained-bass/125ms` | 1 | `[48, 62, 65]` | `[62, 65]` | 0.9995 |
+
+Three of the four are above 0.999, so no confidence gate the version-1 grid can
+express refuses them; the fixed fresh-bass and carry-over rules are what refuse
+them today, and they already do — `baseline-v1` records zero dedicated safety
+events. So on continuous evidence a bass-specific confidence axis buys nothing
+against the dedicated safety families, while a gate at 0.60 refuses genuine
+attacks that reach as low as 0.5093 under Direct and 0.5182 under Tone.
+
+#### The two omitted-bass fixtures, pinned
+
+Both round-one failures reproduce from rendered audio under the renderer that
+produced them, and both are now committed regressions in
+`webapp/src/listenOmittedBassFixtures.ts`:
+
+| Fixture | Score moment | Target | Played | Phantom bass onset | Structure hash |
+| --- | --- | --- | --- | ---: | --- |
+| `isolated/direct/122` | Measure 2, moment 4 | `[48, 60, 68]` | `[60, 68]` | 0.5267 on C3 | `56d57ace` |
+| `isolated/tone/124` | Measure 2, moment 6 | `[56, 68, 75]` | `[68, 75]` | 0.5094 on G#3 | `c80411e6` |
+
+Each fixture pins **per profile**: `baseline-v1`'s refusal and each `v2`
+candidate's advance, together with the pitch each candidate admitted without it
+having been sounded and the qualification path that produced the outcome. The
+incumbent's refusal is checked exactly as strictly as a candidate's advance,
+because a change that quietly made `baseline-v1` advance one of these is the most
+dangerous outcome the fixture exists to catch. A rerun of the command
+re-verifies both against rendered audio and aborts on any difference.
+
+The mechanism is confirmed as the ordinary fresh-onset path: in both cases the
+bass qualifies through a decoded onset in `[0.50, 0.60)` under every candidate,
+never through sustained evidence, which the fresh-bass rule refuses for a triad.
+
+The cross-rendered counterparts are recorded as diagnostics and are not required
+to reproduce anything. Neither decodes a bass onset at all: `isolated/tone/122`
+(`1946c88f`) and `isolated/direct/124` (`10b385b9`) are refused by every profile
+through `bass-requires-fresh-onset`, with sustained bass evidence of 0.3003 and
+0.4253. The hallucination is a property of one renderer's signal path on one
+chord, not of the musical input.
+
+#### Why the repeated chord is late, per pitch and per repetition
+
+Every physical attack of `[62, 74, 82]` was recorded under `baseline-v1` and each
+frozen candidate, with the decoded onset confidence, sustained target evidence,
+active membership, and matcher qualification path of all three pitches. The
+qualification paths are emitted by the matcher itself through a read-only
+observer, so no rejection is reported that the matcher did not make; every
+observed replay is checked against an unobserved one before it is read.
+
+`v05` under `baseline-v1`, the only one of the three runs whose playhead is armed
+on this chord when it sounds:
+
+| Attack | Role | 62 (bass) | 74 (D5) | 82 | Limiting path |
+| ---: | --- | --- | --- | --- | --- |
+| 23 | transition | onset 0.9954 — accepted | **no onset**, evidence 0.1935 | onset 0.9936 — accepted | active-target evidence rejected |
+| 24 | exact repetition | onset 0.5968 — below 0.60 | no onset, evidence 0.4587 — accepted | onset 0.8661 — accepted | fresh onset rejected |
+| 25 | exact repetition | onset 0.9999 — accepted | onset 0.8152 — accepted | onset 0.9980 — accepted | advanced |
+
+The two sides of the case are therefore two different pitches on two different
+repetitions. On the first attack the bass is not the problem at all: it produces
+a 0.9954 onset and qualifies. What blocks the target is D5, which the decoder
+never re-onsets and whose sustained evidence reaches only 0.1935 — below every
+active-target gate in the version-1 grid. On the second repetition D5 has
+recovered to 0.4587 and qualifies through sustained evidence, and it is the bass
+that blocks, at 0.5968, inside the corridor and below the incumbent's 0.60.
+
+The plan's shorthand that "74 and 82 carry" needs one correction. Both are
+repeated from the preceding chord `[65, 74, 82]`, so neither is new to the score,
+but with a 420 ms hold at a 1,000 ms interval neither is still sounding when the
+attack arrives: the decoded active set is empty immediately before it. The record
+reports both facts separately — `playedByPreviousAttack` and
+`soundingBeforeAttack` — and a test pins them, so this cannot regress to the
+claim that every pitch carried.
+
+`v13` and the mixed run reproduce the identical decoded signature — bass and 82
+onset above 0.99 on the first attack while D5 produces no onset and only 0.1627
+and 0.0958 of evidence — but under `baseline-v1` neither run's playhead has
+reached the repeated region at all. It is armed on target 8 in `v13` and target 4
+in the mixed run, so all three repetitions are recorded as `target-not-armed`,
+and the chord never advances under the incumbent in either run.
+
+#### The three-run minimum, and what no active gate can do
+
+| Run | Partition | Limiting upper-voice evidence on the first attack |
+| --- | --- | ---: |
+| `dynamics-constant/tone/salamander/v05` | `regression-only` | 0.1935 |
+| `dynamics-constant/tone/salamander/v13` | `confirmation` | 0.1627 |
+| `dynamics-mixed/tone/salamander` | `discovery` | 0.0958 |
+
+The minimum across the three runs is **0.0958**, not `v05`'s 0.1935, and Task 24
+freezes any below-0.20 diagnostic point against that value. The lowest
+active-target gate the version-1 grid measures is 0.20, so no gate in it admits
+the limiting upper voice on any of the three runs: a scalar active-target gate
+cannot reach source distance 0 here, whatever the onset gate does.
+
+#### What it costs today, and what each counterfactual changes
+
+| Profile | `v05` | `v13` | mixed |
+| --- | --- | --- | --- |
+| `baseline-v1` | distance 2, 2,220 ms | never advances | never advances |
+| all four `v2` candidates | distance 1, 1,228 ms | distance 1, 1,228 ms | distance 1, 1,228 ms |
+| all sixteen counterfactuals | distance 2, 2,220 ms | never advances | never advances |
+
+Each candidate additionally recovers the second repetition of the chord, again at
+distance 1 and at 1,220 ms, in all three runs. `baseline-v1` never advances that
+second repetition anywhere, and neither does any counterfactual: every one of the
+sixteen recovers exactly what the incumbent recovers, `v05` target 23 at distance
+2 and 2,220 ms, and nothing else.
+
+A full attack of playhead lag on a repeated chord is the shipped behaviour, not a
+candidate regression, and on two of the three runs the incumbent never recovers
+the chord at all. No measured profile reaches source distance 0 anywhere. The
+recovery the candidates produce comes from the lower fresh-onset gate: every one
+of the sixteen counterfactuals holds onset at 0.60 and none of them improves any
+run, which is what a 0.5968 bass onset predicts.
+
+The sixteen counterfactuals were replayed over the whole captured corpus, and
+their complete safety and regression evidence is in the archive. The four
+high-onset, open-active profiles reproduce their round-one rejection per trace
+and per classification:
+
+| Profile | Introduced safety events | Committed regressions |
+| --- | --- | --- |
+| `o0p600-t0p500-a0p200-x0p900-b1` | `sequence/tone/course-clear-27/167ms` target 10, `dynamics-constant/tone/salamander/v14` target 8 | pass |
+| `o0p600-t0p500-a0p200-x0p940-b1` | the same two | pass |
+| `o0p600-t0p500-a0p200-x0p970-b1` | the same two | pass |
+| `o0p600-t0p500-a0p200-x0p990-b1` | the same two plus `course-clear-27/333ms` targets 9 and 10 | **loses one** |
+
+This corrects one sentence in the plan: all four open-active profiles carry the
+`course-clear-27/167ms` and `salamander/v14` false advances, not the `x0p970`
+variant alone, and the `x0p990` variant adds two more on `course-clear-27/333ms`
+as well as the committed-regression loss. The measured rows match the Task 08
+archive's per-trace deltas exactly, with target indices the archive did not hold.
+
+The twelve held-active profiles introduce no safety event anywhere and keep every
+committed regression, and they buy nothing. None of them advances an omitted-bass
+fixture, none changes any repeated-chord distance, and on isolated recognition
+they are at best identical to `baseline-v1` (the three `x0p970` columns) and
+otherwise worse: the `x0p900` and `x0p940` columns lose two Direct fixtures each
+and gain none in either renderer. An active gate of 0.275 therefore does **not**
+preserve the recovery that 0.20 produced — the two fixtures the `open` candidates
+recover in each renderer are recovered by no held-active profile.
+
+#### Relationship to the other diagnosed cases
+
+These are three separate cases and a fix for one is not evidence for either
+other. In the Tone 333 ms case a later chord genuinely sounded the shared pitch
+the stalled target was waiting for. In the omitted-bass fixtures the bass was
+never played and the decoder invented it. In the repeated-chord case the pitches
+are all genuinely re-struck and the decoder fails to re-onset one of them. They
+share only the broad policy of completing a target without a fresh attack on
+every target pitch.
+
+Score-rise retrigger detection remains a standing non-goal and is not proposed
+here: it is the prior attempt at this exact problem, and its best measured
+candidate created 22 false or duplicate events to recover two attacks. The
+attribution this round records is that the decoder emitted no D5/74 onset on the
+first attack of the repeated chord in all three runs, and none on the second
+repetition in `v05`. If neither confidence qualification through the existing
+gates nor a measured bass-specific axis reaches source distance 0 safely, that
+missing re-onset is a Task 29 decoder or model input rather than permission for
+another threshold grid.
+
 ### Production profile decision — August 22, 2026
 
 The one auditable global-default decision the frozen evidence was collected for.
@@ -2404,6 +2654,12 @@ node tools\online_amt\run_browser_benchmarks.mjs `
 
 node tools\online_amt\run_browser_benchmarks.mjs `
   http://127.0.0.1:5174/online-amt-benchmark.html listen-dynamics-case-tone salamander v05
+
+node tools\online_amt\run_browser_benchmarks.mjs `
+  http://127.0.0.1:5174/online-amt-benchmark.html listen-bass-qualification
+
+node tools\online_amt\run_browser_benchmarks.mjs `
+  http://127.0.0.1:5174/online-amt-benchmark.html listen-bass-qualification repeated-chord
 ```
 
 `listen-profile-validation` is the unified production-candidate gate. It runs
@@ -2518,6 +2774,24 @@ quoted by a release gate. The historical single-profile `listen-dynamics-constan
 and `listen-dynamics-mixed` commands are unchanged; their results now record
 `baseline-v1` by name rather than following whichever profile production
 defaults to.
+
+`listen-bass-qualification` is the Task 22 measurement. It captures the complete
+isolated corpus, every `discovery` and `regression-only` continuous trace, and the
+three Tone plus Salamander runs where the repeated Course Clear chord recurs — one
+capture per manifest trace — and replays twenty-one profile columns against each
+one: `baseline-v1`, the four frozen `v2` candidates, and the sixteen version-1
+counterfactual grid profiles the second round names. It reports the decoded bass
+onset confidence of every triad attack, separated into genuinely sounded and
+hallucinated, per renderer and both by raw trace count and by unique musical
+input; the per-pitch qualification record of every repetition of `[62, 74, 82]`,
+read from the matcher's own gate decisions; and every counterfactual's safety and
+regression evidence beside the round-one verdict the Task 08 archive recorded for
+it. It selects nothing, ranks nothing, and changes no threshold, gate, or default.
+The optional trailing argument narrows the corpus to `isolated`, `continuous`,
+`repeated-chord`, or `omitted-bass` for a focused smoke; a narrowed run records
+itself as `corpus.complete: false` and may not be quoted as the measurement. Every
+captured omitted-bass trial that a committed fixture pins is re-verified against
+it, so a rerun that no longer produces the phantom bass onset aborts the command.
 
 `listen-dynamics-case` renders one constant-layer run instead of the 40-run
 matrix and prints the complete forensics of every advancement counted against a

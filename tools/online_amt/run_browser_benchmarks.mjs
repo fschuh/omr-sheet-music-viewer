@@ -111,6 +111,15 @@ const LISTEN_DYNAMICS_MIXED_MODE = [
   "listen-dynamics-mixed-legacy",
   "listen-dynamics-mixed-tone",
 ].includes(CONFIGURATION_FILTER);
+// The Task 22 measurement: one capture per manifest trace, then the bass-onset
+// distributions, the repeated-chord qualification records, and the sixteen
+// counterfactual replays. It captures both renderers itself, because every
+// distribution it reports is stated per renderer against one manifest.
+const LISTEN_BASS_QUALIFICATION_MODE = CONFIGURATION_FILTER === "listen-bass-qualification";
+// An optional trailing argument names one or more corpus subsets — `isolated`,
+// `continuous`, `repeated-chord`, `omitted-bass` — for a focused smoke. A
+// narrowed run records itself as incomplete rather than as the measurement.
+const BASS_QUALIFICATION_SCOPES = LISTEN_BASS_QUALIFICATION_MODE ? process.argv[4] : undefined;
 const LISTEN_DYNAMICS_CASE_MODE = [
   "listen-dynamics-case",
   "listen-dynamics-case-legacy",
@@ -283,7 +292,7 @@ async function runConfiguration(configuration) {
         LISTEN_RETRIGGER_SWEEP_MODE || LISTEN_ARTICULATION_MODE ||
         LISTEN_INFERENCE_RESET_MODE || LISTEN_DYNAMICS_CONSTANT_MODE ||
         LISTEN_DYNAMICS_MIXED_MODE || LISTEN_DYNAMICS_CASE_MODE ||
-        LISTEN_SEQUENCE_CASE_MODE) &&
+        LISTEN_SEQUENCE_CASE_MODE || LISTEN_BASS_QUALIFICATION_MODE) &&
         /online-amt-benchmark\.html(?:\?|$)/.test(BASE_URL)
       ? BASE_URL.replace(/online-amt-benchmark\.html/, "index.html")
       : BASE_URL;
@@ -451,6 +460,11 @@ async function runConfiguration(configuration) {
         // every frozen profile.
         : LISTEN_DYNAMICS_VALIDATION_MODE
         ? 5_400_000
+        // Both renderers' isolated corpus, every discovery and regression-only
+        // continuous trace, and the three repeated-chord runs are captured once,
+        // then replayed through twenty-one profile columns.
+        : LISTEN_BASS_QUALIFICATION_MODE
+        ? 10_800_000
         : (LISTEN_RETRIGGER_SWEEP_MODE || LISTEN_DYNAMICS_CONSTANT_MODE)
         ? 1_200_000
         : (LISTEN_ACCURACY_MODE || LISTEN_SEQUENCE_MODE || LISTEN_THRESHOLD_SWEEP_MODE ||
@@ -486,6 +500,13 @@ async function runConfiguration(configuration) {
             const { conciseListenSequenceCaseResult } =
               await import("/src/listenSequenceCaseBenchmark.ts");
             return conciseListenSequenceCaseResult(result);
+          })()`
+        : LISTEN_BASS_QUALIFICATION_MODE
+        ? `(async () => {
+            const result = window.listenBassQualificationResult;
+            const { conciseListenBassQualificationResult } =
+              await import("/src/listenBassQualificationBenchmark.ts");
+            return conciseListenBassQualificationResult(result);
           })()`
         : LISTEN_DYNAMICS_CASE_MODE
         ? `(async () => {
@@ -1149,6 +1170,12 @@ const selectedConfigurations = FINGERING_SMOKE_MODE
       `listen-sequence-case=auto&benchmark-sequence=${SEQUENCE_CASE_SEQUENCE}` +
         `&benchmark-interval=${SEQUENCE_CASE_INTERVAL_MS}`,
     )
+  : LISTEN_BASS_QUALIFICATION_MODE
+  ? [{
+      name: "listen-bass-qualification",
+      query: "listen-bass-qualification=auto" +
+        (BASS_QUALIFICATION_SCOPES ? `&benchmark-suite=${BASS_QUALIFICATION_SCOPES}` : ""),
+    }]
   : LISTEN_DYNAMICS_CASE_MODE
   ? pairedRendererConfigurations(
       "listen-dynamics-case",

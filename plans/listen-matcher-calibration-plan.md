@@ -2155,7 +2155,50 @@ requires a new plan rather than silently extending Tasks 18-20.
 
 ### Task 22 — Map omitted-bass and repeated-chord qualification evidence
 
-**Status:** Required. **Prerequisites:** Task 16 complete.
+**Status:** Completed August 22, 2026; corrected evidence rerun August 23, 2026.
+**Prerequisites:** Task 16 complete.
+
+**Measured outcome:** `benchmark-results/listen-bass-qualification-task22.json`,
+445 traces captured once each and replayed through twenty-one profile columns;
+the full record is the August 23 corrective-rerun entry in
+`tools/online_amt/LISTEN_BENCHMARK.md`.
+Three results this task hands to Tasks 23, 24, and 26, and three corrections to
+the text above:
+
+- The two omitted-bass failures are pinned per profile in
+  `webapp/src/listenOmittedBassFixtures.ts`. The phantom bass onsets measure
+  0.5267 on `isolated/direct/122` and 0.5094 on `isolated/tone/124`, both inside
+  the predicted `[0.50, 0.60)` corridor and both admitted through the ordinary
+  fresh-onset path. Their cross-rendered counterparts decode no bass onset at all.
+- A 0.60 bass gate is free on the isolated matched pairs — no genuine bass attack
+  falls below 0.7161 under Direct or 0.9926 under Tone — and not free anywhere
+  else. On the continuous corpus 15 genuine bass attacks lie inside the corridor
+  and 61 produce no bass onset at all, with weakest onsets of 0.5093 under Direct
+  and 0.5182 under Tone, while the four continuous attacks that do not sound the
+  bass and still decode one reach 0.9999. The two sides do not separate on a
+  single scalar outside the isolated suite.
+- The repeated-chord case is not a bass defect on the attack that matters. On the
+  first attack of `[62, 74, 82]` in all three runs the bass and the top voice both
+  produce onsets above 0.99 and D5/74 produces none at all, with sustained
+  evidence of 0.1935, 0.1627, and 0.0958. The three-run minimum is **0.0958**, so
+  no active-target gate in the version-1 grid can reach source distance 0 on any
+  of them. `baseline-v1` recovers the chord only in `v05`, at source distance 2
+  and 2,220 ms; in `v13` and the mixed run its playhead never arms the chord at
+  all. All four candidates reach distance 1 and 1,228 ms in every run, and none of
+  the sixteen counterfactuals — every one of which holds onset at 0.60 — improves
+  any run.
+- Correction: all four high-onset, open-active profiles carry the
+  `sequence/tone/course-clear-27/167ms` and `dynamics-constant/tone/salamander/v14`
+  false advances, not the `x0p970` variant alone; the `x0p990` variant adds two
+  more on `course-clear-27/333ms` and loses a committed regression.
+- Correction: an active gate of 0.275 preserves nothing that 0.20 produced. No
+  held-active counterfactual recovers a fixture, three are identical to
+  `baseline-v1` on isolated recognition, and the other nine lose two Direct
+  fixtures each.
+- Correction: on the first attack of the repeated chord the upper voices are
+  repeated from the preceding chord but are **not** still sounding — a 420 ms hold
+  at a 1,000 ms interval has been released, and the decoded active set is empty
+  immediately before the attack. The records report the two facts separately.
 
 **Objective:** Turn Task 09's omitted-bass observation into pinned regressions, and
 extend Task 05's completed late-recovery classification by separating the onset and

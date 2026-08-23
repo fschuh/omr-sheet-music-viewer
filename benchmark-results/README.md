@@ -7,9 +7,10 @@ command:
 npm --prefix webapp run dev:wasm-benchmark
 ```
 
-Verify all three frozen artifacts, their exact file hashes, the Task 08 candidate
-archive digest and row count, the Task 10/11 canonical evidence digests, forensic
-schemas, and non-overlapping late-advance counts with:
+Verify all four frozen artifacts, their exact file hashes, the Task 08 candidate
+archive digest and row count, the Task 10/11 canonical evidence digests, the
+Task 22 corpus census and pinned omitted-bass identities, forensic schemas, and
+non-overlapping late-advance counts with:
 
 ```text
 node tools/online_amt/verify_listen_benchmark_evidence.mjs
@@ -164,6 +165,45 @@ LISTEN_BENCHMARK_OUTPUT_PATH=benchmark-results/listen-dynamics-profile-validatio
   http://127.0.0.1:5174/online-amt-benchmark.html \
   listen-dynamics-profile-validation
 ```
+
+## Task 22 bass-onset and repeated-chord qualification evidence
+
+`listen-bass-qualification-task22.json` is the round-two measurement of what a
+bass-onset gate costs on both sides. Task 22 completed August 22, 2026; this
+corrected artifact was remeasured August 23, 2026 at commit `a9b6173` plus that
+change, with Chrome 151.0.7922.173 on Ubuntu 26.04, Node v24.13.0, and the
+unchanged `online_amt_streaming.onnx` model. It captured 445 traces once each —
+the complete 268-trace isolated corpus, 139 `discovery` continuous traces, 37
+`regression-only` continuous traces, and the held-back `v13` layer — and replayed
+`baseline-v1`, the four frozen `v2` candidates, and sixteen version-1
+counterfactual grid profiles against every one of them.
+
+- Protocol manifest: version 1, `0ed1e71d`
+- Musical corpus: `10ae2e0b`
+- File SHA-256:
+  `3b7085969a15242ff06b6a9fc58de72882626609c1e816a3dc7d7cb6c318279e`
+
+The archive keeps every per-attack observation behind its distributions, because
+a distribution is only auditable if the observations under it are present: 156
+isolated triad observations, 822 continuous ones, the per-pitch qualification
+record of every repetition of `[62, 74, 82]` in the three Tone plus Salamander
+runs, and each counterfactual's safety rows stated per trace and per
+classification. It selects nothing and changes no threshold, gate, or default;
+`corpus.complete` records whether the run covered the whole corpus, so a focused
+smoke can never be quoted as the measurement.
+
+Reproduce it while the benchmark dev server is running:
+
+```text
+LISTEN_BENCHMARK_OUTPUT_PATH=benchmark-results/listen-bass-qualification-task22.json \
+  node tools/online_amt/run_browser_benchmarks.mjs \
+  http://127.0.0.1:5174/online-amt-benchmark.html \
+  listen-bass-qualification
+```
+
+A fresh repetition reproduces every decoded-structure hash, distribution, and
+qualification record; it will not reproduce the file hash, because process-local
+PCM identities and host timings differ per browser process by design.
 
 ## Task 13 frozen automated confirmation evidence
 

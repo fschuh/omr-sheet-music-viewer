@@ -78,7 +78,13 @@ safety fixture that `baseline-v1` refuses, and none holds the held-out Tone
 recognition floors. The decision is `no-safe-candidate`, so the default is
 unchanged and no live-instrument corpus was collected for a candidate. Every
 historical profile stays in the registry, so changing or rolling back the default
-is one edit to `DEFAULT_LISTEN_MATCHER_PROFILE_ID`. With the debug panel enabled,
+is one edit to `DEFAULT_LISTEN_MATCHER_PROFILE_ID`. The second round's first
+measurement, completed August 22, 2026 and correctively remeasured August 23, 2026,
+recorded what a bass-onset gate costs on both sides: it is free on the isolated
+fixtures and refuses genuine attacks as low as 0.5093 on continuous passages,
+while the repeated Course Clear chord is limited on its first attack by an upper
+voice the decoder never re-onsets rather than by the bass. Both omitted-bass
+failures are now committed regressions. With the debug panel enabled,
 Settings offers a session-only profile override for hearing a profile on real
 input, and the Diagnostics panel names the profile listen mode is running.
 

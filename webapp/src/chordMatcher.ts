@@ -30,6 +30,83 @@ export const defaultChordMatcherOptions: ChordMatcherOptions = {
   refractoryMode: "time",
 };
 
+/**
+ * Why the matcher accepted or refused one decoded onset.
+ *
+ * These names are the qualification paths a diagnosis reports. They are emitted
+ * by the matcher itself rather than recomputed beside it, so an investigation
+ * cannot describe a rejection the matcher did not make.
+ */
+export type ChordMatcherOnsetVerdict =
+  | "accepted"
+  | "unexpected-note"
+  | "outside-attack-window"
+  | "carried-over"
+  | "below-onset-gate"
+  | "below-note-gate"
+  | "before-refractory"
+  | "overtone-alias"
+  | "duplicate-onset"
+  | "unanchored-extra"
+  | "outside-collection-window";
+
+/** Why the matcher accepted or refused one sustained target-pitch evidence value. */
+export type ChordMatcherEvidenceVerdict =
+  | "accepted"
+  | "not-a-target"
+  | "carried-over"
+  | "bass-requires-fresh-onset"
+  | "below-active-gate"
+  | "already-accumulated"
+  | "attempt-not-anchored"
+  | "before-refractory"
+  | "outside-collection-window";
+
+export interface ChordMatcherOnsetDecision {
+  kind: "onset";
+  capturedAtMs: number;
+  midi: number;
+  confidence: number;
+  noteConfidence: number;
+  onsetTimeMs: number;
+  isTargetPitch: boolean;
+  verdict: ChordMatcherOnsetVerdict;
+}
+
+export interface ChordMatcherEvidenceDecision {
+  kind: "target-evidence";
+  capturedAtMs: number;
+  midi: number;
+  confidence: number;
+  isTargetPitch: boolean;
+  verdict: ChordMatcherEvidenceVerdict;
+}
+
+/** The attempt state after one frame was consumed. */
+export interface ChordMatcherFrameDecision {
+  kind: "frame";
+  capturedAtMs: number;
+  attemptStartMs: number | null;
+  accumulatedPitches: number[];
+  missingTargetPitches: number[];
+  rejected: boolean;
+  complete: boolean;
+  settled: boolean;
+  matched: boolean;
+}
+
+export type ChordMatcherDecision =
+  | ChordMatcherOnsetDecision
+  | ChordMatcherEvidenceDecision
+  | ChordMatcherFrameDecision;
+
+/**
+ * A read-only diagnostic sink. It is invoked while a frame is consumed and may
+ * never mutate the matcher or the frame; the matcher's behavior is identical
+ * whether or not one is attached.
+ */
+export type ChordMatcherObserver = (decision: ChordMatcherDecision) => void;
+
 export interface ChordMatchUpdate {
   matched: boolean;
   stale: boolean;
@@ -72,8 +149,43 @@ export class ExactChordMatcher {
   private rejected = false;
   private matched = false;
 
-  constructor(options: Partial<ChordMatcherOptions> = {}) {
+  constructor(
+    options: Partial<ChordMatcherOptions> = {},
+    private readonly observer?: ChordMatcherObserver,
+  ) {
     this.options = { ...defaultChordMatcherOptions, ...options };
+  }
+
+  private observeOnset(
+    capturedAtMs: number,
+    onset: RecognizedOnset,
+    verdict: ChordMatcherOnsetVerdict,
+  ): void {
+    this.observer?.({
+      kind: "onset",
+      capturedAtMs,
+      midi: onset.midi,
+      confidence: onset.confidence,
+      noteConfidence: onset.noteConfidence,
+      onsetTimeMs: onset.onsetTimeMs,
+      isTargetPitch: this.target.has(onset.midi),
+      verdict,
+    });
+  }
+
+  private observeEvidence(
+    capturedAtMs: number,
+    evidence: { midi: number; confidence: number },
+    verdict: ChordMatcherEvidenceVerdict,
+  ): void {
+    this.observer?.({
+      kind: "target-evidence",
+      capturedAtMs,
+      midi: evidence.midi,
+      confidence: evidence.confidence,
+      isTargetPitch: this.target.has(evidence.midi),
+      verdict,
+    });
   }
 
   setTarget(targetPitches: readonly number[], generation: number, nowMs: number): void {
@@ -160,12 +272,19 @@ export class ExactChordMatcher {
       eventBased: true,
       onsets: result.onsets.filter((onset) => {
         const window = this.eventAttackWindows.get(onset.midi);
-        return (
-          window !== undefined &&
-          !this.carryOverPitches.has(onset.midi) &&
-          onset.onsetTimeMs >= window.startedAtMs &&
-          onset.onsetTimeMs <= window.expiresAtMs
-        );
+        if (window === undefined) {
+          this.observeOnset(result.capturedAtMs, onset, "outside-attack-window");
+          return false;
+        }
+        if (this.carryOverPitches.has(onset.midi)) {
+          this.observeOnset(result.capturedAtMs, onset, "carried-over");
+          return false;
+        }
+        if (onset.onsetTimeMs < window.startedAtMs || onset.onsetTimeMs > window.expiresAtMs) {
+          this.observeOnset(result.capturedAtMs, onset, "outside-attack-window");
+          return false;
+        }
+        return true;
       }),
     };
   }
@@ -179,21 +298,35 @@ export class ExactChordMatcher {
     if (this.matched || this.target.size === 0) return this.update();
 
     const confident = eligible.onsets
-      .filter((onset) => (
-        onset.confidence >= this.options.onsetThreshold &&
-        onset.noteConfidence >= (
-          this.target.has(onset.midi)
-            ? this.options.targetNoteThreshold
-            : this.options.noteThreshold
-        ) &&
-        (eligible.eventBased || onset.onsetTimeMs >= this.refractoryUntilMs)
-      ))
-      // A played upper note and the mathematically coincident partial of a
-      // lower target are indistinguishable without an instrument profile.
-      // Prefer the score target in that exact tie; benchmarks report these
-      // cases separately from distinguishable wrong notes.
-      .filter((onset) => this.target.has(onset.midi) || !Array.from(this.target)
-        .some((targetMidi) => looksLikeOvertoneAlias(onset.midi, targetMidi)))
+      .filter((onset) => {
+        if (onset.confidence < this.options.onsetThreshold) {
+          this.observeOnset(result.capturedAtMs, onset, "below-onset-gate");
+          return false;
+        }
+        const noteGate = this.target.has(onset.midi)
+          ? this.options.targetNoteThreshold
+          : this.options.noteThreshold;
+        if (onset.noteConfidence < noteGate) {
+          this.observeOnset(result.capturedAtMs, onset, "below-note-gate");
+          return false;
+        }
+        if (!eligible.eventBased && onset.onsetTimeMs < this.refractoryUntilMs) {
+          this.observeOnset(result.capturedAtMs, onset, "before-refractory");
+          return false;
+        }
+        // A played upper note and the mathematically coincident partial of a
+        // lower target are indistinguishable without an instrument profile.
+        // Prefer the score target in that exact tie; benchmarks report these
+        // cases separately from distinguishable wrong notes.
+        if (
+          !this.target.has(onset.midi) &&
+          Array.from(this.target).some((targetMidi) => looksLikeOvertoneAlias(onset.midi, targetMidi))
+        ) {
+          this.observeOnset(result.capturedAtMs, onset, "overtone-alias");
+          return false;
+        }
+        return true;
+      })
       .sort((left, right) => left.onsetTimeMs - right.onsetTimeMs || left.midi - right.midi);
 
     // A fresh attack after the retry interval belongs to a new attempt. Reset
@@ -212,6 +345,7 @@ export class ExactChordMatcher {
     for (const onset of confident) {
       const previous = this.lastOnsetByPitch.get(onset.midi);
       if (previous !== undefined && onset.onsetTimeMs - previous < this.options.duplicateOnsetMs) {
+        this.observeOnset(result.capturedAtMs, onset, "duplicate-onset");
         continue;
       }
       this.lastOnsetByPitch.set(onset.midi, onset.onsetTimeMs);
@@ -220,6 +354,7 @@ export class ExactChordMatcher {
         if (!existing || existing.confidence < onset.confidence) {
           this.unanchoredExtras.set(onset.midi, onset);
         }
+        this.observeOnset(result.capturedAtMs, onset, "unanchored-extra");
         continue;
       }
       if (this.attemptStartMs === null) {
@@ -230,12 +365,14 @@ export class ExactChordMatcher {
           ) {
             this.accumulated.set(extra.midi, extra);
             this.rejected = true;
+            this.observeOnset(result.capturedAtMs, extra, "unexpected-note");
           }
         }
         this.unanchoredExtras.clear();
       }
       if (onset.onsetTimeMs - this.attemptStartMs > this.options.collectionWindowMs) {
         this.rejected = true;
+        this.observeOnset(result.capturedAtMs, onset, "outside-collection-window");
         continue;
       }
       const existing = this.accumulated.get(onset.midi);
@@ -244,6 +381,11 @@ export class ExactChordMatcher {
       }
       this.lastNewOnsetMs = Math.max(this.lastNewOnsetMs ?? 0, onset.onsetTimeMs);
       if (!this.target.has(onset.midi)) this.rejected = true;
+      this.observeOnset(
+        result.capturedAtMs,
+        onset,
+        this.target.has(onset.midi) ? "accepted" : "unexpected-note",
+      );
     }
 
     // A chord produces one shared physical attack, but a quieter constituent
@@ -251,30 +393,56 @@ export class ExactChordMatcher {
     // has anchored the attempt, allow stable target evidence to complete it.
     // This cannot start an attempt, so held notes and repeated score moments
     // still require a genuinely fresh attack.
-    if (
-      this.attemptStartMs !== null &&
-      (eligible.eventBased || result.capturedAtMs >= this.refractoryUntilMs) &&
-      result.capturedAtMs - this.attemptStartMs <= this.options.collectionWindowMs
-    ) {
+    // Why sustained evidence could not be considered at all this frame, or null
+    // when it could. Stated once so the refusal a diagnosis reports is the one
+    // the guard below actually applies.
+    const evidenceGateVerdict: ChordMatcherEvidenceVerdict | null =
+      this.attemptStartMs === null
+        ? "attempt-not-anchored"
+        : !(eligible.eventBased || result.capturedAtMs >= this.refractoryUntilMs)
+        ? "before-refractory"
+        : result.capturedAtMs - this.attemptStartMs > this.options.collectionWindowMs
+        ? "outside-collection-window"
+        : null;
+    if (evidenceGateVerdict !== null) {
+      if (this.observer) {
+        for (const active of result.targetPitchEvidence) {
+          this.observeEvidence(result.capturedAtMs, active, evidenceGateVerdict);
+        }
+      }
+    } else {
       for (const active of result.targetPitchEvidence) {
         const lowestTarget = this.target.size > 0 ? Math.min(...this.target) : Infinity;
         const allowCarriedBassEvidence = !this.options.requireFreshBassOnset &&
           this.target.size >= 3 && active.midi === lowestTarget;
+        if (!this.target.has(active.midi)) {
+          this.observeEvidence(result.capturedAtMs, active, "not-a-target");
+          continue;
+        }
         if (
-          !this.target.has(active.midi) ||
-          (
-            eligible.eventBased &&
-            this.carryOverPitches.has(active.midi) &&
-            !allowCarriedBassEvidence
-          ) ||
-          (
-            this.options.requireFreshBassOnset &&
-            this.target.size >= 3 &&
-            active.midi === lowestTarget
-          ) ||
-          active.confidence < this.options.activeTargetThreshold ||
-          this.accumulated.has(active.midi)
-        ) continue;
+          eligible.eventBased &&
+          this.carryOverPitches.has(active.midi) &&
+          !allowCarriedBassEvidence
+        ) {
+          this.observeEvidence(result.capturedAtMs, active, "carried-over");
+          continue;
+        }
+        if (
+          this.options.requireFreshBassOnset &&
+          this.target.size >= 3 &&
+          active.midi === lowestTarget
+        ) {
+          this.observeEvidence(result.capturedAtMs, active, "bass-requires-fresh-onset");
+          continue;
+        }
+        if (active.confidence < this.options.activeTargetThreshold) {
+          this.observeEvidence(result.capturedAtMs, active, "below-active-gate");
+          continue;
+        }
+        if (this.accumulated.has(active.midi)) {
+          this.observeEvidence(result.capturedAtMs, active, "already-accumulated");
+          continue;
+        }
         this.accumulated.set(active.midi, {
           midi: active.midi,
           confidence: this.options.onsetThreshold,
@@ -282,6 +450,7 @@ export class ExactChordMatcher {
           onsetTimeMs: result.capturedAtMs,
         });
         this.lastNewOnsetMs = Math.max(this.lastNewOnsetMs ?? 0, result.capturedAtMs);
+        this.observeEvidence(result.capturedAtMs, active, "accepted");
       }
     }
 
@@ -293,7 +462,21 @@ export class ExactChordMatcher {
     const complete = Array.from(this.target).every((pitch) => this.accumulated.has(pitch));
     const settled = this.lastNewOnsetMs !== null &&
       result.capturedAtMs - this.lastNewOnsetMs >= this.options.settleMs;
-    if (complete && settled && !this.rejected) {
+    const matching = complete && settled && !this.rejected;
+    this.observer?.({
+      kind: "frame",
+      capturedAtMs: result.capturedAtMs,
+      attemptStartMs: this.attemptStartMs,
+      accumulatedPitches: sorted(this.accumulated.keys()),
+      missingTargetPitches: sorted(
+        Array.from(this.target).filter((pitch) => !this.accumulated.has(pitch)),
+      ),
+      rejected: this.rejected,
+      complete,
+      settled,
+      matched: matching,
+    });
+    if (matching) {
       this.matched = true;
       return this.update(true);
     }

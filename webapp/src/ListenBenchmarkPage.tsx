@@ -43,6 +43,14 @@ import {
   type ListenSequenceProfileValidationResult,
 } from "./listenProfileValidationBenchmark";
 import {
+  conciseListenBassQualificationResult,
+  isListenBassQualificationScope,
+  listenBassQualificationScopeFilter,
+  runListenBassQualification,
+  type ListenBassQualificationResult,
+  type ListenBassQualificationScope,
+} from "./listenBassQualificationBenchmark";
+import {
   runListenInferenceResetBenchmark,
   type ListenInferenceResetBenchmarkResult,
 } from "./listenInferenceResetBenchmark";
@@ -148,6 +156,22 @@ function requestedRenderer(): ListenBenchmarkRendererConfiguration {
 }
 
 /**
+ * Corpus subsets a focused bass-qualification smoke covers. An absent selector
+ * captures the whole corpus; a narrowed run records itself as incomplete.
+ */
+function requestedBassQualificationScopes(): ListenBassQualificationScope[] | undefined {
+  const requested = new URLSearchParams(window.location.search).get("benchmark-suite");
+  if (requested === null) return undefined;
+  const scopes = requested.split(",").map((value) => value.trim()).filter((value) => value.length > 0);
+  for (const scope of scopes) {
+    if (!isListenBassQualificationScope(scope)) {
+      throw new Error(`Unknown bass-qualification scope ${scope}.`);
+    }
+  }
+  return scopes.length === 0 ? undefined : (scopes as ListenBassQualificationScope[]);
+}
+
+/**
  * Renderers a multi-renderer command covers. The historical single-renderer
  * commands default to the direct mixer when the selector is absent; a matrix
  * whose gates are stated per renderer instead runs both unless one is named.
@@ -167,7 +191,7 @@ export function ListenBenchmarkPage() {
       | "dynamics-constant" | "dynamics-mixed" | "dynamics-case" | "sequence-case"
       | "multidomain-sweep" | "isolated-profile-validation"
       | "sequence-profile-validation" | "dynamics-profile-validation"
-      | "profile-validation"
+      | "profile-validation" | "bass-qualification"
   >(null);
   const running = runningTask !== null;
   const [progress, setProgress] = useState("");
@@ -177,7 +201,7 @@ export function ListenBenchmarkPage() {
       | "dynamics-constant" | "dynamics-mixed" | "dynamics-case" | "sequence-case"
       | "multidomain-sweep" | "isolated-profile-validation"
       | "sequence-profile-validation" | "dynamics-profile-validation"
-      | "profile-validation"
+      | "profile-validation" | "bass-qualification"
   >("isolated");
   const [error, setError] = useState<string | null>(null);
   const [automated, setAutomated] = useState<ListenBenchmarkSummary | null>(null);
@@ -208,6 +232,8 @@ export function ListenBenchmarkPage() {
     useState<CourseClearDynamicsCaseResult | null>(null);
   const [sequenceCaseResult, setSequenceCaseResult] =
     useState<ListenSequenceCaseResult | null>(null);
+  const [bassQualificationResult, setBassQualificationResult] =
+    useState<ListenBassQualificationResult | null>(null);
   const [manual, setManual] = useState<ListenBenchmarkTrial[]>([]);
   const [manualSource, setManualSource] = useState<"acoustic" | "digital">("acoustic");
   const [manualCorrect, setManualCorrect] = useState(true);
@@ -221,6 +247,9 @@ export function ListenBenchmarkPage() {
     if (query.get("listen-sequence-case") === "auto") {
       automaticBenchmarkStarted = true;
       void runSequenceCase();
+    } else if (query.get("listen-bass-qualification") === "auto") {
+      automaticBenchmarkStarted = true;
+      void runBassQualification();
     } else if (query.get("listen-dynamics-case") === "auto") {
       automaticBenchmarkStarted = true;
       void runDynamicsCase();
@@ -671,6 +700,31 @@ export function ListenBenchmarkPage() {
       (window as typeof window & {
         listenSequenceCaseResult?: ListenSequenceCaseResult;
       }).listenSequenceCaseResult = result;
+      document.body.dataset.status = "complete";
+    } catch (benchmarkError) {
+      setError(benchmarkError instanceof Error ? benchmarkError.message : String(benchmarkError));
+      document.body.dataset.status = "error";
+    } finally {
+      setRunningTask(null);
+    }
+  }
+
+  async function runBassQualification() {
+    setRunningTask("bass-qualification");
+    setProgressTask("bass-qualification");
+    setError(null);
+    setProgress("Measuring bass-onset and repeated-chord qualification…");
+    document.body.dataset.status = "running";
+    try {
+      const scopes = requestedBassQualificationScopes();
+      const result = await runListenBassQualification(
+        (complete, total, label) => setProgress(`${complete} / ${total} traces · ${label}`),
+        scopes === undefined ? undefined : listenBassQualificationScopeFilter(scopes),
+      );
+      setBassQualificationResult(result);
+      (window as typeof window & {
+        listenBassQualificationResult?: ListenBassQualificationResult;
+      }).listenBassQualificationResult = result;
       document.body.dataset.status = "complete";
     } catch (benchmarkError) {
       setError(benchmarkError instanceof Error ? benchmarkError.message : String(benchmarkError));
@@ -1179,15 +1233,35 @@ export function ListenBenchmarkPage() {
         <button type="button" disabled={running} onClick={() => void runSequenceCase()}>
           {runningTask === "sequence-case" ? "Running…" : "Reproduce one sequence case"}
         </button>{" "}
+        <button type="button" disabled={running} onClick={() => void runBassQualification()}>
+          {runningTask === "bass-qualification"
+            ? "Running…"
+            : "Measure bass and repeated-chord qualification"}
+        </button>{" "}
         <button type="button" disabled={running} onClick={() => void runSequenceProfileValidation()}>
           {runningTask === "sequence-profile-validation"
             ? "Running…"
             : "Run sequence candidate matrix"}
         </button>
         {progress && (progressTask === "sequence" || progressTask === "sequence-case" ||
-          progressTask === "sequence-profile-validation")
+          progressTask === "sequence-profile-validation" ||
+          progressTask === "bass-qualification")
           ? <span className="benchmark-progress">{progress}</span>
           : null}
+        {bassQualificationResult ? (
+          <>
+            <h3>Bass-onset and repeated-chord qualification</h3>
+            <p>
+              {bassQualificationResult.traces.length} captured trace(s); the repeated chord{" "}
+              [{bassQualificationResult.repeatedChord.pitches.join(", ")}] was measured on{" "}
+              {bassQualificationResult.repeatedChord.runs.length} run(s). This command measures
+              only: it selects no profile and changes no default.
+            </p>
+            <pre>
+              {JSON.stringify(conciseListenBassQualificationResult(bassQualificationResult), null, 2)}
+            </pre>
+          </>
+        ) : null}
         {sequenceCaseResult ? (
           <>
             <h3>

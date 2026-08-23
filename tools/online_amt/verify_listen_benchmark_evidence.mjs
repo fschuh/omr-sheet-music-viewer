@@ -31,6 +31,46 @@ const EVIDENCE_ARTIFACTS = [
     serializedLateAdvanceCount: 34,
     profileLateAdvanceCount: 25,
   },
+  {
+    name: "Task 22 bass-onset and repeated-chord qualification",
+    path: "benchmark-results/listen-bass-qualification-task22.json",
+    fileSha256: "3b7085969a15242ff06b6a9fc58de72882626609c1e816a3dc7d7cb6c318279e",
+    /**
+     * What makes this file the measurement rather than a focused smoke of it.
+     * A narrowed run reports fewer traces and marks its corpus incomplete, and
+     * both are checked here, because a partial distribution quoted as the corpus
+     * distribution is the failure this artifact is most exposed to.
+     */
+    bassQualification: {
+      name: "listen-bass-qualification",
+      manifestVersion: 1,
+      manifestHash: "0ed1e71d",
+      manifestCorpusHash: "10ae2e0b",
+      capturedTraceCount: 445,
+      profileColumnCount: 21,
+      counterfactualColumnCount: 16,
+      /** Every counterfactual holds the fresh-onset gate at the incumbent's value. */
+      counterfactualOnsetThreshold: 0.6,
+      repeatedChordPitches: [62, 74, 82],
+      repeatedChordTraceIds: [
+        "dynamics-constant/tone/salamander/v05",
+        "dynamics-constant/tone/salamander/v13",
+        "dynamics-mixed/tone/salamander",
+      ],
+      pinnedOmittedBass: [
+        {
+          traceId: "isolated/direct/122",
+          recognitionStructureHash: "56d57ace",
+          bassMidi: 48,
+        },
+        {
+          traceId: "isolated/tone/124",
+          recognitionStructureHash: "c80411e6",
+          bassMidi: 56,
+        },
+      ],
+    },
+  },
 ];
 
 /**
@@ -481,7 +521,95 @@ function collectProfileLateAdvances(result) {
   ));
 }
 
-/** Verifies the committed Task 08, 10, and 11 evidence against their frozen pins. */
+/**
+ * Everything that makes the Task 22 archive the measurement itself.
+ *
+ * The distributions in it are only meaningful over the whole corpus, and its two
+ * pinned omitted-bass trials are only evidence while they still name the decoded
+ * structures they were cut from, so both are checked rather than assumed.
+ */
+export function bassQualificationProblems(artifact, result) {
+  const expected = artifact.bassQualification;
+  const problems = [];
+  const results = Array.isArray(result) ? result : [result];
+  if (results.length !== 1) {
+    return [`${artifact.name}: expected one result, found ${results.length}`];
+  }
+  const [run] = results;
+  const check = (label, actual, wanted) => {
+    if (actual !== wanted) problems.push(`${artifact.name}: ${label} ${actual}, expected ${wanted}`);
+  };
+  check("name", run.name, expected.name);
+  check("selectsNothing", run.selectsNothing, true);
+  check("corpus completeness", run.corpus?.complete, true);
+  check("manifest version", run.manifest?.version, expected.manifestVersion);
+  check("manifest hash", run.manifest?.hash, expected.manifestHash);
+  check("corpus hash", run.manifest?.corpusHash, expected.manifestCorpusHash);
+  check("captured trace count", run.manifest?.capturedTraceCount, expected.capturedTraceCount);
+  check("captured trace rows", run.traces?.length, expected.capturedTraceCount);
+  check("profile column count", run.profiles?.length, expected.profileColumnCount);
+  check("profile report count", run.profileReports?.length, expected.profileColumnCount);
+  check("trace reuse", run.traceReuseVerified, true);
+  check(
+    "repeated chord pitches",
+    (run.repeatedChord?.pitches ?? []).join("+"),
+    expected.repeatedChordPitches.join("+"),
+  );
+  check(
+    "repeated chord runs",
+    (run.repeatedChord?.runs ?? []).map(({ traceId }) => traceId).sort().join(","),
+    [...expected.repeatedChordTraceIds].sort().join(","),
+  );
+  const counterfactuals = (run.profiles ?? []).filter(({ role }) => role === "counterfactual");
+  check("counterfactual columns", counterfactuals.length, expected.counterfactualColumnCount);
+  for (const column of counterfactuals) {
+    if (column.profile?.onsetThreshold !== expected.counterfactualOnsetThreshold) {
+      problems.push(
+        `${artifact.name}: counterfactual ${column.profileId} holds onset at ` +
+          `${column.profile?.onsetThreshold}, expected ${expected.counterfactualOnsetThreshold}`,
+      );
+    }
+    if (column.profile?.requireFreshBassOnset !== true) {
+      problems.push(`${artifact.name}: counterfactual ${column.profileId} does not require a fresh bass onset`);
+    }
+  }
+  const cases = run.omittedBassCases ?? [];
+  check(
+    "pinned omitted-bass trials",
+    cases.map(({ traceId }) => traceId).join(","),
+    expected.pinnedOmittedBass.map(({ traceId }) => traceId).join(","),
+  );
+  for (const pinned of expected.pinnedOmittedBass) {
+    const measured = cases.find(({ traceId }) => traceId === pinned.traceId);
+    if (!measured) continue;
+    check(
+      `${pinned.traceId} decoded structure`,
+      measured.recognitionStructureHash,
+      pinned.recognitionStructureHash,
+    );
+    check(`${pinned.traceId} bass pitch`, measured.bassMidi, pinned.bassMidi);
+    if (measured.alreadyCommitted !== true) {
+      problems.push(`${artifact.name}: ${pinned.traceId} is not pinned by a committed fixture`);
+    }
+    const onset = measured.fixture?.hallucinatedBassOnset?.confidence;
+    if (!(typeof onset === "number" && onset >= 0.5 && onset < 0.6)) {
+      problems.push(
+        `${artifact.name}: ${pinned.traceId} phantom bass onset ${onset}, expected it inside ` +
+          "[0.50, 0.60)",
+      );
+    }
+    const [baseline, ...candidates] = measured.fixture?.pinnedOutcomes ?? [];
+    if (baseline?.profileId !== "baseline-v1" || baseline.advanced !== false) {
+      problems.push(`${artifact.name}: ${pinned.traceId} does not pin the baseline-v1 refusal`);
+    }
+    if (candidates.length !== 4 || !candidates.every(({ advanced }) => advanced === true)) {
+      problems.push(`${artifact.name}: ${pinned.traceId} does not pin all four candidate advances`);
+    }
+  }
+  return problems;
+}
+
+/** Verifies the committed Task 08, 10, 11, and 22 evidence against their frozen pins. */
 export async function verifyFrozenEvidence() {
   const problems = [];
   for (const artifact of EVIDENCE_ARTIFACTS) {
@@ -532,6 +660,10 @@ export async function verifyFrozenEvidence() {
           );
         }
       }
+    }
+
+    if (artifact.bassQualification !== undefined) {
+      problems.push(...bassQualificationProblems(artifact, result));
     }
 
     let lateAdvances;

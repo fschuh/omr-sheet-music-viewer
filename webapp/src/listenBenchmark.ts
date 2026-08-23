@@ -1,4 +1,8 @@
-import { ExactChordMatcher, defaultChordMatcherOptions } from "./chordMatcher";
+import {
+  ExactChordMatcher,
+  defaultChordMatcherOptions,
+  type ChordMatcherObserver,
+} from "./chordMatcher";
 import { ONLINE_AMT_CHUNK_SIZE } from "./onlineAmtProtocol";
 import { OnlineAmtSession } from "./onlineAmtSession";
 import {
@@ -542,10 +546,17 @@ export function replayIsolatedListenTrace(options: {
   targetPitches: readonly number[];
   generation?: number;
   profile?: ListenMatcherThresholds | ListenMatcherProfileId;
+  /**
+   * Read-only sink for the matcher's own gate decisions. A diagnosis reads the
+   * qualification path from the matcher instead of recomputing it; passing an
+   * observer cannot change what the replay produces.
+   */
+  matcherObserver?: ChordMatcherObserver;
 }): IsolatedListenTrialSignature {
   const generation = options.generation ?? 1;
   const matcher = new ExactChordMatcher(
     matcherOptionsForListenMatcherProfile(options.profile),
+    options.matcherObserver,
   );
   matcher.setTarget(options.targetPitches, generation, 0);
   const recognized = new Map<number, {

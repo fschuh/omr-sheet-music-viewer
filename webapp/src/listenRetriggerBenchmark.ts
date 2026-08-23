@@ -11,6 +11,7 @@ import {
   assignRecognitionEventsToAttacks,
   bundledListenSequences,
   courseClearArticulationDefinitions,
+  LISTEN_ATTACK_BOUNDARY_EPSILON_MS,
   materializeListenSequence,
   productionListenMatcherProfile,
   replayListenSequenceTrace,
@@ -480,7 +481,10 @@ function attributionEnd(sequence: MaterializedListenSequence, attack: ScheduledS
   const next = sequence.attacks
     .filter(({ scheduledAtMs }) => scheduledAtMs > attack.scheduledAtMs)
     .sort((left, right) => left.scheduledAtMs - right.scheduledAtMs)[0];
-  return Math.min(attack.scheduledAtMs + ASSIGNMENT_MS, (next?.scheduledAtMs ?? Infinity) - 0.001);
+  return Math.min(
+    attack.scheduledAtMs + ASSIGNMENT_MS,
+    (next?.scheduledAtMs ?? Infinity) - LISTEN_ATTACK_BOUNDARY_EPSILON_MS,
+  );
 }
 
 function hiddenSustainRise(

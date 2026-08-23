@@ -6,6 +6,7 @@ import test from "node:test";
 
 import {
   CONFIRMATION_EVIDENCE,
+  bassQualificationProblems,
   compareEvidenceRuns,
   confirmationEvidenceProblems,
   firstEvidenceDifference,
@@ -1029,4 +1030,120 @@ test("a file that is not an array of results is refused before anything is read"
 test("the frozen-evidence mode and the usage refusal are unchanged", async () => {
   await assert.rejects(() => main(["--compare", "only-one-path.json"]), /Usage:/);
   await assert.rejects(() => main(["--verify"]), /Usage:/);
+});
+
+/* --------------------------------------------------------------------- *
+ * Task 22 bass-onset and repeated-chord qualification
+ * --------------------------------------------------------------------- */
+
+const BASS_ARTIFACT = {
+  name: "probe",
+  bassQualification: {
+    name: "listen-bass-qualification",
+    manifestVersion: 1,
+    manifestHash: "0ed1e71d",
+    manifestCorpusHash: "10ae2e0b",
+    capturedTraceCount: 2,
+    profileColumnCount: 2,
+    counterfactualColumnCount: 1,
+    counterfactualOnsetThreshold: 0.6,
+    repeatedChordPitches: [62, 74, 82],
+    repeatedChordTraceIds: ["dynamics-constant/tone/salamander/v05"],
+    pinnedOmittedBass: [
+      { traceId: "isolated/direct/122", recognitionStructureHash: "56d57ace", bassMidi: 48 },
+    ],
+  },
+};
+
+function bassQualificationRun() {
+  return {
+    name: "listen-bass-qualification",
+    selectsNothing: true,
+    manifest: {
+      version: 1,
+      hash: "0ed1e71d",
+      corpusHash: "10ae2e0b",
+      capturedTraceCount: 2,
+    },
+    corpus: { complete: true, expectedTraceCount: 2, missingTraceIds: [] },
+    traces: [{ traceId: "isolated/direct/122" }, { traceId: "dynamics-constant/tone/salamander/v05" }],
+    profiles: [
+      { profileId: "baseline-v1", role: "baseline", profile: { onsetThreshold: 0.6 } },
+      {
+        profileId: "o0p600-t0p500-a0p275-x0p970-b1",
+        role: "counterfactual",
+        profile: { onsetThreshold: 0.6, requireFreshBassOnset: true },
+      },
+    ],
+    profileReports: [{ profileId: "baseline-v1" }, { profileId: "o0p600-t0p500-a0p275-x0p970-b1" }],
+    traceReuseVerified: true,
+    repeatedChord: {
+      pitches: [62, 74, 82],
+      runs: [{ traceId: "dynamics-constant/tone/salamander/v05" }],
+    },
+    omittedBassCases: [{
+      traceId: "isolated/direct/122",
+      alreadyCommitted: true,
+      bassMidi: 48,
+      recognitionStructureHash: "56d57ace",
+      fixture: {
+        hallucinatedBassOnset: { confidence: 0.5267 },
+        pinnedOutcomes: [
+          { profileId: "baseline-v1", advanced: false },
+          { profileId: "early-open-v2", advanced: true },
+          { profileId: "steady-open-v2", advanced: true },
+          { profileId: "early-held-v2", advanced: true },
+          { profileId: "steady-held-v2", advanced: true },
+        ],
+      },
+    }],
+  };
+}
+
+test("a complete bass-qualification archive passes its frozen pins", () => {
+  assert.deepEqual(bassQualificationProblems(BASS_ARTIFACT, [bassQualificationRun()]), []);
+});
+
+test("a narrowed bass-qualification run is not the measurement", () => {
+  const run = bassQualificationRun();
+  run.corpus.complete = false;
+  const problems = bassQualificationProblems(BASS_ARTIFACT, [run]);
+  assert.equal(problems.length, 1);
+  assert.match(problems[0], /corpus completeness false, expected true/);
+});
+
+test("a bass-qualification archive that lost a repeated-chord run is refused", () => {
+  const run = bassQualificationRun();
+  run.repeatedChord.runs = [];
+  assert.ok(bassQualificationProblems(BASS_ARTIFACT, [run])
+    .some((problem) => /repeated chord runs/.test(problem)));
+});
+
+test("a counterfactual column that moved its onset gate is refused", () => {
+  const run = bassQualificationRun();
+  run.profiles[1].profile.onsetThreshold = 0.5;
+  assert.ok(bassQualificationProblems(BASS_ARTIFACT, [run])
+    .some((problem) => /holds onset at 0.5, expected 0.6/.test(problem)));
+});
+
+test("a pinned omitted-bass trial must keep its structure, corridor, and outcomes", () => {
+  const moved = bassQualificationRun();
+  moved.omittedBassCases[0].recognitionStructureHash = "deadbeef";
+  assert.ok(bassQualificationProblems(BASS_ARTIFACT, [moved])
+    .some((problem) => /decoded structure deadbeef/.test(problem)));
+
+  const outside = bassQualificationRun();
+  outside.omittedBassCases[0].fixture.hallucinatedBassOnset.confidence = 0.61;
+  assert.ok(bassQualificationProblems(BASS_ARTIFACT, [outside])
+    .some((problem) => /expected it inside \[0.50, 0.60\)/.test(problem)));
+
+  const advanced = bassQualificationRun();
+  advanced.omittedBassCases[0].fixture.pinnedOutcomes[0].advanced = true;
+  assert.ok(bassQualificationProblems(BASS_ARTIFACT, [advanced])
+    .some((problem) => /does not pin the baseline-v1 refusal/.test(problem)));
+
+  const uncommitted = bassQualificationRun();
+  uncommitted.omittedBassCases[0].alreadyCommitted = false;
+  assert.ok(bassQualificationProblems(BASS_ARTIFACT, [uncommitted])
+    .some((problem) => /is not pinned by a committed fixture/.test(problem)));
 });

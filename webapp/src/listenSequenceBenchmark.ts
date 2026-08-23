@@ -1,4 +1,8 @@
-import { ExactChordMatcher, type ChordMatchUpdate } from "./chordMatcher";
+import {
+  ExactChordMatcher,
+  type ChordMatchUpdate,
+  type ChordMatcherDecision,
+} from "./chordMatcher";
 import {
   DEFAULT_LISTEN_MATCHER_PROFILE_ID,
   LISTEN_MATCHER_PROFILES,
@@ -62,6 +66,18 @@ export const LISTEN_SEQUENCE_PRE_ROLL_MS = 220;
 export const LISTEN_SEQUENCE_TAIL_MS = 900;
 export const LISTEN_SEQUENCE_ONSET_BUFFER_MS = 192;
 const RECOGNITION_ASSIGNMENT_MS = 450;
+/**
+ * How far short of the next attack a window ends, so exactly one physical attack
+ * owns every instant.
+ *
+ * Decoded times land on the frame cadence and attack times do not, but the two
+ * do coincide — a 125 ms passage puts attack 20 exactly on a frame boundary — and
+ * evidence counted against two attacks at once would inflate whichever
+ * distribution reads it. Every window in the repository is closed at both ends
+ * and shortened by this epsilon instead of being made half-open, so one rule
+ * covers the attribution window and every diagnostic built on it.
+ */
+export const LISTEN_ATTACK_BOUNDARY_EPSILON_MS = 0.001;
 const FRAME_MS = ONLINE_AMT_CHUNK_SIZE * 1_000 / ONLINE_AMT_SAMPLE_RATE;
 const FIRST_PIANO_MIDI = 21;
 
@@ -380,6 +396,28 @@ export interface ListenSequenceAdvancementObservation {
 
 export type ListenSequenceReplayObserver = (
   observation: ListenSequenceAdvancementObservation,
+) => void;
+
+/** Where in the passage one matcher decision was taken. */
+export interface ListenSequenceMatcherDecisionContext {
+  targetIndex: number;
+  generation: number;
+  frameIndex: number;
+}
+
+/**
+ * A read-only sink for every gate decision the matcher takes during a replay,
+ * annotated with the target it was armed on.
+ *
+ * A qualification diagnosis needs to know which gate refused which pitch, and
+ * reconstructing that beside the matcher would be a second implementation of
+ * the rules under investigation. Passing an observer changes nothing: the
+ * matcher is constructed with the same options either way, and a replay
+ * observed here is identical to an unobserved one.
+ */
+export type ListenSequenceMatcherObserver = (
+  decision: ChordMatcherDecision,
+  context: ListenSequenceMatcherDecisionContext,
 ) => void;
 
 export interface ListenSequencePolicyComparison {
@@ -1185,7 +1223,7 @@ function scheduledAttributionEnds(
     attackIndex,
     Math.min(
       startMs + RECOGNITION_ASSIGNMENT_MS,
-      (physicalAttacks[index + 1]?.startMs ?? Infinity) - 0.001,
+      (physicalAttacks[index + 1]?.startMs ?? Infinity) - LISTEN_ATTACK_BOUNDARY_EPSILON_MS,
     ),
   ]));
 }
@@ -1643,11 +1681,22 @@ export function replayListenSequenceTrace(
   policyOrProfile: ListenSequenceReplayPolicy | ListenMatcherThresholds = "current-matcher",
   profileArgument: ListenMatcherThresholds = productionListenMatcherProfile,
   observer?: ListenSequenceReplayObserver,
+  matcherObserver?: ListenSequenceMatcherObserver,
 ): ListenSequenceRunResult {
   const policy = typeof policyOrProfile === "string" ? policyOrProfile : "current-matcher";
   const profile = typeof policyOrProfile === "string" ? profileArgument : policyOrProfile;
   const profileOptions = matcherOptionsForListenMatcherProfile(profile);
-  const matcher = new ExactChordMatcher(profileOptions);
+  let observedFrameIndex = -1;
+  const matcher = new ExactChordMatcher(
+    profileOptions,
+    matcherObserver === undefined
+      ? undefined
+      : (decision) => matcherObserver(decision, {
+        targetIndex,
+        generation,
+        frameIndex: observedFrameIndex,
+      }),
+  );
   let targetIndex = 0;
   let generation = 1;
   matcher.setTarget(sequence.targets[0]?.pitches ?? [], generation, 0);
@@ -1768,6 +1817,7 @@ export function replayListenSequenceTrace(
   };
 
   for (const [frameIndex, frame] of trace.frames.entries()) {
+    observedFrameIndex = frameIndex;
     while (
       nextAttackIndex < sequence.attacks.length &&
       sequence.attacks[nextAttackIndex].scheduledAtMs <= frame.capturedAtMs
