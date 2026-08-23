@@ -2431,7 +2431,7 @@ tests, archive re-score tests, the full unit suite, and the production build pas
 
 ### Task 24 — Regenerate a per-domain archive and freeze the complete selection rule
 
-**Status:** Required research input. **Prerequisites:** Task 22 complete and the
+**Status:** Completed August 23, 2026. **Prerequisites:** Task 22 complete and the
 Task 08 corpus reproducible. Independent of Task 23 and may run beside it.
 
 **Objective:** Freeze every rule the later tasks apply — the regret calculation,
@@ -2545,19 +2545,96 @@ freeze how repeated-chord recovery participates in that decision.
 aggregate exactly, including the 721 rejections, the 30-profile frontier, and the
 four selected identifiers, so the added detail is provably the same search. The
 regret computation and the selection rule are deterministic and unit-tested,
-including the stop rule against constructed ablation results. Constructed
+including the empty one-global selection when no non-baseline profile clears the
+material-improvement rule and the stop rule against constructed ablation results.
+Constructed
 repeated-chord cases prove that a regression in one run cannot be averaged away,
 that distance 1 receives neither full-resolution label, and that the next ablation
 runs or stops exactly at the frozen material-recovery boundary. Constructed
 confirmation cases prove that a non-reproducing group is inconclusive, that it is
 not swapped, and that zero reproducing confirmation groups cannot yield
 `confirmed-full-resolution`. Assert that no `confirmation` trace is read.
+The hashed policy owns the three known repeated-recovery identifiers, and every
+exported regret, repeated-recovery, ablation-stop, and bass-pair decision entry
+validates that policy before producing an outcome. A declared but undecoded
+discovery group remains in the stratum census and fails the stop rule closed with
+an explicit incomplete-evidence reason, without becoming a regression outcome.
+Constructed mixed cases prove that a real measured regression still produces both
+the regression and incomplete-evidence reasons, and that an incomplete matched
+twin comparison cannot support a bass axis through safety rescue or regret gain.
+Leaf-domain detail excludes zero-weight rows exactly as the frozen scoring path
+does. The evidence verifier independently recomputes both the policy hash and the
+Task 24 canonical digest rather than trusting either serialized digest field.
 
 **Complete when:** Every rule Tasks 26 and 27 apply is frozen and tested before any
 Task 26 version-2 result is visible, and the version-1 control result is recorded as
 a control rather than as the round's objective. The repeated-chord rule,
 aggregation, resolution vocabulary, and active-target refinement points or their
 explicit exclusion are all frozen before Task 26 sees a version-2 result.
+
+**Completion evidence:** `listenMatcherSelectionPolicy.ts` freezes selection
+policy version 1 at hash `840b07ec`. The hashed rule includes the known `v05`,
+`v13`, and mixed repeated-recovery census, and every Task 26 decision path rejects
+an amended policy before applying it. Per-leaf-domain regret reads independent
+recognition from all globally safe grid rows, uses a one-percentage-point inclusive
+one-global boundary, starts complementary spread selection from the baseline
+envelope, requires each selected addition to improve a leaf by the same material
+margin, and caps the new candidate set at four. The whole-ablation stop rule
+requires a non-empty search-selected set, a complete discovery-stratum census, no
+measured repeated-chord regression in any selected profile, and material repeated
+recovery in at least one selected profile.
+Matched bass-axis support is separate and requires a categorical safety rescue, a
+one-point worst-regret gain, or material repeated recovery against the identical
+compatibility-default twin, plus complete discovery evidence for that pair. An
+incomplete twin comparison is unsupported even when another separation criterion
+passes.
+
+Repeated recovery is reported per musical-input group and never averaged across a
+regression. Source distance may increase by zero, attribution delay by at most one
+32 ms decoder hop, and material partial recovery requires both one full attack of
+source-distance gain and 500 ms of delay gain; unrecovered-to-recovered is
+categorically material. Every declared discovery stratum must be completely
+decoded and contain a material recovery; an unevaluated group is retained and
+fails closed rather than disappearing from the census. It sets
+`discoveryEvaluationStatus` to `incomplete` and the stop reason to
+`selected-discovery-stratum-not-decoded`, while leaving `noRegression` and
+`repeatedRecoveryOutcome` to describe evaluated performance only. An undecoded
+confirmation group remains `not-run` and does not poison discovery performance.
+Distance 0 on all three known runs and every reproducing discovery group is only
+`discovery-full-resolution`; `confirmed-full-resolution` additionally requires at
+least one unseen reproducing confirmation group and every such group to pass. A
+valid non-reproducing confirmation group remains
+`inconclusive-no-reproduction`. The result keeps performance, discovery
+completeness, and confirmation reproduction in three orthogonal fields.
+A full-resolution performance label may coexist with incomplete discovery when an
+undecoded extra group's baseline does not reproduce the phenomenon; completeness
+still blocks the stop rule and any matched-pair bass-support claim.
+
+Task 22's exact three-run limiting evidence minimum, `0.09577340414698106`, freezes
+new active-target points `0.075`, `0.100`, and `0.125` below the old 0.20 floor,
+plus `0.300` and `0.325` between the old 0.275 and 0.350 points. The below-0.20
+region is not excluded; Task 26 must measure its safety before claiming source
+distance 0 through the scalar family.
+
+`benchmark-results/listen-matcher-domain-archive-task24.json` replays all 1,000
+profiles across the exact manifest-v1 discovery/regression corpus and records all
+29 leaf-domain rows for every profile. Before export it reproduces the Task 08
+candidate digest `53ee8a67`, 721 rejections, 30-row frontier, and four selected
+identifiers, while reading zero confirmation traces. The archive is pinned at
+internal digest `1aab7393` and SHA-256
+`adf66cb52f7f6c62c99d722f0d4b04ecb89a41ba66770d38542e995385798a43`.
+Among 279 globally safe rows, `o0p450-t0p500-a0p200-x0p990-b1` is an oracle in
+all 29 version-1 leaf domains, giving zero worst regret and the control verdict
+`one-global-profile-suffices`. It represents a three-profile complete leaf-vector
+tie with the `t0p425` and `t0p350` variants. Seven leaves have one scoring trace,
+eight are invariant across all safe profiles, and in 19 of the 21 varying leaves
+the one-point decision boundary is below the smallest observed non-zero step; the
+archive records this resolution census rather than implying one-point precision.
+This is explicitly a version-1 discovery control;
+Task 26 reruns the unchanged calculation on manifest version 2 for the round's
+actual global-versus-spread verdict. Policy, regret, archive-parity,
+repeated-recovery, confirmation-vocabulary, stop-rule, bass-pair, full unit, and
+production-build checks pass.
 
 ### Task 25 — Build the round-two corpus and freeze trace manifest version 2
 

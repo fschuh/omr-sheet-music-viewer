@@ -7,6 +7,104 @@
 Entries are kept newest first so renderer and recognition changes remain
 comparable over time.
 
+### Complete per-domain selection control — August 23, 2026
+
+Task 24 reran the exact Task 08 manifest-v1 discovery/regression sweep and changed
+only the retained detail: every one of the 1,000 immutable grid rows now carries
+all 29 leaf-domain results. This is the complete-grid input a per-domain oracle
+requires; the old archive's aggregate-only non-frontier rows could not answer the
+question, and restricting the calculation to the aggregate frontier would have
+made that frontier determine which domain champions were allowed to exist.
+
+```bash
+node tools/online_amt/run_browser_benchmarks.mjs \
+  http://127.0.0.1:5174/online-amt-benchmark.html \
+  listen-matcher-domain-archive \
+  benchmark-results/listen-matcher-domain-archive-task24.json
+```
+
+Measured August 23, 2026 with manifest version 1, hash `0ed1e71d`, corpus hash
+`10ae2e0b`, both bundled renderers, and the unchanged model. Before it writes the
+detail archive, the exporter requires exact Task 08 reproduction: candidate
+digest `53ee8a67`, 721 safety rejections, the 30-row Pareto frontier, and the four
+selected identifiers. All reproduced. The archive reads the 139 `discovery` and
+37 renderable `regression-only` traces and zero `confirmation` traces. Its policy
+hash is `840b07ec`, internal archive digest is `1aab7393`, and file SHA-256 is
+`adf66cb52f7f6c62c99d722f0d4b04ecb89a41ba66770d38542e995385798a43`.
+
+#### Version-1 control result
+
+The domain oracle population is the 279 profiles that are globally safe over the
+complete regression corpus. Each leaf oracle maximizes independent recognition;
+a global profile's regret is that oracle rate minus its rate, and the verdict uses
+the worst leaf. The inclusive decision boundary was frozen at one percentage
+point before this detail result was inspected.
+
+`o0p450-t0p500-a0p200-x0p990-b1` is an oracle in all 29 version-1 leaf domains.
+Its worst and mean regret are both zero, so the control verdict is
+`one-global-profile-suffices`. The comparator chooses it as the representative of
+a three-profile complete-vector tie with
+`o0p450-t0p425-a0p200-x0p990-b1` and
+`o0p450-t0p350-a0p200-x0p990-b1`; each leaf separately has 12 to 279 tied
+oracles.
+
+The one-point boundary is a decision threshold, not a claim of one-point
+measurement resolution. Seven leaves contain one scoring trace, eight are
+invariant over all safe profiles, and 19 of the 21 varying leaves have a smallest
+observed non-zero rate step larger than the boundary (the observed steps span
+`0.006172839506172645` to `0.16666666666666666`). The archive carries this census
+so Task 26 reports the same limitation when it reapplies the rule. This does not
+select a production profile: it is
+observed discovery evidence on a corpus with no isolated scoring domain. Task 25
+adds isolated correct recognition as a co-equal domain, and Task 26 must rerun
+this exact calculation there to obtain the round's decision. Renderer, piano, and
+dynamic bands are acoustic-path proxies; this result is not a measured
+calibration benefit.
+
+#### Frozen round-two selection and stop rule
+
+Selection policy version 1 uses the same one-point boundary for material
+complementarity and permits at most four new candidates. In the spread case it
+starts with `baseline-v1`'s per-domain envelope and greedily chooses the safe
+profile that minimizes worst then mean residual regret; every addition must lift
+at least one leaf-domain independent rate by a full point. The whole-ablation
+stop rule is satisfied only by a non-empty search-selected set with no
+incomplete discovery stratum, no measured repeated-chord regression in any
+selected profile, and material repeated recovery in at least one selected
+profile. A bass axis is judged separately against its
+coordinate-identical compatibility-default twin and cannot earn support merely by
+appearing in a grid that passes. Its paired discovery evidence must itself be
+complete; otherwise support fails with
+`repeated-recovery-discovery-incomplete-against-twin`, even when the axis has a
+categorical safety rescue or material regret gain.
+
+Repeated recovery is paired per musical-input group. Source distance has zero
+regression allowance; attribution delay has one 32 ms decoder-hop allowance. A
+recovered-to-recovered partial gain is material only at one full attack of source
+distance and 500 ms of attribution delay; unrecovered-to-recovered is categorical.
+Every discovery stratum needs a material recovery, while every individual group
+must avoid regression. The declared discovery census includes undecoded groups,
+so an unmeasured group makes its stratum incomplete and forces the stop rule to
+continue with `selected-discovery-stratum-not-decoded`. Completeness is reported
+as `discoveryEvaluationStatus`; missing discovery evidence does not set
+`noRegression` false or downgrade `repeatedRecoveryOutcome`. Undecoded
+confirmation groups remain `not-run` and do not poison measured discovery
+performance. Distance 1 is always partial. Distance 0 across `v05`,
+`v13`, mixed, and every reproducing discovery group earns only
+`discovery-full-resolution`. `confirmed-full-resolution` additionally needs at
+least one unseen confirmation group to reproduce the predeclared decoder predicate
+and every reproducing group to pass. A structurally valid non-reproducing unseen
+group is retained as `inconclusive-no-reproduction`; it is not swapped.
+A discovery full-resolution label may coexist with incomplete discovery when the
+undecoded extra group's baseline does not reproduce the phenomenon, but the
+incomplete status still prevents the ablation from stopping.
+
+Task 22's exact three-run upper-voice minimum, `0.09577340414698106`, predeclares
+active-target refinement points `0.075`, `0.100`, and `0.125` below the historical
+0.20 floor, plus `0.300` and `0.325` between 0.275 and 0.350. The below-0.20
+region is not assumed safe; it remains a Task 26 diagnostic whose results cannot
+change these rules.
+
 ### Bass-onset and repeated-chord qualification — corrective rerun August 23, 2026
 
 The corrective rerun of the second round's first measurement, originally
@@ -2745,6 +2843,14 @@ its worst-domain metric is taken across renderers. It never captures a
 `confirmation` trace. The single-renderer `listen-threshold-sweep` command and
 its measured Direct and Tone results remain unchanged as historical discovery
 evidence.
+
+`listen-matcher-domain-archive` runs that same immutable multi-domain capture and
+replay, then uses the separate Task 24 exporter. It retains every grid profile's
+29 leaf-domain rows, applies selection policy version 1 to produce the version-1
+control verdict, and refuses to export unless the Task 08 aggregate archive is
+reproduced exactly. Pass the output path as its final argument; when a path is
+present stdout remains the compact aggregate summary instead of printing the
+large detail archive.
 
 `listen-dynamics-profile-validation` replays `baseline-v1` and the frozen
 multi-domain candidates over the dynamics and articulation corpora: 20 constant

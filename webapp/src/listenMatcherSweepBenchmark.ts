@@ -491,6 +491,33 @@ export interface ListenMultiDomainBreakdown {
   domains: Array<{ domainKey: string; value: number; traceCount: number }>;
 }
 
+/**
+ * The compact, auditable contribution of one leaf domain to one grid profile.
+ *
+ * Task 08 retained this detail only for its frontier. Task 24 needs it for all
+ * 1,000 rows so a domain oracle is selected from the complete globally-safe
+ * grid rather than from a frontier chosen by the aggregate metric order.
+ */
+export interface ListenMultiDomainLeafMetrics {
+  domainKey: string;
+  traceCount: number;
+  expectedEventCount: number;
+  independentMatchCount: number;
+  independentRate: number;
+  orderedAdvanceCount: number;
+  orderedPrefixCompleted: number;
+  orderedPrefixRate: number;
+  completePassageCount: number;
+  completePassageRate: number;
+  lateAdvanceCount: number;
+  lateAdvanceSourceDistance: number | null;
+  attributionDelayMs: number | null;
+  p95LatencyMs: number | null;
+  falseAdvanceCount: number;
+  skippedAdvanceCount: number;
+  duplicateAdvanceCount: number;
+}
+
 export interface ListenMultiDomainSafetyVerdict {
   passed: boolean;
   rejectionReasons: string[];
@@ -527,6 +554,8 @@ export interface ListenMultiDomainProfileResult {
   /** Leaf domains whose independent recognition improves on baseline-v1. */
   improvedDomainCount: number;
   worsenedDomainCount: number;
+  /** Retained for every row by the Task 24 detail re-export. */
+  leafDomains: ListenMultiDomainLeafMetrics[];
   totals: {
     scoredTraceCount: number;
     expectedEventCount: number;
@@ -814,6 +843,58 @@ interface MultiDomainAggregationInput {
   baseline: ListenMultiDomainProfileResult | null;
 }
 
+export function listenMultiDomainLeafMetrics(
+  runs: readonly ListenMultiDomainRunMetrics[],
+  scoringWeights: readonly ListenTraceWeight[],
+): ListenMultiDomainLeafMetrics[] {
+  const byTrace = new Map(runs.map((run) => [run.traceId, run]));
+  const scoredWeights = scoringWeights.filter(({ weight }) => weight > 0);
+  const domainKeys = [...new Set(scoredWeights.map(({ domainKey }) => domainKey))].sort();
+  return domainKeys.map((domainKey): ListenMultiDomainLeafMetrics => {
+    const domainRuns = scoredWeights
+      .filter((weight) => weight.domainKey === domainKey)
+      .flatMap(({ traceId }) => {
+        const run = byTrace.get(traceId);
+        return run === undefined ? [] : [run];
+      });
+    if (domainRuns.length === 0) {
+      throw new Error(`The scored leaf domain ${domainKey} has no replay rows.`);
+    }
+    const sum = (field: keyof ListenMultiDomainRunMetrics) => domainRuns.reduce(
+      (total, run) => total + Number(run[field]),
+      0,
+    );
+    const lateAdvanceCount = sum("lateAdvanceCount");
+    return {
+      domainKey,
+      traceCount: domainRuns.length,
+      expectedEventCount: sum("expectedEventCount"),
+      independentMatchCount: sum("independentMatchCount"),
+      // Preserve the manifest's run-equal leaf weighting. Event-count ratios
+      // remain available from the adjacent exact counts but do not replace it.
+      independentRate: meanOf(domainRuns.map(({ independentRate }) => independentRate)) ?? 0,
+      orderedAdvanceCount: sum("orderedAdvanceCount"),
+      orderedPrefixCompleted: sum("orderedPrefixCompleted"),
+      orderedPrefixRate: meanOf(domainRuns.map(({ orderedPrefixRate }) => orderedPrefixRate)) ?? 0,
+      completePassageCount: domainRuns.filter(({ complete }) => complete).length,
+      completePassageRate: meanOf(domainRuns.map(({ complete }) => complete ? 1 : 0)) ?? 0,
+      lateAdvanceCount,
+      lateAdvanceSourceDistance: lateAdvanceCount === 0
+        ? null
+        : sum("lateAdvanceSourceDistanceTotal") / lateAdvanceCount,
+      attributionDelayMs: lateAdvanceCount === 0
+        ? null
+        : sum("lateAdvanceAttributionDelayTotalMs") / lateAdvanceCount,
+      p95LatencyMs: meanOf(domainRuns.flatMap(({ p95OrderedAdvanceLatencyMs }) => (
+        p95OrderedAdvanceLatencyMs === null ? [] : [p95OrderedAdvanceLatencyMs]
+      ))),
+      falseAdvanceCount: sum("falseAdvanceCount"),
+      skippedAdvanceCount: sum("skippedAdvanceCount"),
+      duplicateAdvanceCount: sum("duplicateAdvanceCount"),
+    };
+  });
+}
+
 /**
  * Safety is a hard constraint evaluated over three separate populations, none of
  * which may be traded for a better score.
@@ -963,6 +1044,7 @@ function aggregateMultiDomainProfile(
       .filter(({ value: delta }) => delta > 0).length,
     worsenedDomainCount: independentRateDeltaFromBaseline.domains
       .filter(({ value: delta }) => delta < 0).length,
+    leafDomains: listenMultiDomainLeafMetrics(input.runs, input.scoringWeights),
     totals: {
       scoredTraceCount: scored.length,
       expectedEventCount: scored.reduce((total, entry) => total + entry.expectedEventCount, 0),

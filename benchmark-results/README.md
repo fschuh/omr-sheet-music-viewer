@@ -7,10 +7,11 @@ command:
 npm --prefix webapp run dev:wasm-benchmark
 ```
 
-Verify all four frozen artifacts, their exact file hashes, the Task 08 candidate
-archive digest and row count, the Task 10/11 canonical evidence digests, the
-Task 22 corpus census and pinned omitted-bass identities, forensic schemas, and
-non-overlapping late-advance counts with:
+Verify all five frozen artifacts, their exact file hashes, the Task 08 candidate
+archive digest and row count, the Task 24 complete per-domain control and policy,
+the Task 10/11 canonical evidence digests, the Task 22 corpus census and pinned
+omitted-bass identities, forensic schemas, and non-overlapping late-advance counts
+with:
 
 ```text
 node tools/online_amt/verify_listen_benchmark_evidence.mjs
@@ -102,6 +103,61 @@ consume Task 13 confirmation evidence. With an archive path, stdout remains the 
 summary instead of repeating the 3.4 MB candidate list. Without a path, the non-summary
 command emits the full result on stdout; use `listen-matcher-multidomain-sweep-summary`
 when only the compact result is wanted.
+
+## Task 24 complete per-domain control archive
+
+`listen-matcher-domain-archive-task24.json` is the August 23, 2026 detail-only
+re-export of the exact Task 08 discovery/regression search. It replays the same
+manifest-v1 corpus through the same immutable 1,000-profile grid, but retains the
+complete leaf-domain row for every profile instead of only the baseline and
+frontier. Its constructor fails unless every Task 08 aggregate reproduces first:
+721 safety rejections, the 30-profile frontier, all four selected identifiers,
+and candidate digest `53ee8a67`. It captures no confirmation trace.
+
+- Selection policy: version 1, `840b07ec`
+- Protocol manifest: version 1, `0ed1e71d`
+- Musical corpus: `10ae2e0b`
+- Globally safe profiles: 279 / 1,000
+- Leaf domains: 29
+- Task 24 archive digest: `fnv1a-32-canonical-json:1aab7393`
+- File SHA-256: `adf66cb52f7f6c62c99d722f0d4b04ecb89a41ba66770d38542e995385798a43`
+
+The predeclared one-percentage-point worst-domain regret boundary produces the
+version-1 control verdict `one-global-profile-suffices`.
+`o0p450-t0p500-a0p200-x0p990-b1` is an oracle in all 29 leaf domains and therefore
+has zero worst-domain regret. It is the frozen comparator's representative of a
+three-profile complete-vector tie with the otherwise identical `t0p425` and
+`t0p350` profiles; each leaf's recorded oracle tie set contains between 12 and
+279 safe profiles.
+
+The archive records the metric's observed resolution beside the boundary. Seven
+of 29 leaves contain one scoring trace, eight leaves are invariant over all 279
+safe profiles, and in 19 of the 21 varying leaves the one-point boundary is below
+the smallest observed non-zero rate step. In those leaves the practical test is
+zero regret versus any observable regret, not one-point measurement precision.
+This is discovery evidence on the version-1 corpus, not round-two eligibility and
+not calibration evidence.
+The frozen repeated-recovery policy reports an incomplete discovery census
+separately from matcher performance: it blocks the ablation with
+`selected-discovery-stratum-not-decoded` without labelling an unevaluated group as
+a regression. Undecoded confirmation groups remain `not-run`.
+Matched bass-axis support independently requires complete discovery evidence for
+its twin comparison; whole-ablation status cannot substitute for that pair-level
+census.
+Task 26 must rerun the identical calculation after manifest version 2 adds
+isolated correct recognition as a co-equal scoring domain.
+
+Reproduce the archive while the benchmark server is running:
+
+```text
+node tools/online_amt/run_browser_benchmarks.mjs \
+  http://127.0.0.1:5174/online-amt-benchmark.html \
+  listen-matcher-domain-archive \
+  benchmark-results/listen-matcher-domain-archive-task24.json
+```
+
+With an output path the runner writes the complete archive and keeps stdout to
+the Task 08 aggregate summary.
 
 ## Task 10 sequence-validation evidence
 

@@ -135,6 +135,11 @@ export declare function confirmationEvidenceProblems(
   label: string,
 ): string[];
 
+export declare function task24DomainArchiveProblems(
+  artifact: Record<string, unknown>,
+  result: unknown,
+): string[];
+
 export declare function verifyFrozenEvidence(): Promise<boolean>;
 
 export declare function main(args?: string[]): Promise<void>;

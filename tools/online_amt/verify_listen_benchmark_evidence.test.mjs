@@ -12,12 +12,66 @@ import {
   firstEvidenceDifference,
   main,
   rescoreTask13ArchiveUnderRoundTwoPolicy,
+  task24DomainArchiveProblems,
 } from "./verify_listen_benchmark_evidence.mjs";
 
 const COLUMN = [
   CONFIRMATION_EVIDENCE.baselineProfileId,
   ...CONFIRMATION_EVIDENCE.candidateProfileIds,
 ];
+
+const TASK24_ARTIFACT = {
+  name: "Task 24 per-domain control archive",
+  task24DomainArchive: {
+    name: "listen-matcher-domain-archive",
+    formatVersion: 1,
+    policyVersion: 1,
+    policyHash: "840b07ec",
+    manifestVersion: 1,
+    manifestHash: "0ed1e71d",
+    manifestCorpusHash: "10ae2e0b",
+    candidateCount: 1_000,
+    safeProfileCount: 279,
+    leafDomainCount: 29,
+    task08CandidateDigest: "53ee8a67",
+    task24Digest: "1aab7393",
+    verdict: "one-global-profile-suffices",
+    bestGlobalProfileId: "o0p450-t0p500-a0p200-x0p990-b1",
+    bestGlobalTieProfileIds: [
+      "o0p450-t0p500-a0p200-x0p990-b1",
+      "o0p450-t0p425-a0p200-x0p990-b1",
+      "o0p450-t0p350-a0p200-x0p990-b1",
+    ],
+    selectedProfileIds: ["o0p450-t0p500-a0p200-x0p990-b1"],
+    singleTraceDomainCount: 7,
+    invariantDomainCount: 8,
+    boundaryFinerThanSmallestPositiveStepDomainCount: 19,
+    task08RejectedCount: 721,
+    task08FrontierCount: 30,
+    task08SelectedProfileIds: [
+      "o0p450-t0p500-a0p200-x0p990-b1",
+      "o0p500-t0p500-a0p200-x0p990-b1",
+      "o0p450-t0p500-a0p275-x0p990-b1",
+      "o0p500-t0p500-a0p275-x0p990-b1",
+    ],
+  },
+};
+
+test("the Task 24 verifier accepts the complete archive and rejects a changed control", async () => {
+  const archive = JSON.parse(await readFile(join(
+    import.meta.dirname,
+    "../../benchmark-results/listen-matcher-domain-archive-task24.json",
+  ), "utf8"));
+  assert.deepEqual(task24DomainArchiveProblems(TASK24_ARTIFACT, archive), []);
+  const changed = structuredClone(archive);
+  changed[0].task24.version1Control.bestGlobal.profileId = "post-result-retune";
+  assert.ok(task24DomainArchiveProblems(TASK24_ARTIFACT, changed)
+    .some((problem) => problem.includes("best global profile")));
+  const selfDeclaredDigest = structuredClone(archive);
+  selfDeclaredDigest[0].task24.candidates[0].leafDomains[0].independentRate += 0.001;
+  assert.ok(task24DomainArchiveProblems(TASK24_ARTIFACT, selfDeclaredDigest)
+    .some((problem) => problem.includes("recomputed Task 24 digest")));
+});
 
 /** The frozen corpus sizes, so a fixture is the shape a real repetition has. */
 const DOMAIN_TRACE_COUNTS = Object.fromEntries(CONFIRMATION_EVIDENCE.domains

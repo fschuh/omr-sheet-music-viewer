@@ -22,8 +22,11 @@ const LISTEN_SEQUENCE_MODE = CONFIGURATION_FILTER === "listen-sequence" ||
 const LISTEN_THRESHOLD_SWEEP_MODE = CONFIGURATION_FILTER === "listen-threshold-sweep";
 const LISTEN_MULTIDOMAIN_SWEEP_SUMMARY_MODE = CONFIGURATION_FILTER ===
   "listen-matcher-multidomain-sweep-summary";
+const LISTEN_TASK24_DOMAIN_ARCHIVE_MODE = CONFIGURATION_FILTER ===
+  "listen-matcher-domain-archive";
 const LISTEN_MULTIDOMAIN_SWEEP_MODE = CONFIGURATION_FILTER ===
-  "listen-matcher-multidomain-sweep" || LISTEN_MULTIDOMAIN_SWEEP_SUMMARY_MODE;
+  "listen-matcher-multidomain-sweep" || LISTEN_MULTIDOMAIN_SWEEP_SUMMARY_MODE ||
+  LISTEN_TASK24_DOMAIN_ARCHIVE_MODE;
 // Full evidence commands can archive their complete JSON directly. The output
 // environment variable is honored for every command. Task 08's positional path
 // remains supported; validation matrices also accept a path after their optional
@@ -37,7 +40,8 @@ const POSITIONAL_LISTEN_VALIDATION_OUTPUT_FILTERS = new Set([
   "listen-dynamics-profile-validation-tone",
 ]);
 const LISTEN_BENCHMARK_OUTPUT_PATH = process.env.LISTEN_BENCHMARK_OUTPUT_PATH ?? (
-  CONFIGURATION_FILTER === "listen-matcher-multidomain-sweep"
+  CONFIGURATION_FILTER === "listen-matcher-multidomain-sweep" ||
+    LISTEN_TASK24_DOMAIN_ARCHIVE_MODE
     ? process.argv[4]
     : POSITIONAL_LISTEN_VALIDATION_OUTPUT_FILTERS.has(CONFIGURATION_FILTER)
     ? process.argv[5]
@@ -747,6 +751,11 @@ async function runConfiguration(configuration) {
         : LISTEN_MULTIDOMAIN_SWEEP_MODE
         ? `(async () => {
             const result = window.listenMatcherMultiDomainSweepResult;
+            if (${LISTEN_TASK24_DOMAIN_ARCHIVE_MODE}) {
+              const { fullListenTask24DomainArchiveResult } =
+                await import("/src/listenMatcherSelectionPolicy.ts");
+              return fullListenTask24DomainArchiveResult(result);
+            }
             const {
               conciseListenMatcherMultiDomainSweepResult,
               fullListenMatcherMultiDomainSweepResult,
@@ -1130,7 +1139,9 @@ const selectedConfigurations = FINGERING_SMOKE_MODE
   // One configuration, not a renderer pair: the multi-domain sweep captures both
   // renderers itself because its worst-domain metric spans them.
   ? [{
-      name: LISTEN_MULTIDOMAIN_SWEEP_SUMMARY_MODE
+      name: LISTEN_TASK24_DOMAIN_ARCHIVE_MODE
+        ? "listen-matcher-domain-archive"
+        : LISTEN_MULTIDOMAIN_SWEEP_SUMMARY_MODE
         ? "listen-matcher-multidomain-sweep-summary"
         : "listen-matcher-multidomain-sweep",
       query: "listen-matcher-multidomain-sweep=auto",
@@ -1893,7 +1904,7 @@ if (LISTEN_BENCHMARK_OUTPUT_PATH) {
 // written to a file. Without an output path the non-summary command still emits
 // the full result, while the explicit summary command remains compact.
 const stdoutResults = LISTEN_MULTIDOMAIN_SWEEP_MODE && LISTEN_BENCHMARK_OUTPUT_PATH
-  ? results.map(({ candidateArchive: _candidateArchive, ...summary }) => summary)
+  ? results.map(({ candidateArchive: _candidateArchive, task24: _task24, ...summary }) => summary)
   : results;
 console.log(JSON.stringify(
   stdoutResults,

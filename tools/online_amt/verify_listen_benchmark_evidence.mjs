@@ -14,6 +14,44 @@ const EVIDENCE_ARTIFACTS = [
     candidateCount: 1_000,
   },
   {
+    name: "Task 24 per-domain control archive",
+    path: "benchmark-results/listen-matcher-domain-archive-task24.json",
+    fileSha256: "adf66cb52f7f6c62c99d722f0d4b04ecb89a41ba66770d38542e995385798a43",
+    task24DomainArchive: {
+      name: "listen-matcher-domain-archive",
+      formatVersion: 1,
+      policyVersion: 1,
+      policyHash: "840b07ec",
+      manifestVersion: 1,
+      manifestHash: "0ed1e71d",
+      manifestCorpusHash: "10ae2e0b",
+      candidateCount: 1_000,
+      safeProfileCount: 279,
+      leafDomainCount: 29,
+      task08CandidateDigest: "53ee8a67",
+      task24Digest: "1aab7393",
+      verdict: "one-global-profile-suffices",
+      bestGlobalProfileId: "o0p450-t0p500-a0p200-x0p990-b1",
+      bestGlobalTieProfileIds: [
+        "o0p450-t0p500-a0p200-x0p990-b1",
+        "o0p450-t0p425-a0p200-x0p990-b1",
+        "o0p450-t0p350-a0p200-x0p990-b1",
+      ],
+      selectedProfileIds: ["o0p450-t0p500-a0p200-x0p990-b1"],
+      singleTraceDomainCount: 7,
+      invariantDomainCount: 8,
+      boundaryFinerThanSmallestPositiveStepDomainCount: 19,
+      task08RejectedCount: 721,
+      task08FrontierCount: 30,
+      task08SelectedProfileIds: [
+        "o0p450-t0p500-a0p200-x0p990-b1",
+        "o0p500-t0p500-a0p200-x0p990-b1",
+        "o0p450-t0p500-a0p275-x0p990-b1",
+        "o0p500-t0p500-a0p275-x0p990-b1",
+      ],
+    },
+  },
+  {
     name: "Task 10 sequence validation",
     path: "benchmark-results/listen-sequence-profile-validation-task10.json",
     fileSha256: "e969060b9011d86f1eb7cbb551077fbff69d03a8b01d4b548f499eaba51c927e",
@@ -733,6 +771,21 @@ export function canonicalJson(value, omittedFields = new Set()) {
   )).join(",")}}`;
 }
 
+/** Independent restatement of DeterministicHasher.text(canonicalJson(value), false). */
+function canonicalJsonDigest(value) {
+  let hash = 0x811c9dc5;
+  const text = canonicalJson(value);
+  const byte = (value) => {
+    hash = Math.imul(hash ^ (value & 0xff), 0x01000193) >>> 0;
+  };
+  for (let index = 0; index < text.length; index += 1) {
+    const code = text.charCodeAt(index);
+    byte(code & 0xff);
+    byte(code >>> 8);
+  }
+  return hash.toString(16).padStart(8, "0");
+}
+
 function objectKeys(value, omittedFields) {
   return Object.keys(value)
     .filter((key) => !omittedFields.has(key) && value[key] !== undefined)
@@ -927,7 +980,140 @@ export function bassQualificationProblems(artifact, result) {
   return problems;
 }
 
-/** Verifies the committed Task 08, 10, 11, and 22 evidence against their frozen pins. */
+/** Everything that makes the Task 24 file the complete-grid, detail-only control. */
+export function task24DomainArchiveProblems(artifact, result) {
+  const expected = artifact.task24DomainArchive;
+  if (expected === undefined) return [];
+  const problems = [];
+  const [run] = Array.isArray(result) ? result : [];
+  const archive = run?.task24;
+  const check = (label, actual, wanted) => {
+    if (actual !== wanted) problems.push(`${artifact.name}: ${label} ${actual}, expected ${wanted}`);
+  };
+  if (!Array.isArray(result) || result.length !== 1 || archive === undefined) {
+    return [`${artifact.name}: expected exactly one Task 24 archive`];
+  }
+  check("command", run.name, expected.name);
+  check("format version", archive.formatVersion, expected.formatVersion);
+  check("policy version", archive.selectionPolicy?.version, expected.policyVersion);
+  check("policy hash", archive.selectionPolicy?.hash, expected.policyHash);
+  check(
+    "recomputed policy hash",
+    canonicalJsonDigest(archive.selectionPolicy?.rule),
+    expected.policyHash,
+  );
+  check("manifest version", archive.manifest?.version, expected.manifestVersion);
+  check("manifest hash", archive.manifest?.hash, expected.manifestHash);
+  check("corpus hash", archive.manifest?.corpusHash, expected.manifestCorpusHash);
+  check("candidate count", archive.candidateCount, expected.candidateCount);
+  check("serialized candidate rows", archive.candidates?.length, expected.candidateCount);
+  check("safe profile count", archive.version1Control?.safeProfileCount, expected.safeProfileCount);
+  check("leaf-domain count", archive.version1Control?.domainCount, expected.leafDomainCount);
+  check(
+    "Task 08 candidate digest",
+    archive.task08Parity?.aggregateCandidateDigest,
+    expected.task08CandidateDigest,
+  );
+  check("Task 24 digest", archive.digest?.value, expected.task24Digest);
+  check("recomputed Task 24 digest", canonicalJsonDigest({
+    formatVersion: archive.formatVersion,
+    selectionPolicyVersion: archive.selectionPolicy?.version,
+    selectionPolicyHash: archive.selectionPolicy?.hash,
+    manifest: archive.manifest,
+    task08CandidateDigest: archive.task08Parity?.aggregateCandidateDigest,
+    version1Control: archive.version1Control,
+    candidates: archive.candidates,
+  }), expected.task24Digest);
+  check("version-1 control verdict", archive.version1Control?.verdict, expected.verdict);
+  check(
+    "best global profile",
+    archive.version1Control?.bestGlobal?.profileId,
+    expected.bestGlobalProfileId,
+  );
+  check("best global worst regret", archive.version1Control?.bestGlobal?.worstDomainRegret, 0);
+  check("best global mean regret", archive.version1Control?.bestGlobal?.meanDomainRegret, 0);
+  check(
+    "single-trace domain count",
+    archive.version1Control?.measurementResolution?.singleTraceDomainCount,
+    expected.singleTraceDomainCount,
+  );
+  check(
+    "invariant domain count",
+    archive.version1Control?.measurementResolution?.invariantDomainCount,
+    expected.invariantDomainCount,
+  );
+  check(
+    "boundary-finer-than-step domain count",
+    archive.version1Control?.measurementResolution
+      ?.boundaryFinerThanSmallestPositiveStepDomainCount,
+    expected.boundaryFinerThanSmallestPositiveStepDomainCount,
+  );
+  check("confirmation traces read", archive.confirmationTraceCountRead, 0);
+  if (archive.selectsNothing !== true) problems.push(`${artifact.name}: archive selects a profile`);
+  if (archive.task08Parity?.reproduced !== true) {
+    problems.push(`${artifact.name}: Task 08 aggregate parity is not verified`);
+  }
+  if (!sameList(archive.sourcePartitions, ["discovery", "regression-only"])) {
+    problems.push(`${artifact.name}: source partitions are not discovery/regression-only`);
+  }
+  if ((run.captures ?? []).some(({ partition }) => partition === "confirmation")) {
+    problems.push(`${artifact.name}: top-level aggregate captured confirmation evidence`);
+  }
+  if (!sameList(archive.version1Control?.selectedProfileIds, expected.selectedProfileIds)) {
+    problems.push(`${artifact.name}: version-1 selected control profile changed`);
+  }
+  check(
+    "Task 08 rejection count",
+    archive.task08Parity?.profilesRejectedBySafety,
+    expected.task08RejectedCount,
+  );
+  check(
+    "Task 08 frontier count",
+    archive.task08Parity?.paretoFrontierCount,
+    expected.task08FrontierCount,
+  );
+  if (!sameList(
+    archive.task08Parity?.selectedProfileIds,
+    expected.task08SelectedProfileIds,
+  )) {
+    problems.push(`${artifact.name}: Task 08 selected identifiers changed`);
+  }
+  if (archive.digest?.algorithm !== "fnv1a-32-canonical-json") {
+    problems.push(`${artifact.name}: unexpected Task 24 digest algorithm`);
+  }
+  const candidates = Array.isArray(archive.candidates) ? archive.candidates : [];
+  const profileIds = candidates.map((candidate) => candidate.profile?.id);
+  if (new Set(profileIds).size !== expected.candidateCount) {
+    problems.push(`${artifact.name}: candidate profile identifiers are not complete and unique`);
+  }
+  const incomplete = candidates.find((candidate) => (
+    candidate.metrics?.profileId !== candidate.profile?.id ||
+    !Array.isArray(candidate.leafDomains) ||
+    candidate.leafDomains.length !== expected.leafDomainCount ||
+    new Set(candidate.leafDomains.map(({ domainKey }) => domainKey)).size !==
+      expected.leafDomainCount
+  ));
+  if (incomplete) {
+    problems.push(`${artifact.name}: ${incomplete.profile?.id} has incomplete leaf-domain detail`);
+  }
+  const oracles = archive.version1Control?.oracles ?? [];
+  if (oracles.length !== expected.leafDomainCount || oracles.some((oracle) => (
+    !Array.isArray(oracle.tiedProfileIds) ||
+    !oracle.tiedProfileIds.includes(oracle.profileId) ||
+    !expected.bestGlobalTieProfileIds.every((profileId) => oracle.tiedProfileIds.includes(profileId))
+  ))) {
+    problems.push(`${artifact.name}: the version-1 leaf oracle tie sets do not reproduce the control`);
+  }
+  if (!sameList(
+    archive.version1Control?.bestGlobalTieProfileIds,
+    expected.bestGlobalTieProfileIds,
+  )) {
+    problems.push(`${artifact.name}: the best-global tie set changed`);
+  }
+  return problems;
+}
+
+/** Verifies the committed Task 08, 10, 11, 22, and 24 evidence against frozen pins. */
 export async function verifyFrozenEvidence() {
   const problems = [];
   for (const artifact of EVIDENCE_ARTIFACTS) {
@@ -982,6 +1168,9 @@ export async function verifyFrozenEvidence() {
 
     if (artifact.bassQualification !== undefined) {
       problems.push(...bassQualificationProblems(artifact, result));
+    }
+    if (artifact.task24DomainArchive !== undefined) {
+      problems.push(...task24DomainArchiveProblems(artifact, result));
     }
 
     let lateAdvances;

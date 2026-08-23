@@ -25,6 +25,7 @@ import {
 import {
   LISTEN_TRACE_CORPUS_HASH,
   LISTEN_TRACE_MANIFEST_HASH,
+  listenTraceWeightsForPartition,
   listenTracesInPartition,
   type ListenCandidateMetrics,
   type ListenTraceDescriptor,
@@ -46,6 +47,7 @@ import {
   generateListenMatcherSweepProfiles,
   listenMultiDomainCandidateArchive,
   listenMultiDomainCandidateArchiveDigest,
+  listenMultiDomainLeafMetrics,
   listenMultiDomainSweepTraces,
   listenThresholdSweepParetoFrontier,
   rankListenThresholdSweepCandidates,
@@ -566,6 +568,30 @@ test("the multi-domain sweep scores the manifest's frozen weighting and never re
     (result.baseline.metrics.equalDomainIndependentRate ?? 0));
   assert.equal(result.baseline.metrics.distanceFromBaseline, 0);
   assert.equal(result.baseline.independentRateDeltaFromBaseline.overall, 0);
+  assert.ok(result.candidates.every(({ leafDomains }) => leafDomains.length > 0));
+  assert.deepEqual(
+    result.baseline.leafDomains.map(({ domainKey, independentRate }) => ({
+      domainKey,
+      independentRate,
+    })),
+    result.baseline.independentRate.domains
+      .map(({ domainKey, value }) => ({ domainKey, independentRate: value }))
+      .sort((left, right) => left.domainKey.localeCompare(right.domainKey)),
+  );
+  const discoveryWeights = listenTraceWeightsForPartition("discovery");
+  const diagnosticTrace = discoveryWeights.find(({ weight }) => weight > 0)!;
+  const weightsWithOneDiagnostic = discoveryWeights.map((entry) => (
+    entry.traceId === diagnosticTrace.traceId ? { ...entry, weight: 0 } : entry
+  ));
+  const filteredLeaf = listenMultiDomainLeafMetrics(
+    result.baseline.runs!,
+    weightsWithOneDiagnostic,
+  ).find(({ domainKey }) => domainKey === diagnosticTrace.domainKey)!;
+  assert.equal(filteredLeaf.traceCount, discoveryWeights.filter((entry) => (
+    entry.domainKey === diagnosticTrace.domainKey &&
+    entry.weight > 0 &&
+    entry.traceId !== diagnosticTrace.traceId
+  )).length, "zero-weight diagnostic rows do not enter Task 24 leaf rates");
 
   // Per-run metrics survive only where a report needs them.
   assert.equal(result.baseline.runs?.length, 176);
