@@ -41,6 +41,8 @@ import {
   LISTEN_TRACE_CORPUS_HASH,
   LISTEN_TRACE_MANIFEST,
   LISTEN_TRACE_MANIFEST_HASH,
+  LISTEN_TRACE_MANIFEST_RECOGNITION_TARGET_COUNTS,
+  buildListenTraceManifestVersionOneControl,
   listenTracesInSuite,
   type ListenIsolatedCaseKind,
   type ListenTracePartition,
@@ -231,7 +233,8 @@ test("isolated validation cases join the manifest to the fixture corpus", () => 
   const isolatedTraces = listenTracesInSuite("isolated", LISTEN_TRACE_MANIFEST);
   assert.equal(cases.length, isolatedTraces.length);
   assert.equal(cases.length, bundledListenBenchmarkCases().length * 2);
-  assert.ok(cases.every(({ descriptor }) => descriptor.partition === "confirmation"));
+  assert.equal(cases.filter(({ descriptor }) => descriptor.partition === "discovery").length, 212);
+  assert.equal(cases.filter(({ descriptor }) => descriptor.partition === "regression-only").length, 56);
   const direct = listenIsolatedValidationCases(LISTEN_TRACE_MANIFEST, ["direct"]);
   assert.equal(direct.length, bundledListenBenchmarkCases().length);
   assert.ok(direct.every(({ renderer }) => renderer.version === LISTEN_BENCHMARK_RENDERER.version));
@@ -281,7 +284,7 @@ test("every profile column replays the identical retained trace", async () => {
   assert.equal(result.renderers.length, 1);
   assert.equal(result.traceReuseVerified, true);
   assert.equal(result.baselineParityVerified, true);
-  assert.equal(result.manifest.hash, "0ed1e71d");
+  assert.equal(result.manifest.hash, LISTEN_TRACE_MANIFEST_HASH);
   // One capture per fixture, five profile columns replayed from it.
   assert.equal(direct.caseCount, listenIsolatedValidationCases(LISTEN_TRACE_MANIFEST, ["direct"]).length);
   assert.ok([...captureCounts.values()].every((count) => count === 1));
@@ -982,11 +985,11 @@ test("dynamics validation cases join the manifest to the dynamics and articulati
   assert.equal(constant.length, 40);
   assert.equal(mixed.length, 4);
   assert.equal(articulation.length, 8);
-  // These suites are exactly what the manifest split, so both partitions are here
-  // and the diagnosed Tone Salamander v05 row gates instead of scoring.
+  // Every observed positive row is discovery in version 2; the diagnosed Tone
+  // Salamander v05 row remains a non-scoring regression.
   assert.deepEqual(
     [...new Set(cases.map(({ descriptor }) => descriptor.partition))].sort(),
-    ["confirmation", "discovery", "regression-only"],
+    ["discovery", "regression-only"],
   );
   assert.deepEqual(
     cases.filter(({ scoreEligible }) => !scoreEligible).map(({ descriptor }) => descriptor.id),
@@ -1062,10 +1065,8 @@ test("every dynamics profile column replays the identical retained trace", async
   assert.equal(result.renderers.length, 2);
   assert.equal(result.traceReuseVerified, true);
   assert.equal(result.baselineParityVerified, true);
-  // The manifest splits these suites across both partitions, so the run as a
-  // whole is mixed evidence and can never be quoted as confirmation.
-  assert.equal(result.evidenceRole, "mixed");
-  assert.deepEqual(result.partitions.slice().sort(), ["confirmation", "discovery", "regression-only"]);
+  assert.equal(result.evidenceRole, "discovery");
+  assert.deepEqual(result.partitions.slice().sort(), ["discovery", "regression-only"]);
   assert.equal(result.manifest.capturedTraceCount, 52);
   assert.ok([...captureCounts.values()].every((count) => count === 1));
   // Candidate metadata is the frozen registry manifest, values included.
@@ -1108,7 +1109,7 @@ test("every dynamics profile column replays the identical retained trace", async
   assert.equal(baseline.deltaFromBaseline, null);
   assert.equal(corpus(baseline).deltaFromBaseline, null);
   assert.equal(corpus(baseline).totals.orderedAdvanceCount, 0);
-  assert.equal(corpus(baseline).evidenceRole, "mixed");
+  assert.equal(corpus(baseline).evidenceRole, "discovery");
   assert.equal(corpus(baseline).traceIds.length, tone.scoredCaseCount);
   for (const candidate of tone.profiles.slice(1)) {
     assert.ok(corpus(candidate).totals.orderedAdvanceCount > 0);
@@ -1121,11 +1122,11 @@ test("every dynamics profile column replays the identical retained trace", async
     assert.ok(!corpus(candidate).traceIds.includes("dynamics-constant/tone/salamander/v05"));
     assert.equal(candidate.regressionTotals.sequenceCount, 1);
   }
-  // Each partition is reported on its own, so a gate can quote confirmation alone.
+  // All scored dynamics rows are now observed discovery evidence.
   const partitionGroups = baseline.groups.filter(({ kind }) => kind === "partition");
   assert.deepEqual(
     partitionGroups.map(({ evidenceRole }) => evidenceRole),
-    ["confirmation", "discovery"],
+    ["discovery"],
   );
   assert.equal(
     partitionGroups.reduce((total, { totals }) => total + totals.sequenceCount, 0),
@@ -1170,7 +1171,7 @@ test("every dynamics profile column replays the identical retained trace", async
     assert.equal(profile.safety.passed, true);
   }
   const concise = conciseListenDynamicsProfileValidationResult(result);
-  assert.equal(concise.evidenceRole, "mixed");
+  assert.equal(concise.evidenceRole, "discovery");
   assert.equal(concise.renderers[1].traceIdentities.length, tone.caseCount);
   assert.equal(concise.renderers[1].profiles[0].profileId, "baseline-v1");
   assert.equal(concise.renderers[1].regressionCases.length, 1);
@@ -1668,7 +1669,8 @@ function gateIsolatedRenderer(
   const courseClearCorrectTrialCount = options.courseClearCorrectTrialCount ?? 54;
   const wrongTrialCount = options.wrongTrialCount ?? 4;
   const ambiguousTrialCount = options.ambiguousTrialCount ?? 2;
-  const partition = options.partition ?? "confirmation";
+  const correctPartition = options.partition ?? "discovery";
+  const negativePartition = options.partition ?? "regression-only";
   const renderer = rendererKey === "tone"
     ? LISTEN_BENCHMARK_TONE_RENDERER
     : LISTEN_BENCHMARK_RENDERER;
@@ -1684,7 +1686,7 @@ function gateIsolatedRenderer(
       traceId: `isolated/${rendererKey}/${String(index).padStart(3, "0")}`,
       caseIndex: index,
       rendererKey,
-      partition,
+      partition: correctPartition,
       caseKind: "correct",
       fixtureGroup: courseClear ? "course-clear" : "general",
       expectedCorrect: true,
@@ -1704,7 +1706,7 @@ function gateIsolatedRenderer(
       traceId: `isolated/${rendererKey}/omitted-bass-${index}`,
       caseIndex: correctTrialCount + index,
       rendererKey,
-      partition,
+      partition: negativePartition,
       caseKind: "omitted-bass",
       fixtureGroup: "course-clear",
       expectedCorrect: false,
@@ -1721,7 +1723,7 @@ function gateIsolatedRenderer(
       traceId: `isolated/${rendererKey}/ambiguous-${index}`,
       caseIndex: correctTrialCount + wrongTrialCount + index,
       rendererKey,
-      partition,
+      partition: negativePartition,
       caseKind: "ambiguous-harmonic",
       fixtureGroup: "general",
       expectedCorrect: false,
@@ -2096,10 +2098,9 @@ test("a clean complete matrix makes the candidate eligible without selecting any
   assert.equal(report.reference.policy.promotionEligible, false);
   assert.equal(report.reference.gates.length, LISTEN_PROFILE_GATES.length);
   assert.ok(report.reference.gates.every(({ applied, passed }) => applied && passed));
-  // Each gate says which partitions it read, and release gates read only the
-  // held-back ones while the sequence corpus stays labeled discovery.
-  assert.deepEqual(gateOutcome(report, "release-isolated-recognition").partitions, ["confirmation"]);
-  assert.equal(gateOutcome(report, "release-isolated-recognition").evidenceRole, "confirmation");
+  // Paired isolated correctness now reads the observed scoring rows in discovery.
+  assert.deepEqual(gateOutcome(report, "release-isolated-recognition").partitions, ["discovery"]);
+  assert.equal(gateOutcome(report, "release-isolated-recognition").evidenceRole, "discovery");
   assert.deepEqual(gateOutcome(report, "release-dynamics-layer-loss").partitions, ["confirmation"]);
   assert.equal(
     gateOutcome(report, "consistency-sequence-speed-recognition").evidenceRole,
@@ -2938,12 +2939,28 @@ test("a partial run may reject a candidate but may never clear one", () => {
       gateIsolatedRenderer("tone", CLEAN_ISOLATED_ROWS),
     ]),
   });
-  // 8 of 8 is far below the floor of 104, and the floor is not rescaled to the
-  // corpus it was handed: the smaller renderer is left unscored, not passed.
+  // The frozen floor is not rescaled to the focused census. The smaller
+  // renderer remains paired for correctness but emits no product-debt row.
   assert.equal(gateOutcome(smallCorpus, "release-isolated-recognition").passed, true);
   assert.match(smallCorpus.incompleteEvidenceReasons.join(" "), /not the 106 the fixed floor/);
-  // A confirmation gate may not read a row from another partition at all, so a
-  // misfiled renderer that would have failed the floor is skipped, not scored.
+  const frozenDirectTarget = smallCorpus.reference.policy.recognitionTargets.find((target) => (
+    target.rendererKey === "direct" && target.metric === "isolated-correct-advance-rate"
+  ));
+  assert.equal(frozenDirectTarget, undefined);
+  const completeToneTarget = smallCorpus.reference.policy.recognitionTargets.find((target) => (
+    target.rendererKey === "tone" && target.metric === "isolated-correct-advance-rate"
+  ));
+  const frozenToneDefinition = LISTEN_TRACE_MANIFEST_RECOGNITION_TARGET_COUNTS.find((target) => (
+    target.rendererKey === "tone" && target.metric === "isolated-correct-advance-rate"
+  ));
+  assert.ok(frozenToneDefinition);
+  assert.ok(completeToneTarget);
+  assert.deepEqual(
+    [completeToneTarget.census, completeToneTarget.targetRate, completeToneTarget.targetCount],
+    [frozenToneDefinition.census, frozenToneDefinition.targetRate, frozenToneDefinition.targetCount],
+  );
+  // Correctness is paired on scored discovery; misfiling the negative members
+  // is incomplete evidence but cannot hide a paired correctness loss.
   const misfiled = evaluateListenProfileValidationGates({
     ...clean,
     isolated: gateIsolatedResult([
@@ -2954,9 +2971,12 @@ test("a partial run may reject a candidate but may never clear one", () => {
       gateIsolatedRenderer("tone", CLEAN_ISOLATED_ROWS),
     ]),
   });
-  assert.equal(gateOutcome(misfiled, "release-isolated-recognition").passed, true);
-  assert.deepEqual(gateOutcome(misfiled, "release-isolated-recognition").partitions, ["confirmation"]);
-  assert.match(misfiled.incompleteEvidenceReasons.join(" "), /outside the confirmation partition/);
+  assert.equal(gateOutcome(misfiled, "release-isolated-recognition").passed, false);
+  assert.deepEqual(gateOutcome(misfiled, "release-isolated-recognition").partitions, ["discovery"]);
+  assert.match(
+    misfiled.incompleteEvidenceReasons.join(" "),
+    /does not route correct rows to scored discovery/,
+  );
 });
 
 test("domains that did not measure one frozen matrix are refused rather than gated", () => {
@@ -3756,9 +3776,12 @@ test("the evidence verifier's frozen contract matches the code it describes", ()
     CONFIRMATION_EVIDENCE.candidateProfileIds,
     [...LISTEN_MULTIDOMAIN_CANDIDATE_PROFILE_IDS],
   );
-  assert.equal(CONFIRMATION_EVIDENCE.manifestVersion, LISTEN_TRACE_MANIFEST.version);
-  assert.equal(CONFIRMATION_EVIDENCE.manifestHash, LISTEN_TRACE_MANIFEST_HASH);
-  assert.equal(CONFIRMATION_EVIDENCE.manifestCorpusHash, LISTEN_TRACE_CORPUS_HASH);
+  assert.equal(CONFIRMATION_EVIDENCE.manifestVersion, 1);
+  assert.equal(CONFIRMATION_EVIDENCE.manifestHash, "0ed1e71d");
+  assert.equal(CONFIRMATION_EVIDENCE.manifestCorpusHash, "10ae2e0b");
+  assert.notEqual(CONFIRMATION_EVIDENCE.manifestVersion, LISTEN_TRACE_MANIFEST.version);
+  assert.notEqual(CONFIRMATION_EVIDENCE.manifestHash, LISTEN_TRACE_MANIFEST_HASH);
+  assert.notEqual(CONFIRMATION_EVIDENCE.manifestCorpusHash, LISTEN_TRACE_CORPUS_HASH);
 
   // The thresholds, not only the identifiers: the verifier exists to catch an
   // archive whose profile values are not the ones this task froze.
@@ -3807,12 +3830,13 @@ test("the evidence verifier's frozen contract matches the code it describes", ()
 
   // The corpus sizes come from the frozen manifest rather than from a memory of
   // it, so a manifest that grew a trace fails here before it reaches a run.
+  const historicalManifest = buildListenTraceManifestVersionOneControl();
   const dynamicsSuites = ["dynamics-constant", "dynamics-mixed", "articulation"] as const;
   const capturedTraceCounts = {
-    isolated: listenTracesInSuite("isolated").length,
-    sequence: listenTracesInSuite("sequence").length,
+    isolated: listenTracesInSuite("isolated", historicalManifest).length,
+    sequence: listenTracesInSuite("sequence", historicalManifest).length,
     dynamics: dynamicsSuites
-      .reduce((total, suite) => total + listenTracesInSuite(suite).length, 0),
+      .reduce((total, suite) => total + listenTracesInSuite(suite, historicalManifest).length, 0),
   };
   assert.deepEqual(
     CONFIRMATION_EVIDENCE.domains.map(({ domain, capturedTraceCount }) => (
@@ -3833,7 +3857,7 @@ test("the evidence verifier's frozen contract matches the code it describes", ()
   // to a partition or renderer the frozen matrix does not contain.
   for (const expected of CONFIRMATION_EVIDENCE.domains) {
     const partitions = [...new Set(expected.suites
-      .flatMap((suite) => listenTracesInSuite(suite as ListenTraceSuite))
+      .flatMap((suite) => listenTracesInSuite(suite as ListenTraceSuite, historicalManifest))
       .map(({ partition }) => partition))].sort();
     assert.deepEqual(expected.partitions, partitions, expected.domain);
     // A gating row carries no scored role at all, which the report writes as null.
@@ -3844,20 +3868,13 @@ test("the evidence verifier's frozen contract matches the code it describes", ()
   }
   assert.deepEqual(CONFIRMATION_EVIDENCE.rendererKeys, ["direct", "tone"]);
 
-  // The verifier also restates which rows a gate of each role and domain may
-  // have read, so it can refuse an outcome that quotes discovery rows as a
-  // release result. That rule is checked against gates the benchmark actually
-  // evaluated rather than against a description of them.
-  const report = evaluateListenProfileValidationGates(cleanGateInput());
-  for (const candidate of report.candidates) {
-    for (const gate of candidate.gates) {
-      const allowed = GATE_SCOPE_BY_ROLE[gate.role]
-        .filter((partition) => GATE_SCOPE_BY_DOMAIN[gate.domain].includes(partition));
-      for (const partition of gate.partitions) {
-        assert.ok(allowed.includes(partition), `${gate.code} read ${partition} rows`);
-      }
-      assert.equal(gate.applied, gate.partitions.length > 0, gate.code);
-      assert.equal(gate.passed, gate.applied && gate.failures.length === 0, gate.code);
+  // Scope here belongs to the frozen Task 13 archive. The current version-2
+  // evaluator intentionally reads the promoted isolated rows from discovery.
+  for (const gate of CONFIRMATION_EVIDENCE.gates) {
+    const allowed = GATE_SCOPE_BY_ROLE[gate.role]
+      .filter((partition) => GATE_SCOPE_BY_DOMAIN[gate.domain].includes(partition));
+    for (const partition of gate.partitions) {
+      assert.ok(allowed.includes(partition), `${gate.code} read ${partition} rows`);
     }
   }
   assert.deepEqual(
@@ -4039,37 +4056,19 @@ function completeCorpusGateReport(): ListenProfileValidationGateReport {
   });
 }
 
-test("the verifier's required gate coverage is the coverage a complete matrix has", () => {
+test("version-2 observed matrices cannot substitute for undecoded confirmation", () => {
   const report = completeCorpusGateReport();
-  // The fabricated matrix is the complete frozen corpus, so the release floors
-  // apply and every gate is reached.
+  // Every observed matrix is present, but Task 25 deliberately leaves no
+  // confirmation dynamics row. Required release coverage therefore fails
+  // closed until the newly authored paired confirmation corpus is decoded.
   assert.equal(report.evidenceComplete, true, report.incompleteEvidenceReasons.join(" "));
   const candidate = report.candidates[0];
-  assert.deepEqual(candidate.failedGateCodes, []);
-  for (const gate of candidate.gates) {
-    assert.equal(gate.applied, true, `${gate.code} was not applied`);
-  }
-  // Coverage is pinned per gate, not merely bounded: a complete archive that
-  // gated safety on the confirmation rows alone must be refused, and a subset
-  // rule would accept it.
-  assert.deepEqual(
-    candidate.gates.map(({ code, partitions }) => [code, partitions]),
-    CONFIRMATION_EVIDENCE.gates.map(({ code, partitions }) => [code, partitions]),
-  );
-  for (const gate of candidate.gates) {
-    const allowed = GATE_SCOPE_BY_ROLE[gate.role]
-      .filter((partition) => GATE_SCOPE_BY_DOMAIN[gate.domain].includes(partition));
-    for (const partition of gate.partitions) {
-      assert.ok(allowed.includes(partition), `${gate.code} read ${partition} rows`);
-    }
-  }
-  // The three domains carry the partitions the verifier pins for them too.
-  assert.deepEqual(
-    report.domains.map(({ domain, partitions, evidenceRole }) => (
-      [domain, partitions, evidenceRole]
-    )),
-    CONFIRMATION_EVIDENCE.domains.map(({ domain, partitions, evidenceRole }) => (
-      [domain, partitions, evidenceRole]
-    )),
-  );
+  assert.deepEqual(candidate.failedGateCodes, [
+    "release-dynamics-piano-recognition",
+    "release-dynamics-layer-loss",
+  ]);
+  assert.ok(candidate.gates
+    .filter(({ code }) => candidate.failedGateCodes.includes(code))
+    .every(({ applied }) => !applied));
+  assert.equal(candidate.eligibility, "rejected");
 });

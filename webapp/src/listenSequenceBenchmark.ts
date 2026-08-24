@@ -53,6 +53,7 @@ import type {
   RecognizedPitchEvidence,
   RecognizerResult,
 } from "./noteRecognizer";
+import type { PianoId, PianoLayerId } from "./pianoRegistry";
 
 export const LISTEN_SEQUENCE_INTERVALS_MS = [
   1_000,
@@ -1005,6 +1006,7 @@ export function benchmarkAudioAttacksForSequence(
 export function renderListenSequenceAudio(
   sequence: MaterializedListenSequence,
   renderer: ListenBenchmarkRendererConfiguration = LISTEN_BENCHMARK_RENDERER,
+  selection: { piano?: PianoId; layer?: PianoLayerId } = {},
 ): Promise<ListenBenchmarkAudioRenderResult> {
   return renderBenchmarkAudio({
     attacks: benchmarkAudioAttacksForSequence(sequence),
@@ -1012,6 +1014,7 @@ export function renderListenSequenceAudio(
     sampleRate: ONLINE_AMT_SAMPLE_RATE,
     chunkSize: ONLINE_AMT_CHUNK_SIZE,
     renderer,
+    ...selection,
   });
 }
 
@@ -2933,12 +2936,15 @@ export async function captureListenSequenceRun(options: {
   intervalMs: number;
   session: SequenceInferenceSession;
   renderer?: ListenBenchmarkRendererConfiguration;
+  piano?: PianoId;
+  layer?: PianoLayerId;
 }): Promise<ListenSequenceCapture> {
   const { definition, intervalMs } = options;
   const sequence = materializeListenSequence(definition, intervalMs);
   const rendered = await renderListenSequenceAudio(
     sequence,
     options.renderer ?? LISTEN_BENCHMARK_RENDERER,
+    { piano: options.piano, layer: options.layer },
   );
   const label = `${definition.id} at ${intervalMs} ms`;
   const renderedSignature = signatureForBenchmarkPcm(rendered.pcm);

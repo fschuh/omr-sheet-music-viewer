@@ -983,13 +983,13 @@ test("the captured corpus holds the isolated suite, discovery, and the three run
     traces.filter(({ suite }) => suite === "isolated").length,
     LISTEN_TRACE_MANIFEST.traces.filter(({ suite }) => suite === "isolated").length,
   );
-  // Confirmation evidence enters only where the plan names it: the isolated
-  // corpus and the held-back `v13` layer.
+  // Task 25 moves every observed row out of confirmation. Newly authored
+  // confirmation pairs are outside this historical Task 22 capture command.
   assert.deepEqual(
     traces
       .filter(({ partition, suite }) => partition === "confirmation" && suite !== "isolated")
       .map(({ id }) => id),
-    ["dynamics-constant/tone/salamander/v13"],
+    [],
   );
   assert.equal(traces.some(({ suite }) => suite === "safety-regression"), false);
 });

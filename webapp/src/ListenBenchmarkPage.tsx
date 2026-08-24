@@ -27,6 +27,10 @@ import {
 } from "./listenMatcherSweepBenchmark";
 import type { ListenTraceRendererKey } from "./listenTraceManifest";
 import {
+  runListenRoundTwoCorpusCapture,
+  type ListenRoundTwoCorpusCaptureResult,
+} from "./listenRoundTwoCorpusBenchmark";
+import {
   LISTEN_DYNAMICS_VALIDATION_SUITES,
   conciseListenDynamicsProfileValidationResult,
   conciseListenIsolatedProfileValidationResult,
@@ -192,6 +196,7 @@ export function ListenBenchmarkPage() {
       | "multidomain-sweep" | "isolated-profile-validation"
       | "sequence-profile-validation" | "dynamics-profile-validation"
       | "profile-validation" | "bass-qualification"
+      | "round-two-corpus"
   >(null);
   const running = runningTask !== null;
   const [progress, setProgress] = useState("");
@@ -202,6 +207,7 @@ export function ListenBenchmarkPage() {
       | "multidomain-sweep" | "isolated-profile-validation"
       | "sequence-profile-validation" | "dynamics-profile-validation"
       | "profile-validation" | "bass-qualification"
+      | "round-two-corpus"
   >("isolated");
   const [error, setError] = useState<string | null>(null);
   const [automated, setAutomated] = useState<ListenBenchmarkSummary | null>(null);
@@ -244,7 +250,10 @@ export function ListenBenchmarkPage() {
   useEffect(() => {
     if (automaticBenchmarkStarted) return;
     const query = new URLSearchParams(window.location.search);
-    if (query.get("listen-sequence-case") === "auto") {
+    if (query.get("listen-round-two-corpus") === "auto") {
+      automaticBenchmarkStarted = true;
+      void runRoundTwoCorpusCapture();
+    } else if (query.get("listen-sequence-case") === "auto") {
       automaticBenchmarkStarted = true;
       void runSequenceCase();
     } else if (query.get("listen-bass-qualification") === "auto") {
@@ -389,6 +398,28 @@ export function ListenBenchmarkPage() {
       (window as typeof window & {
         listenMatcherMultiDomainSweepResult?: ListenMultiDomainSweepResult;
       }).listenMatcherMultiDomainSweepResult = result;
+      document.body.dataset.status = "complete";
+    } catch (benchmarkError) {
+      setError(benchmarkError instanceof Error ? benchmarkError.message : String(benchmarkError));
+      document.body.dataset.status = "error";
+    } finally {
+      setRunningTask(null);
+    }
+  }
+
+  async function runRoundTwoCorpusCapture() {
+    setRunningTask("round-two-corpus");
+    setProgressTask("round-two-corpus");
+    setError(null);
+    setProgress("Capturing authored discovery and Task 22 regression evidence…");
+    document.body.dataset.status = "running";
+    try {
+      const result = await runListenRoundTwoCorpusCapture((complete, total, label) => {
+        setProgress(`${complete} / ${total} traces · ${label}`);
+      });
+      (window as typeof window & {
+        listenRoundTwoCorpusResult?: ListenRoundTwoCorpusCaptureResult;
+      }).listenRoundTwoCorpusResult = result;
       document.body.dataset.status = "complete";
     } catch (benchmarkError) {
       setError(benchmarkError instanceof Error ? benchmarkError.message : String(benchmarkError));

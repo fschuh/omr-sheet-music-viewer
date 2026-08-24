@@ -27,6 +27,7 @@ const LISTEN_TASK24_DOMAIN_ARCHIVE_MODE = CONFIGURATION_FILTER ===
 const LISTEN_MULTIDOMAIN_SWEEP_MODE = CONFIGURATION_FILTER ===
   "listen-matcher-multidomain-sweep" || LISTEN_MULTIDOMAIN_SWEEP_SUMMARY_MODE ||
   LISTEN_TASK24_DOMAIN_ARCHIVE_MODE;
+const LISTEN_ROUND_TWO_CORPUS_MODE = CONFIGURATION_FILTER === "listen-round-two-corpus";
 // Full evidence commands can archive their complete JSON directly. The output
 // environment variable is honored for every command. Task 08's positional path
 // remains supported; validation matrices also accept a path after their optional
@@ -41,6 +42,7 @@ const POSITIONAL_LISTEN_VALIDATION_OUTPUT_FILTERS = new Set([
 ]);
 const LISTEN_BENCHMARK_OUTPUT_PATH = process.env.LISTEN_BENCHMARK_OUTPUT_PATH ?? (
   CONFIGURATION_FILTER === "listen-matcher-multidomain-sweep" ||
+    LISTEN_ROUND_TWO_CORPUS_MODE ||
     LISTEN_TASK24_DOMAIN_ARCHIVE_MODE
     ? process.argv[4]
     : POSITIONAL_LISTEN_VALIDATION_OUTPUT_FILTERS.has(CONFIGURATION_FILTER)
@@ -290,6 +292,7 @@ async function runConfiguration(configuration) {
       ? BASE_URL.replace(/online-amt-benchmark\.html(?:\?.*)?$/, "listen-benchmark-parity.html")
       : (LISTEN_SMOKE_MODE || LISTEN_DYNAMICS_SMOKE_MODE || LISTEN_ACCURACY_MODE || LISTEN_SEQUENCE_MODE ||
         LISTEN_THRESHOLD_SWEEP_MODE || LISTEN_MULTIDOMAIN_SWEEP_MODE ||
+        LISTEN_ROUND_TWO_CORPUS_MODE ||
         LISTEN_PROFILE_VALIDATION_MODE ||
         LISTEN_ISOLATED_VALIDATION_MODE || LISTEN_SEQUENCE_VALIDATION_MODE ||
         LISTEN_DYNAMICS_VALIDATION_MODE ||
@@ -447,6 +450,8 @@ async function runConfiguration(configuration) {
       // and regression corpora, then replays 1,000 profiles against each trace.
       LISTEN_MULTIDOMAIN_SWEEP_MODE
         ? 7_200_000
+        : LISTEN_ROUND_TWO_CORPUS_MODE
+        ? 1_200_000
         // The unified gate captures the isolated, sequence, dynamics, and
         // articulation corpora under both renderers in one pass.
         : LISTEN_PROFILE_VALIDATION_MODE
@@ -748,6 +753,8 @@ async function runConfiguration(configuration) {
               await import("/src/listenProfileValidationBenchmark.ts");
             return conciseListenDynamicsProfileValidationResult(result);
           })()`
+        : LISTEN_ROUND_TWO_CORPUS_MODE
+        ? "window.listenRoundTwoCorpusResult"
         : LISTEN_MULTIDOMAIN_SWEEP_MODE
         ? `(async () => {
             const result = window.listenMatcherMultiDomainSweepResult;
@@ -1135,6 +1142,11 @@ const selectedConfigurations = FINGERING_SMOKE_MODE
           : "") +
         (DYNAMICS_VALIDATION_SUITES ? `&benchmark-suite=${DYNAMICS_VALIDATION_SUITES}` : ""),
     }]
+  : LISTEN_ROUND_TWO_CORPUS_MODE
+  ? [{
+      name: "listen-round-two-corpus",
+      query: "listen-round-two-corpus=auto",
+    }]
   : LISTEN_MULTIDOMAIN_SWEEP_MODE
   // One configuration, not a renderer pair: the multi-domain sweep captures both
   // renderers itself because its worst-domain metric spans them.
@@ -1505,6 +1517,13 @@ for (let index = 0; index < selectedConfigurations.length; index += 1) {
     );
   } else if (LISTEN_PARITY_MODE) {
     console.error(`${configuration.name}: ${result.checks.length} parity checks passed`);
+  } else if (LISTEN_ROUND_TWO_CORPUS_MODE) {
+    console.error(
+      `${configuration.name}: captured=${result.capturedTraceCount} ` +
+      `confirmation-decoded=${result.confirmation.decodedTraceCount}/` +
+      `${result.confirmation.traceCount} manifest=${result.manifest.version}/` +
+      `${result.manifest.hash}/${result.manifest.corpusHash}`,
+    );
   } else if (LISTEN_SEQUENCE_CASE_MODE) {
     console.error(
       `${configuration.name}: ${result.sequenceId} at ${result.intervalMs.toFixed(2)}ms ` +

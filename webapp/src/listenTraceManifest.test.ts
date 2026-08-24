@@ -2,6 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { bundledListenBenchmarkCases } from "./listenBenchmark";
 import { LISTEN_SAFETY_REGRESSION_FIXTURES } from "./listenSafetyRegression";
+import { LISTEN_OMITTED_BASS_REGRESSION_FIXTURES } from "./listenOmittedBassRegression";
+import {
+  LISTEN_ROUND_TWO_FIXTURE_GROUPS,
+  LISTEN_ROUND_TWO_FIXTURE_ROLES,
+} from "./listenRoundTwoFixtures";
 import {
   LISTEN_SEQUENCE_INTERVALS_MS,
   bundledListenSequences,
@@ -13,16 +18,20 @@ import {
   LISTEN_DYNAMIC_BANDS,
   LISTEN_TRACE_CORPUS_HASH,
   LISTEN_TRACE_MANIFEST_CENSUS,
+  LISTEN_TRACE_MANIFEST_EXPECTED_RANKING_EFFECT,
+  LISTEN_TRACE_MANIFEST_RECOGNITION_TARGET_COUNTS,
   LISTEN_TRACE_MANIFEST_TRACE_COUNT,
   canonicalListenMetricValue,
   listenTraceCensus,
-  LISTEN_ISOLATED_CASE_KINDS,
   LISTEN_TRACE_MANIFEST,
   LISTEN_TRACE_MANIFEST_HASH,
   LISTEN_TRACE_MANIFEST_VERSION,
   LISTEN_TRACE_PARTITIONS,
+  LISTEN_PRIOR_TRACE_LEDGER,
+  LISTEN_PRIOR_TRACE_LEDGER_HASH,
   assertValidListenTraceManifest,
   buildListenTraceManifest,
+  buildListenTraceManifestVersionOneControl,
   compareListenCandidates,
   computeListenTraceWeights,
   eligibleListenCandidates,
@@ -34,6 +43,7 @@ import {
   listenTraceDomainMeans,
   listenTraceCorpusHash,
   listenTraceManifestHash,
+  listenPriorTraceLedgerHash,
   listenTraceMusicalInputHash,
   listenTraceWeightsForPartition,
   listenTracesInPartition,
@@ -89,9 +99,11 @@ test("assigns every automated trace exactly once", () => {
     constantCount +
     PIANO_IDS.length * 2 +
     bundledListenBenchmarkCases().length * 2 +
-    LISTEN_SAFETY_REGRESSION_FIXTURES.length;
+    LISTEN_SAFETY_REGRESSION_FIXTURES.length +
+    LISTEN_OMITTED_BASS_REGRESSION_FIXTURES.length +
+    LISTEN_ROUND_TWO_FIXTURE_GROUPS.length * LISTEN_ROUND_TWO_FIXTURE_ROLES.length;
   assert.equal(traces.length, expected);
-  assert.equal(traces.length, 478);
+  assert.equal(traces.length, 504);
   assert.equal(new Set(traces.map(({ id }) => id)).size, traces.length);
   for (const trace of traces) {
     assert.ok(LISTEN_TRACE_PARTITIONS.includes(trace.partition), trace.id);
@@ -109,9 +121,9 @@ test("freezes the measured partition census", () => {
       partition,
       listenTracesInPartition(partition).length,
     ]),
-    [["discovery", 139], ["confirmation", 300], ["regression-only", 39]],
+    [["discovery", 395], ["confirmation", 12], ["regression-only", 97]],
   );
-  assert.equal(LISTEN_TRACE_MANIFEST_VERSION, 1);
+  assert.equal(LISTEN_TRACE_MANIFEST_VERSION, 2);
   assert.ok(Object.isFrozen(LISTEN_TRACE_MANIFEST));
   assert.ok(Object.isFrozen(LISTEN_TRACE_MANIFEST.traces[0]));
 });
@@ -176,33 +188,22 @@ test("covers every discovery domain the plan requires", () => {
   }
 });
 
-test("reserves untouched confirmation evidence", () => {
+test("reserves only newly authored paired evidence for confirmation", () => {
   const confirmation = listenTracesInPartition("confirmation");
   const isolated = listenTracesInSuite("isolated");
   assert.equal(isolated.length, bundledListenBenchmarkCases().length * 2);
-  assert.ok(isolated.every(({ partition }) => partition === "confirmation"));
-  for (const caseKind of LISTEN_ISOLATED_CASE_KINDS) {
-    assert.ok(confirmation.some((trace) => trace.caseKind === caseKind), caseKind);
+  assert.equal(isolated.filter(({ partition }) => partition === "discovery").length, 212);
+  assert.equal(isolated.filter(({ partition }) => partition === "regression-only").length, 56);
+  assert.ok(confirmation.every(({ suite }) => suite === "round-two-paired"));
+  assert.ok(confirmation.every(({ decodeStatus, fixtureVersion }) => (
+    decodeStatus === "not-decoded-until-task-28" && fixtureVersion === null
+  )));
+  for (const role of LISTEN_ROUND_TWO_FIXTURE_ROLES) {
+    assert.ok(confirmation.some(({ pairedCaseRole }) => pairedCaseRole === role), role);
   }
-  for (const rendererKey of ["direct", "tone"] as const) {
-    for (const piano of PIANO_IDS) {
-      assert.ok(
-        confirmation.some((trace) => (
-          trace.suite === "dynamics-constant" &&
-          trace.rendererKey === rendererKey &&
-          trace.piano === piano
-        )),
-        `${rendererKey} ${piano}`,
-      );
-    }
-    assert.ok(
-      confirmation.some((trace) => (
-        trace.suite === "articulation" && trace.rendererKey === rendererKey
-      )),
-      `${rendererKey} articulation`,
-    );
-  }
-  assert.ok(confirmation.some(({ suite }) => suite === "dynamics-mixed"));
+  assert.ok(confirmation.some(({ repeatedRecoveryDesignStatus }) => (
+    repeatedRecoveryDesignStatus === "designed-unverified"
+  )));
 });
 
 test("counts the isolated corpus by case kind", () => {
@@ -220,6 +221,135 @@ test("counts the isolated corpus by case kind", () => {
   assert.equal(listenIsolatedCaseKind([60], [61]), "distinguishable-wrong");
   assert.equal(listenIsolatedCaseKind([60], [60, 72]), "ambiguous-harmonic");
   assert.equal(listenIsolatedCaseKind([52, 64, 72], [64, 72]), "omitted-bass");
+});
+
+test("routes the observed isolated census to scoring, safety, and diagnostic roles", () => {
+  const isolated = listenTracesInSuite("isolated");
+  const count = (caseKind: string, evidenceRole: string) => isolated.filter((trace) => (
+    trace.caseKind === caseKind && trace.evidenceRole === evidenceRole
+  )).length;
+  assert.equal(count("correct", "scoring"), 212);
+  assert.equal(count("omitted-bass", "safety"), 36);
+  assert.equal(count("distinguishable-wrong", "safety"), 4);
+  assert.equal(count("ambiguous-harmonic", "diagnostic"), 16);
+  assert.ok(isolated.filter(({ evidenceRole }) => evidenceRole === "diagnostic")
+    .every(({ scoreEligible }) => !scoreEligible));
+});
+
+test("binds Task 23 target rates to the finalized version-2 census", () => {
+  assert.deepEqual(LISTEN_TRACE_MANIFEST_RECOGNITION_TARGET_COUNTS, [
+    {
+      rendererKey: "direct",
+      metric: "isolated-correct-advance-rate",
+      targetRate: 0.98,
+      census: 106,
+      targetCount: 104,
+    },
+    {
+      rendererKey: "direct",
+      metric: "course-clear-correct-advance-rate",
+      targetRate: 0.95,
+      census: 54,
+      targetCount: 52,
+    },
+    {
+      rendererKey: "tone",
+      metric: "isolated-correct-advance-rate",
+      targetRate: 0.95,
+      census: 106,
+      targetCount: 101,
+    },
+    {
+      rendererKey: "tone",
+      metric: "course-clear-correct-advance-rate",
+      targetRate: 0.95,
+      census: 54,
+      targetCount: 52,
+    },
+  ]);
+});
+
+test("predeclares the concentrated weight of the sixth round-two suite", () => {
+  const weights = listenTraceWeightsForPartition("discovery");
+  const byId = new Map(weights.map((entry) => [entry.traceId, entry.weight]));
+  const pairedCorrect = LISTEN_TRACE_MANIFEST.traces.filter(({ partition, suite, pairedCaseRole }) => (
+    partition === "discovery" && suite === "round-two-paired" && pairedCaseRole === "correct"
+  ));
+  const isolatedCorrect = LISTEN_TRACE_MANIFEST.traces.filter(({ partition, suite }) => (
+    partition === "discovery" && suite === "isolated"
+  ));
+  assert.equal(pairedCorrect.length, 4);
+  assert.equal(isolatedCorrect.length, 212);
+  assert.ok(pairedCorrect.every(({ id }) => (
+    Math.abs((byId.get(id) ?? 0) - 1 / 24) < 1e-15
+  )));
+  assert.ok(isolatedCorrect.every(({ id }) => (
+    Math.abs((byId.get(id) ?? 0) - 1 / 1_272) < 1e-15
+  )));
+  assert.ok(Math.abs((byId.get(pairedCorrect[0].id) ?? 0) /
+    (byId.get(isolatedCorrect[0].id) ?? 1) - 53) < 1e-12);
+  assert.match(LISTEN_TRACE_MANIFEST_EXPECTED_RANKING_EFFECT, /sixth co-equal suite/);
+  assert.match(LISTEN_TRACE_MANIFEST_EXPECTED_RANKING_EFFECT, /53 times heavier/);
+});
+
+test("keeps every authored pair intact and non-scoring on its negative members", () => {
+  for (const authored of LISTEN_ROUND_TWO_FIXTURE_GROUPS) {
+    const traces = LISTEN_TRACE_MANIFEST.traces.filter(({ pairedGroupId }) => (
+      pairedGroupId === authored.id
+    ));
+    assert.equal(traces.length, 3, authored.id);
+    assert.deepEqual(traces.map(({ pairedCaseRole }) => pairedCaseRole).sort(), [
+      "correct",
+      "distinguishable-wrong",
+      "omitted-bass",
+    ]);
+    assert.equal(new Set(traces.map(({ partition }) => partition)).size, 1);
+    assert.equal(new Set(traces.map(({ pairedGroupHash }) => pairedGroupHash)).size, 1);
+    assert.equal(traces.filter(({ scoreEligible }) => scoreEligible).length, 1);
+  }
+  for (const partition of ["discovery", "confirmation"] as const) {
+    assert.ok(LISTEN_ROUND_TWO_FIXTURE_GROUPS.some((group) => (
+      group.partition === partition && group.repeatedIdenticalChord
+    )));
+  }
+});
+
+test("pins prior evidence and rejects it from version-2 confirmation", () => {
+  assert.equal(LISTEN_PRIOR_TRACE_LEDGER.length, 478);
+  assert.equal(listenPriorTraceLedgerHash(), LISTEN_PRIOR_TRACE_LEDGER_HASH);
+  const oldInput = LISTEN_PRIOR_TRACE_LEDGER[0];
+  const leaked = mutatedManifest((trace) => (
+    trace.partition === "confirmation" && trace.id === listenTracesInPartition("confirmation")[0].id
+      ? { ...trace, musicalInputHash: oldInput.musicalInputHash }
+      : trace
+  ));
+  assert.ok(validateListenTraceManifest(leaked)
+    .some(({ code }) => code === "confirmation-seen-in-prior-round"));
+  const relabelledContent = mutatedManifest((trace) => (
+    trace.partition === "confirmation" && trace.id === listenTracesInPartition("confirmation")[0].id
+      ? { ...trace, contentKey: oldInput.contentIdentity }
+      : trace
+  ));
+  assert.ok(validateListenTraceManifest(relabelledContent)
+    .some(({ code }) => code === "confirmation-seen-in-prior-round"));
+
+  const versionOneAsVersionTwo: ListenTraceManifest = {
+    ...buildListenTraceManifestVersionOneControl(),
+    version: 2,
+  };
+  const codes = validateListenTraceManifest(versionOneAsVersionTwo).map(({ code }) => code);
+  assert.ok(codes.includes("manifest-census"), codes.join(","));
+  assert.ok(codes.includes("confirmation-not-authored-in-v2"), codes.join(","));
+});
+
+test("rejects splitting an authored pair across discovery and confirmation", () => {
+  const groupId = LISTEN_ROUND_TWO_FIXTURE_GROUPS[0].id;
+  const split = mutatedManifest((trace) => (
+    trace.pairedGroupId === groupId && trace.pairedCaseRole === "omitted-bass"
+      ? { ...trace, partition: "confirmation" }
+      : trace
+  ));
+  assert.ok(validateListenTraceManifest(split).some(({ code }) => code === "split-paired-group"));
 });
 
 test("keeps discovery and confirmation from sharing rendered content", () => {
@@ -280,18 +410,15 @@ test("rejects the amendments that keep every structural rule satisfied", () => {
     .some(({ code }) => code === "manifest-trace-count"));
   assert.ok(validateListenTraceManifest(promotedRegression)
     .some(({ code }) => code === "manifest-census"));
-  // Relabelling the version is not the new-round process, so it is rejected as
-  // an unpinned version rather than escaping the census and hash checks.
+  // Relabelling to an unknown version is not the new-round process.
   for (const amended of [withoutOneIsolatedCase, promotedRegression, reweighted]) {
-    const relabelled: ListenTraceManifest = { ...amended, version: 2 };
-    assert.deepEqual(
-      validateListenTraceManifest(relabelled).map(({ code }) => code),
-      ["unknown-manifest-version"],
-    );
+    const relabelled: ListenTraceManifest = { ...amended, version: 3 };
+    assert.ok(validateListenTraceManifest(relabelled)
+      .some(({ code }) => code === "unknown-manifest-version"));
     assert.throws(() => assertValidListenTraceManifest(relabelled), /unknown-manifest-version/);
   }
   assert.deepEqual(
-    validateListenTraceManifest({ ...LISTEN_TRACE_MANIFEST, version: 2 })
+    validateListenTraceManifest({ ...LISTEN_TRACE_MANIFEST, version: 3 })
       .map(({ code }) => code),
     ["unknown-manifest-version"],
   );
@@ -318,7 +445,7 @@ test("rejects a manifest that duplicates or drops a trace", () => {
     traces: LISTEN_TRACE_MANIFEST.traces.filter(({ caseKind }) => caseKind !== "omitted-bass"),
   };
   assert.ok(validateListenTraceManifest(withoutIsolated)
-    .some(({ code }) => code === "missing-confirmation-case-kind"));
+    .some(({ code }) => code === "manifest-census"));
   const withoutTone: ListenTraceManifest = {
     ...LISTEN_TRACE_MANIFEST,
     traces: LISTEN_TRACE_MANIFEST.traces.filter((trace) => (
@@ -329,7 +456,7 @@ test("rejects a manifest that duplicates or drops a trace", () => {
     .some(({ code }) => code === "missing-discovery-renderer"));
 });
 
-test("gates on the safety families and both committed regressions without scoring them", () => {
+test("gates on safety families and all four committed regressions without scoring them", () => {
   const regression = listenTracesInPartition("regression-only");
   for (const definition of bundledListenSequences().filter(({ family }) => family === "safety")) {
     assert.equal(
@@ -346,6 +473,13 @@ test("gates on the safety families and both committed regressions without scorin
     assert.ok(source, `${fixture.id} source`);
     assert.notEqual(source.partition, "confirmation");
   }
+  for (const fixture of LISTEN_OMITTED_BASS_REGRESSION_FIXTURES) {
+    const trace = regression.find(({ sourceId }) => sourceId === fixture.id);
+    assert.ok(trace, fixture.id);
+    assert.equal(trace.fixtureVersion, fixture.origin.sourceRecognitionStructureHash);
+    assert.equal(trace.derivedFromTraceId, fixture.origin.traceId);
+    assert.equal(trace.scoreEligible, false);
+  }
   assert.equal(
     findListenTrace("regression/tone-salamander-v05-repeated-chord-late-advance")
       ?.derivedFromTraceId,
@@ -357,7 +491,7 @@ test("gates on the safety families and both committed regressions without scorin
     "sequence/tone/course-clear-27/333ms",
   );
   for (const entry of computeListenTraceWeights(LISTEN_TRACE_MANIFEST.traces)) {
-    if (findListenTrace(entry.traceId)?.partition === "regression-only") {
+    if (!findListenTrace(entry.traceId)?.scoreEligible) {
       assert.equal(entry.weight, 0, entry.traceId);
     }
   }
@@ -418,7 +552,7 @@ test("keeps 16 Salamander layers from outweighing four Splendid layers", () => {
 });
 
 test("averages by domain rather than by run count", () => {
-  const weights = listenTraceWeightsForPartition("confirmation")
+  const weights = listenTraceWeightsForPartition("discovery")
     .filter((entry) => entry.suite === "dynamics-constant" && entry.rendererKey === "direct");
   const value = (traceId: string) => (traceId.includes("salamander") ? 0 : 1);
   const means = listenTraceDomainMeans(weights, value);
@@ -432,7 +566,7 @@ test("averages by domain rather than by run count", () => {
   assert.deepEqual(worstListenTraceDomain(weights, value), {
     domainKey: "direct/dynamics-constant/salamander",
     value: 0,
-    traceCount: 13,
+    traceCount: 16,
   });
   assert.equal(weightedListenTraceMean(weights, () => null), null);
 });

@@ -23,6 +23,7 @@ import {
   listenRecognitionTraceHash,
 } from "./listenBaselineParity";
 import {
+  LISTEN_TRACE_MANIFEST,
   LISTEN_TRACE_CORPUS_HASH,
   LISTEN_TRACE_MANIFEST_HASH,
   listenTraceWeightsForPartition,
@@ -45,9 +46,11 @@ import {
   evaluateListenMatcherMultiDomainSweep,
   fullListenMatcherMultiDomainSweepResult,
   generateListenMatcherSweepProfiles,
+  listenBaselineRelativeSafetyRegressions,
   listenMultiDomainCandidateArchive,
   listenMultiDomainCandidateArchiveDigest,
   listenMultiDomainLeafMetrics,
+  listenMultiDomainSafetyPopulations,
   listenMultiDomainSweepTraces,
   listenThresholdSweepParetoFrontier,
   rankListenThresholdSweepCandidates,
@@ -56,6 +59,7 @@ import {
   type ListenMultiDomainCandidateArchive,
   type ListenMultiDomainCapture,
   type ListenMultiDomainProfileResult,
+  type ListenMultiDomainRunMetrics,
   type ListenThresholdSweepProfileResult,
 } from "./listenMatcherSweepBenchmark";
 
@@ -506,12 +510,82 @@ test("the multi-domain sweep captures discovery and regression traces, never con
   assert.equal(traces.filter(({ suite }) => suite === "safety-regression").length, 0);
   assert.equal(
     traces.length,
-    listenTracesInPartition("discovery").length +
-      listenTracesInPartition("regression-only").length -
-      LISTEN_SAFETY_REGRESSION_FIXTURES.length,
+    LISTEN_TRACE_MANIFEST.traces.filter((trace) => (
+      trace.partition !== "confirmation" &&
+      trace.evidenceRole !== "diagnostic" &&
+      trace.suite !== "safety-regression"
+    )).length,
   );
-  assert.equal(traces.length, 176);
+  assert.equal(traces.length, 472);
   assert.equal(new Set(traces.map(({ id }) => id)).size, traces.length);
+});
+
+test("every applied safety population is captured and discovery negatives are baseline-relative", () => {
+  const populations = listenMultiDomainSafetyPopulations();
+  assert.equal(populations.dedicatedSafetyTraceIds.length, 36);
+  assert.equal(populations.regressionRunTraceIds.length, 41);
+  assert.equal(populations.baselineRelativeSafetyTraceIds.length, 8);
+  assert.equal(populations.baselineRelativeTraceIds.length, 395);
+  const captured = new Set(listenMultiDomainSweepTraces().map(({ id }) => id));
+  const confirmation = new Set(LISTEN_TRACE_MANIFEST.traces
+    .filter(({ partition }) => partition === "confirmation")
+    .map(({ id }) => id));
+  for (const ids of [
+    populations.dedicatedSafetyTraceIds,
+    populations.regressionRunTraceIds,
+    populations.baselineRelativeTraceIds,
+  ]) {
+    assert.ok(ids.every((id) => captured.has(id)));
+    assert.ok(ids.every((id) => !confirmation.has(id)));
+  }
+  assert.deepEqual(
+    [...populations.baselineRelativeSafetyTraceIds].sort(),
+    LISTEN_TRACE_MANIFEST.traces.filter(({ partition, evidenceRole }) => (
+      partition === "discovery" && evidenceRole === "safety"
+    )).map(({ id }) => id).sort(),
+  );
+  assert.ok(populations.regressionRunTraceIds.every((id) => (
+    LISTEN_TRACE_MANIFEST.traces.find((trace) => trace.id === id)?.partition === "regression-only"
+  )));
+});
+
+test("safety population construction rejects a declared row absent from the capture list", () => {
+  const populations = listenMultiDomainSafetyPopulations();
+  const missingId = populations.baselineRelativeTraceIds[0];
+  const incompleteCapture = listenMultiDomainSweepTraces()
+    .filter(({ id }) => id !== missingId);
+  assert.throws(
+    () => listenMultiDomainSafetyPopulations(LISTEN_TRACE_MANIFEST, incompleteCapture),
+    (error: unknown) => error instanceof Error && error.message ===
+      `baseline-relative discovery population declares uncaptured rows: ${missingId}`,
+  );
+});
+
+test("a paired discovery defect is tolerated only at baseline parity", () => {
+  const traceId = listenMultiDomainSafetyPopulations().baselineRelativeSafetyTraceIds[0];
+  const row = (falseAdvanceCount: number): ListenMultiDomainRunMetrics => ({
+    traceId,
+    falseAdvanceCount,
+    skippedAdvanceCount: 0,
+    duplicateAdvanceCount: 0,
+  }) as ListenMultiDomainRunMetrics;
+  assert.deepEqual(
+    listenBaselineRelativeSafetyRegressions([row(1)], [row(1)], new Set([traceId])),
+    [],
+  );
+  assert.deepEqual(
+    listenBaselineRelativeSafetyRegressions([row(2)], [row(1)], new Set([traceId])),
+    [{
+      traceId,
+      falseAdvanceDelta: 1,
+      skippedAdvanceDelta: 0,
+      duplicateAdvanceDelta: 0,
+    }],
+  );
+  assert.throws(
+    () => listenBaselineRelativeSafetyRegressions([row(1)], [], new Set([traceId])),
+    /missing from a replay/,
+  );
 });
 
 test("the multi-domain sweep scores the manifest's frozen weighting and never reads confirmation", async () => {
@@ -527,18 +601,23 @@ test("the multi-domain sweep scores the manifest's frozen weighting and never re
   assert.deepEqual(requested, listenMultiDomainSweepTraces().map(({ id }) => id));
   assert.equal(result.manifest.hash, LISTEN_TRACE_MANIFEST_HASH);
   assert.equal(result.manifest.corpusHash, LISTEN_TRACE_CORPUS_HASH);
-  assert.equal(result.manifest.capturedTraceCount, 176);
-  assert.equal(result.manifest.scoredTraceCount, 139);
-  assert.equal(result.manifest.regressionRunCount, 37);
-  assert.equal(result.captures.length, 176);
+  assert.equal(result.manifest.capturedTraceCount, 472);
+  assert.equal(result.manifest.scoredTraceCount, 387);
+  assert.equal(result.manifest.regressionRunCount, 77);
+  assert.equal(result.manifest.baselineRelativeSafetyRunCount, 8);
+  assert.equal(
+    result.manifest.regressionRunCount + result.manifest.baselineRelativeSafetyRunCount,
+    result.captures.filter(({ weight }) => weight === 0).length,
+  );
+  assert.equal(result.captures.length, 472);
   assert.equal(result.replayParityVerified, true);
 
   // Scored traces carry the manifest weight; the regression corpus scores nothing.
-  const scored = result.captures.filter(({ partition }) => partition === "discovery");
-  assert.equal(scored.length, 139);
+  const scored = result.captures.filter(({ weight }) => weight > 0);
+  assert.equal(scored.length, 387);
   assert.ok(scored.every(({ weight }) => weight > 0));
   assert.ok(result.captures
-    .filter(({ partition }) => partition === "regression-only")
+    .filter(({ weight }) => weight === 0)
     .every(({ weight }) => weight === 0));
   assert.ok(Math.abs(scored.reduce((total, { weight }) => total + weight, 0) - 1) < 1e-9);
 
@@ -555,8 +634,9 @@ test("the multi-domain sweep scores the manifest's frozen weighting and never re
     result.baseline.independentRate.suites.map(({ key }) => key).sort(),
     [
       "direct/articulation", "direct/dynamics-constant", "direct/dynamics-mixed",
-      "direct/sequence",
-      "tone/articulation", "tone/dynamics-constant", "tone/dynamics-mixed", "tone/sequence",
+      "direct/isolated", "direct/round-two-paired", "direct/sequence",
+      "tone/articulation", "tone/dynamics-constant", "tone/dynamics-mixed", "tone/isolated",
+      "tone/round-two-paired", "tone/sequence",
     ],
   );
   assert.equal(
@@ -594,7 +674,7 @@ test("the multi-domain sweep scores the manifest's frozen weighting and never re
   )).length, "zero-weight diagnostic rows do not enter Task 24 leaf rates");
 
   // Per-run metrics survive only where a report needs them.
-  assert.equal(result.baseline.runs?.length, 176);
+  assert.equal(result.baseline.runs?.length, 472);
   const retained = new Set([
     result.baseline.profile.id,
     ...result.paretoFrontier.map(({ profile }) => profile.id),

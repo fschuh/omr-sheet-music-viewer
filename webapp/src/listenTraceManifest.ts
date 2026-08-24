@@ -39,6 +39,17 @@ import {
   LISTEN_BENCHMARK_RENDERER,
   LISTEN_BENCHMARK_TONE_RENDERER,
 } from "./listenBenchmarkAudio";
+import { LISTEN_OMITTED_BASS_REGRESSION_FIXTURE_LIST } from "./listenOmittedBassFixtures";
+import {
+  LISTEN_RECOGNITION_TARGET_RATES,
+  listenRecognitionTargetCount,
+} from "./listenProfileValidationPolicy";
+import {
+  LISTEN_ROUND_TWO_FIXTURE_GROUPS,
+  LISTEN_ROUND_TWO_FIXTURE_ROLES,
+  validateListenRoundTwoFixtureGroups,
+  type ListenRoundTwoFixtureRole,
+} from "./listenRoundTwoFixtures";
 import { LISTEN_SAFETY_REGRESSION_FIXTURES } from "./listenSafetyRegression";
 import {
   COURSE_CLEAR_ARTICULATION_INTERVAL_MS,
@@ -57,10 +68,16 @@ import {
   type PianoLayerId,
 } from "./pianoRegistry";
 
+const LISTEN_OMITTED_BASS_REGRESSION_FIXTURES =
+  LISTEN_OMITTED_BASS_REGRESSION_FIXTURE_LIST;
+
 /** Bumped whenever any assignment, weight, metric, or tie-break rule changes. */
-export const LISTEN_TRACE_MANIFEST_VERSION = 1;
+export const LISTEN_TRACE_MANIFEST_VERSION = 2;
 
 export type ListenTracePartition = "discovery" | "confirmation" | "regression-only";
+
+/** Orthogonal to partition: scoring, hard-gating, and diagnostic evidence never mix. */
+export type ListenTraceEvidenceRole = "scoring" | "safety" | "diagnostic";
 
 export type ListenTraceSuite =
   | "isolated"
@@ -68,6 +85,7 @@ export type ListenTraceSuite =
   | "articulation"
   | "dynamics-constant"
   | "dynamics-mixed"
+  | "round-two-paired"
   | "safety-regression";
 
 /** Short renderer key used in trace identifiers. */
@@ -89,12 +107,19 @@ export const LISTEN_TRACE_PARTITIONS: readonly ListenTracePartition[] = Object.f
   "regression-only",
 ] as const);
 
+export const LISTEN_TRACE_EVIDENCE_ROLES: readonly ListenTraceEvidenceRole[] = Object.freeze([
+  "scoring",
+  "safety",
+  "diagnostic",
+] as const);
+
 export const LISTEN_TRACE_SUITES: readonly ListenTraceSuite[] = Object.freeze([
   "isolated",
   "sequence",
   "articulation",
   "dynamics-constant",
   "dynamics-mixed",
+  "round-two-paired",
   "safety-regression",
 ] as const);
 
@@ -115,6 +140,7 @@ export const LISTEN_DYNAMIC_BANDS: readonly ListenDynamicBand[] = Object.freeze(
 export interface ListenTraceDescriptor {
   id: string;
   partition: ListenTracePartition;
+  evidenceRole: ListenTraceEvidenceRole;
   suite: ListenTraceSuite;
   renderer: string;
   rendererKey: ListenTraceRendererKey;
@@ -138,6 +164,15 @@ export interface ListenTraceDescriptor {
   fixtureVersion: string | null;
   /** The measured run a committed regression was minimized from. */
   derivedFromTraceId: string | null;
+  /** Authored pair identity. Null for the pre-round-two corpus. */
+  pairedGroupId: string | null;
+  pairedGroupHash: string | null;
+  pairedCaseRole: ListenRoundTwoFixtureRole | null;
+  repeatedRecoveryDesignStatus: "not-applicable" | "designed-unverified" | null;
+  /** A confirmation row is structurally frozen but deliberately has no decode. */
+  decodeStatus: "captured" | "capture-permitted" | "not-decoded-until-task-28" | null;
+  /** The first manifest version in which this musical evidence was captured. */
+  firstObservedManifestVersion: 1 | 2;
   /**
    * Deterministic identity of the ordered score targets, physical attacks,
    * attack/release timing, holds, and per-attack velocity layers rendered by
@@ -150,7 +185,7 @@ export interface ListenTraceDescriptor {
    * a confirmation row would be a re-measurement of a discovery row.
    */
   contentKey: string;
-  /** False for `regression-only` traces: they gate profiles but add no score. */
+  /** True only for the `scoring` role. */
   scoreEligible: boolean;
 }
 
@@ -162,12 +197,23 @@ export interface ListenTraceManifest {
 }
 
 export const LISTEN_TRACE_MANIFEST_RATIONALE =
-  "The Direct and Tone sequence sweeps have been observed, so the whole sequence corpus is " +
-  "discovery. Dynamics and articulation are split before searching: one constant layer per " +
-  "piano, renderer, and loudness band plus one mixed run per renderer enter discovery, and " +
-  "every unselected layer, the held-back mixed runs, the held-back articulations, and the " +
-  "complete isolated corpus stay untouched for confirmation. The dedicated safety families " +
-  "and the two committed regressions gate every profile without scoring one.";
+  "Every version-1 row was observed by the completed validation round, so positive sequence, " +
+  "dynamics, articulation, and isolated-correct evidence moves to discovery. Observed omitted-" +
+  "bass and distinguishable-wrong rows become hard regression evidence; mathematically " +
+  "ambiguous isolated rows are an explicit non-scoring diagnostic role. Eight newly authored " +
+  "paired groups are split at authoring time between discovery and genuinely unseen " +
+  "confirmation, with every group keeping its correct, omitted-bass, and distinguishable-wrong " +
+  "members together. Confirmation definitions remain undecoded until Task 28.";
+
+export const LISTEN_TRACE_MANIFEST_EXPECTED_RANKING_EFFECT =
+  "The 212 observed isolated-correct rows enter discovery as a co-equal suite under the " +
+  "unchanged renderer-to-suite-to-domain-to-run weights. This is expected to penalize profiles " +
+  "that trade isolated recognition for continuous recovery and may therefore change the leader, " +
+  "frontier, or one-global-versus-spread verdict; it does not give the larger isolated row count " +
+  "more top-level weight than another suite. Round-two-paired is also a new sixth co-equal suite " +
+  "per renderer. Its four scoring discovery rows each carry 1/24 of total weight, while each " +
+  "isolated-correct row carries 1/1272, so a paired row is intentionally 53 times heavier and " +
+  "the suite's small authored census can materially move equal-domain ranking.";
 
 export const LISTEN_TRACE_MANIFEST_AMENDMENT_RULE =
   "A trace never moves between partitions, and the weights, metric order, and tie-breaks " +
@@ -379,10 +425,40 @@ function repeatedLayer(layer: string, definition: ListenSequenceDefinition): str
 }
 
 function descriptor(
-  values: Omit<ListenTraceDescriptor, "scoreEligible" | "contentKey"> & { contentKey?: string },
+  values: Omit<
+    ListenTraceDescriptor,
+    | "scoreEligible"
+    | "contentKey"
+    | "evidenceRole"
+    | "pairedGroupId"
+    | "pairedGroupHash"
+    | "pairedCaseRole"
+    | "repeatedRecoveryDesignStatus"
+    | "decodeStatus"
+    | "firstObservedManifestVersion"
+  > & {
+    contentKey?: string;
+    evidenceRole?: ListenTraceEvidenceRole;
+    pairedGroupId?: string | null;
+    pairedGroupHash?: string | null;
+    pairedCaseRole?: ListenRoundTwoFixtureRole | null;
+    repeatedRecoveryDesignStatus?: "not-applicable" | "designed-unverified" | null;
+    decodeStatus?: ListenTraceDescriptor["decodeStatus"];
+    firstObservedManifestVersion?: 1 | 2;
+  },
 ): ListenTraceDescriptor {
+  const evidenceRole = values.evidenceRole ?? (
+    values.partition === "regression-only" ? "safety" : "scoring"
+  );
   return Object.freeze({
     ...values,
+    evidenceRole,
+    pairedGroupId: values.pairedGroupId ?? null,
+    pairedGroupHash: values.pairedGroupHash ?? null,
+    pairedCaseRole: values.pairedCaseRole ?? null,
+    repeatedRecoveryDesignStatus: values.repeatedRecoveryDesignStatus ?? null,
+    decodeStatus: values.decodeStatus ?? null,
+    firstObservedManifestVersion: values.firstObservedManifestVersion ?? 1,
     contentKey: values.contentKey ?? contentKey({
       rendererKey: values.rendererKey,
       sourceId: values.sourceId,
@@ -391,7 +467,7 @@ function descriptor(
       layer: values.layer,
       dynamicProfile: values.dynamicProfile,
     }),
-    scoreEligible: values.partition !== "regression-only",
+    scoreEligible: evidenceRole === "scoring",
   });
 }
 
@@ -456,7 +532,7 @@ function sequenceTraces(): ListenTraceDescriptor[] {
   )));
 }
 
-function articulationTraces(): ListenTraceDescriptor[] {
+function articulationTraces(manifestVersion: 1 | 2): ListenTraceDescriptor[] {
   const definitions = courseClearArticulationDefinitions();
   return RENDERERS.flatMap(({ key, version }) => definitions.map((definition) => {
     const articulation = definition.articulation;
@@ -468,7 +544,7 @@ function articulationTraces(): ListenTraceDescriptor[] {
     );
     return descriptor({
       id: `articulation/${key}/${articulation}`,
-      partition: DISCOVERY_ARTICULATIONS[key].includes(articulation)
+      partition: manifestVersion === 2 || DISCOVERY_ARTICULATIONS[key].includes(articulation)
         ? "discovery"
         : "confirmation",
       suite: "articulation",
@@ -505,7 +581,7 @@ function regressionSourceContentKeys(): Set<string> {
   })));
 }
 
-function constantDynamicsTraces(): ListenTraceDescriptor[] {
+function constantDynamicsTraces(manifestVersion: 1 | 2): ListenTraceDescriptor[] {
   const regressionSources = regressionSourceContentKeys();
   const definition = courseClearArticulationDefinitions()
     .find(({ id }) => id === DYNAMICS_SOURCE_ID);
@@ -522,7 +598,7 @@ function constantDynamicsTraces(): ListenTraceDescriptor[] {
       });
       const partition: ListenTracePartition = regressionSources.has(key1)
         ? "regression-only"
-        : DISCOVERY_CONSTANT_LAYERS[piano].includes(layer)
+        : manifestVersion === 2 || DISCOVERY_CONSTANT_LAYERS[piano].includes(layer)
           ? "discovery"
           : "confirmation";
       return descriptor({
@@ -554,13 +630,15 @@ function constantDynamicsTraces(): ListenTraceDescriptor[] {
   )));
 }
 
-function mixedDynamicsTraces(): ListenTraceDescriptor[] {
+function mixedDynamicsTraces(manifestVersion: 1 | 2): ListenTraceDescriptor[] {
   const definition = courseClearArticulationDefinitions()
     .find(({ id }) => id === DYNAMICS_SOURCE_ID);
   if (!definition) throw new Error(`The dynamics passage ${DYNAMICS_SOURCE_ID} is unavailable.`);
   return RENDERERS.flatMap(({ key, version }) => PIANO_IDS.map((piano) => descriptor({
     id: `dynamics-mixed/${key}/${piano}`,
-    partition: DISCOVERY_MIXED_PIANO[key] === piano ? "discovery" : "confirmation",
+    partition: manifestVersion === 2 || DISCOVERY_MIXED_PIANO[key] === piano
+      ? "discovery"
+      : "confirmation",
     suite: "dynamics-mixed",
     renderer: version,
     rendererKey: key,
@@ -584,18 +662,27 @@ function mixedDynamicsTraces(): ListenTraceDescriptor[] {
   })));
 }
 
-function isolatedTraces(): ListenTraceDescriptor[] {
+function isolatedTraces(manifestVersion: 1 | 2): ListenTraceDescriptor[] {
   const cases = bundledListenBenchmarkCases();
   return RENDERERS.flatMap(({ key, version }) => cases.map((benchmarkCase, index) => {
     const caseKind = listenIsolatedCaseKind(benchmarkCase.target, benchmarkCase.played);
     const sourceId = `isolated-case-${String(index + 1).padStart(3, "0")}`;
     const target = [...benchmarkCase.target].sort((left, right) => left - right);
     const played = [...benchmarkCase.played].sort((left, right) => left - right);
+    const partition: ListenTracePartition = manifestVersion === 1
+      ? "confirmation"
+      : caseKind === "correct"
+        ? "discovery"
+        : "regression-only";
+    const evidenceRole: ListenTraceEvidenceRole = caseKind === "correct"
+      ? "scoring"
+      : caseKind === "ambiguous-harmonic"
+        ? "diagnostic"
+        : "safety";
     return descriptor({
-      // The complete isolated corpus is untouched confirmation evidence: no
-      // threshold may be chosen from the numbers the release gates quote.
       id: `isolated/${key}/${String(index + 1).padStart(3, "0")}`,
-      partition: "confirmation",
+      partition,
+      evidenceRole: manifestVersion === 1 ? "scoring" : evidenceRole,
       suite: "isolated",
       renderer: version,
       rendererKey: key,
@@ -673,25 +760,189 @@ function regressionFixtureTraces(traces: readonly ListenTraceDescriptor[]): List
   });
 }
 
-/** Builds the manifest deterministically from the corpora the benchmarks define. */
-export function buildListenTraceManifest(): ListenTraceManifest {
-  const measured = [
+/** Task 22's two rendered omitted-bass failures, admitted by manifest v2. */
+function omittedBassRegressionFixtureTraces(
+  traces: readonly ListenTraceDescriptor[],
+): ListenTraceDescriptor[] {
+  return LISTEN_OMITTED_BASS_REGRESSION_FIXTURES.map((fixture) => {
+    const source = traces.find(({ id }) => id === fixture.origin.traceId);
+    if (!source) throw new Error(`${fixture.id} names missing source ${fixture.origin.traceId}.`);
+    return descriptor({
+      id: `regression/${fixture.id}`,
+      partition: "regression-only",
+      evidenceRole: "safety",
+      suite: "safety-regression",
+      renderer: fixture.origin.renderer,
+      rendererKey: fixture.origin.rendererKey,
+      domain: "omitted-bass-regression",
+      sourceId: fixture.id,
+      sequenceFamily: "isolated-omitted-bass",
+      articulation: null,
+      piano: source.piano,
+      layer: source.layer,
+      dynamicBand: source.dynamicBand,
+      dynamicProfile: source.dynamicProfile,
+      intervalMs: null,
+      caseKind: "omitted-bass",
+      fixtureVersion: fixture.origin.sourceRecognitionStructureHash,
+      derivedFromTraceId: source.id,
+      musicalInputHash: source.musicalInputHash,
+      contentKey: `regression/${fixture.id}`,
+      firstObservedManifestVersion: 1,
+    });
+  });
+}
+
+function roundTwoPairedGroupHash(
+  group: (typeof LISTEN_ROUND_TWO_FIXTURE_GROUPS)[number],
+): string {
+  const hasher = new DeterministicHasher();
+  hasher.text(group.id);
+  hasher.text(group.partition);
+  hasher.text(group.renderer);
+  hasher.text(group.piano);
+  hasher.text(group.layer);
+  hasher.text(group.register);
+  hasher.number(group.chordSize);
+  hasher.text(group.articulation);
+  hasher.number(group.intervalMs);
+  hasher.number(group.repeatedIdenticalChord ? 1 : 0);
+  const targets = group.members[0]?.definition.targets ?? [];
+  hasher.number(targets.length);
+  for (const target of targets) {
+    hasher.number(target.length);
+    for (const midi of target) hasher.number(midi);
+  }
+  return hasher.digest;
+}
+
+function roundTwoPairedTraces(): ListenTraceDescriptor[] {
+  return LISTEN_ROUND_TWO_FIXTURE_GROUPS.flatMap((group) => {
+    const groupHash = roundTwoPairedGroupHash(group);
+    return group.members.map((member) => descriptor({
+      id: `round-two/${group.id}/${member.role}`,
+      partition: group.partition,
+      evidenceRole: member.role === "correct" ? "scoring" : "safety",
+      suite: "round-two-paired",
+      renderer: group.renderer,
+      rendererKey: group.rendererKey,
+      domain: group.id,
+      sourceId: member.definition.id,
+      sequenceFamily: member.definition.family,
+      articulation: group.articulation,
+      piano: group.piano,
+      layer: group.layer,
+      dynamicBand: listenDynamicBand(group.piano, group.layer),
+      dynamicProfile: "constant",
+      intervalMs: group.intervalMs,
+      caseKind: member.role,
+      fixtureVersion: null,
+      derivedFromTraceId: null,
+      pairedGroupId: group.id,
+      pairedGroupHash: groupHash,
+      pairedCaseRole: member.role,
+      repeatedRecoveryDesignStatus: group.repeatedRecoveryDesignStatus,
+      decodeStatus: group.decodeStatus,
+      firstObservedManifestVersion: 2,
+      musicalInputHash: sequenceMusicalInputHash(
+        member.definition,
+        group.intervalMs,
+        repeatedLayer(group.layer, member.definition),
+      ),
+      contentKey: [
+        group.rendererKey,
+        "round-two",
+        group.id,
+        member.role,
+        group.piano,
+        group.layer,
+      ].join("/"),
+    }));
+  });
+}
+
+function measuredTraceCorpus(version: 1 | 2): ListenTraceDescriptor[] {
+  return [
     ...sequenceTraces(),
-    ...articulationTraces(),
-    ...constantDynamicsTraces(),
-    ...mixedDynamicsTraces(),
-    ...isolatedTraces(),
+    ...articulationTraces(version),
+    ...constantDynamicsTraces(version),
+    ...mixedDynamicsTraces(version),
+    ...isolatedTraces(version),
   ];
+}
+
+/** Historical manifest-v1 rows used only to construct the immutable unseen ledger. */
+export function buildListenTraceManifestVersionOneControl(): ListenTraceManifest {
+  const measured = measuredTraceCorpus(1);
   return Object.freeze({
-    version: LISTEN_TRACE_MANIFEST_VERSION,
-    rationale: LISTEN_TRACE_MANIFEST_RATIONALE,
+    version: 1,
+    rationale: "Historical manifest-v1 ledger control.",
     amendmentRule: LISTEN_TRACE_MANIFEST_AMENDMENT_RULE,
     traces: Object.freeze([...measured, ...regressionFixtureTraces(measured)]),
   });
 }
 
+/** Builds the manifest deterministically from the corpora the benchmarks define. */
+export function buildListenTraceManifest(): ListenTraceManifest {
+  const measured = measuredTraceCorpus(2);
+  return Object.freeze({
+    version: LISTEN_TRACE_MANIFEST_VERSION,
+    rationale: LISTEN_TRACE_MANIFEST_RATIONALE,
+    amendmentRule: LISTEN_TRACE_MANIFEST_AMENDMENT_RULE,
+    traces: Object.freeze([
+      ...measured,
+      ...regressionFixtureTraces(measured),
+      ...omittedBassRegressionFixtureTraces(measured),
+      ...roundTwoPairedTraces(),
+    ]),
+  });
+}
+
 /** The frozen protocol. Task 08 onwards reads this and never rebuilds it. */
 export const LISTEN_TRACE_MANIFEST: ListenTraceManifest = buildListenTraceManifest();
+
+export interface ListenPriorTraceLedgerEntry {
+  traceId: string;
+  contentIdentity: string;
+  musicalInputHash: string;
+  evidenceSources: readonly ("manifest-v1" | "task08-archive" | "task13-archive")[];
+}
+
+/**
+ * Every row captured before round two, indexed by both rendered-content and
+ * musical-input identity. The archive labels make explicit why discovery and
+ * former confirmation rows alike are no longer unseen.
+ */
+export const LISTEN_PRIOR_TRACE_LEDGER: readonly ListenPriorTraceLedgerEntry[] = Object.freeze(
+  buildListenTraceManifestVersionOneControl().traces.map((trace) => Object.freeze({
+    traceId: trace.id,
+    contentIdentity: trace.contentKey,
+    musicalInputHash: trace.musicalInputHash,
+    evidenceSources: Object.freeze([
+      "manifest-v1" as const,
+      ...(trace.partition === "discovery" ? ["task08-archive" as const] : []),
+      "task13-archive" as const,
+    ]),
+  })),
+);
+
+export function listenPriorTraceLedgerHash(
+  ledger: readonly ListenPriorTraceLedgerEntry[] = LISTEN_PRIOR_TRACE_LEDGER,
+): string {
+  const hasher = new DeterministicHasher();
+  hasher.number(ledger.length);
+  for (const entry of ledger) {
+    hasher.text(entry.traceId);
+    hasher.text(entry.contentIdentity);
+    hasher.text(entry.musicalInputHash);
+    hasher.number(entry.evidenceSources.length);
+    for (const source of entry.evidenceSources) hasher.text(source);
+  }
+  return hasher.digest;
+}
+
+/** Pinned after rebuilding the ledger from the immutable version-1 sources. */
+export const LISTEN_PRIOR_TRACE_LEDGER_HASH = "1f9613bd";
 
 export function listenTracesInPartition(
   partition: ListenTracePartition,
@@ -1042,6 +1293,7 @@ export function listenTraceManifestHash(
   for (const trace of manifest.traces) {
     hasher.text(trace.id);
     hasher.text(trace.partition);
+    hasher.text(trace.evidenceRole);
     hasher.text(trace.suite);
     hasher.text(trace.renderer);
     hasher.text(trace.domain);
@@ -1056,6 +1308,12 @@ export function listenTraceManifestHash(
     hasher.text(trace.caseKind ?? "");
     hasher.text(trace.fixtureVersion ?? "");
     hasher.text(trace.derivedFromTraceId ?? "");
+    hasher.text(trace.pairedGroupId ?? "");
+    hasher.text(trace.pairedGroupHash ?? "");
+    hasher.text(trace.pairedCaseRole ?? "");
+    hasher.text(trace.repeatedRecoveryDesignStatus ?? "");
+    hasher.text(trace.decodeStatus ?? "");
+    hasher.number(trace.firstObservedManifestVersion);
     hasher.text(trace.contentKey);
     hasher.number(trace.scoreEligible ? 1 : 0);
     hasher.number(weights.get(trace.id) ?? 0);
@@ -1068,10 +1326,10 @@ export function listenTraceManifestHash(
 }
 
 /**
- * The pinned identity of version 1. Changing a partition, a weight, or the
+ * The pinned identity of version 2. Changing a partition, a weight, or the
  * metric order breaks this pin on purpose: see LISTEN_TRACE_MANIFEST_AMENDMENT_RULE.
  */
-export const LISTEN_TRACE_MANIFEST_HASH = "0ed1e71d";
+export const LISTEN_TRACE_MANIFEST_HASH = "d1971fa3";
 
 /**
  * Corpus identity is separate from the historical protocol hash because the
@@ -1092,8 +1350,8 @@ export function listenTraceCorpusHash(
   return hasher.digest;
 }
 
-/** Pinned identity of the ordered musical corpus behind manifest version 1. */
-export const LISTEN_TRACE_CORPUS_HASH = "10ae2e0b";
+/** Pinned identity of the ordered musical corpus behind manifest version 2. */
+export const LISTEN_TRACE_CORPUS_HASH = "1213016e";
 
 /* ------------------------------------------------------------------------- *
  * Census
@@ -1118,39 +1376,39 @@ export function listenTraceCensus(
   ));
 }
 
-/** The exact version-1 census. A manifest that does not match it is rejected. */
+/** The exact version-2 census. A manifest that does not match it is rejected. */
 export const LISTEN_TRACE_MANIFEST_CENSUS: readonly ListenTraceCensusEntry[] = Object.freeze([
+  Object.freeze({
+    partition: "discovery" as const,
+    suite: "isolated" as const,
+    traceCount: 212,
+  }),
   Object.freeze({ partition: "discovery" as const, suite: "sequence" as const, traceCount: 120 }),
-  Object.freeze({ partition: "discovery" as const, suite: "articulation" as const, traceCount: 5 }),
+  Object.freeze({ partition: "discovery" as const, suite: "articulation" as const, traceCount: 8 }),
   Object.freeze({
     partition: "discovery" as const,
     suite: "dynamics-constant" as const,
+    traceCount: 39,
+  }),
+  Object.freeze({
+    partition: "discovery" as const,
+    suite: "dynamics-mixed" as const,
+    traceCount: 4,
+  }),
+  Object.freeze({
+    partition: "discovery" as const,
+    suite: "round-two-paired" as const,
     traceCount: 12,
   }),
   Object.freeze({
-    partition: "discovery" as const,
-    suite: "dynamics-mixed" as const,
-    traceCount: 2,
+    partition: "confirmation" as const,
+    suite: "round-two-paired" as const,
+    traceCount: 12,
   }),
   Object.freeze({
-    partition: "confirmation" as const,
+    partition: "regression-only" as const,
     suite: "isolated" as const,
-    traceCount: 268,
-  }),
-  Object.freeze({
-    partition: "confirmation" as const,
-    suite: "articulation" as const,
-    traceCount: 3,
-  }),
-  Object.freeze({
-    partition: "confirmation" as const,
-    suite: "dynamics-constant" as const,
-    traceCount: 27,
-  }),
-  Object.freeze({
-    partition: "confirmation" as const,
-    suite: "dynamics-mixed" as const,
-    traceCount: 2,
+    traceCount: 56,
   }),
   Object.freeze({
     partition: "regression-only" as const,
@@ -1165,11 +1423,51 @@ export const LISTEN_TRACE_MANIFEST_CENSUS: readonly ListenTraceCensusEntry[] = O
   Object.freeze({
     partition: "regression-only" as const,
     suite: "safety-regression" as const,
-    traceCount: 2,
+    traceCount: 4,
   }),
 ]);
 
-export const LISTEN_TRACE_MANIFEST_TRACE_COUNT = 478;
+export const LISTEN_TRACE_MANIFEST_TRACE_COUNT = 504;
+
+export interface ListenManifestRecognitionTargetCount {
+  rendererKey: ListenTraceRendererKey;
+  metric: "isolated-correct-advance-rate" | "course-clear-correct-advance-rate";
+  targetRate: number;
+  census: number;
+  targetCount: number;
+}
+
+/** Task 23's frozen rates bound to the finalized manifest-v2 isolated census. */
+export const LISTEN_TRACE_MANIFEST_RECOGNITION_TARGET_COUNTS:
+  readonly ListenManifestRecognitionTargetCount[] = Object.freeze(RENDERERS.flatMap(({ key }) => {
+    const rendererIsolated = LISTEN_TRACE_MANIFEST.traces.filter((trace) => (
+      trace.suite === "isolated" && trace.rendererKey === key && trace.caseKind === "correct"
+    ));
+    const courseClear = rendererIsolated.filter((trace) => trace.sequenceFamily === "course-clear");
+    const rates = LISTEN_RECOGNITION_TARGET_RATES[key];
+    return [
+      Object.freeze({
+        rendererKey: key,
+        metric: "isolated-correct-advance-rate" as const,
+        targetRate: rates.isolatedCorrectAdvanceRate,
+        census: rendererIsolated.length,
+        targetCount: listenRecognitionTargetCount(
+          rates.isolatedCorrectAdvanceRate,
+          rendererIsolated.length,
+        ),
+      }),
+      Object.freeze({
+        rendererKey: key,
+        metric: "course-clear-correct-advance-rate" as const,
+        targetRate: rates.courseClearCorrectAdvanceRate,
+        census: courseClear.length,
+        targetCount: listenRecognitionTargetCount(
+          rates.courseClearCorrectAdvanceRate,
+          courseClear.length,
+        ),
+      }),
+    ];
+  }));
 
 function censusKey(entry: ListenTraceCensusEntry): string {
   return `${entry.partition}/${entry.suite}`;
@@ -1205,6 +1503,13 @@ export function validateListenTraceManifest(
   manifest: ListenTraceManifest = LISTEN_TRACE_MANIFEST,
 ): ListenTraceManifestProblem[] {
   const problems: ListenTraceManifestProblem[] = [];
+  for (const fixtureProblem of validateListenRoundTwoFixtureGroups()) {
+    problems.push(problem(
+      `round-two-${fixtureProblem.code}`,
+      fixtureProblem.message,
+      [fixtureProblem.groupId],
+    ));
+  }
   if (manifest.version !== LISTEN_TRACE_MANIFEST_VERSION) {
     problems.push(problem(
       "unknown-manifest-version",
@@ -1274,13 +1579,35 @@ export function validateListenTraceManifest(
     if (!LISTEN_TRACE_SUITES.includes(trace.suite)) {
       problems.push(problem("unknown-suite", `${trace.id} has suite ${trace.suite}.`, [trace.id]));
     }
-    if (trace.scoreEligible !== (trace.partition !== "regression-only")) {
+    if (!LISTEN_TRACE_EVIDENCE_ROLES.includes(trace.evidenceRole)) {
       problems.push(problem(
-        "score-weight-mismatch",
-        `${trace.id} is ${trace.partition} but ${trace.scoreEligible ? "scores" : "does not score"}.`,
+        "unknown-evidence-role",
+        `${trace.id} has evidence role ${trace.evidenceRole}.`,
         [trace.id],
       ));
     }
+    if (trace.scoreEligible !== (trace.evidenceRole === "scoring")) {
+      problems.push(problem(
+        "score-weight-mismatch",
+        `${trace.id} is ${trace.evidenceRole} but ${trace.scoreEligible ? "scores" : "does not score"}.`,
+        [trace.id],
+      ));
+    }
+    if (trace.partition === "regression-only" && trace.evidenceRole === "scoring") {
+      problems.push(problem(
+        "scored-regression-trace",
+        `${trace.id} is regression-only but has the scoring evidence role.`,
+        [trace.id],
+      ));
+    }
+  }
+
+  const ledgerHash = listenPriorTraceLedgerHash();
+  if (ledgerHash !== LISTEN_PRIOR_TRACE_LEDGER_HASH) {
+    problems.push(problem(
+      "prior-ledger-hash",
+      `The prior-evidence ledger hashes to ${ledgerHash}, not ${LISTEN_PRIOR_TRACE_LEDGER_HASH}.`,
+    ));
   }
 
   const contentPartitions = new Map<string, Set<ListenTracePartition>>();
@@ -1359,45 +1686,122 @@ export function validateListenTraceManifest(
   }
 
   const isolated = manifest.traces.filter(({ suite }) => suite === "isolated");
-  const heldBackIsolated = isolated.filter(({ partition }) => partition !== "confirmation");
-  if (heldBackIsolated.length > 0) {
-    problems.push(problem(
-      "isolated-not-confirmation",
-      "The complete isolated corpus must stay untouched confirmation evidence.",
-      heldBackIsolated.map(({ id }) => id),
-    ));
-  }
-  for (const caseKind of LISTEN_ISOLATED_CASE_KINDS) {
-    if (!confirmation.some((trace) => trace.caseKind === caseKind)) {
+  for (const trace of isolated) {
+    const expected = trace.caseKind === "correct"
+      ? { partition: "discovery", evidenceRole: "scoring" }
+      : trace.caseKind === "ambiguous-harmonic"
+        ? { partition: "regression-only", evidenceRole: "diagnostic" }
+        : { partition: "regression-only", evidenceRole: "safety" };
+    if (trace.partition !== expected.partition || trace.evidenceRole !== expected.evidenceRole) {
       problems.push(problem(
-        "missing-confirmation-case-kind",
-        `Confirmation has no isolated ${caseKind} case.`,
+        "isolated-role-mismatch",
+        `${trace.id} (${trace.caseKind}) must be ${expected.partition}/${expected.evidenceRole}.`,
+        [trace.id],
       ));
     }
   }
-  for (const { key } of RENDERERS) {
-    for (const piano of PIANO_IDS) {
-      if (!confirmation.some((trace) => (
-        trace.suite === "dynamics-constant" && trace.rendererKey === key && trace.piano === piano
-      ))) {
-        problems.push(problem(
-          "missing-confirmation-layer",
-          `Confirmation has no held-back ${key} ${piano} constant layer.`,
-        ));
-      }
+
+  const priorContent = new Set(LISTEN_PRIOR_TRACE_LEDGER.map(({ contentIdentity }) => contentIdentity));
+  const priorMusicalInput = new Set(
+    LISTEN_PRIOR_TRACE_LEDGER.map(({ musicalInputHash }) => musicalInputHash),
+  );
+  for (const trace of confirmation) {
+    if (trace.firstObservedManifestVersion !== 2) {
+      problems.push(problem(
+        "confirmation-not-authored-in-v2",
+        `${trace.id} claims it was observed before manifest version 2.`,
+        [trace.id],
+      ));
+    }
+    if (priorContent.has(trace.contentKey) || priorMusicalInput.has(trace.musicalInputHash)) {
+      problems.push(problem(
+        "confirmation-seen-in-prior-round",
+        `${trace.id} matches content or musical input captured before round two.`,
+        [trace.id],
+      ));
+    }
+    if (trace.decodeStatus !== "not-decoded-until-task-28" || trace.fixtureVersion !== null) {
+      problems.push(problem(
+        "confirmation-decode-recorded",
+        `${trace.id} must remain structurally authored with no decoded identity until Task 28.`,
+        [trace.id],
+      ));
     }
   }
-  if (!confirmation.some(({ suite }) => suite === "articulation")) {
-    problems.push(problem(
-      "missing-confirmation-articulation",
-      "Confirmation has no held-back articulation trace.",
-    ));
+
+  const paired = manifest.traces.filter(({ suite }) => suite === "round-two-paired");
+  const pairedGroups = new Map<string, ListenTraceDescriptor[]>();
+  for (const trace of paired) {
+    if (trace.pairedGroupId === null || trace.pairedGroupHash === null ||
+        trace.pairedCaseRole === null) {
+      problems.push(problem(
+        "malformed-paired-trace",
+        `${trace.id} does not carry complete paired-group metadata.`,
+        [trace.id],
+      ));
+      continue;
+    }
+    pairedGroups.set(trace.pairedGroupId, [
+      ...(pairedGroups.get(trace.pairedGroupId) ?? []),
+      trace,
+    ]);
   }
-  if (!confirmation.some(({ suite }) => suite === "dynamics-mixed")) {
-    problems.push(problem(
-      "missing-confirmation-mixed",
-      "Confirmation has no held-back mixed-dynamics trace.",
+  for (const authored of LISTEN_ROUND_TWO_FIXTURE_GROUPS) {
+    const members = pairedGroups.get(authored.id) ?? [];
+    const roles = members.map(({ pairedCaseRole }) => pairedCaseRole).sort();
+    const expectedRoles = [...LISTEN_ROUND_TWO_FIXTURE_ROLES].sort();
+    if (roles.join("|") !== expectedRoles.join("|")) {
+      problems.push(problem(
+        "incomplete-paired-group",
+        `${authored.id} has roles ${roles.join(",") || "none"}, not ${expectedRoles.join(",")}.`,
+        members.map(({ id }) => id),
+      ));
+      continue;
+    }
+    const partitions = new Set(members.map(({ partition }) => partition));
+    const hashes = new Set(members.map(({ pairedGroupHash }) => pairedGroupHash));
+    if (partitions.size !== 1 || !partitions.has(authored.partition)) {
+      problems.push(problem(
+        "split-paired-group",
+        `${authored.id} is not wholly assigned to ${authored.partition}.`,
+        members.map(({ id }) => id),
+      ));
+    }
+    if (hashes.size !== 1) {
+      problems.push(problem(
+        "paired-group-identity-mismatch",
+        `${authored.id}'s members do not share one musical-input group identity.`,
+        members.map(({ id }) => id),
+      ));
+    }
+    const correct = members.find(({ pairedCaseRole }) => pairedCaseRole === "correct");
+    const negative = members.filter(({ pairedCaseRole }) => pairedCaseRole !== "correct");
+    if (correct?.evidenceRole !== "scoring" || negative.some(({ evidenceRole }) => (
+      evidenceRole !== "safety"
+    ))) {
+      problems.push(problem(
+        "paired-evidence-role",
+        `${authored.id} must score only its correct member and safety-gate both negative members.`,
+        members.map(({ id }) => id),
+      ));
+    }
+  }
+  for (const partition of ["discovery", "confirmation"] as const) {
+    const groups = LISTEN_ROUND_TWO_FIXTURE_GROUPS.filter((group) => (
+      group.partition === partition
     ));
+    if (!groups.some(({ repeatedIdenticalChord }) => repeatedIdenticalChord)) {
+      problems.push(problem(
+        "missing-repeated-paired-group",
+        `${partition} has no authored repeated-identical-chord paired group.`,
+      ));
+    }
+    if (!groups.some(({ members }) => members.some(({ role }) => role !== "correct"))) {
+      problems.push(problem(
+        "missing-paired-negative",
+        `${partition} has no authored negative paired fixture.`,
+      ));
+    }
   }
 
   for (const definition of bundledListenSequences().filter(({ family }) => family === "safety")) {
@@ -1447,13 +1851,30 @@ export function validateListenTraceManifest(
       ));
     }
   }
+  for (const fixture of LISTEN_OMITTED_BASS_REGRESSION_FIXTURES) {
+    const trace = regression.find(({ sourceId }) => sourceId === fixture.id);
+    if (!trace) {
+      problems.push(problem(
+        "missing-omitted-bass-regression",
+        `Task 22 fixture ${fixture.id} is not regression-only.`,
+      ));
+      continue;
+    }
+    if (trace.fixtureVersion !== fixture.origin.sourceRecognitionStructureHash) {
+      problems.push(problem(
+        "omitted-bass-fixture-version",
+        `${trace.id} does not pin Task 22's decoded-structure identity.`,
+        [trace.id],
+      ));
+    }
+  }
 
   for (const entry of computeListenTraceWeights(manifest.traces)) {
     const trace = manifest.traces.find(({ id }) => id === entry.traceId);
-    if (trace?.partition === "regression-only" && entry.weight !== 0) {
+    if (trace && !trace.scoreEligible && entry.weight !== 0) {
       problems.push(problem(
-        "scored-regression-trace",
-        `${entry.traceId} is regression-only but carries weight ${entry.weight}.`,
+        "scored-non-scoring-trace",
+        `${entry.traceId} is ${trace.evidenceRole} but carries weight ${entry.weight}.`,
         [entry.traceId],
       ));
     }

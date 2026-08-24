@@ -87,6 +87,7 @@ import {
 } from "./listenProfileValidationPolicy";
 import {
   LISTEN_TRACE_MANIFEST,
+  LISTEN_TRACE_MANIFEST_RECOGNITION_TARGET_COUNTS,
   assertValidListenTraceManifest,
   listenTraceCorpusHash,
   listenTraceManifestHash,
@@ -4037,12 +4038,35 @@ function listenProfilePolicyAssessment(
         rendererKey: renderer.rendererKey,
         ...definition,
       }));
-      recognitionTargets.push(assessListenRecognitionTarget({
-        rendererKey: renderer.rendererKey,
-        metric: definition.metric,
-        census: definition.census,
-        observedCount: definition.profileCount,
-      }));
+      const frozenTarget = LISTEN_TRACE_MANIFEST_RECOGNITION_TARGET_COUNTS.find((target) => (
+        target.rendererKey === renderer.rendererKey && target.metric === definition.metric
+      ));
+      if (!frozenTarget) {
+        throw new Error(
+          `Manifest v2 has no frozen ${renderer.rendererKey}/${definition.metric} target.`,
+        );
+      }
+      // A focused run still participates in paired correctness, but it cannot
+      // state full-corpus product debt. Only the measured frozen census may be
+      // assessed against the manifest-owned absolute target.
+      if (definition.census === frozenTarget.census) {
+        const targetAssessment = assessListenRecognitionTarget({
+          rendererKey: renderer.rendererKey,
+          metric: definition.metric,
+          census: definition.census,
+          observedCount: definition.profileCount,
+        });
+        const reached = definition.profileCount >= frozenTarget.targetCount;
+        recognitionTargets.push({
+          ...targetAssessment,
+          targetRate: frozenTarget.targetRate,
+          census: frozenTarget.census,
+          targetCount: frozenTarget.targetCount,
+          reached,
+          debtCount: Math.max(0, frozenTarget.targetCount - definition.profileCount),
+          debtRate: Math.max(0, frozenTarget.targetRate - targetAssessment.observedRate),
+        });
+      }
       const baselineRate = definition.census === 0
         ? 0
         : definition.baselineCount / definition.census;
@@ -4326,7 +4350,7 @@ function incompleteEvidenceReasons(results: ListenProfileValidationDomainResults
   const reasons: string[] = [];
   const bothRenderers = (keys: readonly ListenTraceRendererKey[]) =>
     keys.includes("direct") && keys.includes("tone");
-  if (!isolated) reasons.push("The isolated confirmation matrix was not measured.");
+  if (!isolated) reasons.push("The isolated paired-correctness matrix was not measured.");
   else {
     if (!bothRenderers(isolated.renderers.map(({ rendererKey }) => rendererKey))) {
       reasons.push("The isolated matrix covered one renderer, and its floors are stated per renderer.");
@@ -4339,10 +4363,14 @@ function incompleteEvidenceReasons(results: ListenProfileValidationDomainResults
           `fixtures, not the ${gate.correctTrialCount} the fixed floor is stated against.`,
         );
       }
-      if (renderer.cases.some(({ partition }) => partition !== "confirmation")) {
+      if (renderer.cases.some((row) => (
+        row.expectedCorrect
+          ? row.partition !== "discovery"
+          : row.partition !== "regression-only"
+      ))) {
         reasons.push(
-          `The isolated ${renderer.rendererKey} corpus contains a row outside the confirmation ` +
-          "partition, which a release gate may not read.",
+          `The isolated ${renderer.rendererKey} corpus does not route correct rows to scored ` +
+          "discovery and negative rows to non-scoring regression evidence.",
         );
       }
     }
@@ -4583,14 +4611,16 @@ function evaluateCandidateGates(
     });
   }
 
-  /* The isolated confirmation corpus. */
+  /* The observed isolated corpus, paired against baseline-v1. */
   if (isolated) {
     for (const renderer of isolated.renderers) {
       const key = renderer.rendererKey;
       const candidate = isolatedSummaryFor(renderer, profileId);
       const baseline = isolatedSummaryFor(renderer, baselineProfileId);
       const partitions = [...new Set(renderer.cases.map(({ partition }) => partition))];
-      const releasePartitions = partitions.filter((partition) => partition === "confirmation");
+      const releasePartitions = [...new Set(renderer.cases
+        .filter(({ expectedCorrect }) => expectedCorrect)
+        .map(({ partition }) => partition))];
       safety.isolatedDistinguishableFalseAdvances += candidate.summary.falseAdvanceCount;
       safety.isolatedAmbiguousAdvances += candidate.summary.ambiguousAdvanceCount;
 
@@ -4617,7 +4647,7 @@ function evaluateCandidateGates(
       // Round two uses paired correctness on the identical frozen corpus. The
       // absolute target is assessed separately below as product debt for both
       // this profile and the incumbent; it is not a challenger-only floor.
-      const releasable = releasePartitions.length === partitions.length;
+      const releasable = releasePartitions.length > 0;
       if (releasable) {
         book.apply("release-isolated-recognition", releasePartitions);
         if (candidate.correctAdvanceCount < baseline.correctAdvanceCount) {

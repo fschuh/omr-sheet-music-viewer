@@ -261,6 +261,60 @@ A fresh repetition reproduces every decoded-structure hash, distribution, and
 qualification record; it will not reproduce the file hash, because process-local
 PCM identities and host timings differ per browser process by design.
 
+## Task 25 round-two corpus evidence
+
+`listen-round-two-corpus-task25-run1.json` and
+`listen-round-two-corpus-task25-run2.json` are independent fresh-browser captures
+of exactly the Task 25 evidence that may be decoded before candidate selection:
+the 12 members of the four newly authored discovery groups and the two isolated
+source traces behind Task 22's committed omitted-bass regressions. The guarded
+capture path rejects confirmation and diagnostic descriptors.
+
+- Protocol manifest: version 2, `d1971fa3`
+- Musical corpus: `1213016e`
+- Prior-evidence ledger: `1f9613bd`
+- Captured rows per run: 14
+- Confirmation rows decoded per run: 0 / 12
+- Run 1 file SHA-256:
+  `15b029439b34e006d89db57a0796603ea9169dbe1e4a7cbc3d5728eb6fd96176`
+- Run 2 file SHA-256:
+  `4e462cc799e570bd34b4d1d83349aa6585b4aca6c82390de5307c9113686bf1c`
+
+The two runs have identical trace order, musical identities,
+recognition-structure hashes, frame counts, discrete matcher results, manifest
+metadata, and confirmation metadata. PCM hashes are retained only as
+process-local render diagnostics and are excluded from the repetition equality;
+12 of 14 differ between these browser processes. Confirmation contains four
+complete unseen paired groups, including negative cases and two
+repeated-identical-chord groups, but only their schema, identities, grouping, and
+asset requirements were inspected. Their first decode remains Task 28.
+
+The matched non-PCM results include two baseline-v1 false advances, both on
+discovery distinguishable-wrong rows:
+
+- `round-two/r2-repeated-low-triad-direct-splendid-pp/distinguishable-wrong`
+- `round-two/r2-paired-high-tetrad-tone-splendid-ff/distinguishable-wrong`
+
+They are frozen as genuine baseline discovery defects, not omitted from the
+report and not put under an absolute-zero gate the incumbent fails. All eight
+zero-weight discovery negatives join the trace-for-trace baseline-relative safety
+comparison; parity passes and any newly unsafe event fails. Task 26's absolute
+capture populations are 36 dedicated safety rows plus 41 other regression-only
+rows. Undecoded confirmation rows belong to neither population.
+
+Reproduce either archive while the benchmark dev server is running:
+
+```text
+node tools/online_amt/run_browser_benchmarks.mjs \
+  http://127.0.0.1:5173/online-amt-benchmark.html \
+  listen-round-two-corpus \
+  benchmark-results/listen-round-two-corpus-task25-run1.json
+```
+
+The pretest bundle `listenRoundTwoCorpusBenchmark.test.ts` reads both committed
+archives, removes only `pcmHash`, and requires every remaining row and the zero-
+decode confirmation record to match exactly.
+
 ## Task 13 frozen automated confirmation evidence
 
 `listen-profile-validation-task13-run1.json` and

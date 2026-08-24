@@ -2953,5 +2953,71 @@ safety gate, a ready-to-commit regression fixture for each one, and the replay o
 every already committed regression against all three named profiles. Name the
 piano and layer as the last two arguments.
 
+### Round-two corpus and manifest version 2 — August 23, 2026
+
+Task 25 freezes manifest version 2 at protocol hash `d1971fa3`, musical-corpus
+hash `1213016e`, and prior-evidence-ledger hash `1f9613bd`. The immutable ledger
+contains all 478 version-1 rows and indexes both rendered-content identity and
+musical-input hash, so relabelling previously observed material as confirmation is
+rejected mechanically.
+
+The version-2 census has 504 rows: 395 discovery, 12 newly authored confirmation,
+and 97 regression-only. Across both renderers the 268 observed isolated rows are
+routed as 212 scoring correct rows, 40 safety negatives, and 16 non-scoring
+ambiguous diagnostics. The hierarchical renderer → suite → domain → run weighting
+is unchanged. Consequently 387 discovery rows score, while safety, diagnostic,
+and regression-only rows carry zero weight. Promoting isolated-correct evidence as
+a co-equal suite is expected to penalize candidates that exchange isolated
+recognition for continuous recovery; its larger row count gives it no extra
+top-level weight. The finalized census binds Task 23's rate targets to Direct
+104/106 overall and 52/54 Course Clear, and Tone 101/106 overall and 52/54 Course
+Clear. The assessment path reads these exact frozen census/count pairs only when
+the measured census matches; a focused run emits no full-corpus product-debt row.
+`round-two-paired` is a sixth co-equal suite under each renderer. Its
+four scoring discovery rows each weigh 1/24 overall, versus 1/1272 for an
+isolated-correct row, so each paired row is deliberately 53 times heavier. The
+captured baseline independent rates on those four rows are 0.20, 0.80, 1.00, and
+1.00; this concentrated small-corpus effect is part of the predeclared ranking
+interpretation, not hidden by the suite-level average.
+
+Eight new paired groups contribute correct, omitted-bass, and
+distinguishable-wrong performances of the same score material. They span both
+pianos and renderers, low/middle/high registers, triads/tetrads, detached through
+sustained articulation, and eight velocity layers. Four complete groups are in
+discovery and four are in confirmation. Two groups in each partition contain a
+fresh bass under carried upper voices followed by three identical chord targets,
+which structurally covers source distances 0, 1, and 2. That construction is
+recorded as `designed-unverified`: Task 25 does not claim that an unseen decode
+will reproduce the late-recovery defect.
+
+Run the guarded evidence capture while the benchmark server is available:
+
+```text
+node tools/online_amt/run_browser_benchmarks.mjs \
+  http://127.0.0.1:5173/online-amt-benchmark.html \
+  listen-round-two-corpus \
+  benchmark-results/listen-round-two-corpus-task25-run1.json
+```
+
+The command admits only the 12 new discovery members and the two rendered sources
+of Task 22's omitted-bass regressions. It rejects diagnostic and confirmation
+descriptors before capture. Both committed repetitions captured 14 rows and
+reported confirmation as `not-decoded-until-task-28`, with 0/12 rows decoded.
+Every recognition-structure hash, discrete count, manifest identity, and
+confirmation identity matches across the two runs. PCM hashes are process-local
+diagnostics and are deliberately excluded from that equality.
+
+The archives expose two stable baseline-v1 defects rather than a clean absolute
+negative corpus: one false advance on
+`round-two/r2-repeated-low-triad-direct-splendid-pp/distinguishable-wrong` and one
+on `round-two/r2-paired-high-tetrad-tone-splendid-ff/distinguishable-wrong`.
+Task 26 therefore treats all eight captured discovery negatives as paired
+non-regression evidence, just like the known Course Clear discovery false advance:
+matching baseline is safe, and any added false, skipped, or duplicate advance
+rejects the candidate. The absolute populations contain exactly the 36 dedicated
+safety passages and 41 other captured regression-only rows. Confirmation rows are
+not declared in any Task 26 population, and population construction throws when a
+declared row is absent from capture instead of silently applying a smaller gate.
+
 See the [piano dynamics benchmark](PIANO_DYNAMICS_BENCHMARK.md) for the
 velocity-layer methodology, asset smoke checks, and measured 40-run matrix.

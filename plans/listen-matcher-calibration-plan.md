@@ -2638,7 +2638,7 @@ production-build checks pass.
 
 ### Task 25 — Build the round-two corpus and freeze trace manifest version 2
 
-**Status:** Required. **Prerequisites:** Tasks 22-24 complete.
+**Status:** Completed August 23, 2026. **Prerequisites:** Tasks 22-24 complete.
 
 **Objective:** Author genuinely unseen confirmation evidence, because none
 survives, and repartition the observed corpus so the next search is gated by the
@@ -2746,6 +2746,49 @@ gates or diagnoses rather than scores the evidence that rejected round one; and
 every derived count is bound to the frozen census. The plan to exercise repeated
 recovery is structurally validated without claiming that an unseen decode will
 reproduce it.
+
+**Completion evidence:** Manifest version 2 is pinned at protocol hash `d1971fa3`,
+musical-corpus hash `1213016e`, and prior-evidence-ledger hash `1f9613bd`. Its 504
+rows comprise 395 discovery, 12 confirmation, and 97 regression-only rows. The
+observed isolated census is asserted as 212 scoring correct, 40 safety negative,
+and 16 non-scoring diagnostic rows. The unchanged hierarchical weighting gives
+387 discovery rows positive weight; every safety, diagnostic, and regression-only
+row has zero weight. Task 23's frozen rates now derive 104/106 and 52/54 Direct
+targets and 101/106 and 52/54 Tone targets from the finalized census, and the live
+assessment path consumes those frozen counts only when the measured census matches;
+a focused run emits no misleading full-corpus debt row. `round-two-paired` is a
+sixth co-equal suite per renderer: each of its
+four scoring discovery rows weighs 1/24 overall, while each isolated-correct row
+weighs 1/1272, a deliberate 53× concentration recorded before Task 26 ranks.
+
+Eight new three-member paired groups span both pianos and renderers, low through
+high registers, triads and tetrads, eight dynamic layers, and four articulation
+patterns. Four groups are discovery and four are confirmation; each partition has
+two repeated-identical-chord groups. Every group keeps correct, omitted-bass, and
+distinguishable-wrong members together. Repeated groups structurally introduce a
+fresh bass under carried upper voices and contain three identical targets, but
+remain labelled `designed-unverified` rather than claiming decoder reproduction.
+All 12 confirmation rows are pinned `not-decoded-until-task-28`, have required
+assets, and collide with neither content identity nor musical-input identity in
+the immutable 478-row version-1 ledger. The two Task 22 omitted-bass fixtures are
+also admitted as regression-only evidence.
+
+Two independent real-browser captures are archived as
+`listen-round-two-corpus-task25-run1.json` and
+`listen-round-two-corpus-task25-run2.json`. Each captured exactly the 12 permitted
+discovery pair rows plus the two Task 22 rendered source rows and recorded zero of
+12 confirmation rows decoded. All recognition-structure hashes and non-PCM result
+fields match between runs; process-local PCM identities remain diagnostic-only.
+Both archives also record one baseline-v1 false advance on each of two discovery
+distinguishable-wrong rows. Those stable baseline defects are recorded explicitly
+and routed like the known Course Clear discovery defect: the eight zero-weight
+discovery negatives are paired non-regression against baseline-v1, so parity is
+safe and a worsened event rejects. Absolute zero remains the rule for the 36
+dedicated and 41 other captured regression-only rows. No confirmation identifier
+is declared in an applied Task 26 safety population; population construction
+throws if any declared row was not captured.
+Manifest, fixture, guarded-capture, archive-repetition, full unit, and production
+build checks pass.
 
 ### Task 26 — Stage the round-two grid and decide whether a bass-onset axis is required
 

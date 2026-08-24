@@ -19,6 +19,7 @@ import {
   LISTEN_BENCHMARK_TONE_RENDERER,
   type ListenBenchmarkRendererConfiguration,
 } from "./listenBenchmarkAudio";
+import { bundledListenBenchmarkCases } from "./listenBenchmark";
 import type { ListenMatcherThresholds } from "./listenMatcherProfiles";
 import {
   LISTEN_BASELINE_PROFILE,
@@ -40,9 +41,11 @@ import {
   type ListenSequenceAggregateSummary,
   type ListenSequenceBenchmarkResult,
   type ListenSequenceRunResult,
+  type ListenSequenceDefinition,
   type MaterializedListenSequence,
   type SequenceInferenceSession,
 } from "./listenSequenceBenchmark";
+import { findListenRoundTwoFixtureMember } from "./listenRoundTwoFixtures";
 import { captureCourseClearDynamicsRun } from "./listenDynamicsBenchmark";
 import {
   replayListenSafetyRegressions,
@@ -60,7 +63,6 @@ import {
   listenTraceCorpusHash,
   listenTraceManifestHash,
   listenTraceWeightsForPartition,
-  listenTracesInPartition,
   rankListenCandidates,
   type ListenCandidateMetricKey,
   type ListenCandidateMetrics,
@@ -531,7 +533,7 @@ export interface ListenMultiDomainSafetyVerdict {
   regressionRunSkippedAdvanceCount: number;
   regressionRunDuplicateAdvanceCount: number;
   regressionRunLateAdvanceCount: number;
-  /** Scored traces where this profile is unsafe in a way baseline-v1 is not. */
+  /** Discovery traces where this profile is unsafe in a way baseline-v1 is not. */
   discoveryRegressions: Array<{
     traceId: string;
     falseAdvanceDelta: number;
@@ -580,7 +582,10 @@ export interface ListenMultiDomainSweepResult {
     traceCount: number;
     capturedTraceCount: number;
     scoredTraceCount: number;
+    /** Absolute safety rows actually captured and applied in this sweep. */
     regressionRunCount: number;
+    /** Zero-weight discovery negatives compared trace-for-trace with baseline-v1. */
+    baselineRelativeSafetyRunCount: number;
   };
   renderers: ListenBenchmarkRendererConfiguration[];
   baselineProfile: ListenMatcherThresholds;
@@ -614,10 +619,99 @@ export function listenMultiDomainSweepTraces(
 ): ListenTraceDescriptor[] {
   return manifest.traces.filter((trace) => (
     (trace.partition === "discovery" || trace.partition === "regression-only") &&
+    trace.evidenceRole !== "diagnostic" &&
     // The committed regressions are replayed from their pinned frames by
     // `replayListenSafetyRegressions`; they have no audio to render.
     trace.suite !== "safety-regression"
   ));
+}
+
+export interface ListenMultiDomainSafetyPopulations {
+  /** Dedicated safety passages, held to an absolute zero-event rule. */
+  dedicatedSafetyTraceIds: readonly string[];
+  /** Other captured regression-only safety rows, also held to absolute zero. */
+  regressionRunTraceIds: readonly string[];
+  /** Captured discovery rows compared trace-for-trace against baseline-v1. */
+  baselineRelativeTraceIds: readonly string[];
+  /** The zero-weight paired negatives inside the baseline-relative population. */
+  baselineRelativeSafetyTraceIds: readonly string[];
+}
+
+/**
+ * Freezes the three applied safety populations before replay. Confirmation is
+ * absent by construction, and every declared identifier must be in the capture
+ * list so a gate can never silently shrink to the rows that happened to run.
+ */
+export function listenMultiDomainSafetyPopulations(
+  manifest: ListenTraceManifest = LISTEN_TRACE_MANIFEST,
+  capturedTraces: readonly ListenTraceDescriptor[] = listenMultiDomainSweepTraces(manifest),
+): ListenMultiDomainSafetyPopulations {
+  const capturedIds = new Set(capturedTraces.map(({ id }) => id));
+  const dedicatedSafetyTraceIds = manifest.traces
+    .filter(({ partition, evidenceRole, suite, sequenceFamily }) => (
+      partition === "regression-only" &&
+      evidenceRole === "safety" &&
+      suite === "sequence" &&
+      sequenceFamily === "safety"
+    ))
+    .map(({ id }) => id);
+  const dedicated = new Set(dedicatedSafetyTraceIds);
+  const regressionRunTraceIds = manifest.traces
+    .filter(({ id, partition, evidenceRole, suite }) => (
+      partition === "regression-only" &&
+      evidenceRole === "safety" &&
+      !dedicated.has(id) &&
+      suite !== "safety-regression"
+    ))
+    .map(({ id }) => id);
+  const baselineRelativeTraceIds = manifest.traces
+    .filter(({ partition, evidenceRole, suite }) => (
+      partition === "discovery" &&
+      evidenceRole !== "diagnostic" &&
+      suite !== "safety-regression"
+    ))
+    .map(({ id }) => id);
+  const baselineRelativeSafetyTraceIds = manifest.traces
+    .filter(({ partition, evidenceRole }) => (
+      partition === "discovery" && evidenceRole === "safety"
+    ))
+    .map(({ id }) => id);
+  for (const [label, traceIds] of [
+    ["dedicated safety", dedicatedSafetyTraceIds],
+    ["regression-run safety", regressionRunTraceIds],
+    ["baseline-relative discovery", baselineRelativeTraceIds],
+  ] as const) {
+    const missing = traceIds.filter((id) => !capturedIds.has(id));
+    if (missing.length > 0) {
+      throw new Error(`${label} population declares uncaptured rows: ${missing.join(", ")}`);
+    }
+  }
+  return {
+    dedicatedSafetyTraceIds: Object.freeze(dedicatedSafetyTraceIds),
+    regressionRunTraceIds: Object.freeze(regressionRunTraceIds),
+    baselineRelativeTraceIds: Object.freeze(baselineRelativeTraceIds),
+    baselineRelativeSafetyTraceIds: Object.freeze(baselineRelativeSafetyTraceIds),
+  };
+}
+
+function isolatedDefinitionForTrace(descriptor: ListenTraceDescriptor): ListenSequenceDefinition {
+  const index = Number(descriptor.id.split("/").at(-1)) - 1;
+  const benchmarkCase = bundledListenBenchmarkCases()[index];
+  if (!benchmarkCase) throw new Error(`${descriptor.id} names no isolated fixture.`);
+  const expectedAdvance = descriptor.caseKind === "correct";
+  return {
+    id: descriptor.sourceId,
+    family: benchmarkCase.fixtureGroup ?? "isolated",
+    label: descriptor.id,
+    targets: [benchmarkCase.target],
+    attacks: [{
+      at: 0,
+      targetIndex: 0,
+      notes: benchmarkCase.played,
+      expectedAdvance,
+      targetStart: expectedAdvance ? undefined : true,
+    }],
+  };
 }
 
 function rendererForListenTrace(
@@ -645,6 +739,56 @@ export async function captureListenMultiDomainTrace(
   session: SequenceInferenceSession,
 ): Promise<ListenMultiDomainCapture> {
   const renderer = rendererForListenTrace(descriptor);
+  if (descriptor.suite === "isolated") {
+    if (descriptor.piano === null || descriptor.layer === null) {
+      throw new Error(`${descriptor.id} names no piano layer.`);
+    }
+    const captured = await captureListenSequenceRun({
+      definition: isolatedDefinitionForTrace(descriptor),
+      intervalMs: 1_000,
+      session,
+      renderer,
+      piano: descriptor.piano,
+      layer: descriptor.layer,
+    });
+    return {
+      descriptor,
+      sequence: captured.sequence,
+      trace: captured.trace,
+      recognitionHash: captured.recognitionHash,
+      recognitionStructureHash: listenRecognitionStructureHash(captured.trace),
+      baselineRun: captured.run,
+    };
+  }
+  if (descriptor.suite === "round-two-paired") {
+    if (descriptor.pairedGroupId === null || descriptor.pairedCaseRole === null ||
+        descriptor.intervalMs === null || descriptor.piano === null || descriptor.layer === null) {
+      throw new Error(`${descriptor.id} has incomplete paired-fixture metadata.`);
+    }
+    const authored = findListenRoundTwoFixtureMember(
+      descriptor.pairedGroupId,
+      descriptor.pairedCaseRole,
+    );
+    if (!authored || authored.member.definition.id !== descriptor.sourceId) {
+      throw new Error(`${descriptor.id} names no authored paired fixture.`);
+    }
+    const captured = await captureListenSequenceRun({
+      definition: authored.member.definition,
+      intervalMs: descriptor.intervalMs,
+      session,
+      renderer,
+      piano: descriptor.piano,
+      layer: descriptor.layer,
+    });
+    return {
+      descriptor,
+      sequence: captured.sequence,
+      trace: captured.trace,
+      recognitionHash: captured.recognitionHash,
+      recognitionStructureHash: listenRecognitionStructureHash(captured.trace),
+      baselineRun: captured.run,
+    };
+  }
   if (descriptor.suite === "sequence" || descriptor.suite === "articulation") {
     const definitions = descriptor.suite === "sequence"
       ? bundledListenSequences()
@@ -833,12 +977,47 @@ function worstDomainValue(breakdown: ListenMultiDomainBreakdown): number | null 
   )).value;
 }
 
+/**
+ * Finds newly unsafe events on discovery rows, including zero-weight paired
+ * negatives. A candidate must have the same baseline row for every declared
+ * identifier; missing comparison evidence is an error, not an empty result.
+ */
+export function listenBaselineRelativeSafetyRegressions(
+  runs: readonly ListenMultiDomainRunMetrics[],
+  baselineRuns: readonly ListenMultiDomainRunMetrics[],
+  traceIds: ReadonlySet<string>,
+): ListenMultiDomainSafetyVerdict["discoveryRegressions"] {
+  const candidateByTrace = new Map(runs.map((entry) => [entry.traceId, entry]));
+  const baselineByTrace = new Map(baselineRuns.map((entry) => [entry.traceId, entry]));
+  const regressions: ListenMultiDomainSafetyVerdict["discoveryRegressions"] = [];
+  for (const traceId of traceIds) {
+    const entry = candidateByTrace.get(traceId);
+    const reference = baselineByTrace.get(traceId);
+    if (!entry || !reference) {
+      throw new Error(`Baseline-relative safety row ${traceId} is missing from a replay.`);
+    }
+    const falseAdvanceDelta = entry.falseAdvanceCount - reference.falseAdvanceCount;
+    const skippedAdvanceDelta = entry.skippedAdvanceCount - reference.skippedAdvanceCount;
+    const duplicateAdvanceDelta = entry.duplicateAdvanceCount - reference.duplicateAdvanceCount;
+    if (falseAdvanceDelta > 0 || skippedAdvanceDelta > 0 || duplicateAdvanceDelta > 0) {
+      regressions.push({
+        traceId,
+        falseAdvanceDelta,
+        skippedAdvanceDelta,
+        duplicateAdvanceDelta,
+      });
+    }
+  }
+  return regressions;
+}
+
 interface MultiDomainAggregationInput {
   profile: ListenMatcherSweepProfile;
   runs: readonly ListenMultiDomainRunMetrics[];
   scoringWeights: readonly ListenTraceWeight[];
   dedicatedSafetyTraceIds: ReadonlySet<string>;
   regressionRunTraceIds: ReadonlySet<string>;
+  baselineRelativeTraceIds: ReadonlySet<string>;
   scoredTraceIds: ReadonlySet<string>;
   baseline: ListenMultiDomainProfileResult | null;
 }
@@ -900,10 +1079,10 @@ export function listenMultiDomainLeafMetrics(
  * which may be traded for a better score.
  *
  * The dedicated families and the regression-only runs must be clean outright.
- * Scored traces are compared against `baseline-v1` on the same trace instead,
- * because the corpus contains one already-diagnosed baseline false advance —
- * `course-clear-27` at 333 ms under Tone — and an absolute rule there would
- * either reject baseline itself or have to pretend that event does not exist.
+ * Discovery traces are compared against `baseline-v1` on the same trace instead,
+ * whether they score or are zero-weight paired negatives. The discovery corpus
+ * contains known baseline false advances, and an absolute rule there would
+ * reject the incumbent before ranking or pretend the measured event did not exist.
  */
 function multiDomainSafetyVerdict(
   input: MultiDomainAggregationInput,
@@ -939,25 +1118,13 @@ function multiDomainSafetyVerdict(
   ) {
     rejectionReasons.push("regression-run-unsafe");
   }
-  const baselineByTrace = new Map(
-    (baseline?.runs ?? []).map((entry) => [entry.traceId, entry]),
-  );
-  const discoveryRegressions = runs.flatMap((entry) => {
-    if (!input.scoredTraceIds.has(entry.traceId)) return [];
-    const reference = baselineByTrace.get(entry.traceId);
-    if (!reference) return [];
-    const falseAdvanceDelta = entry.falseAdvanceCount - reference.falseAdvanceCount;
-    const skippedAdvanceDelta = entry.skippedAdvanceCount - reference.skippedAdvanceCount;
-    const duplicateAdvanceDelta = entry.duplicateAdvanceCount - reference.duplicateAdvanceCount;
-    return falseAdvanceDelta > 0 || skippedAdvanceDelta > 0 || duplicateAdvanceDelta > 0
-      ? [{
-        traceId: entry.traceId,
-        falseAdvanceDelta,
-        skippedAdvanceDelta,
-        duplicateAdvanceDelta,
-      }]
-      : [];
-  });
+  const discoveryRegressions = baseline === null
+    ? []
+    : listenBaselineRelativeSafetyRegressions(
+        runs,
+        baseline.runs ?? [],
+        input.baselineRelativeTraceIds,
+      );
   if (discoveryRegressions.length > 0) rejectionReasons.push("discovery-safety-regression");
   const regressions = replayListenSafetyRegressions(profile, profile.id);
   if (!regressions.passed) rejectionReasons.push("committed-regression");
@@ -1167,14 +1334,13 @@ export async function evaluateListenMatcherMultiDomainSweep(options: {
   }
   const descriptors = listenMultiDomainSweepTraces(manifest);
   const scoringWeights = listenTraceWeightsForPartition("discovery", manifest);
-  const scoredTraceIds = new Set(scoringWeights.map(({ traceId }) => traceId));
-  const regressionOnly = listenTracesInPartition("regression-only", manifest);
-  const dedicatedSafetyTraceIds = new Set(regressionOnly
-    .filter(({ suite }) => suite === "sequence")
-    .map(({ id }) => id));
-  const regressionRunTraceIds = new Set(regressionOnly
-    .filter(({ suite }) => suite !== "sequence" && suite !== "safety-regression")
-    .map(({ id }) => id));
+  const scoredTraceIds = new Set(scoringWeights
+    .filter(({ weight }) => weight > 0)
+    .map(({ traceId }) => traceId));
+  const safetyPopulations = listenMultiDomainSafetyPopulations(manifest, descriptors);
+  const dedicatedSafetyTraceIds = new Set(safetyPopulations.dedicatedSafetyTraceIds);
+  const regressionRunTraceIds = new Set(safetyPopulations.regressionRunTraceIds);
+  const baselineRelativeTraceIds = new Set(safetyPopulations.baselineRelativeTraceIds);
   const weightByTrace = new Map(scoringWeights.map(({ traceId, weight }) => [traceId, weight]));
   const perProfileRuns = profiles.map((): ListenMultiDomainRunMetrics[] => []);
   const captures: ListenMultiDomainSweepResult["captures"] = [];
@@ -1253,6 +1419,7 @@ export async function evaluateListenMatcherMultiDomainSweep(options: {
     scoredTraceIds,
     dedicatedSafetyTraceIds,
     regressionRunTraceIds,
+    baselineRelativeTraceIds,
   };
   const baseline = aggregateMultiDomainProfile({
     ...shared,
@@ -1288,6 +1455,8 @@ export async function evaluateListenMatcherMultiDomainSweep(options: {
       capturedTraceCount: descriptors.length,
       scoredTraceCount: scoredTraceIds.size,
       regressionRunCount: dedicatedSafetyTraceIds.size + regressionRunTraceIds.size,
+      baselineRelativeSafetyRunCount:
+        safetyPopulations.baselineRelativeSafetyTraceIds.length,
     },
     renderers: [...renderers.values()],
     baselineProfile: { ...LISTEN_SWEEP_DISCOVERY_BASELINE_PROFILE },
