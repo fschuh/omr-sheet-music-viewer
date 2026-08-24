@@ -28,6 +28,9 @@ const LISTEN_MULTIDOMAIN_SWEEP_MODE = CONFIGURATION_FILTER ===
   "listen-matcher-multidomain-sweep" || LISTEN_MULTIDOMAIN_SWEEP_SUMMARY_MODE ||
   LISTEN_TASK24_DOMAIN_ARCHIVE_MODE;
 const LISTEN_ROUND_TWO_CORPUS_MODE = CONFIGURATION_FILTER === "listen-round-two-corpus";
+// Task 26 stages up to three grids in one process, because each one runs only
+// when the recorded stop verdict of the one before authorises it.
+const LISTEN_ROUND_TWO_ABLATION_MODE = CONFIGURATION_FILTER === "listen-round-two-ablation";
 // Full evidence commands can archive their complete JSON directly. The output
 // environment variable is honored for every command. Task 08's positional path
 // remains supported; validation matrices also accept a path after their optional
@@ -43,6 +46,7 @@ const POSITIONAL_LISTEN_VALIDATION_OUTPUT_FILTERS = new Set([
 const LISTEN_BENCHMARK_OUTPUT_PATH = process.env.LISTEN_BENCHMARK_OUTPUT_PATH ?? (
   CONFIGURATION_FILTER === "listen-matcher-multidomain-sweep" ||
     LISTEN_ROUND_TWO_CORPUS_MODE ||
+    LISTEN_ROUND_TWO_ABLATION_MODE ||
     LISTEN_TASK24_DOMAIN_ARCHIVE_MODE
     ? process.argv[4]
     : POSITIONAL_LISTEN_VALIDATION_OUTPUT_FILTERS.has(CONFIGURATION_FILTER)
@@ -292,7 +296,7 @@ async function runConfiguration(configuration) {
       ? BASE_URL.replace(/online-amt-benchmark\.html(?:\?.*)?$/, "listen-benchmark-parity.html")
       : (LISTEN_SMOKE_MODE || LISTEN_DYNAMICS_SMOKE_MODE || LISTEN_ACCURACY_MODE || LISTEN_SEQUENCE_MODE ||
         LISTEN_THRESHOLD_SWEEP_MODE || LISTEN_MULTIDOMAIN_SWEEP_MODE ||
-        LISTEN_ROUND_TWO_CORPUS_MODE ||
+        LISTEN_ROUND_TWO_CORPUS_MODE || LISTEN_ROUND_TWO_ABLATION_MODE ||
         LISTEN_PROFILE_VALIDATION_MODE ||
         LISTEN_ISOLATED_VALIDATION_MODE || LISTEN_SEQUENCE_VALIDATION_MODE ||
         LISTEN_DYNAMICS_VALIDATION_MODE ||
@@ -450,6 +454,12 @@ async function runConfiguration(configuration) {
       // and regression corpora, then replays 1,000 profiles against each trace.
       LISTEN_MULTIDOMAIN_SWEEP_MODE
         ? 7_200_000
+        // Three staged grids of 1,000, 1,400, and 4,200 profiles, each replayed
+        // against the whole version-2 discovery and regression corpus. The
+        // environment variable is for a machine slower than the one this was
+        // measured on, not for narrowing the run.
+        : LISTEN_ROUND_TWO_ABLATION_MODE
+        ? Number(process.env.LISTEN_ROUND_TWO_ABLATION_TIMEOUT_MS ?? 43_200_000)
         : LISTEN_ROUND_TWO_CORPUS_MODE
         ? 1_200_000
         // The unified gate captures the isolated, sequence, dynamics, and
@@ -753,6 +763,8 @@ async function runConfiguration(configuration) {
               await import("/src/listenProfileValidationBenchmark.ts");
             return conciseListenDynamicsProfileValidationResult(result);
           })()`
+        : LISTEN_ROUND_TWO_ABLATION_MODE
+        ? "window.listenRoundTwoAblationResult"
         : LISTEN_ROUND_TWO_CORPUS_MODE
         ? "window.listenRoundTwoCorpusResult"
         : LISTEN_MULTIDOMAIN_SWEEP_MODE
@@ -1142,6 +1154,11 @@ const selectedConfigurations = FINGERING_SMOKE_MODE
           : "") +
         (DYNAMICS_VALIDATION_SUITES ? `&benchmark-suite=${DYNAMICS_VALIDATION_SUITES}` : ""),
     }]
+  : LISTEN_ROUND_TWO_ABLATION_MODE
+  ? [{
+      name: "listen-round-two-ablation",
+      query: "listen-round-two-ablation=auto",
+    }]
   : LISTEN_ROUND_TWO_CORPUS_MODE
   ? [{
       name: "listen-round-two-corpus",
@@ -1517,6 +1534,21 @@ for (let index = 0; index < selectedConfigurations.length; index += 1) {
     );
   } else if (LISTEN_PARITY_MODE) {
     console.error(`${configuration.name}: ${result.checks.length} parity checks passed`);
+  } else if (LISTEN_ROUND_TWO_ABLATION_MODE) {
+    console.error(
+      `${configuration.name}: outcome=${result.terminalOutcome} ` +
+      `manifest=${result.manifest.version}/${result.manifest.hash}/${result.manifest.corpusHash} ` +
+      `digest=${result.digest.value}`,
+    );
+    for (const ablation of result.ablations) {
+      console.error(
+        `  ${ablation.ablation}: grid=${ablation.gridSize}` +
+        `${ablation.gridIsFrozenGenerator ? "" : " (injected)"} ` +
+        `safe=${ablation.safeProfileCount} verdict=${ablation.domainRegret.verdict} ` +
+        `selected=[${ablation.selectedProfileIds.join(", ")}] ` +
+        `stop=${ablation.stop.satisfied ? "satisfied" : ablation.stop.reasons.join("|")}`,
+      );
+    }
   } else if (LISTEN_ROUND_TWO_CORPUS_MODE) {
     console.error(
       `${configuration.name}: captured=${result.capturedTraceCount} ` +

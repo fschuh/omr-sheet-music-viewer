@@ -70,6 +70,202 @@ const EVIDENCE_ARTIFACTS = [
     profileLateAdvanceCount: 25,
   },
   {
+    name: "Task 26 staged round-two ablations (run 1)",
+    path: "benchmark-results/listen-round-two-ablation-task26-run1.json",
+    fileSha256: "271b673a9696c449b7c3e91b4298b22a3d83b927a890643f2d62eb2ae20f0fc7",
+    /**
+     * What makes this file the staged search rather than one grid run in
+     * isolation. Every ablation it contains must be the frozen generator's own
+     * grid, must have been authorised by the recorded verdict of the ablation
+     * before it, and must report per-run repeated-chord evidence for every
+     * profile it selected; the terminal outcome is recomputed from those
+     * verdicts rather than read from the file.
+     */
+    roundTwoAblation: {
+      generatorVersion: 1,
+      policyVersion: 1,
+      policyHash: "840b07ec",
+      manifestVersion: 2,
+      manifestHash: "d1971fa3",
+      manifestCorpusHash: "1213016e",
+      capturedTraceCount: 472,
+      terminalOutcome: "bass-axis-unsupported",
+      digest: "8dfe2f1b",
+      activeTargetRefinementPoints: [0.075, 0.1, 0.125, 0.3, 0.325],
+      targetNoteRefinementPoints: [0.4625, 0.5375],
+      bassOnsetPoints: [0.55, 0.6, 0.7],
+      task22LimitingMinimum: 0.09577340414698106,
+      /** Task 24's frozen comparison boundaries, restated so they can be applied here. */
+      repeatedRecoveryBoundaries: {
+        sourceDistanceNoRegression: 0,
+        attributionDelayNoRegressionMs: 32,
+        sourceDistanceMaterialGain: 1,
+        attributionDelayMaterialGainMs: 500,
+      },
+      domainRegretMaterialBoundary: 0.01,
+      /** The three groups the hashed policy names; full resolution is read against them. */
+      knownDiscoveryGroupIds: [
+        "dynamics-constant/tone/salamander/v05",
+        "dynamics-constant/tone/salamander/v13",
+        "dynamics-mixed/tone/salamander",
+      ],
+      processLocalDigestFields: [
+        "lowestLimitingUpperVoiceEvidence",
+        "onsetConfidence",
+        "targetEvidence",
+        "task22LimitingUpperVoiceEvidence",
+        "transitionLowestLimitingUpperVoiceEvidence",
+      ],
+      repeatedChordGroupIds: [
+        "dynamics-constant/tone/salamander/v05",
+        "dynamics-constant/tone/salamander/v13",
+        "dynamics-mixed/tone/salamander",
+        "round-two/r2-repeated-low-triad-direct-splendid-pp/correct",
+        "round-two/r2-repeated-mid-tetrad-tone-salamander-v13/correct",
+      ],
+      ablations: [
+        {
+          id: "ablation-1-round-one-grid",
+          gridSize: 1_000,
+          bassAxisPresent: false,
+          safeProfileCount: 159,
+          verdict: "domain-spread-material",
+          stopSatisfied: false,
+          stopReasons: ["selected-set-has-no-material-repeated-recovery"],
+          selectedProfileIds: [
+            "o0p550-t0p500-a0p350-x0p990-b1",
+            "o0p450-t0p575-a0p275-x0p970-b1",
+            "o0p550-t0p500-a0p200-x0p970-b1",
+          ],
+        },
+        {
+          id: "ablation-2-refined-family",
+          gridSize: 1_400,
+          bassAxisPresent: false,
+          safeProfileCount: 452,
+          verdict: "domain-spread-material",
+          stopSatisfied: false,
+          stopReasons: ["selected-set-has-no-material-repeated-recovery"],
+          selectedProfileIds: [
+            "o0p450-t0p5375-a0p300-x0p990-b1",
+            "o0p450-t0p5375-a0p075-x0p970-b1",
+          ],
+        },
+        {
+          id: "ablation-3-bass-axis",
+          gridSize: 4_200,
+          bassAxisPresent: true,
+          safeProfileCount: 2_294,
+          verdict: "domain-spread-material",
+          stopSatisfied: false,
+          stopReasons: ["selected-set-has-no-material-repeated-recovery"],
+          selectedProfileIds: [
+            "o0p450-t0p500-a0p075-x0p990-b1-B0p550",
+            "o0p450-t0p5375-a0p075-x0p970-b1",
+          ],
+        },
+      ],
+    },
+  },
+  {
+    name: "Task 26 staged round-two ablations (run 2)",
+    path: "benchmark-results/listen-round-two-ablation-task26-run2.json",
+    fileSha256: "0766dd023a72a8859aa0eb415650f0f36ecf2952daad4181a8647b4b6b480707",
+    /**
+     * What makes this file the staged search rather than one grid run in
+     * isolation. Every ablation it contains must be the frozen generator's own
+     * grid, must have been authorised by the recorded verdict of the ablation
+     * before it, and must report per-run repeated-chord evidence for every
+     * profile it selected; the terminal outcome is recomputed from those
+     * verdicts rather than read from the file.
+     */
+    roundTwoAblation: {
+      generatorVersion: 1,
+      policyVersion: 1,
+      policyHash: "840b07ec",
+      manifestVersion: 2,
+      manifestHash: "d1971fa3",
+      manifestCorpusHash: "1213016e",
+      capturedTraceCount: 472,
+      terminalOutcome: "bass-axis-unsupported",
+      digest: "8dfe2f1b",
+      activeTargetRefinementPoints: [0.075, 0.1, 0.125, 0.3, 0.325],
+      targetNoteRefinementPoints: [0.4625, 0.5375],
+      bassOnsetPoints: [0.55, 0.6, 0.7],
+      task22LimitingMinimum: 0.09577340414698106,
+      /** Task 24's frozen comparison boundaries, restated so they can be applied here. */
+      repeatedRecoveryBoundaries: {
+        sourceDistanceNoRegression: 0,
+        attributionDelayNoRegressionMs: 32,
+        sourceDistanceMaterialGain: 1,
+        attributionDelayMaterialGainMs: 500,
+      },
+      domainRegretMaterialBoundary: 0.01,
+      /** The three groups the hashed policy names; full resolution is read against them. */
+      knownDiscoveryGroupIds: [
+        "dynamics-constant/tone/salamander/v05",
+        "dynamics-constant/tone/salamander/v13",
+        "dynamics-mixed/tone/salamander",
+      ],
+      processLocalDigestFields: [
+        "lowestLimitingUpperVoiceEvidence",
+        "onsetConfidence",
+        "targetEvidence",
+        "task22LimitingUpperVoiceEvidence",
+        "transitionLowestLimitingUpperVoiceEvidence",
+      ],
+      repeatedChordGroupIds: [
+        "dynamics-constant/tone/salamander/v05",
+        "dynamics-constant/tone/salamander/v13",
+        "dynamics-mixed/tone/salamander",
+        "round-two/r2-repeated-low-triad-direct-splendid-pp/correct",
+        "round-two/r2-repeated-mid-tetrad-tone-salamander-v13/correct",
+      ],
+      ablations: [
+        {
+          id: "ablation-1-round-one-grid",
+          gridSize: 1_000,
+          bassAxisPresent: false,
+          safeProfileCount: 159,
+          verdict: "domain-spread-material",
+          stopSatisfied: false,
+          stopReasons: ["selected-set-has-no-material-repeated-recovery"],
+          selectedProfileIds: [
+            "o0p550-t0p500-a0p350-x0p990-b1",
+            "o0p450-t0p575-a0p275-x0p970-b1",
+            "o0p550-t0p500-a0p200-x0p970-b1",
+          ],
+        },
+        {
+          id: "ablation-2-refined-family",
+          gridSize: 1_400,
+          bassAxisPresent: false,
+          safeProfileCount: 452,
+          verdict: "domain-spread-material",
+          stopSatisfied: false,
+          stopReasons: ["selected-set-has-no-material-repeated-recovery"],
+          selectedProfileIds: [
+            "o0p450-t0p5375-a0p300-x0p990-b1",
+            "o0p450-t0p5375-a0p075-x0p970-b1",
+          ],
+        },
+        {
+          id: "ablation-3-bass-axis",
+          gridSize: 4_200,
+          bassAxisPresent: true,
+          safeProfileCount: 2_294,
+          verdict: "domain-spread-material",
+          stopSatisfied: false,
+          stopReasons: ["selected-set-has-no-material-repeated-recovery"],
+          selectedProfileIds: [
+            "o0p450-t0p500-a0p075-x0p990-b1-B0p550",
+            "o0p450-t0p5375-a0p075-x0p970-b1",
+          ],
+        },
+      ],
+    },
+  },
+  {
     name: "Task 22 bass-onset and repeated-chord qualification",
     path: "benchmark-results/listen-bass-qualification-task22.json",
     fileSha256: "3b7085969a15242ff06b6a9fc58de72882626609c1e816a3dc7d7cb6c318279e",
@@ -772,9 +968,9 @@ export function canonicalJson(value, omittedFields = new Set()) {
 }
 
 /** Independent restatement of DeterministicHasher.text(canonicalJson(value), false). */
-function canonicalJsonDigest(value) {
+function canonicalJsonDigest(value, omittedFields = new Set()) {
   let hash = 0x811c9dc5;
-  const text = canonicalJson(value);
+  const text = canonicalJson(value, omittedFields);
   const byte = (value) => {
     hash = Math.imul(hash ^ (value & 0xff), 0x01000193) >>> 0;
   };
@@ -1113,7 +1309,489 @@ export function task24DomainArchiveProblems(artifact, result) {
   return problems;
 }
 
-/** Verifies the committed Task 08, 10, 11, 22, and 24 evidence against frozen pins. */
+/**
+ * Task 24's repeated-recovery comparison, restated here in the verifier's own
+ * terms and recomputed from both sides' archived measurements.
+ *
+ * The artifact stores the evaluation the search made; this reproduces it from
+ * the per-run source distances, delays, and safety counts, so a record whose
+ * verdict does not follow from its own measurements fails verification. The
+ * boundaries are the frozen policy's and are pinned by the caller.
+ */
+function recomputeRepeatedRecovery(reference, candidate, boundaries, knownGroupIds) {
+  const referenceById = new Map((reference ?? []).map((row) => [row.groupId, row]));
+  const unsafeCount = (observation) => (
+    (observation?.falseAdvanceCount ?? 0) + (observation?.skippedAdvanceCount ?? 0) +
+      (observation?.duplicateAdvanceCount ?? 0)
+  );
+  const reproduces = (observation) => Boolean(
+    observation?.evaluated && observation?.structurallyValid &&
+      observation?.firstCorrectFullChordAttackIncomplete &&
+      observation?.carriedRequiredPitchWithoutFreshReOnset &&
+      observation?.laterIdenticalAttackRecoveredCorrectTarget &&
+      observation?.sourceDistance !== null && observation?.sourceDistance > 0 &&
+      unsafeCount(observation) === 0,
+  );
+  const groups = (candidate ?? []).map((row) => {
+    const base = referenceById.get(row.groupId)?.observation;
+    const measured = row.observation;
+    const candidateSafe = Boolean(measured?.evaluated) && unsafeCount(measured) === 0;
+    let noRegression = candidateSafe;
+    if (base?.sourceDistance !== null && base?.sourceDistance !== undefined) {
+      noRegression = noRegression && measured?.sourceDistance !== null &&
+        measured.sourceDistance - base.sourceDistance <=
+          boundaries.sourceDistanceNoRegression &&
+        measured.attributionDelayMs - base.attributionDelayMs <=
+          boundaries.attributionDelayNoRegressionMs + 1e-12;
+    }
+    const materialRecovery = candidateSafe && measured?.sourceDistance !== null && (
+      base?.sourceDistance === null || base?.sourceDistance === undefined || (
+        base.sourceDistance - measured.sourceDistance >= boundaries.sourceDistanceMaterialGain &&
+        base.attributionDelayMs - measured.attributionDelayMs + 1e-12 >=
+          boundaries.attributionDelayMaterialGainMs
+      )
+    );
+    return {
+      groupId: row.groupId,
+      stratum: row.stratum,
+      evaluated: Boolean(measured?.evaluated),
+      baselineReproduces: reproduces(base),
+      noRegression,
+      materialRecovery,
+      fullResolution: candidateSafe && measured?.sourceDistance === 0,
+    };
+  });
+  const strata = [...new Set(groups.map(({ stratum }) => stratum))].sort();
+  const materialRecoveryByStratum = strata.map((stratum) => {
+    const rows = groups.filter((group) => group.stratum === stratum);
+    const evaluatedGroupCount = rows.filter(({ evaluated }) => evaluated).length;
+    const complete = evaluatedGroupCount === rows.length;
+    return {
+      stratum,
+      requiredGroupCount: rows.length,
+      evaluatedGroupCount,
+      complete,
+      material: complete && rows.some(({ materialRecovery }) => materialRecovery),
+    };
+  });
+  const byGroupId = new Map(groups.map((group) => [group.groupId, group]));
+  const requiredForResolution = groups.filter((group) => (
+    knownGroupIds.includes(group.groupId) || group.baselineReproduces
+  ));
+  const noRegression = groups.filter(({ evaluated }) => evaluated)
+    .every(({ noRegression: clean }) => clean);
+  const materialRecovery = groups.length > 0 && materialRecoveryByStratum.length > 0 &&
+    materialRecoveryByStratum.every(({ material }) => material);
+  const discoveryFullResolution = knownGroupIds.every((id) => byGroupId.has(id)) &&
+    requiredForResolution.length >= knownGroupIds.length &&
+    requiredForResolution.every(({ fullResolution }) => fullResolution);
+  // Task 26 declares no confirmation comparison, so the frozen aggregation over
+  // an empty confirmation set is what its record must show. A record that
+  // carried one would fail the evidence-role check beside this.
+  const confirmedFullResolution = false;
+  return {
+    groups,
+    materialRecoveryByStratum,
+    discoveryEvaluationStatus: materialRecoveryByStratum.length > 0 &&
+      materialRecoveryByStratum.every(({ complete }) => complete) ? "complete" : "incomplete",
+    noRegression,
+    materialRecovery,
+    discoveryFullResolution,
+    confirmedFullResolution,
+    confirmationReproductionStatus: "not-run",
+    reproducingConfirmationGroupIds: [],
+    inconclusiveConfirmationGroupIds: [],
+    repeatedRecoveryOutcome: !noRegression
+      ? "regressed"
+      : discoveryFullResolution
+      ? "discovery-full-resolution"
+      : materialRecovery
+      ? "material-partial-recovery"
+      : "unchanged",
+  };
+}
+
+/** Task 24's whole-ablation stop rule, recomputed from the recomputed evaluations. */
+function recomputeStopReasons(selectedProfileIds, evaluations) {
+  const reasons = [];
+  if (selectedProfileIds.length === 0) reasons.push("no-search-selected-candidate");
+  const incomplete = evaluations.some(({ discoveryEvaluationStatus }) => (
+    discoveryEvaluationStatus === "incomplete"
+  ));
+  if (incomplete) reasons.push("selected-discovery-stratum-not-decoded");
+  if (evaluations.some(({ noRegression }) => !noRegression)) {
+    reasons.push("selected-repeated-recovery-regression");
+  }
+  if (!incomplete && evaluations.length > 0 &&
+      evaluations.every(({ materialRecovery }) => !materialRecovery)) {
+    reasons.push("selected-set-has-no-material-repeated-recovery");
+  }
+  return reasons;
+}
+
+/**
+ * Task 24's matched-pair support rule, recomputed from the ablation's own grid.
+ *
+ * The pair record repeats the axis's and twin's selection, safety, and regret;
+ * `inputs` is those same facts resolved from `selectedProfileIds` and the grid
+ * rows instead, so a pair that is internally consistent but disagrees with the
+ * grid it came from fails here rather than only moving the digest.
+ */
+function recomputePairSupport(inputs, stopSatisfied, evaluation, materialBoundary) {
+  const reasons = [];
+  const categoricalSafetyRescue = Boolean(inputs.axisSafe) && !inputs.twinSafe;
+  const axisRegret = inputs.axisWorstDomainRegret ?? 0;
+  const worstDomainRegretGain = (inputs.twinWorstDomainRegret ?? axisRegret) - axisRegret;
+  const materialRegretGain = worstDomainRegretGain + 1e-12 >= materialBoundary;
+  const materialRepeatedRecoveryGain = evaluation.noRegression && evaluation.materialRecovery;
+  if (!stopSatisfied) reasons.push("bass-grid-failed-stop-rule");
+  if (!inputs.axisSelected) reasons.push("axis-profile-not-selected");
+  if (!inputs.axisSafe) reasons.push("axis-profile-unsafe");
+  if (evaluation.discoveryEvaluationStatus === "incomplete") {
+    reasons.push("repeated-recovery-discovery-incomplete-against-twin");
+  }
+  if (!evaluation.noRegression) reasons.push("repeated-recovery-regression-against-twin");
+  if (!categoricalSafetyRescue && !materialRegretGain && !materialRepeatedRecoveryGain) {
+    reasons.push("axis-does-not-separate-from-twin");
+  }
+  return {
+    supported: reasons.length === 0,
+    categoricalSafetyRescue,
+    worstDomainRegretGain,
+    materialRegretGain,
+    materialRepeatedRecoveryGain,
+    reasons,
+  };
+}
+
+/**
+ * The frozen transition rule, recomputed here rather than read from the file.
+ *
+ * The artifact states one terminal outcome; this derives it again from the
+ * recorded stop verdicts and matched-pair support, so a file whose outcome does
+ * not follow from its own evidence fails verification.
+ */
+function recomputedRoundTwoOutcome(ablations) {
+  const find = (ablation) => ablations.find((record) => record.ablation === ablation);
+  const first = find("ablation-1-round-one-grid");
+  const second = find("ablation-2-refined-family");
+  const third = find("ablation-3-bass-axis");
+  if (!first) return "no-first-ablation";
+  if (first.stop?.satisfied) {
+    return second || third ? "unauthorised-ablation" : "existing-grid-sufficient";
+  }
+  if (!second) return "missing-second-ablation";
+  if (second.stop?.satisfied) {
+    return third ? "unauthorised-ablation" : "existing-family-refinement-sufficient";
+  }
+  if (!third) return "missing-third-ablation";
+  const supported = (third.matchedPairs ?? []).filter(({ support }) => support?.supported === true);
+  return third.stop?.satisfied && supported.length > 0
+    ? "bass-axis-supported"
+    : "bass-axis-unsupported";
+}
+
+/** Where a recorded repeated-recovery evaluation departs from the recomputed one. */
+function repeatedRecoveryDisagreements(label, recorded, recomputed) {
+  const problems = [];
+  const roles = [...new Set((recorded?.groups ?? []).map(({ evidenceRole }) => evidenceRole))];
+  if (roles.length !== 1 || roles[0] !== "discovery") {
+    problems.push(`${label} declares evidence roles ${JSON.stringify(roles)}, expected discovery`);
+  }
+  for (const field of [
+    "noRegression",
+    "materialRecovery",
+    "discoveryEvaluationStatus",
+    "repeatedRecoveryOutcome",
+    "discoveryFullResolution",
+    "confirmedFullResolution",
+    "confirmationReproductionStatus",
+  ]) {
+    if (recorded?.[field] !== recomputed[field]) {
+      problems.push(
+        `${label} records ${field}=${JSON.stringify(recorded?.[field])}, recomputed ` +
+          `${JSON.stringify(recomputed[field])}`,
+      );
+    }
+  }
+  for (const field of [
+    "reproducingConfirmationGroupIds",
+    "inconclusiveConfirmationGroupIds",
+  ]) {
+    if (!sameList(recorded?.[field], recomputed[field])) {
+      problems.push(`${label} records ${field} that its own evidence does not support`);
+    }
+  }
+  const recordedGroups = (recorded?.groups ?? []).map((group) => (
+    `${group.groupId}:${group.noRegression}:${group.materialRecovery}:${group.fullResolution}:` +
+      `${group.baselineReproduces}`
+  ));
+  const recomputedGroups = recomputed.groups.map((group) => (
+    `${group.groupId}:${group.noRegression}:${group.materialRecovery}:${group.fullResolution}:` +
+      `${group.baselineReproduces}`
+  ));
+  if (!sameList(recordedGroups, recomputedGroups)) {
+    problems.push(`${label} per-group verdicts do not follow from their own measurements`);
+  }
+  const recordedStrata = (recorded?.materialRecoveryByStratum ?? []).map((row) => (
+    `${row.stratum}:${row.requiredGroupCount}:${row.evaluatedGroupCount}:${row.complete}:` +
+      `${row.material}`
+  ));
+  const recomputedStrata = recomputed.materialRecoveryByStratum.map((row) => (
+    `${row.stratum}:${row.requiredGroupCount}:${row.evaluatedGroupCount}:${row.complete}:` +
+      `${row.material}`
+  ));
+  if (!sameList(recordedStrata, recomputedStrata)) {
+    problems.push(`${label} stratum census does not follow from its own measurements`);
+  }
+  return problems;
+}
+
+/** Everything that makes the Task 26 file the staged ablation record. */
+export function roundTwoAblationProblems(artifact, result) {
+  const expected = artifact.roundTwoAblation;
+  if (expected === undefined) return [];
+  const problems = [];
+  const [run] = Array.isArray(result) ? result : [];
+  if (!Array.isArray(result) || result.length !== 1 || run === undefined) {
+    return [`${artifact.name}: expected exactly one Task 26 ablation record`];
+  }
+  const check = (label, actual, wanted) => {
+    if (actual !== wanted) problems.push(`${artifact.name}: ${label} ${actual}, expected ${wanted}`);
+  };
+  check("command", run.name, "listen-round-two-ablation");
+  check("format version", run.formatVersion, 1);
+  check("generator version", run.generatorVersion, expected.generatorVersion);
+  check("policy version", run.selectionPolicy?.version, expected.policyVersion);
+  check("policy hash", run.selectionPolicy?.hash, expected.policyHash);
+  check("manifest version", run.manifest?.version, expected.manifestVersion);
+  check("manifest hash", run.manifest?.hash, expected.manifestHash);
+  check("corpus hash", run.manifest?.corpusHash, expected.manifestCorpusHash);
+  check("terminal outcome", run.terminalOutcome, expected.terminalOutcome);
+  check("production shape changed", run.productionThresholdShapeChanged, false);
+  check("production shape excludes the axis", run.productionThresholdShapeExcludesBassAxis, true);
+  check("round-one generator untouched", run.roundOneGeneratorUntouched, true);
+  check("digest algorithm", run.digest?.algorithm, "fnv1a-32-canonical-json");
+  check("digest", run.digest?.value, expected.digest);
+  // The recipe is read from the record and checked against the frozen list, so
+  // a file cannot quietly widen what its own digest ignores.
+  if (!sameList(run.digest?.processLocalFieldsExcluded, expected.processLocalDigestFields)) {
+    problems.push(`${artifact.name}: the digest's excluded fields changed`);
+  }
+  const { digest: _digest, ...digestInput } = run;
+  check(
+    "recomputed digest",
+    canonicalJsonDigest(digestInput, new Set(expected.processLocalDigestFields)),
+    expected.digest,
+  );
+  if (!sameList(
+    run.selectionPolicy?.activeTargetRefinementPoints,
+    expected.activeTargetRefinementPoints,
+  )) {
+    problems.push(`${artifact.name}: the frozen active-target refinement points changed`);
+  }
+  if (!sameList(run.selectionPolicy?.targetNoteRefinementPoints, expected.targetNoteRefinementPoints)) {
+    problems.push(`${artifact.name}: the target-note refinement points changed`);
+  }
+  if (!sameList(run.selectionPolicy?.bassOnsetPoints, expected.bassOnsetPoints)) {
+    problems.push(`${artifact.name}: the bass-onset points changed`);
+  }
+  if (!sameList(
+    (run.repeatedChordCensus ?? []).map(({ groupId }) => groupId),
+    expected.repeatedChordGroupIds,
+  )) {
+    problems.push(`${artifact.name}: the repeated-chord census changed`);
+  }
+  check(
+    "Task 22 limiting minimum",
+    run.task22LimitingUpperVoiceEvidence?.frozenThreeRunMinimum,
+    expected.task22LimitingMinimum,
+  );
+  // The outcome must follow from the recorded evidence, not merely be stated.
+  check("recomputed terminal outcome", recomputedRoundTwoOutcome(run.ablations ?? []),
+    expected.terminalOutcome);
+  const ablations = Array.isArray(run.ablations) ? run.ablations : [];
+  if (!sameList(ablations.map(({ ablation }) => ablation), expected.ablations.map(({ id }) => id))) {
+    problems.push(`${artifact.name}: the staged ablations changed`);
+    return problems;
+  }
+  ablations.forEach((record, index) => {
+    const wanted = expected.ablations[index];
+    const label = `${wanted.id}`;
+    check(`${label} grid size`, record.gridSize, wanted.gridSize);
+    check(`${label} frozen generator`, record.gridIsFrozenGenerator, true);
+    check(`${label} grid version`, record.gridVersion, `round-two-v1/${wanted.id}`);
+    check(`${label} bass axis present`, record.bassAxisPresent, wanted.bassAxisPresent);
+    check(`${label} captured traces`, record.capturedTraceCount, expected.capturedTraceCount);
+    check(`${label} confirmation traces read`, record.confirmationTraceCountRead, 0);
+    check(`${label} safe profiles`, record.safeProfileCount, wanted.safeProfileCount);
+    check(`${label} regret verdict`, record.domainRegret?.verdict, wanted.verdict);
+    check(`${label} stop satisfied`, record.stop?.satisfied, wanted.stopSatisfied);
+    check(`${label} grid rows`, record.domainRegret?.gridRows?.length, wanted.gridSize);
+    if (!sameList(record.selectedProfileIds, wanted.selectedProfileIds)) {
+      problems.push(`${artifact.name}: ${label} selected profiles changed`);
+    }
+    if (!sameList(record.stop?.reasons, wanted.stopReasons)) {
+      problems.push(`${artifact.name}: ${label} stop reasons changed`);
+    }
+    // A verdict has to follow from its own reasons, in both directions.
+    if (record.stop?.satisfied !== ((record.stop?.reasons ?? []).length === 0) ||
+        record.stop?.runNextAblation === record.stop?.satisfied) {
+      problems.push(`${artifact.name}: ${label} stop verdict does not follow from its reasons`);
+    }
+    if (record.selectionJudgement !== "discovery-safe-and-search-selected") {
+      problems.push(`${artifact.name}: ${label} claims a judgement it cannot have made`);
+    }
+    const ids = (record.domainRegret?.gridRows ?? []).map(({ profileId }) => profileId);
+    if (new Set(ids).size !== ids.length) {
+      problems.push(`${artifact.name}: ${label} grid rows are not unique`);
+    }
+    // Every selected profile carries its own per-run repeated-chord evidence.
+    const reported = (record.repeatedRecovery ?? []).map(({ profileId }) => profileId);
+    if (!sameList(reported, record.selectedProfileIds ?? [])) {
+      problems.push(`${artifact.name}: ${label} does not report every selected profile's recovery`);
+    }
+    // Both sides of every comparison are archived, so the verdict the record
+    // states is recomputed from the measurements rather than trusted. The
+    // incumbent's side is archived once per ablation and must cover the census,
+    // or a missing reference row would read as an unrecovered baseline and turn
+    // any candidate recovery into a categorical material gain.
+    if (!sameList(
+      (record.baselineRepeatedMeasurements ?? []).map(({ groupId }) => groupId),
+      expected.repeatedChordGroupIds,
+    )) {
+      problems.push(`${artifact.name}: ${label} archives no complete incumbent comparison`);
+    }
+    const recomputed = new Map();
+    for (const report of record.repeatedRecovery ?? []) {
+      const measured = (report.measurements ?? []).map(({ groupId }) => groupId);
+      if (!sameList(measured, expected.repeatedChordGroupIds)) {
+        problems.push(
+          `${artifact.name}: ${label} ${report.profileId} does not report every repeated group`,
+        );
+      }
+      if (report.evaluation?.confirmationReproductionStatus !== "not-run" ||
+          report.evaluation?.confirmedFullResolution !== false) {
+        problems.push(
+          `${artifact.name}: ${label} ${report.profileId} reads confirmation evidence`,
+        );
+      }
+      const evaluation = recomputeRepeatedRecovery(
+        record.baselineRepeatedMeasurements,
+        report.measurements,
+        expected.repeatedRecoveryBoundaries,
+        expected.knownDiscoveryGroupIds,
+      );
+      recomputed.set(report.profileId, evaluation);
+      problems.push(...repeatedRecoveryDisagreements(
+        `${artifact.name}: ${label} ${report.profileId}`,
+        report.evaluation,
+        evaluation,
+      ));
+    }
+    const recomputedReasons = recomputeStopReasons(
+      record.selectedProfileIds ?? [],
+      (record.selectedProfileIds ?? []).map((profileId) => recomputed.get(profileId) ?? {
+        discoveryEvaluationStatus: "incomplete",
+        noRegression: false,
+        materialRecovery: false,
+      }),
+    );
+    if (!sameList(record.stop?.reasons, recomputedReasons)) {
+      problems.push(
+        `${artifact.name}: ${label} stop reasons ${JSON.stringify(record.stop?.reasons)} do not ` +
+          `follow from its own measurements ${JSON.stringify(recomputedReasons)}`,
+      );
+    }
+    const gridRowById = new Map((record.domainRegret?.gridRows ?? []).map((row) => (
+      [row.profileId, row]
+    )));
+    for (const pair of record.matchedPairs ?? []) {
+      const pairLabel = `${artifact.name}: ${label} ${pair.axisProfileId}`;
+      const sides = [
+        ["twin comparison", pair.twinRepeatedMeasurements],
+        ["axis comparison", pair.repeatedRecoveryAgainstTwin?.measurements],
+      ];
+      const incomplete = sides.filter(([, rows]) => !sameList(
+        (rows ?? []).map(({ groupId }) => groupId),
+        expected.repeatedChordGroupIds,
+      ));
+      if (incomplete.length > 0) {
+        for (const [side] of incomplete) {
+          problems.push(`${pairLabel} archives no complete ${side}`);
+        }
+        continue;
+      }
+      const evaluation = recomputeRepeatedRecovery(
+        pair.twinRepeatedMeasurements,
+        pair.repeatedRecoveryAgainstTwin?.measurements,
+        expected.repeatedRecoveryBoundaries,
+        expected.knownDiscoveryGroupIds,
+      );
+      problems.push(...repeatedRecoveryDisagreements(
+        `${pairLabel} against ${pair.twinProfileId}`,
+        pair.repeatedRecoveryAgainstTwin?.evaluation,
+        evaluation,
+      ));
+      const axisRow = gridRowById.get(pair.axisProfileId);
+      const twinRow = gridRowById.get(pair.twinProfileId);
+      if (axisRow === undefined || twinRow === undefined) {
+        problems.push(`${pairLabel} names a profile its own grid does not contain`);
+        continue;
+      }
+      // The pair's own copies of these facts are checked against the grid they
+      // came from, so a rescue or a regret gain cannot be asserted by the pair
+      // record against the safety verdict the search actually recorded.
+      const inputs = {
+        axisSelected: (record.selectedProfileIds ?? []).includes(pair.axisProfileId),
+        axisSafe: axisRow.safe,
+        twinSafe: twinRow.safe,
+        axisWorstDomainRegret: axisRow.worstDomainRegret,
+        twinWorstDomainRegret: twinRow.worstDomainRegret,
+      };
+      for (const [field, recorded] of [
+        ["axisSelected", pair.axisSelected],
+        ["axisSafe", pair.axisSafe],
+        ["twinSafe", pair.twinSafe],
+        ["axisWorstDomainRegret", pair.axisWorstDomainRegret],
+        ["twinWorstDomainRegret", pair.twinWorstDomainRegret],
+      ]) {
+        if (recorded !== inputs[field]) {
+          problems.push(
+            `${pairLabel} records ${field}=${JSON.stringify(recorded)}, but its grid rows say ` +
+              `${JSON.stringify(inputs[field])}`,
+          );
+        }
+      }
+      const support = recomputePairSupport(
+        inputs,
+        record.stop?.satisfied === true,
+        evaluation,
+        expected.domainRegretMaterialBoundary,
+      );
+      const gainDifference = Math.abs(
+        (pair.support?.worstDomainRegretGain ?? Number.NaN) - support.worstDomainRegretGain,
+      );
+      if (support.supported !== pair.support?.supported ||
+          support.categoricalSafetyRescue !== pair.support?.categoricalSafetyRescue ||
+          support.materialRegretGain !== pair.support?.materialRegretGain ||
+          support.materialRepeatedRecoveryGain !== pair.support?.materialRepeatedRecoveryGain ||
+          !(gainDifference <= 1e-12) ||
+          !sameList(pair.support?.reasons, support.reasons)) {
+        problems.push(
+          `${pairLabel} support ${JSON.stringify(pair.support)} does not follow from its own ` +
+            `pair ${JSON.stringify(support)}`,
+        );
+      }
+    }
+    if (index + 1 < ablations.length && record.stop?.runNextAblation !== true) {
+      problems.push(`${artifact.name}: ${label} did not authorise the ablation recorded after it`);
+    }
+  });
+  return problems;
+}
+
+/** Verifies the committed Task 08, 10, 11, 22, 24, and 26 evidence against frozen pins. */
 export async function verifyFrozenEvidence() {
   const problems = [];
   for (const artifact of EVIDENCE_ARTIFACTS) {
@@ -1171,6 +1849,9 @@ export async function verifyFrozenEvidence() {
     }
     if (artifact.task24DomainArchive !== undefined) {
       problems.push(...task24DomainArchiveProblems(artifact, result));
+    }
+    if (artifact.roundTwoAblation !== undefined) {
+      problems.push(...roundTwoAblationProblems(artifact, result));
     }
 
     let lateAdvances;

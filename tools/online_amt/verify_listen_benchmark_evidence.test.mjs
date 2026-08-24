@@ -12,6 +12,7 @@ import {
   firstEvidenceDifference,
   main,
   rescoreTask13ArchiveUnderRoundTwoPolicy,
+  roundTwoAblationProblems,
   task24DomainArchiveProblems,
 } from "./verify_listen_benchmark_evidence.mjs";
 
@@ -71,6 +72,232 @@ test("the Task 24 verifier accepts the complete archive and rejects a changed co
   selfDeclaredDigest[0].task24.candidates[0].leafDomains[0].independentRate += 0.001;
   assert.ok(task24DomainArchiveProblems(TASK24_ARTIFACT, selfDeclaredDigest)
     .some((problem) => problem.includes("recomputed Task 24 digest")));
+});
+
+const TASK26_ARTIFACT = {
+  name: "Task 26 staged round-two ablations",
+  roundTwoAblation: {
+    generatorVersion: 1,
+    policyVersion: 1,
+    policyHash: "840b07ec",
+    manifestVersion: 2,
+    manifestHash: "d1971fa3",
+    manifestCorpusHash: "1213016e",
+    capturedTraceCount: 472,
+    terminalOutcome: "bass-axis-unsupported",
+    digest: "8dfe2f1b",
+    activeTargetRefinementPoints: [0.075, 0.1, 0.125, 0.3, 0.325],
+    targetNoteRefinementPoints: [0.4625, 0.5375],
+    bassOnsetPoints: [0.55, 0.6, 0.7],
+    task22LimitingMinimum: 0.09577340414698106,
+    repeatedRecoveryBoundaries: {
+      sourceDistanceNoRegression: 0,
+      attributionDelayNoRegressionMs: 32,
+      sourceDistanceMaterialGain: 1,
+      attributionDelayMaterialGainMs: 500,
+    },
+    domainRegretMaterialBoundary: 0.01,
+    knownDiscoveryGroupIds: [
+      "dynamics-constant/tone/salamander/v05",
+      "dynamics-constant/tone/salamander/v13",
+      "dynamics-mixed/tone/salamander",
+    ],
+    processLocalDigestFields: [
+      "lowestLimitingUpperVoiceEvidence",
+      "onsetConfidence",
+      "targetEvidence",
+      "task22LimitingUpperVoiceEvidence",
+      "transitionLowestLimitingUpperVoiceEvidence",
+    ],
+    repeatedChordGroupIds: [
+      "dynamics-constant/tone/salamander/v05",
+      "dynamics-constant/tone/salamander/v13",
+      "dynamics-mixed/tone/salamander",
+      "round-two/r2-repeated-low-triad-direct-splendid-pp/correct",
+      "round-two/r2-repeated-mid-tetrad-tone-salamander-v13/correct",
+    ],
+    ablations: [
+      {
+        id: "ablation-1-round-one-grid",
+        gridSize: 1_000,
+        bassAxisPresent: false,
+        safeProfileCount: 159,
+        verdict: "domain-spread-material",
+        stopSatisfied: false,
+        stopReasons: ["selected-set-has-no-material-repeated-recovery"],
+        selectedProfileIds: [
+          "o0p550-t0p500-a0p350-x0p990-b1",
+          "o0p450-t0p575-a0p275-x0p970-b1",
+          "o0p550-t0p500-a0p200-x0p970-b1",
+        ],
+      },
+      {
+        id: "ablation-2-refined-family",
+        gridSize: 1_400,
+        bassAxisPresent: false,
+        safeProfileCount: 452,
+        verdict: "domain-spread-material",
+        stopSatisfied: false,
+        stopReasons: ["selected-set-has-no-material-repeated-recovery"],
+        selectedProfileIds: [
+          "o0p450-t0p5375-a0p300-x0p990-b1",
+          "o0p450-t0p5375-a0p075-x0p970-b1",
+        ],
+      },
+      {
+        id: "ablation-3-bass-axis",
+        gridSize: 4_200,
+        bassAxisPresent: true,
+        safeProfileCount: 2_294,
+        verdict: "domain-spread-material",
+        stopSatisfied: false,
+        stopReasons: ["selected-set-has-no-material-repeated-recovery"],
+        selectedProfileIds: [
+          "o0p450-t0p500-a0p075-x0p990-b1-B0p550",
+          "o0p450-t0p5375-a0p075-x0p970-b1",
+        ],
+      },
+    ],
+  },
+};
+
+test("the Task 26 verifier accepts the staged record and rejects an unearned outcome", async () => {
+  const archive = JSON.parse(await readFile(join(
+    import.meta.dirname,
+    "../../benchmark-results/listen-round-two-ablation-task26-run1.json",
+  ), "utf8"));
+  assert.deepEqual(roundTwoAblationProblems(TASK26_ARTIFACT, archive), []);
+
+  // The outcome must follow from the recorded stop verdicts rather than being
+  // stated by the file: an ablation whose predecessor satisfied the stop rule
+  // was never authorised to run.
+  const unauthorised = structuredClone(archive);
+  unauthorised[0].ablations[0].stop = { satisfied: true, runNextAblation: false, reasons: [] };
+  assert.ok(roundTwoAblationProblems(TASK26_ARTIFACT, unauthorised)
+    .some((problem) => problem.includes("recomputed terminal outcome")));
+  assert.ok(roundTwoAblationProblems(TASK26_ARTIFACT, unauthorised)
+    .some((problem) => problem.includes("did not authorise the ablation recorded after it")));
+
+  // A stop verdict that does not follow from its own reasons is rejected even
+  // when the outcome it produces is the pinned one.
+  const inconsistent = structuredClone(archive);
+  inconsistent[0].ablations[0].stop.reasons = [];
+  assert.ok(roundTwoAblationProblems(TASK26_ARTIFACT, inconsistent)
+    .some((problem) => problem.includes("does not follow from its reasons")));
+
+  // The digest is recomputed from the record rather than read from it.
+  const retuned = structuredClone(archive);
+  retuned[0].ablations[0].domainRegret.gridRows[0].worstDomainRegret = 0;
+  assert.ok(roundTwoAblationProblems(TASK26_ARTIFACT, retuned)
+    .some((problem) => problem.includes("recomputed digest")));
+
+  // Widening what the digest ignores is itself a change to the recipe.
+  const widened = structuredClone(archive);
+  widened[0].digest.processLocalFieldsExcluded = ["selectedProfileIds"];
+  assert.ok(roundTwoAblationProblems(TASK26_ARTIFACT, widened)
+    .some((problem) => problem.includes("excluded fields changed")));
+
+  // A selected profile whose repeated-chord evidence is missing cannot pass.
+  const missingRecovery = structuredClone(archive);
+  missingRecovery[0].ablations[0].repeatedRecovery.pop();
+  assert.ok(roundTwoAblationProblems(TASK26_ARTIFACT, missingRecovery)
+    .some((problem) => problem.includes("does not report every selected profile")));
+
+  // Reading confirmation evidence would show up as a reproduction status.
+  const readConfirmation = structuredClone(archive);
+  readConfirmation[0].ablations[0].repeatedRecovery[0].evaluation
+    .confirmationReproductionStatus = "reproduced";
+  assert.ok(roundTwoAblationProblems(TASK26_ARTIFACT, readConfirmation)
+    .some((problem) => problem.includes("reads confirmation evidence")));
+
+  // The repeated-recovery verdicts are recomputed from both sides' archived
+  // measurements: a run that moved a full attack later than the incumbent is a
+  // regression however the file describes itself.
+  const movedRun = structuredClone(archive);
+  const measurement = movedRun[0].ablations[0].repeatedRecovery[0].measurements
+    .find(({ observation }) => observation.sourceDistance !== null);
+  measurement.observation.sourceDistance += 2;
+  measurement.observation.attributionDelayMs += 2_000;
+  const movedProblems = roundTwoAblationProblems(TASK26_ARTIFACT, movedRun);
+  assert.ok(movedProblems.some((problem) => problem.includes("records noRegression=true")));
+  assert.ok(movedProblems.some((problem) => (
+    problem.includes("per-group verdicts do not follow from their own measurements")
+  )));
+  // …and the stop rule the record states is recomputed from those verdicts.
+  assert.ok(movedProblems.some((problem) => problem.includes("do not follow from its own")));
+
+  // The matched-pair support is recomputed too, from the twin's own archived
+  // measurements rather than from the stored boolean.
+  const claimedSupport = structuredClone(archive);
+  const pair = claimedSupport[0].ablations.at(-1).matchedPairs[0];
+  pair.support = {
+    ...pair.support,
+    supported: true,
+    reasons: [],
+  };
+  assert.ok(roundTwoAblationProblems(TASK26_ARTIFACT, claimedSupport)
+    .some((problem) => problem.includes("does not follow from its own pair")));
+
+  // A pair that archives only the axis side cannot be recomputed at all.
+  const halfPair = structuredClone(archive);
+  delete halfPair[0].ablations.at(-1).matchedPairs[0].twinRepeatedMeasurements;
+  assert.ok(roundTwoAblationProblems(TASK26_ARTIFACT, halfPair)
+    .some((problem) => problem.includes("archives no complete twin comparison")));
+
+  // A missing incumbent row would read as an unrecovered baseline and turn any
+  // candidate recovery into a categorical material gain, so it is refused.
+  const halfBaseline = structuredClone(archive);
+  halfBaseline[0].ablations[0].baselineRepeatedMeasurements.shift();
+  assert.ok(roundTwoAblationProblems(TASK26_ARTIFACT, halfBaseline)
+    .some((problem) => problem.includes("archives no complete incumbent comparison")));
+
+  // The pair's axis side is held to the same census as its twin side.
+  const halfAxis = structuredClone(archive);
+  halfAxis[0].ablations.at(-1).matchedPairs[0].repeatedRecoveryAgainstTwin.measurements.pop();
+  assert.ok(roundTwoAblationProblems(TASK26_ARTIFACT, halfAxis)
+    .some((problem) => problem.includes("archives no complete axis comparison")));
+
+  // Every Task 24 aggregate is recomputed, not only the three the stop rule
+  // reads: a relabelled outcome or resolution claim is refused.
+  const relabelled = structuredClone(archive);
+  relabelled[0].ablations[0].repeatedRecovery[0].evaluation.repeatedRecoveryOutcome =
+    "discovery-full-resolution";
+  relabelled[0].ablations[0].repeatedRecovery[0].evaluation.discoveryFullResolution = true;
+  const relabelledProblems = roundTwoAblationProblems(TASK26_ARTIFACT, relabelled);
+  assert.ok(relabelledProblems.some((problem) => (
+    problem.includes("records repeatedRecoveryOutcome=")
+  )));
+  assert.ok(relabelledProblems.some((problem) => (
+    problem.includes("records discoveryFullResolution=")
+  )));
+
+  // Confirmation aggregates are derived from the declared evidence roles, so a
+  // record that claims a reproducing confirmation group is refused twice over.
+  const claimedConfirmation = structuredClone(archive);
+  const claimedEvaluation = claimedConfirmation[0].ablations[0].repeatedRecovery[0].evaluation;
+  claimedEvaluation.reproducingConfirmationGroupIds = ["dynamics-mixed/tone/salamander"];
+  claimedEvaluation.groups[0].evidenceRole = "confirmation";
+  const confirmationProblems = roundTwoAblationProblems(TASK26_ARTIFACT, claimedConfirmation);
+  assert.ok(confirmationProblems.some((problem) => (
+    problem.includes("reproducingConfirmationGroupIds that its own evidence does not support")
+  )));
+  assert.ok(confirmationProblems.some((problem) => problem.includes("declares evidence roles")));
+
+  // Pair support inputs are resolved from the grid the pair came from, so a
+  // safety rescue the grid does not show is refused.
+  const claimedRescue = structuredClone(archive);
+  const rescuePair = claimedRescue[0].ablations.at(-1).matchedPairs[0];
+  rescuePair.twinSafe = true;
+  rescuePair.support = { ...rescuePair.support, categoricalSafetyRescue: false };
+  const rescueProblems = roundTwoAblationProblems(TASK26_ARTIFACT, claimedRescue);
+  assert.ok(rescueProblems.some((problem) => problem.includes("records twinSafe=true")));
+  assert.ok(rescueProblems.some((problem) => problem.includes("does not follow from its own pair")));
+
+  // The numeric regret gain is compared too, not only the booleans it feeds.
+  const movedGain = structuredClone(archive);
+  movedGain[0].ablations.at(-1).matchedPairs[0].support.worstDomainRegretGain = 0.005;
+  assert.ok(roundTwoAblationProblems(TASK26_ARTIFACT, movedGain)
+    .some((problem) => problem.includes("does not follow from its own pair")));
 });
 
 /** The frozen corpus sizes, so a fixture is the shape a real repetition has. */

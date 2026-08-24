@@ -15,9 +15,12 @@ import {
   FIXED_LISTEN_MATCHER_POLICY,
   LISTEN_MATCHER_PROFILES,
   LISTEN_MATCHER_PROFILE_IDS,
-  listenMatcherThresholds,
   type ListenMatcherThresholds,
 } from "./listenMatcherProfiles";
+import {
+  listenExperimentalThresholds,
+  type ListenExperimentalBassOnsetThresholds,
+} from "./listenExperimentalBassOnset";
 import {
   ONLINE_AMT_CHUNK_SIZE,
   ONLINE_AMT_SAMPLE_RATE,
@@ -216,7 +219,7 @@ export function diagnoseListenSequenceSafety(
     return [{
       sequenceId: run.sequenceId,
       intervalMs: run.intervalMs,
-      profile: listenMatcherThresholds(profile),
+      profile: listenExperimentalThresholds(profile),
       classification,
       targetIndex: event.index,
       generation: observation.generation,
@@ -573,14 +576,14 @@ export interface ListenSafetyRegressionSummary {
 
 function replayFixture(
   fixture: ListenSafetyRegressionFixture,
-  profile: ListenMatcherThresholds,
+  profile: ListenExperimentalBassOnsetThresholds,
 ): { run: ListenSequenceRunResult; observations: ListenSequenceAdvancementObservation[] } {
   const observations: ListenSequenceAdvancementObservation[] = [];
   const run = replayListenSequenceTrace(
     listenSafetyRegressionSequence(fixture),
     listenSafetyRegressionTrace(fixture),
     "current-matcher",
-    listenMatcherThresholds(profile),
+    listenExperimentalThresholds(profile),
     (observation) => observations.push(observation),
   );
   return { run, observations };
@@ -717,7 +720,7 @@ function outcomeFor(
  * registry entry rather than whichever profile is being tested.
  */
 export function replayListenSafetyRegressions(
-  profile: ListenMatcherThresholds,
+  profile: ListenExperimentalBassOnsetThresholds,
   profileId = "candidate",
   fixtures: readonly ListenSafetyRegressionFixture[] = LISTEN_SAFETY_REGRESSION_FIXTURES,
 ): ListenSafetyRegressionSummary {

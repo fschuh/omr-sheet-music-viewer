@@ -2953,6 +2953,20 @@ safety gate, a ready-to-commit regression fixture for each one, and the replay o
 every already committed regression against all three named profiles. Name the
 piano and layer as the last two arguments.
 
+`listen-round-two-ablation` is the Task 26 search. It stages up to three grids in
+one process — the unchanged round-one 1,000-profile grid, the refined five-axis
+family, and that same refined family crossed with the experimental bass-onset
+axis — and runs each one only when Task 24's frozen stop rule authorises it from
+the recorded verdict of the one before, so the corpus change, the grid
+refinement, and the new axis are attributed separately. Each staged grid captures
+the complete version-2 `discovery` and `regression-only` corpus itself and never a
+`confirmation` trace. Pass the output path as its final argument; the run is
+hours long, so `LISTEN_ROUND_TWO_ABLATION_TIMEOUT_MS` raises the 12-hour default
+for a slower machine. It selects search candidates and decides one terminal
+outcome; it confirms nothing, and it changes no default. The production threshold
+shape gains the bass axis only under `bass-axis-supported`, and the artifact
+records the runtime check that it has not.
+
 ### Round-two corpus and manifest version 2 — August 23, 2026
 
 Task 25 freezes manifest version 2 at protocol hash `d1971fa3`, musical-corpus
@@ -3018,6 +3032,147 @@ rejects the candidate. The absolute populations contain exactly the 36 dedicated
 safety passages and 41 other captured regression-only rows. Confirmation rows are
 not declared in any Task 26 population, and population construction throws when a
 declared row is absent from capture instead of silently applying a smaller gate.
+
+### Staged round-two ablations — August 24, 2026
+
+Task 26 ran all three staged grids, each authorised by the recorded stop verdict
+of the one before, and ended at `bass-axis-unsupported` in its grid-failed form:
+the bass grid did not clear Task 24's stop rule, so the round selected nothing it
+can both register and confirm. `ListenMatcherThresholds` and
+`matcherOptionsForListenMatcherProfile` are unchanged, and the artifact records
+the runtime check that the production threshold shape does not carry the
+experimental axis.
+
+```bash
+node tools/online_amt/run_browser_benchmarks.mjs \
+  http://127.0.0.1:5174/online-amt-benchmark.html \
+  listen-round-two-ablation \
+  benchmark-results/listen-round-two-ablation-task26-run1.json
+```
+
+Measured against manifest version 2, hash `d1971fa3`, musical corpus `1213016e`,
+selection policy version 1 at hash `840b07ec` applied unamended. Each ablation
+captured 472 traces and read 0 confirmation traces.
+
+| Ablation | Grid | Safe | Verdict | Selected | Stop |
+| --- | ---: | ---: | --- | ---: | --- |
+| `ablation-1-round-one-grid` | 1,000 | 159 | `domain-spread-material` | 3 | no material repeated recovery |
+| `ablation-2-refined-family` | 1,400 | 452 | `domain-spread-material` | 2 | no material repeated recovery |
+| `ablation-3-bass-axis` | 4,200 | 2,294 | `domain-spread-material` | 2 | no material repeated recovery |
+
+#### Why every stop verdict is the same
+
+Task 24's frozen rule requires a material recovery in **every** declared
+discovery stratum. The two newly authored round-two repeated-chord groups cannot
+supply one: their renders re-onset every chord member, so `baseline-v1` already
+advances `r2-repeated-low-triad-direct-splendid-pp` at source distance 0 and
+`r2-repeated-mid-tetrad-tone-salamander-v13` at distance 1, and no candidate can
+materially improve on that. They remain in the stratum census — the policy is
+hashed and Task 26 does not amend it — so the rule fails closed on every ablation
+and carried the round to the zero branch. Task 25 recorded those fixtures as
+`designed-unverified`; this is the first measurement of what they actually
+reproduce, and the same risk now applies to the confirmation groups Task 28
+decodes.
+
+#### What the version-2 corpus rejected
+
+841 of the round-one grid's 1,000 profiles are rejected and 159 are safe, against
+721 and 279 in round one. All four frozen `v2` candidates now fail
+`regression-run-unsafe`, because the isolated omitted-bass evidence that rejected
+them in Task 13 is inside the search corpus rather than behind it.
+
+| Rejection | Ablation one | Ablation two | Ablation three |
+| --- | ---: | ---: | ---: |
+| `dedicated-false-advance` | 680 | 440 | 1,080 |
+| `regression-run-unsafe` | 620 | 320 | 320 |
+| `fresh-bass-not-required` | 500 | — | — |
+| `dedicated-skipped-advance` | 500 | — | — |
+| `dedicated-incomplete-carried-bass` | 500 | — | — |
+| `discovery-safety-regression` | 436 | 375 | 965 |
+| `committed-regression` | 76 | 135 | 365 |
+
+The refined family drops round one's structurally refused `b0` half, which is why
+three rejection codes disappear after ablation one. All sixteen version-1
+counterfactuals reproduce the safety verdict the Task 08 archive recorded for
+them, and all 60 surviving profiles that hold the fresh-onset gate at the
+incumbent's 0.60 keep the active-target gate at 0.275 or above, exactly as round
+one found.
+
+#### The round's global-versus-spread verdict
+
+Task 24's calculation returns `domain-spread-material` in all three ablations,
+against `one-global-profile-suffices` on its own version-1 control. The best
+single profile leaves 0.0741 of worst leaf-domain regret in ablation one, 0.1250
+in ablation two, and 0.0370 in ablation three, all above the frozen 0.01
+boundary. Read that with the resolution the same calculation reports: of 40 leaf
+domains, 16 hold a single trace, 11 to 15 are invariant across the entire safe
+grid, and 19 to 23 have a smallest positive step coarser than the decision
+boundary. It is discovery evidence that per-source selection is worth testing,
+never that it works.
+
+#### Repeated-chord recovery, per run
+
+Reported per musical-input group and never averaged, using Task 22's per-pitch
+qualification records under Task 24's frozen rule. Source distance, then
+attribution delay.
+
+| Run | `baseline-v1` | Best ablation-one selection | `o0p450-t0p5375-a0p075-x0p970-b1` |
+| --- | --- | --- | --- |
+| `dynamics-constant/tone/salamander/v05` | 2, 2,220 ms | 1, 1,228 ms | 0, 228 ms |
+| `dynamics-constant/tone/salamander/v13` | unrecovered | 1, 1,228 ms | 0, 228 ms |
+| `dynamics-mixed/tone/salamander` | unrecovered | unrecovered | unrecovered |
+| `round-two/r2-repeated-low-triad-direct-splendid-pp/correct` | 0, 349 ms | 0 | 0 |
+| `round-two/r2-repeated-mid-tetrad-tone-salamander-v13/correct` | 1, 720 ms | 1 | 1 |
+
+The refinement did what Task 24 predeclared it for. Ablation two's
+`o0p450-t0p5375-a0p075-x0p970-b1` uses both new points — the target-note
+refinement at 0.5375 and the active-target point at 0.075, below the historical
+0.20 floor and straddling Task 22's 0.0958 limiting minimum — and is the first
+measured profile to reach source distance 0 on the known runs. On `v05` the
+limiting evidence is Task 22's unchanged: at the transition attack the bass 62
+qualifies on a 0.9954 fresh onset while D5/74 has no decoded onset at all and
+0.1935 of sustained evidence. The mixed run stays unrecovered under every profile
+in every ablation, so `discovery-full-resolution` is never reached.
+
+#### The bass axis, against its own control
+
+Ablation three crosses the identical refined grid with bass-onset points 0.55,
+0.60, and 0.70, offered only above each profile's own general gate, and emits
+2,800 matched pairs beside their 1,400 compatibility-default twins. The axis is
+visibly protective: 2,294 of 4,200 profiles pass safety, and the best global
+profile is a bass-axis row. The one selected bass profile,
+`o0p450-t0p500-a0p075-x0p990-b1-B0p550`, is safe where its twin
+`o0p450-t0p500-a0p075-x0p990-b1` is rejected for `regression-run-unsafe` — a
+categorical safety rescue under the frozen criterion.
+
+It is still `bass-axis-unsupported`, for two reasons recorded with the pair:
+`bass-grid-failed-stop-rule`, and `repeated-recovery-regression-against-twin` —
+against that same twin the axis turns `dynamics-mixed/tone/salamander` from
+recovered at source distance 0 and 228 ms into unrecovered. The two-sided cost
+this round existed to measure is therefore measured directly: the bass gate buys
+omitted-bass safety and gives back a repeated-chord recovery, on the same pair of
+profiles. Both sides are archived — the pair record carries the twin's own
+per-run measurements beside the axis's — so that comparison is readable from the
+file. The evidence verifier recomputes every repeated-recovery verdict from those
+measurements, including the outcome label, the resolution claim, and the
+confirmation aggregates; derives each ablation's stop reasons from them; and
+resolves the pair's selection, safety, and regret inputs from the ablation's own
+grid rows before recomputing the support decision, so a pair that is internally
+consistent but disagrees with the grid it came from is refused.
+
+#### Repeatability
+
+The command was run twice in fresh browser processes. Both archives agree on
+every decision-bearing value — outcome, all three stop verdicts, every selected
+set, every grid row's safety verdict, the matched-pair decision, and every
+repeated-chord distance and delay — and differ only in raw decoder confidences by
+at most 2.6e-5, so both report the digest `fnv1a-32-canonical-json:8dfe2f1b`,
+which excludes those process-local fields by name. Alongside them, the historical
+single-renderer sweeps reproduce their recorded results exactly on this code —
+Direct 700 rejected with a 14-profile frontier recommending
+`o0p450-t0p500-a0p200-x0p990-b1`, Tone 538 rejected with a 3-profile frontier
+recommending `o0p500-t0p500-a0p200-x0p970-b1` — which is what shows the
+experimental axis and the replay-path change altered no measured behaviour.
 
 See the [piano dynamics benchmark](PIANO_DYNAMICS_BENCHMARK.md) for the
 velocity-layer methodology, asset smoke checks, and measured 40-run matrix.

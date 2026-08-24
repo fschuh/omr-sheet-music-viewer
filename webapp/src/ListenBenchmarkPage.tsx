@@ -31,6 +31,10 @@ import {
   type ListenRoundTwoCorpusCaptureResult,
 } from "./listenRoundTwoCorpusBenchmark";
 import {
+  runListenRoundTwoAblations,
+  type ListenRoundTwoAblationResult,
+} from "./listenRoundTwoAblationBenchmark";
+import {
   LISTEN_DYNAMICS_VALIDATION_SUITES,
   conciseListenDynamicsProfileValidationResult,
   conciseListenIsolatedProfileValidationResult,
@@ -196,7 +200,7 @@ export function ListenBenchmarkPage() {
       | "multidomain-sweep" | "isolated-profile-validation"
       | "sequence-profile-validation" | "dynamics-profile-validation"
       | "profile-validation" | "bass-qualification"
-      | "round-two-corpus"
+      | "round-two-corpus" | "round-two-ablation"
   >(null);
   const running = runningTask !== null;
   const [progress, setProgress] = useState("");
@@ -207,7 +211,7 @@ export function ListenBenchmarkPage() {
       | "multidomain-sweep" | "isolated-profile-validation"
       | "sequence-profile-validation" | "dynamics-profile-validation"
       | "profile-validation" | "bass-qualification"
-      | "round-two-corpus"
+      | "round-two-corpus" | "round-two-ablation"
   >("isolated");
   const [error, setError] = useState<string | null>(null);
   const [automated, setAutomated] = useState<ListenBenchmarkSummary | null>(null);
@@ -250,7 +254,10 @@ export function ListenBenchmarkPage() {
   useEffect(() => {
     if (automaticBenchmarkStarted) return;
     const query = new URLSearchParams(window.location.search);
-    if (query.get("listen-round-two-corpus") === "auto") {
+    if (query.get("listen-round-two-ablation") === "auto") {
+      automaticBenchmarkStarted = true;
+      void runRoundTwoAblations();
+    } else if (query.get("listen-round-two-corpus") === "auto") {
       automaticBenchmarkStarted = true;
       void runRoundTwoCorpusCapture();
     } else if (query.get("listen-sequence-case") === "auto") {
@@ -398,6 +405,33 @@ export function ListenBenchmarkPage() {
       (window as typeof window & {
         listenMatcherMultiDomainSweepResult?: ListenMultiDomainSweepResult;
       }).listenMatcherMultiDomainSweepResult = result;
+      document.body.dataset.status = "complete";
+    } catch (benchmarkError) {
+      setError(benchmarkError instanceof Error ? benchmarkError.message : String(benchmarkError));
+      document.body.dataset.status = "error";
+    } finally {
+      setRunningTask(null);
+    }
+  }
+
+  /**
+   * Task 26's staged ablations. The page holds no result state for them: the run
+   * is hours long and its record is the artifact the runner archives, so the
+   * only thing that must survive is the window handle the runner reads.
+   */
+  async function runRoundTwoAblations() {
+    setRunningTask("round-two-ablation");
+    setProgressTask("round-two-ablation");
+    setError(null);
+    setProgress("Staging the round-two ablations…");
+    document.body.dataset.status = "running";
+    try {
+      const result = await runListenRoundTwoAblations((complete, total, label) => {
+        setProgress(`${complete} / ${total} traces · ${label}`);
+      });
+      (window as typeof window & {
+        listenRoundTwoAblationResult?: ListenRoundTwoAblationResult;
+      }).listenRoundTwoAblationResult = result;
       document.body.dataset.status = "complete";
     } catch (benchmarkError) {
       setError(benchmarkError instanceof Error ? benchmarkError.message : String(benchmarkError));

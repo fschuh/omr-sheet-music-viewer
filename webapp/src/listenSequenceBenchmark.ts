@@ -7,9 +7,11 @@ import {
   DEFAULT_LISTEN_MATCHER_PROFILE_ID,
   LISTEN_MATCHER_PROFILES,
   listenMatcherThresholds,
-  matcherOptionsForListenMatcherProfile,
   type ListenMatcherThresholds,
 } from "./listenMatcherProfiles";
+import {
+  matcherOptionsForListenExperimentalProfile,
+} from "./listenExperimentalBassOnset";
 import {
   LISTEN_BASELINE_PROFILE,
   assertListenSequenceRunParity,
@@ -1363,7 +1365,7 @@ export function evaluateTraceRecognitionLayers(
   trace: ListenRecognitionTrace,
   profile: ListenMatcherThresholds = productionListenMatcherProfile,
 ): TraceEventRecognitionDiagnostic[] {
-  const profileOptions = matcherOptionsForListenMatcherProfile(profile);
+  const profileOptions = matcherOptionsForListenExperimentalProfile(profile);
   const observations = recognizedAttacks(trace);
   const scheduledNotes = sequence.attacks.flatMap(({ notes }) => notes);
   const assignments = assignRecognitionEventsToAttacks(scheduledNotes, observations);
@@ -1688,7 +1690,7 @@ export function replayListenSequenceTrace(
 ): ListenSequenceRunResult {
   const policy = typeof policyOrProfile === "string" ? policyOrProfile : "current-matcher";
   const profile = typeof policyOrProfile === "string" ? profileArgument : policyOrProfile;
-  const profileOptions = matcherOptionsForListenMatcherProfile(profile);
+  const profileOptions = matcherOptionsForListenExperimentalProfile(profile);
   let observedFrameIndex = -1;
   const matcher = new ExactChordMatcher(
     profileOptions,

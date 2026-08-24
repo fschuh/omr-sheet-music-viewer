@@ -7,11 +7,11 @@ command:
 npm --prefix webapp run dev:wasm-benchmark
 ```
 
-Verify all five frozen artifacts, their exact file hashes, the Task 08 candidate
+Verify all seven frozen artifacts, their exact file hashes, the Task 08 candidate
 archive digest and row count, the Task 24 complete per-domain control and policy,
 the Task 10/11 canonical evidence digests, the Task 22 corpus census and pinned
-omitted-bass identities, forensic schemas, and non-overlapping late-advance counts
-with:
+omitted-bass identities, the Task 26 staged ablation record and its recomputed
+terminal outcome, forensic schemas, and non-overlapping late-advance counts with:
 
 ```text
 node tools/online_amt/verify_listen_benchmark_evidence.mjs
@@ -314,6 +314,104 @@ node tools/online_amt/run_browser_benchmarks.mjs \
 The pretest bundle `listenRoundTwoCorpusBenchmark.test.ts` reads both committed
 archives, removes only `pcmHash`, and requires every remaining row and the zero-
 decode confirmation record to match exactly.
+
+## Task 26 staged round-two ablation evidence
+
+`listen-round-two-ablation-task26-run1.json` and
+`listen-round-two-ablation-task26-run2.json` are two independent fresh-browser
+repetitions of the Task 26 search: the three staged grids, Task 24's frozen
+calculation applied to the version-2 discovery results, the per-run
+repeated-chord evidence of every selected profile, the matched bass-axis pair
+comparisons, and one terminal outcome. They select search candidates; they
+confirm nothing, and they changed no production default or threshold shape.
+
+- Protocol manifest: version 2, `d1971fa3`; musical corpus `1213016e`
+- Selection policy: version 1, `840b07ec`, applied unamended
+- Ablations that ran: 3 of 3, each authorised by its predecessor's recorded stop
+  verdict — grids of 1,000, 1,400, and 4,200 profiles
+- Captured traces per ablation: 472; confirmation traces read: 0
+- Terminal outcome: `bass-axis-unsupported`, in its grid-failed form
+- Artifact digest, identical in both runs: `fnv1a-32-canonical-json:8dfe2f1b`
+- Run 1 file SHA-256:
+  `271b673a9696c449b7c3e91b4298b22a3d83b927a890643f2d62eb2ae20f0fc7`
+- Run 2 file SHA-256:
+  `0766dd023a72a8859aa0eb415650f0f36ecf2952daad4181a8647b4b6b480707`
+
+The two runs agree on every decision-bearing value: the terminal outcome, all
+three stop verdicts, every search-selected set, the domain-spread verdicts, the
+safe and rejected counts, every grid row's safety verdict and rejection codes,
+the matched-pair support decision, and every repeated-chord run's source
+distance, delay, and resolution label. They differ only in raw decoder
+confidences — `onsetConfidence`, `targetEvidence`, and the two limiting-evidence
+values derived from them — by at most 2.6e-5, which is the documented ONNX
+Runtime and `OfflineAudioContext` last-bit behaviour. Those fields are reported
+in full and named in the artifact's own `digest.processLocalFieldsExcluded`, so
+the digest identifies the decision rather than the noise; the file hashes above
+still pin the exact bytes.
+
+Every stop verdict is `selected-set-has-no-material-repeated-recovery`. Task 24's
+frozen rule requires a material recovery in every declared discovery stratum, and
+the two newly authored round-two repeated-chord groups cannot supply one: their
+renders re-onset every chord member, so `baseline-v1` already advances one at
+source distance 0 and the other at distance 1, leaving nothing for a candidate to
+recover materially. That is not a filter Task 26 applied — the groups stay in the
+census, exactly as the hashed policy requires — and it is what carried the round
+through all three ablations to the zero branch.
+
+The version-2 corpus rejects 841 of the 1,000 round-one grid profiles, leaving
+159 against round one's 279. All four frozen `v2` candidates are now rejected for
+`regression-run-unsafe`: the isolated omitted-bass evidence that rejected them in
+Task 13 is inside the search corpus. All sixteen version-1 counterfactuals
+reproduce their archived round-one safety verdicts, and the 60 surviving
+high-onset profiles still hold the active-target gate at 0.275 or above.
+
+Task 24's calculation returns `domain-spread-material` in all three ablations,
+against `one-global-profile-suffices` on its own version-1 control. Read it with
+the recorded measurement resolution: of 40 leaf domains, 16 hold a single trace,
+11 to 15 are invariant across the whole safe grid, and 19 to 23 have a smallest
+positive step coarser than the decision boundary.
+
+The refinement did what Task 24 predeclared it for. Ablation two's
+`o0p450-t0p5375-a0p075-x0p970-b1` — using both new axes' points, the target-note
+refinement at 0.5375 and the active-target point at 0.075 below the historical
+floor that straddles Task 22's 0.0958 limiting minimum — is the first measured
+profile to reach source distance 0 on `v05` and `v13`, at 228 ms against the
+incumbent's 2,220 ms and unrecovered. `dynamics-mixed/tone/salamander` stays
+unrecovered under every profile in every ablation.
+
+The bass axis was measured against its own control and not supported. Its grid is
+markedly safer — 2,294 of 4,200 profiles pass, and the best global profile is a
+bass-axis row whose worst leaf regret is 0.0370 — and the one selected bass
+profile, `o0p450-t0p500-a0p075-x0p990-b1-B0p550`, is safe where its
+compatibility-default twin is rejected for `regression-run-unsafe`, which is a
+categorical safety rescue. It is still unsupported for two frozen reasons
+recorded with it: the bass grid failed the stop rule, and against that same twin
+the axis regresses `dynamics-mixed/tone/salamander` from recovered at source
+distance 0 and 228 ms to unrecovered. The two-sided cost the round was built to
+measure is therefore measured: the bass gate buys omitted-bass safety and gives
+back a repeated-chord recovery.
+
+Both sides of that comparison are archived — the pair record carries the twin's
+own per-run measurements beside the axis's — so the claim can be read from the
+file rather than inferred from a derived verdict. The evidence verifier
+independently recomputes, under Task 24's frozen boundaries, every
+repeated-recovery verdict at group, stratum, and aggregate level, including the
+outcome label, the discovery-full-resolution claim, and the confirmation
+aggregates; each ablation's stop reasons from those verdicts; and the
+matched-pair support, whose inputs it resolves from the ablation's own
+`selectedProfileIds` and grid rows rather than from the pair's copies of them, so
+a rescue or a regret gain the grid does not show is refused. A stored verdict
+that does not follow from its own evidence fails verification rather than only
+moving the digest.
+
+Reproduce either archive while the benchmark dev server is running:
+
+```text
+node tools/online_amt/run_browser_benchmarks.mjs \
+  http://127.0.0.1:5174/online-amt-benchmark.html \
+  listen-round-two-ablation \
+  benchmark-results/listen-round-two-ablation-task26-run1.json
+```
 
 ## Task 13 frozen automated confirmation evidence
 

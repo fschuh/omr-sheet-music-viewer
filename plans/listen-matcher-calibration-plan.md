@@ -2792,7 +2792,7 @@ build checks pass.
 
 ### Task 26 — Stage the round-two grid and decide whether a bass-onset axis is required
 
-**Status:** Required, with one of four terminal outcomes recorded.
+**Status:** Completed August 24, 2026, recording `bass-axis-unsupported`.
 **Prerequisites:** Tasks 22, 24, and 25 complete.
 
 **Objective:** Establish how much of round one's failure the existing grid fixes on
@@ -2948,6 +2948,104 @@ the production threshold shape has changed only under `bass-axis-supported`; the
 round-one generator is untouched; each ablation's grid is versioned and frozen; and
 one digest-bearing ablation artifact records every ablation that ran, its stop-rule
 verdicts, its selected profiles, and the terminal outcome, for Task 27 to reference.
+
+**Completion evidence:** The terminal outcome is `bass-axis-unsupported`, in the
+form where the bass grid failed the stop rule, so nothing was selected that the
+round can both register and confirm. All three ablations ran, each authorised only
+by the recorded stop verdict of the one before, against manifest version 2
+(`d1971fa3`, corpus `1213016e`) under selection policy version 1 (`840b07ec`)
+applied unamended. Each captured 472 traces and read no confirmation trace.
+
+| Ablation | Grid | Safe | Verdict | Selected | Stop |
+| --- | ---: | ---: | --- | ---: | --- |
+| `ablation-1-round-one-grid` | 1,000 | 159 | `domain-spread-material` | 3 | `selected-set-has-no-material-repeated-recovery` |
+| `ablation-2-refined-family` | 1,400 | 452 | `domain-spread-material` | 2 | `selected-set-has-no-material-repeated-recovery` |
+| `ablation-3-bass-axis` | 4,200 | 2,294 | `domain-spread-material` | 2 | `selected-set-has-no-material-repeated-recovery` |
+
+Every stop verdict has the same cause, and it is the frozen rule rather than a
+measurement of the candidates. Task 24 requires a material recovery in every
+declared discovery stratum, and the two newly authored round-two repeated-chord
+groups cannot supply one: their renders re-onset every chord member, so
+`baseline-v1` already advances `r2-repeated-low-triad-direct-splendid-pp` at
+source distance 0 and `r2-repeated-mid-tetrad-tone-salamander-v13` at distance 1.
+Both groups stay in the stratum census — the policy is hashed, and Task 26 does
+not narrow what it declares — so the rule fails closed at every stage. Task 25
+recorded those fixtures as `designed-unverified`; this is the first measurement
+of what they reproduce, and the same risk now applies to the confirmation groups
+Task 28 decodes.
+
+The version-2 corpus rejects 841 of the round-one grid's 1,000 profiles against
+721 in round one. All four frozen `v2` candidates are rejected for
+`regression-run-unsafe`: the isolated omitted-bass evidence that rejected them in
+Task 13 now gates the search itself. All sixteen version-1 counterfactuals
+reproduce their archived round-one verdicts, and all 60 surviving profiles that
+hold the fresh-onset gate at 0.60 keep the active-target gate at 0.275 or above.
+
+Task 24's calculation returns `domain-spread-material` in all three ablations
+where its own version-1 control returned `one-global-profile-suffices`; the best
+single profile's worst leaf-domain regret is 0.0741, 0.1250, and 0.0370 against
+the frozen 0.01 boundary. The recorded resolution qualifies it: of 40 leaf
+domains, 16 hold one trace, 11 to 15 are invariant across the whole safe grid,
+and 19 to 23 have a smallest positive step coarser than the boundary. It is
+discovery evidence about where per-source selection might help, not a calibration
+benefit.
+
+The contributions are separately attributed. The corpus change alone (ablation
+one) leaves `v05` recovered at distance 1 and 1,228 ms against the incumbent's 2
+and 2,220 ms, `v13` at distance 1 for one selected profile, and the mixed run
+unrecovered. The grid refinement alone (ablation two) produces the first measured
+profile to reach source distance 0 on both `v05` and `v13`, at 228 ms:
+`o0p450-t0p5375-a0p075-x0p970-b1`, which uses the target-note refinement at
+0.5375 together with the active-target point at 0.075 that Task 24 froze below
+the historical 0.20 floor to straddle Task 22's 0.0958 limiting minimum. The
+route to source distance 0 through the existing scalar family is therefore no
+longer untested: it was tested and reached on two of the three known runs.
+`dynamics-mixed/tone/salamander` stays unrecovered under every profile of every
+ablation, so `discovery-full-resolution` is never reached and the residual defect
+there remains a decoder-evidence question for Task 29 to route.
+
+The bass axis was judged against its own matched control, not against ablation
+two. Its grid is markedly safer — 2,294 of 4,200 pass, and the best global
+profile is a bass-axis row at 0.0370 worst regret — and the single selected bass
+profile `o0p450-t0p500-a0p075-x0p990-b1-B0p550` is safe where its
+compatibility-default twin `o0p450-t0p500-a0p075-x0p990-b1` is rejected for
+`regression-run-unsafe`, which the frozen criterion records as a categorical
+safety rescue. It is unsupported for the two reasons stored with the pair:
+`bass-grid-failed-stop-rule`, and `repeated-recovery-regression-against-twin`,
+because against that same twin the axis turns `dynamics-mixed/tone/salamander`
+from recovered at source distance 0 and 228 ms into unrecovered; both sides of
+that comparison are archived with the pair, so it is readable from the record
+rather than inferred from the verdict. The two-sided cost this round existed to measure
+is measured on one pair of profiles: the bass gate buys omitted-bass safety and
+gives back a repeated-chord recovery. The axis therefore stays out of
+`ListenMatcherThresholds` and `matcherOptionsForListenMatcherProfile`; the
+artifact records a runtime check, not an assertion, that no registry profile,
+projection, or production conversion carries it, and the round-one generator is
+untouched with ablation one refusing to run unless its grid is that generator's
+1,000 rows coordinate for coordinate.
+
+Two independent fresh-browser repetitions are archived as
+`listen-round-two-ablation-task26-run1.json` and
+`listen-round-two-ablation-task26-run2.json`. They agree on every decision-bearing
+value and differ only in raw decoder confidences by at most 2.6e-5, so both carry
+the digest `fnv1a-32-canonical-json:8dfe2f1b`, which excludes those process-local
+fields by name; Task 27 references that digest as `task26EvidenceDigest` and
+takes the zero branch with reason `no-ablation-accepted`, which records that no
+ablation was accepted by the stop rule rather than that discovery selected
+nothing — all three ablations did select profiles, and this artifact names them.
+The evidence verifier recomputes the digest, checks that each recorded ablation
+was authorised by its predecessor, re-derives every repeated-recovery verdict —
+group, stratum, aggregate, outcome label, resolution claim, and confirmation
+aggregates — together with each stop reason and each matched-pair support
+decision from the archived per-run measurements under Task 24's frozen
+boundaries, resolving the pair's selection, safety, and regret inputs from the
+ablation's own grid rows rather than from the pair's copies of them, and
+re-derives the terminal outcome from the recorded stop verdicts rather than
+reading it. The historical single-renderer sweeps reproduce their
+recorded results exactly on this code — Direct 700 rejected, frontier 14,
+`o0p450-t0p500-a0p200-x0p990-b1`; Tone 538 rejected, frontier 3,
+`o0p500-t0p500-a0p200-x0p970-b1` — and every frozen Task 08, 10, 11, 22, and 24
+artifact still verifies. Unit, verifier, and production build checks pass.
 
 ### Task 27 — Run the round-two search and freeze the candidate manifest
 
@@ -3204,11 +3302,14 @@ approved-profile list that any later calibration depends on.
   confirmation matrix that ran and rejected every candidate is
   `round-two-candidate-set-exhausted`. A `not-run-no-confirmable-candidate` state is
   `round-two-grid-produced-no-eligible-improvement` under either reason, but the two
-  are not described alike: `no-ablation-accepted` means discovery selected nothing,
-  while `no-supported-parameterization` means discovery did select profiles and none
-  of them could be both registered and confirmed, because each depended on an axis
-  the ablation did not support. Do not write the second up as though nothing was
-  found; report what the passing bass grid selected and why it was not registrable.
+  are not described alike: `no-ablation-accepted` means no ablation was accepted by
+  the stop rule, which is not the same as discovery having selected no profiles —
+  an ablation that failed the stop rule may still have search-selected profiles,
+  and Task 26's record names them. `no-supported-parameterization` means an
+  ablation was accepted and did select profiles, none of which could be both
+  registered and confirmed, because each depended on an axis the ablation did not
+  support. Do not write either up as though nothing was found: report what each
+  ablation selected, which rule refused it, and why it was not registrable.
   In both not-run reasons, say explicitly that the version-2 confirmation fixtures
   remain unobserved and stay available to a later round. Task 28 confirms the frozen
   candidate set, not every safe profile in the searched grid, so concluding that the

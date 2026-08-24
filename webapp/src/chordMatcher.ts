@@ -6,6 +6,19 @@ export interface ChordMatcherOptions {
   activeTargetThreshold: number;
   noteThreshold: number;
   requireFreshBassOnset: boolean;
+  /**
+   * Task 26's experimental bass-specific fresh-onset gate, applied only to the
+   * lowest pitch of a chord the fresh-bass rule already treats as a bass — the
+   * same `target.size >= 3` lowest-note definition, so one chord can never have
+   * two different bass pitches under two rules.
+   *
+   * It is absent from `defaultChordMatcherOptions` and from every production
+   * conversion, and an absent value means the general `onsetThreshold` gates the
+   * bass exactly as it always has. Only the round-two ablation generator sets
+   * it, and it enters the production threshold shape only if Task 26 records
+   * `bass-axis-supported`.
+   */
+  bassOnsetThreshold?: number;
   preTargetExtraLookbackMs: number;
   collectionWindowMs: number;
   settleMs: number;
@@ -154,6 +167,31 @@ export class ExactChordMatcher {
     private readonly observer?: ChordMatcherObserver,
   ) {
     this.options = { ...defaultChordMatcherOptions, ...options };
+    const bassOnsetThreshold = this.options.bassOnsetThreshold;
+    if (bassOnsetThreshold !== undefined && !(
+      Number.isFinite(bassOnsetThreshold) &&
+      bassOnsetThreshold >= 0 &&
+      bassOnsetThreshold <= 1
+    )) {
+      throw new Error(`Invalid bass onset threshold: ${String(bassOnsetThreshold)}`);
+    }
+  }
+
+  /**
+   * The fresh-onset gate one decoded pitch is judged against.
+   *
+   * Without the experimental bass gate this is the general gate for every
+   * pitch, which is the shipped behaviour, so the two paths cannot diverge for
+   * any profile that does not set the axis.
+   */
+  private onsetGateFor(midi: number): number {
+    const bassOnsetThreshold = this.options.bassOnsetThreshold;
+    if (bassOnsetThreshold === undefined || this.target.size < 3) {
+      return this.options.onsetThreshold;
+    }
+    return midi === Math.min(...this.target)
+      ? bassOnsetThreshold
+      : this.options.onsetThreshold;
   }
 
   private observeOnset(
@@ -299,7 +337,7 @@ export class ExactChordMatcher {
 
     const confident = eligible.onsets
       .filter((onset) => {
-        if (onset.confidence < this.options.onsetThreshold) {
+        if (onset.confidence < this.onsetGateFor(onset.midi)) {
           this.observeOnset(result.capturedAtMs, onset, "below-onset-gate");
           return false;
         }
