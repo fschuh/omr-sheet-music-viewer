@@ -7,11 +7,13 @@ command:
 npm --prefix webapp run dev:wasm-benchmark
 ```
 
-Verify all seven frozen artifacts, their exact file hashes, the Task 08 candidate
+Verify all eight frozen artifacts, their exact file hashes, the Task 08 candidate
 archive digest and row count, the Task 24 complete per-domain control and policy,
 the Task 10/11 canonical evidence digests, the Task 22 corpus census and pinned
 omitted-bass identities, the Task 26 staged ablation record and its recomputed
-terminal outcome, forensic schemas, and non-overlapping late-advance counts with:
+terminal outcome, the Task 27 candidate manifest re-derived by rerunning that stop
+rule over both Task 26 repetitions, forensic schemas, and non-overlapping
+late-advance counts with:
 
 ```text
 node tools/online_amt/verify_listen_benchmark_evidence.mjs
@@ -411,6 +413,66 @@ node tools/online_amt/run_browser_benchmarks.mjs \
   http://127.0.0.1:5174/online-amt-benchmark.html \
   listen-round-two-ablation \
   benchmark-results/listen-round-two-ablation-task26-run1.json
+```
+
+## Task 27 round-two candidate manifest
+
+`listen-round-two-candidate-manifest-task27.json` is the first link of the
+round-two artifact chain and the round's only Task 27 file. Task 26 ended at
+`bass-axis-unsupported` in its grid-failed form, so Task 27 took the zero branch:
+nothing was searched, no `v3` identifier was added, the registry stayed at version
+2 byte-identical, `DEFAULT_LISTEN_MATCHER_PROFILE_ID` stayed at `baseline-v1`, and
+no result archive was written. A placeholder search archive would later read as a
+search that found nothing rather than one that never ran.
+
+- Candidates: none; `notRunReason` is `no-ablation-accepted`
+- Referenced Task 26 evidence: `bass-axis-unsupported` at digest
+  `fnv1a-32-canonical-json:8dfe2f1b`
+- Registry version 2 at generation digest `d1b3f6a3`, selection policy version 1
+  `840b07ec`, trace manifest version 2 `d1971fa3`, musical corpus `1213016e`,
+  generator version 1
+- Manifest digest: `fnv1a-32-canonical-json:21655efa`
+- File SHA-256:
+  `4016355ba98cdd4962f7196dbb7f75f8c1fc49bb3be9ef3f1ea66f1f0b701a9e`
+
+`registryDigest` is what makes "every registry entry stays byte-identical"
+enforceable. It covers the registry version, the default identifier, the fixed
+timing policy every profile shares, and each identifier in registry order with its
+complete threshold set, so a moved `v1` or `v2` threshold, a reordered list, or an
+added entry all move it — none of which a version number or a `v3` suffix check
+would catch. Emission refuses unless it is still `d1b3f6a3`.
+
+The reason code is part of the record rather than something a later task supplies.
+The zero branch has two forms that are not the same finding: `no-ablation-accepted`
+means the stop rule accepted no ablation, and `no-supported-parameterization` means
+it accepted a grid whose only selected profiles need a parameterization the round
+left unsupported. Both the reason and the terminal outcome sit inside this
+manifest's own digest, over the Task 26 evidence digest they were derived from, so
+relabelling one as the other downstream cannot leave every digest verifying.
+
+Nothing here is read as a conclusion. The manifest is re-derived by rerunning
+Task 24's frozen stop rule over both archived Task 26 repetitions: each ablation's
+verdict is recomputed from both sides of its archived repeated-chord measurements,
+each matched pair's support from the ablation's own grid rows, and the terminal
+outcome from those recomputed verdicts. Both repetitions rerun to the same three
+rejections, the same outcome, the same evidence digest, and therefore the same
+manifest; a manifest only one repetition supports is not the round's result. The
+verifier additionally refuses an eligibility field on this record — Task 28 emits
+a separate artifact that references this digest — and refuses any other Task 27
+file in this directory.
+
+The emitter freezes the zero branch only. Had Task 26 accepted an ablation, the
+manifest for that branch would have to be frozen against the search's own result
+archive, with its selections registered as new `v3` identifiers at registry
+version 3; none of that exists, so the emitter refuses that branch outright rather
+than accepting a caller-supplied list of already-registered identifiers as this
+round's selection.
+
+Reproduce the manifest from the committed archives; a second emission must
+reproduce it byte for byte rather than revise it:
+
+```text
+npm --prefix webapp run emit:round-two-candidate-manifest
 ```
 
 ## Task 13 frozen automated confirmation evidence

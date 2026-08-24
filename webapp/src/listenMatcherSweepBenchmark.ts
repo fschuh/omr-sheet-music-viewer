@@ -738,6 +738,16 @@ export async function captureListenMultiDomainTrace(
   descriptor: ListenTraceDescriptor,
   session: SequenceInferenceSession,
 ): Promise<ListenMultiDomainCapture> {
+  // The confirmation partition is held back from every selection path, and that
+  // rule is enforced here rather than only by the filter that builds the capture
+  // list. A descriptor that reaches this function — from a future caller, a
+  // narrowed rerun, or a relabelled manifest row — must fail rather than quietly
+  // become search evidence, because a partition read once cannot be unread.
+  if (descriptor.partition === "confirmation") {
+    throw new Error(
+      `${descriptor.id} is a confirmation trace, which the selection path never captures.`,
+    );
+  }
   const renderer = rendererForListenTrace(descriptor);
   if (descriptor.suite === "isolated") {
     if (descriptor.piano === null || descriptor.layer === null) {

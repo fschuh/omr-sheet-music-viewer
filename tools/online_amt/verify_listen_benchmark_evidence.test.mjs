@@ -13,6 +13,9 @@ import {
   main,
   rescoreTask13ArchiveUnderRoundTwoPolicy,
   roundTwoAblationProblems,
+  roundTwoCandidateManifestProblems,
+  roundTwoSearchArchiveProblems,
+  rerunRoundTwoSelection,
   task24DomainArchiveProblems,
 } from "./verify_listen_benchmark_evidence.mjs";
 
@@ -573,6 +576,185 @@ async function rejectedComparison(first, second) {
   assert.ok(thrown, "the comparison was expected to refuse these archives");
   return thrown.message;
 }
+
+const TASK27_ARTIFACT = {
+  name: "Task 27 round-two candidate manifest",
+  path: "benchmark-results/listen-round-two-candidate-manifest-task27.json",
+  roundTwoCandidateManifest: {
+    name: "listen-round-two-candidate-manifest",
+    formatVersion: 1,
+    roundId: "round-two",
+    candidateProfileIds: [],
+    registryVersion: 2,
+    registryDigest: "d1b3f6a3",
+    policyVersion: 1,
+    policyHash: "840b07ec",
+    traceManifestVersion: 2,
+    traceManifestHash: "d1971fa3",
+    traceManifestCorpusHash: "1213016e",
+    generatorVersion: 1,
+    ablationId: null,
+    task26TerminalOutcome: "bass-axis-unsupported",
+    task26EvidenceDigest: "8dfe2f1b",
+    notRunReason: "no-ablation-accepted",
+    digest: "21655efa",
+    evidencePaths: [
+      "benchmark-results/listen-round-two-ablation-task26-run1.json",
+      "benchmark-results/listen-round-two-ablation-task26-run2.json",
+    ],
+    repeatedRecoveryBoundaries: {
+      sourceDistanceNoRegression: 0,
+      attributionDelayNoRegressionMs: 32,
+      sourceDistanceMaterialGain: 1,
+      attributionDelayMaterialGainMs: 500,
+    },
+    domainRegretMaterialBoundary: 0.01,
+    knownDiscoveryGroupIds: [
+      "dynamics-constant/tone/salamander/v05",
+      "dynamics-constant/tone/salamander/v13",
+      "dynamics-mixed/tone/salamander",
+    ],
+    processLocalDigestFields: [
+      "lowestLimitingUpperVoiceEvidence",
+      "onsetConfidence",
+      "targetEvidence",
+      "task22LimitingUpperVoiceEvidence",
+      "transitionLowestLimitingUpperVoiceEvidence",
+    ],
+  },
+};
+
+async function task27Evidence() {
+  return Promise.all(TASK27_ARTIFACT.roundTwoCandidateManifest.evidencePaths.map(async (path) => (
+    JSON.parse(await readFile(join(import.meta.dirname, "../..", path), "utf8"))
+  )));
+}
+
+async function task27Manifest() {
+  return JSON.parse(await readFile(
+    join(import.meta.dirname, "../..", TASK27_ARTIFACT.path),
+    "utf8",
+  ));
+}
+
+test("the committed zero-branch manifest is re-derived from both Task 26 repetitions", async () => {
+  const [manifest, evidence] = await Promise.all([task27Manifest(), task27Evidence()]);
+  assert.deepEqual(roundTwoCandidateManifestProblems(TASK27_ARTIFACT, manifest, evidence), []);
+
+  // The branch rests on a rerun: every ablation is rejected by the stop rule
+  // recomputed from its own archived measurements, in both repetitions.
+  for (const run of evidence) {
+    const rerun = rerunRoundTwoSelection(run[0], TASK27_ARTIFACT.roundTwoCandidateManifest);
+    assert.deepEqual(rerun.ablations.map(({ stop }) => stop.satisfied), [false, false, false]);
+    assert.deepEqual(rerun.ablations.map(({ stop }) => stop.reasons), [
+      ["selected-set-has-no-material-repeated-recovery"],
+      ["selected-set-has-no-material-repeated-recovery"],
+      ["selected-set-has-no-material-repeated-recovery"],
+    ]);
+    assert.equal(rerun.terminalOutcome, "bass-axis-unsupported");
+    assert.equal(rerun.notRunReason, "no-ablation-accepted");
+    assert.equal(rerun.ablationId, null);
+    assert.equal(rerun.evidenceDigest, "8dfe2f1b");
+  }
+});
+
+test("a manifest that states a result its own evidence does not rerun to is refused", async () => {
+  const [manifest, evidence] = await Promise.all([task27Manifest(), task27Evidence()]);
+
+  // A candidate registered under a zero-branch rerun.
+  const registered = structuredClone(manifest);
+  registered.candidateProfileIds = ["early-open-v2"];
+  const registeredProblems = roundTwoCandidateManifestProblems(
+    TASK27_ARTIFACT,
+    registered,
+    evidence,
+  );
+  assert.ok(registeredProblems.some((problem) => problem.includes("the candidate list changed")));
+  assert.ok(registeredProblems.some((problem) => problem.includes("may register no candidate")));
+
+  // The digest is recomputed from the record, so a field cannot move under it.
+  const moved = structuredClone(manifest);
+  moved.task26EvidenceDigest = "00000000";
+  assert.ok(roundTwoCandidateManifestProblems(TASK27_ARTIFACT, moved, evidence)
+    .some((problem) => problem.includes("recomputed digest")));
+
+  // The registry generation the round left untouched is named by digest, so a
+  // manifest that claims a different one — or the same one after a threshold
+  // moved — is refused.
+  const otherRegistry = structuredClone(manifest);
+  otherRegistry.registryDigest = "00000000";
+  const registryProblems = roundTwoCandidateManifestProblems(
+    TASK27_ARTIFACT,
+    otherRegistry,
+    evidence,
+  );
+  assert.ok(registryProblems.some((problem) => problem.includes("registry digest")));
+  assert.ok(registryProblems.some((problem) => problem.includes("recomputed digest")));
+
+  // An eligibility field would let candidacy be read as a release decision.
+  const eligible = structuredClone(manifest);
+  eligible.eligible = true;
+  assert.ok(roundTwoCandidateManifestProblems(TASK27_ARTIFACT, eligible, evidence)
+    .some((problem) => problem.includes("eligibility field")));
+
+  // One repetition is not the round's result.
+  assert.ok(roundTwoCandidateManifestProblems(TASK27_ARTIFACT, manifest, evidence.slice(0, 1))
+    .some((problem) => problem.includes("expected 2 Task 26 repetitions")));
+});
+
+test("relabelling the zero-branch reason is detected against the rerun", async () => {
+  const [manifest, evidence] = await Promise.all([task27Manifest(), task27Evidence()]);
+
+  // The reason recorded here is the one the rerun produces. Claiming the other
+  // zero-branch form — profiles were selected but need an unsupported
+  // parameterization — is a materially different finding and is refused.
+  const relabelled = structuredClone(manifest);
+  relabelled.notRunReason = "no-supported-parameterization";
+  const relabelledProblems = roundTwoCandidateManifestProblems(
+    TASK27_ARTIFACT,
+    relabelled,
+    evidence,
+  );
+  assert.ok(relabelledProblems.some((problem) => problem.includes("not-run reason")));
+  assert.ok(relabelledProblems.some((problem) => problem.includes("reruns to reason")));
+
+  // And the check runs in the other direction too: evidence whose bass grid the
+  // stop rule accepts reruns to the other reason, which the committed manifest
+  // does not record.
+  const accepted = structuredClone(evidence[0]);
+  const third = accepted[0].ablations.at(-1);
+  for (const report of third.repeatedRecovery) {
+    for (const measurement of report.measurements) {
+      measurement.observation.sourceDistance = 0;
+      measurement.observation.attributionDelayMs = 0;
+    }
+  }
+  const acceptedRerun = rerunRoundTwoSelection(
+    accepted[0],
+    TASK27_ARTIFACT.roundTwoCandidateManifest,
+  );
+  assert.equal(acceptedRerun.ablations.at(-1).stop.satisfied, true);
+  assert.equal(acceptedRerun.terminalOutcome, "bass-axis-unsupported");
+  assert.equal(acceptedRerun.notRunReason, "no-supported-parameterization");
+  assert.equal(acceptedRerun.ablationId, "ablation-3-bass-axis");
+  assert.ok(roundTwoCandidateManifestProblems(TASK27_ARTIFACT, manifest, [accepted, evidence[1]])
+    .some((problem) => problem.includes("has an ablation the rerun stop rule accepted")));
+});
+
+test("the zero branch may not leave a search archive behind", () => {
+  const manifestFile = "listen-round-two-candidate-manifest-task27.json";
+  assert.deepEqual(
+    roundTwoSearchArchiveProblems(
+      ["README.md", manifestFile, "listen-round-two-ablation-task26-run1.json"],
+      TASK27_ARTIFACT.path,
+    ),
+    [],
+  );
+  assert.ok(roundTwoSearchArchiveProblems(
+    [manifestFile, "listen-round-two-search-task27-run1.json"],
+    TASK27_ARTIFACT.path,
+  )[0].includes("listen-round-two-search-task27-run1.json"));
+});
 
 test("cross-run comparison ignores only the documented host-dependent fields", () => {
   const { first, second } = repetitions();

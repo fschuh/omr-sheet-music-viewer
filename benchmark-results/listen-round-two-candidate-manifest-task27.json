@@ -1,0 +1,22 @@
+{
+  "name": "listen-round-two-candidate-manifest",
+  "formatVersion": 1,
+  "roundId": "round-two",
+  "candidateProfileIds": [],
+  "registryVersion": 2,
+  "registryDigest": "d1b3f6a3",
+  "policyVersion": 1,
+  "policyHash": "840b07ec",
+  "traceManifestVersion": 2,
+  "traceManifestHash": "d1971fa3",
+  "traceManifestCorpusHash": "1213016e",
+  "generatorVersion": 1,
+  "ablationId": null,
+  "task26TerminalOutcome": "bass-axis-unsupported",
+  "task26EvidenceDigest": "8dfe2f1b",
+  "notRunReason": "no-ablation-accepted",
+  "digest": {
+    "algorithm": "fnv1a-32-canonical-json",
+    "value": "21655efa"
+  }
+}

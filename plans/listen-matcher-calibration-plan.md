@@ -3049,7 +3049,8 @@ artifact still verifies. Unit, verifier, and production build checks pass.
 
 ### Task 27 — Run the round-two search and freeze the candidate manifest
 
-**Status:** Required. **Prerequisites:** Tasks 22-26 complete.
+**Status:** Completed August 24, 2026, on the zero branch with reason
+`no-ablation-accepted`. **Prerequisites:** Tasks 22-26 complete.
 
 **Objective:** Search the ablation the evidence selected, over manifest version 2,
 and freeze a candidate set under new immutable identifiers — or, when the evidence
@@ -3151,6 +3152,70 @@ recorded with an empty digest-bearing manifest, an untouched registry, and no
 search archive. In both branches earlier generations are unchanged, the default is
 still baseline, and the confirmation partition remains unread by the selection
 path.
+
+**Completion evidence:** Task 26's terminal outcome is `bass-axis-unsupported`,
+so this task took the zero branch and searched nothing. The frozen manifest is
+`benchmark-results/listen-round-two-candidate-manifest-task27.json`: zero
+candidates, `notRunReason` `no-ablation-accepted`, `ablationId` null,
+`task26TerminalOutcome` `bass-axis-unsupported`, `task26EvidenceDigest`
+`8dfe2f1b`, registry version 2 at generation digest `d1b3f6a3`, policy version 1
+`840b07ec`, trace manifest version 2 `d1971fa3` over musical corpus `1213016e`,
+generator version 1, its own digest `fnv1a-32-canonical-json:21655efa`, and file
+SHA-256 `4016355ba98cdd4962f7196dbb7f75f8c1fc49bb3be9ef3f1ea66f1f0b701a9e`. Both the
+terminal outcome and the reason code are inside that digest, over the Task 26
+evidence digest they were derived from, so relabelling
+`no-ablation-accepted` as `no-supported-parameterization` downstream cannot leave
+every digest verifying. The record carries no eligibility field.
+
+The branch rests on a rerun rather than on Task 26's recorded conclusion.
+`reproduceListenRoundTwoAblationEvidence` rebuilds the repeated-chord census from
+the fixtures, refuses an artifact whose census, policy hash, manifest hash, or
+generator version differs from this commit's, recomputes each ablation's
+repeated-recovery evaluation from both sides of its archived measurements,
+reapplies Task 24's frozen stop rule to those evaluations, recomputes each
+matched-pair support decision from the ablation's own grid rows, derives the
+terminal outcome from the recomputed verdicts, and recomputes the Task 26 evidence
+digest — throwing wherever the artifact's stored conclusion disagrees. Both
+committed repetitions rerun to the same three rejections
+(`selected-set-has-no-material-repeated-recovery` at every stage), the same
+outcome, the same evidence digest, and therefore the same manifest; the emitter
+requires at least two repetitions and refuses a manifest only one of them
+supports. Emitting twice reproduces the file byte for byte, and re-emission over
+an existing file is checked for equality rather than allowed to revise it.
+
+The registry is untouched, and that is enforced by identity rather than by proxy.
+The manifest records `registryDigest` `d1b3f6a3`, taken over the registry version,
+the default identifier, the fixed timing policy every profile shares, and each
+identifier in registry order with its complete threshold set; a moved `v1` or `v2`
+threshold, a reordered identifier list, an added entry, or a removed one all move
+it and fail emission, as do a bumped `LISTEN_MATCHER_REGISTRY_VERSION`, any `v3`
+identifier, a moved `DEFAULT_LISTEN_MATCHER_PROFILE_ID`, and a production
+threshold shape that has gained the experimental bass axis. No result archive was
+written; the verifier fails if any Task 27 file other than the manifest appears in
+`benchmark-results`.
+
+The nonempty branch is refused outright rather than half-implemented. Its
+candidates must come from the search of the accepted ablation and be registered as
+new `v3` identifiers at registry version 3, frozen against that search's own
+result archive, and none of that exists because the evidence did not take that
+branch. The emitter therefore accepts no candidate list at all: taking one would
+let already-registered identifiers — round one's rejected `v2` candidates among
+them — be recorded as this round's selection with nothing having selected them.
+The manifest schema still declares the fields that branch fills, so a later round
+emits one shape. The confirmation partition stayed unread: every ablation
+records zero confirmation traces read, every recomputed evaluation reports
+`confirmationReproductionStatus` `not-run`, and `captureListenMultiDomainTrace`
+now throws on a `confirmation` descriptor, with a unit test that fails when that
+guard is removed.
+
+Verification: `node tools/online_amt/verify_listen_benchmark_evidence.mjs` passes
+over all eight artifacts, independently rerunning the stop rule over both Task 26
+archives and re-deriving the manifest's outcome, reason, ablation, and evidence
+digest from that rerun. 23 unit tests cover the manifest module — both zero-branch
+forms, the declared schema, the nonempty branch's refusal, every way a registry can
+stop being the searched generation, the immutability rule, and each recomputation
+refusal — and four verifier tests cover the committed files. The full suite and the
+production build pass.
 
 ### Task 28 — Execute the round-two frozen automated confirmation
 

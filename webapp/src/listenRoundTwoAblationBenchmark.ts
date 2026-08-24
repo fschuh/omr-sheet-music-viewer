@@ -712,6 +712,23 @@ function canonicalDigest(value: unknown): string {
 }
 
 /**
+ * The decision-scoped digest of a frozen Task 26 artifact, recomputed from the
+ * artifact's own fields.
+ *
+ * Task 27 branches on this record and must not take its digest on trust, so the
+ * recipe lives here beside the emission that produced it: strip the stored
+ * digest, canonicalize what remains, and omit the same process-local fields the
+ * emission omitted.
+ */
+export function listenRoundTwoAblationEvidenceDigest(artifact: unknown): string {
+  if (typeof artifact !== "object" || artifact === null) {
+    throw new Error("A Task 26 artifact digest can only be recomputed from a record.");
+  }
+  const { digest: _storedDigest, ...rest } = artifact as Record<string, unknown>;
+  return canonicalDigest(rest);
+}
+
+/**
  * Proves, rather than asserts in prose, that the production threshold shape has
  * not gained the experimental axis.
  *

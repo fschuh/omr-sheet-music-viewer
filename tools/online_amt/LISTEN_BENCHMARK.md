@@ -3174,5 +3174,55 @@ Direct 700 rejected with a 14-profile frontier recommending
 recommending `o0p500-t0p500-a0p200-x0p970-b1` — which is what shows the
 experimental axis and the replay-path change altered no measured behaviour.
 
+### Round-two candidate manifest — August 24, 2026
+
+Task 27 froze the round's candidate manifest,
+`benchmark-results/listen-round-two-candidate-manifest-task27.json`, on the zero
+branch. Task 26's terminal outcome was `bass-axis-unsupported` in its grid-failed
+form, so the round has nothing it can both register and confirm: the manifest
+holds zero candidates with reason `no-ablation-accepted`, and no search ran.
+
+```bash
+npm --prefix webapp run emit:round-two-candidate-manifest
+```
+
+The command needs no browser and no dev server. It reads the two committed Task 26
+repetitions, reruns Task 24's frozen stop rule over their archived per-run
+measurements, recomputes every matched-pair support decision from each ablation's
+own grid rows, derives the terminal outcome from those recomputed verdicts, and
+only then emits the manifest — so the branch rests on a rerun rather than on the
+outcome the artifact records. Both repetitions must produce the identical manifest.
+Re-running the command reproduces the committed file byte for byte and refuses to
+revise it; the manifest is immutable once written.
+
+What the zero branch deliberately does not do: it registers no `v3` identifier,
+leaves `LISTEN_MATCHER_REGISTRY_VERSION` at 2 with every entry byte-identical,
+leaves `DEFAULT_LISTEN_MATCHER_PROFILE_ID` at `baseline-v1`, and writes no result
+archive, because a placeholder archive would later read as a search that found
+nothing rather than one that never ran. Emission refuses outright if any of those
+has moved. Byte identity is checked by digest rather than by version number: the
+manifest records `registryDigest` `d1b3f6a3` over the registry version, the
+default, the shared fixed policy, and every profile's thresholds in registry
+order, so a moved `v1` threshold, a reordered list, or an added non-`v3` entry
+fails emission just as a bumped version does.
+
+The emitter freezes the zero branch only, and refuses the nonempty branch rather
+than accepting candidates from its caller. That branch's candidates must come from
+the search of the accepted ablation and be registered as new `v3` identifiers at
+registry version 3, frozen against the search's own result archive; accepting a
+supplied list of already-registered identifiers would record a selection nothing
+selected — the same failure the zero branch's refusal exists to prevent. The
+measurements the passing-grid form would have needed to preserve live in Task 26's
+ablation artifact, which the manifest references by digest.
+
+The two zero-branch forms are recorded distinctly, because they are different
+findings: `no-ablation-accepted` when the stop rule accepted nothing, and
+`no-supported-parameterization` when it accepted a grid whose only selected
+profiles need an unsupported parameterization. Both that reason and the terminal
+outcome are inside the manifest's own digest, over the Task 26 evidence digest
+they were derived from, so a downstream relabelling is detectable rather than
+silent. The manifest records candidacy only and carries no eligibility field:
+Task 28 emits a separate artifact referencing this digest.
+
 See the [piano dynamics benchmark](PIANO_DYNAMICS_BENCHMARK.md) for the
 velocity-layer methodology, asset smoke checks, and measured 40-run matrix.

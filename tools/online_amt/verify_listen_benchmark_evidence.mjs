@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -262,6 +262,73 @@ const EVIDENCE_ARTIFACTS = [
             "o0p450-t0p5375-a0p075-x0p970-b1",
           ],
         },
+      ],
+    },
+  },
+  {
+    name: "Task 27 round-two candidate manifest",
+    path: "benchmark-results/listen-round-two-candidate-manifest-task27.json",
+    fileSha256: "4016355ba98cdd4962f7196dbb7f75f8c1fc49bb3be9ef3f1ea66f1f0b701a9e",
+    /**
+     * The first link of the round-two artifact chain, and the only Task 27 file.
+     *
+     * Every field below is pinned, but the record is not accepted because it
+     * matches them: the branch it took, the reason code it carries, the ablation
+     * it names, and the Task 26 digest it references are all re-derived from the
+     * committed Task 26 archives by rerunning the frozen stop rule over their
+     * archived measurements, so a manifest that merely states the round's result
+     * fails here.
+     */
+    roundTwoCandidateManifest: {
+      name: "listen-round-two-candidate-manifest",
+      formatVersion: 1,
+      roundId: "round-two",
+      candidateProfileIds: [],
+      registryVersion: 2,
+      /**
+       * The identity of the registry generation the search measured against.
+       *
+       * The zero branch registers nothing, so this must be the whole generation's
+       * digest — version, default, shared fixed policy, and every profile's
+       * thresholds in registry order — and not the version number, which a moved
+       * `v1` threshold or an added non-`v3` entry would leave untouched.
+       */
+      registryDigest: "d1b3f6a3",
+      policyVersion: 1,
+      policyHash: "840b07ec",
+      traceManifestVersion: 2,
+      traceManifestHash: "d1971fa3",
+      traceManifestCorpusHash: "1213016e",
+      generatorVersion: 1,
+      ablationId: null,
+      task26TerminalOutcome: "bass-axis-unsupported",
+      task26EvidenceDigest: "8dfe2f1b",
+      notRunReason: "no-ablation-accepted",
+      digest: "21655efa",
+      /** Both archived repetitions must independently re-derive this manifest. */
+      evidencePaths: [
+        "benchmark-results/listen-round-two-ablation-task26-run1.json",
+        "benchmark-results/listen-round-two-ablation-task26-run2.json",
+      ],
+      /** Task 24's frozen boundaries, restated so the stop rule can be rerun here. */
+      repeatedRecoveryBoundaries: {
+        sourceDistanceNoRegression: 0,
+        attributionDelayNoRegressionMs: 32,
+        sourceDistanceMaterialGain: 1,
+        attributionDelayMaterialGainMs: 500,
+      },
+      domainRegretMaterialBoundary: 0.01,
+      knownDiscoveryGroupIds: [
+        "dynamics-constant/tone/salamander/v05",
+        "dynamics-constant/tone/salamander/v13",
+        "dynamics-mixed/tone/salamander",
+      ],
+      processLocalDigestFields: [
+        "lowestLimitingUpperVoiceEvidence",
+        "onsetConfidence",
+        "targetEvidence",
+        "task22LimitingUpperVoiceEvidence",
+        "transitionLowestLimitingUpperVoiceEvidence",
       ],
     },
   },
@@ -1791,7 +1858,196 @@ export function roundTwoAblationProblems(artifact, result) {
   return problems;
 }
 
-/** Verifies the committed Task 08, 10, 11, 22, 24, and 26 evidence against frozen pins. */
+/**
+ * Reruns the frozen stop rule over one Task 26 archive and derives the round's
+ * branch from the result.
+ *
+ * Nothing recorded in the archive is read as a conclusion: each ablation's stop
+ * verdict is recomputed from both sides of its archived repeated-chord
+ * measurements, each matched pair's support from the ablation's own grid rows,
+ * and the terminal outcome from those recomputed verdicts. Task 27's zero branch
+ * rests on this rerun.
+ */
+export function rerunRoundTwoSelection(record, pins) {
+  const ablations = (record?.ablations ?? []).map((ablation) => {
+    const evaluations = (ablation.selectedProfileIds ?? []).map((profileId) => {
+      const report = (ablation.repeatedRecovery ?? []).find((row) => row.profileId === profileId);
+      return recomputeRepeatedRecovery(
+        ablation.baselineRepeatedMeasurements,
+        report?.measurements,
+        pins.repeatedRecoveryBoundaries,
+        pins.knownDiscoveryGroupIds,
+      );
+    });
+    const reasons = recomputeStopReasons(ablation.selectedProfileIds ?? [], evaluations);
+    const stop = { satisfied: reasons.length === 0, reasons };
+    const gridRowById = new Map((ablation.domainRegret?.gridRows ?? []).map((row) => (
+      [row.profileId, row]
+    )));
+    const matchedPairs = (ablation.matchedPairs ?? []).map((pair) => {
+      const axisRow = gridRowById.get(pair.axisProfileId);
+      const twinRow = gridRowById.get(pair.twinProfileId);
+      const support = recomputePairSupport(
+        {
+          axisSelected: (ablation.selectedProfileIds ?? []).includes(pair.axisProfileId),
+          axisSafe: axisRow?.safe,
+          twinSafe: twinRow?.safe,
+          axisWorstDomainRegret: axisRow?.worstDomainRegret,
+          twinWorstDomainRegret: twinRow?.worstDomainRegret,
+        },
+        stop.satisfied,
+        recomputeRepeatedRecovery(
+          pair.twinRepeatedMeasurements,
+          pair.repeatedRecoveryAgainstTwin?.measurements,
+          pins.repeatedRecoveryBoundaries,
+          pins.knownDiscoveryGroupIds,
+        ),
+        pins.domainRegretMaterialBoundary,
+      );
+      return { support };
+    });
+    return { ablation: ablation.ablation, stop, matchedPairs };
+  });
+  const terminalOutcome = recomputedRoundTwoOutcome(ablations);
+  const accepted = ablations.find(({ stop }) => stop.satisfied) ?? null;
+  // The two zero-branch forms are different findings: nothing was accepted, or a
+  // grid was accepted whose selected profiles all need an unsupported
+  // parameterization. A nonempty branch has no reason code at all.
+  const zeroBranch = terminalOutcome === "bass-axis-unsupported";
+  return {
+    ablations,
+    terminalOutcome,
+    evidenceDigest: canonicalJsonDigest(
+      Object.fromEntries(Object.entries(record ?? {}).filter(([key]) => key !== "digest")),
+      new Set(pins.processLocalDigestFields),
+    ),
+    ablationId: accepted?.ablation ?? null,
+    notRunReason: !zeroBranch
+      ? null
+      : accepted === null
+      ? "no-ablation-accepted"
+      : "no-supported-parameterization",
+    candidatesAllowed: !zeroBranch,
+  };
+}
+
+/**
+ * Everything that makes the Task 27 file the frozen candidate manifest.
+ *
+ * `evidenceRuns` are the parsed Task 26 repetitions the manifest was derived
+ * from. Each is rerun independently, because a manifest that only one repetition
+ * supports is not the round's result.
+ */
+export function roundTwoCandidateManifestProblems(artifact, result, evidenceRuns) {
+  const expected = artifact.roundTwoCandidateManifest;
+  if (expected === undefined) return [];
+  const problems = [];
+  if (Array.isArray(result) || typeof result !== "object" || result === null) {
+    return [`${artifact.name}: the candidate manifest is one record, not a list`];
+  }
+  const check = (label, actual, wanted) => {
+    if (actual !== wanted) {
+      problems.push(
+        `${artifact.name}: ${label} ${printable(actual)}, expected ${printable(wanted)}`,
+      );
+    }
+  };
+  check("command", result.name, expected.name);
+  check("format version", result.formatVersion, expected.formatVersion);
+  check("round", result.roundId, expected.roundId);
+  check("registry version", result.registryVersion, expected.registryVersion);
+  check("registry digest", result.registryDigest, expected.registryDigest);
+  check("policy version", result.policyVersion, expected.policyVersion);
+  check("policy hash", result.policyHash, expected.policyHash);
+  check("manifest version", result.traceManifestVersion, expected.traceManifestVersion);
+  check("manifest hash", result.traceManifestHash, expected.traceManifestHash);
+  check("corpus hash", result.traceManifestCorpusHash, expected.traceManifestCorpusHash);
+  check("generator version", result.generatorVersion, expected.generatorVersion);
+  check("ablation", result.ablationId, expected.ablationId);
+  check("terminal outcome", result.task26TerminalOutcome, expected.task26TerminalOutcome);
+  check("Task 26 evidence digest", result.task26EvidenceDigest, expected.task26EvidenceDigest);
+  check("not-run reason", result.notRunReason, expected.notRunReason);
+  check("digest algorithm", result.digest?.algorithm, "fnv1a-32-canonical-json");
+  check("digest", result.digest?.value, expected.digest);
+  if (!sameList(result.candidateProfileIds, expected.candidateProfileIds)) {
+    problems.push(`${artifact.name}: the candidate list changed`);
+  }
+  // The manifest carries candidacy only; an eligibility field here would let a
+  // search result be read as a release result before Task 28 has measured one.
+  for (const forbidden of ["eligible", "eligibility", "eligibleProfileIds", "confirmation"]) {
+    if (Object.hasOwn(result, forbidden)) {
+      problems.push(`${artifact.name}: the manifest carries an eligibility field ${forbidden}`);
+    }
+  }
+  const { digest: _digest, ...digestInput } = result;
+  check("recomputed digest", canonicalJsonDigest(digestInput), expected.digest);
+  if (!Array.isArray(evidenceRuns) || evidenceRuns.length !== expected.evidencePaths.length) {
+    problems.push(`${artifact.name}: expected ${expected.evidencePaths.length} Task 26 repetitions`);
+    return problems;
+  }
+  evidenceRuns.forEach((run, index) => {
+    const label = `${artifact.name}: ${expected.evidencePaths[index]}`;
+    const [record] = Array.isArray(run) ? run : [];
+    if (record === undefined) {
+      problems.push(`${label} is not one Task 26 record`);
+      return;
+    }
+    const rerun = rerunRoundTwoSelection(record, expected);
+    if (rerun.evidenceDigest !== result.task26EvidenceDigest) {
+      problems.push(
+        `${label} recomputes to digest ${rerun.evidenceDigest}, and the manifest references ` +
+          `${printable(result.task26EvidenceDigest)}`,
+      );
+    }
+    if (rerun.terminalOutcome !== result.task26TerminalOutcome) {
+      problems.push(
+        `${label} reruns to terminal outcome ${rerun.terminalOutcome}, and the manifest records ` +
+          `${printable(result.task26TerminalOutcome)}`,
+      );
+    }
+    if (rerun.notRunReason !== result.notRunReason) {
+      problems.push(
+        `${label} reruns to reason ${printable(rerun.notRunReason)}, and the manifest records ` +
+          `${printable(result.notRunReason)}`,
+      );
+    }
+    if (rerun.ablationId !== result.ablationId) {
+      problems.push(
+        `${label} reruns to ablation ${printable(rerun.ablationId)}, and the manifest names ` +
+          `${printable(result.ablationId)}`,
+      );
+    }
+    if (!rerun.candidatesAllowed && (result.candidateProfileIds ?? []).length > 0) {
+      problems.push(`${label} took the zero branch, so the manifest may register no candidate`);
+    }
+    // Under `no-ablation-accepted` the rerun must show the stop rule rejecting
+    // every ablation, which is the finding the manifest reports.
+    if (result.notRunReason === "no-ablation-accepted" &&
+        rerun.ablations.some(({ stop }) => stop.satisfied)) {
+      problems.push(`${label} has an ablation the rerun stop rule accepted`);
+    }
+  });
+  return problems;
+}
+
+/**
+ * The zero branch writes no search archive.
+ *
+ * A placeholder archive would later read as a search that found nothing rather
+ * than one that never ran, so the only Task 27 file the repository may hold is
+ * the candidate manifest itself.
+ */
+export function roundTwoSearchArchiveProblems(fileNames, manifestPath) {
+  const manifestFile = manifestPath.split("/").at(-1);
+  const strays = fileNames
+    .filter((name) => /task27/i.test(name) && name !== manifestFile)
+    .sort();
+  return strays.length === 0
+    ? []
+    : [`The zero branch wrote no search archive, but found ${strays.join(", ")}`];
+}
+
+/** Verifies the committed Task 08, 10, 11, 22, 24, 26, and 27 evidence against frozen pins. */
 export async function verifyFrozenEvidence() {
   const problems = [];
   for (const artifact of EVIDENCE_ARTIFACTS) {
@@ -1853,6 +2109,18 @@ export async function verifyFrozenEvidence() {
     if (artifact.roundTwoAblation !== undefined) {
       problems.push(...roundTwoAblationProblems(artifact, result));
     }
+    if (artifact.roundTwoCandidateManifest !== undefined) {
+      const evidenceRuns = await Promise.all(
+        artifact.roundTwoCandidateManifest.evidencePaths.map(async (path) => JSON.parse(
+          (await readFile(join(REPOSITORY_ROOT, path))).toString("utf8"),
+        )),
+      );
+      problems.push(...roundTwoCandidateManifestProblems(artifact, result, evidenceRuns));
+      problems.push(...roundTwoSearchArchiveProblems(
+        await readdir(join(REPOSITORY_ROOT, "benchmark-results")),
+        artifact.path,
+      ));
+    }
 
     let lateAdvances;
     let profileLateAdvances;
@@ -1880,6 +2148,14 @@ export async function verifyFrozenEvidence() {
     }
 
     const details = [`file=${fileDigest}`];
+    if (artifact.roundTwoCandidateManifest !== undefined) {
+      details.push(
+        `candidates=${(result.candidateProfileIds ?? []).length}`,
+        `reason=${result.notRunReason}`,
+        `task26=${result.task26TerminalOutcome}/${result.task26EvidenceDigest}`,
+        `manifest=${result.digest?.value}`,
+      );
+    }
     if (candidateArchive !== undefined) {
       details.push(
         `candidate=${candidateArchive.digest.value}`,

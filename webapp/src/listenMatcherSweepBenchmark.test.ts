@@ -42,6 +42,7 @@ import {
 import {
   LISTEN_MULTIDOMAIN_MAX_CANDIDATES,
   LISTEN_SWEEP_DISCOVERY_BASELINE_PROFILE,
+  captureListenMultiDomainTrace,
   conciseListenMatcherMultiDomainSweepResult,
   evaluateListenMatcherMultiDomainSweep,
   fullListenMatcherMultiDomainSweepResult,
@@ -518,6 +519,32 @@ test("the multi-domain sweep captures discovery and regression traces, never con
   );
   assert.equal(traces.length, 472);
   assert.equal(new Set(traces.map(({ id }) => id)).size, traces.length);
+});
+
+test("the capture function refuses a confirmation trace outright", async () => {
+  const [confirmation] = LISTEN_TRACE_MANIFEST.traces
+    .filter(({ partition }) => partition === "confirmation");
+  assert.ok(confirmation !== undefined);
+  // The filter that builds the capture list is not the whole rule: the function
+  // itself must refuse, so a future caller cannot read the held-back partition
+  // into a selection result. It throws before the inference session is touched,
+  // which is why one that cannot be used is passed here.
+  await assert.rejects(
+    () => captureListenMultiDomainTrace(
+      confirmation,
+      undefined as unknown as Parameters<typeof captureListenMultiDomainTrace>[1],
+    ),
+    /confirmation trace, which the selection path never captures/,
+  );
+  const [discovery] = LISTEN_TRACE_MANIFEST.traces
+    .filter(({ partition }) => partition === "discovery");
+  await assert.rejects(
+    () => captureListenMultiDomainTrace(
+      discovery,
+      undefined as unknown as Parameters<typeof captureListenMultiDomainTrace>[1],
+    ),
+    (error: Error) => !/never captures/.test(error.message),
+  );
 });
 
 test("every applied safety population is captured and discovery negatives are baseline-relative", () => {
