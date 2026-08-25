@@ -4001,25 +4001,30 @@ function listenProfileUnsafeEventCount(
 }
 
 /**
- * Applies all corpus-independent round-two policy calculations to one profile.
- * The manifest owns the censuses in the supplied results; this code owns only
- * rate comparisons and the frozen materiality boundaries.
+ * The frozen Task 23 promotion materiality, over the domains a run measured.
+ *
+ * This is the only recipe. Task 29's production decision applies it to the
+ * archived confirmation repetitions rather than assembling its own aggregate,
+ * because a promotion axis this policy did not authorize is a policy amendment
+ * made at decision time, and an axis it does authorize — a sequence ordered or
+ * complete-passage gain, a dynamics suite gain — must be able to earn a promotion
+ * rather than being averaged away.
+ *
+ * Every axis is named by domain, renderer, and metric, and none is netted against
+ * another: `materialImprovementMet` is "some axis is material", and safety
+ * regressions are refused by the gates rather than traded here.
  */
-function listenProfilePolicyAssessment(
-  profileId: ListenMatcherProfileId,
-  baselineProfileId: ListenMatcherProfileId,
-  results: ListenProfileValidationDomainResults,
-  gates: readonly ListenProfileGateOutcome[],
-  evidenceComplete: boolean,
-): Omit<ListenProfilePolicyAssessment, "promotionEligible"> {
-  const pairedCorrectness: ListenPairedCorrectnessAssessment[] = [];
-  const recognitionTargets: ListenRecognitionTargetAssessment[] = [];
+export function listenPromotionMaterialImprovements(options: {
+  profileId: ListenMatcherProfileId;
+  baselineProfileId: ListenMatcherProfileId;
+  results: ListenProfileValidationDomainResults;
+}): ListenMaterialImprovementAssessment[] {
+  const { profileId, baselineProfileId, results } = options;
   const materialImprovements: ListenMaterialImprovementAssessment[] = [];
-
   for (const renderer of results.isolated?.renderers ?? []) {
     const profile = isolatedSummaryFor(renderer, profileId);
     const baseline = isolatedSummaryFor(renderer, baselineProfileId);
-    const definitions = [
+    for (const definition of [
       {
         metric: "isolated-correct-advance-rate" as const,
         census: renderer.correctTrialCount,
@@ -4032,41 +4037,7 @@ function listenProfilePolicyAssessment(
         profileCount: profile.courseClearAdvanceCount,
         baselineCount: baseline.courseClearAdvanceCount,
       },
-    ];
-    for (const definition of definitions) {
-      pairedCorrectness.push(assessListenPairedCorrectness({
-        rendererKey: renderer.rendererKey,
-        ...definition,
-      }));
-      const frozenTarget = LISTEN_TRACE_MANIFEST_RECOGNITION_TARGET_COUNTS.find((target) => (
-        target.rendererKey === renderer.rendererKey && target.metric === definition.metric
-      ));
-      if (!frozenTarget) {
-        throw new Error(
-          `Manifest v2 has no frozen ${renderer.rendererKey}/${definition.metric} target.`,
-        );
-      }
-      // A focused run still participates in paired correctness, but it cannot
-      // state full-corpus product debt. Only the measured frozen census may be
-      // assessed against the manifest-owned absolute target.
-      if (definition.census === frozenTarget.census) {
-        const targetAssessment = assessListenRecognitionTarget({
-          rendererKey: renderer.rendererKey,
-          metric: definition.metric,
-          census: definition.census,
-          observedCount: definition.profileCount,
-        });
-        const reached = definition.profileCount >= frozenTarget.targetCount;
-        recognitionTargets.push({
-          ...targetAssessment,
-          targetRate: frozenTarget.targetRate,
-          census: frozenTarget.census,
-          targetCount: frozenTarget.targetCount,
-          reached,
-          debtCount: Math.max(0, frozenTarget.targetCount - definition.profileCount),
-          debtRate: Math.max(0, frozenTarget.targetRate - targetAssessment.observedRate),
-        });
-      }
+    ]) {
       const baselineRate = definition.census === 0
         ? 0
         : definition.baselineCount / definition.census;
@@ -4145,6 +4116,84 @@ function listenProfilePolicyAssessment(
     listenProfileUnsafeEventCount(baselineProfileId, results),
     listenProfileUnsafeEventCount(profileId, results),
   ));
+  return materialImprovements;
+}
+
+/**
+ * Applies all corpus-independent round-two policy calculations to one profile.
+ * The manifest owns the censuses in the supplied results; this code owns only
+ * rate comparisons and the frozen materiality boundaries.
+ */
+function listenProfilePolicyAssessment(
+  profileId: ListenMatcherProfileId,
+  baselineProfileId: ListenMatcherProfileId,
+  results: ListenProfileValidationDomainResults,
+  gates: readonly ListenProfileGateOutcome[],
+  evidenceComplete: boolean,
+): Omit<ListenProfilePolicyAssessment, "promotionEligible"> {
+  const pairedCorrectness: ListenPairedCorrectnessAssessment[] = [];
+  const recognitionTargets: ListenRecognitionTargetAssessment[] = [];
+  const materialImprovements: ListenMaterialImprovementAssessment[] = [];
+  materialImprovements.push(...listenPromotionMaterialImprovements({
+    profileId,
+    baselineProfileId,
+    results,
+  }));
+
+  for (const renderer of results.isolated?.renderers ?? []) {
+    const profile = isolatedSummaryFor(renderer, profileId);
+    const baseline = isolatedSummaryFor(renderer, baselineProfileId);
+    const definitions = [
+      {
+        metric: "isolated-correct-advance-rate" as const,
+        census: renderer.correctTrialCount,
+        profileCount: profile.correctAdvanceCount,
+        baselineCount: baseline.correctAdvanceCount,
+      },
+      {
+        metric: "course-clear-correct-advance-rate" as const,
+        census: baseline.courseClearCorrectTrialCount,
+        profileCount: profile.courseClearAdvanceCount,
+        baselineCount: baseline.courseClearAdvanceCount,
+      },
+    ];
+    for (const definition of definitions) {
+      pairedCorrectness.push(assessListenPairedCorrectness({
+        rendererKey: renderer.rendererKey,
+        ...definition,
+      }));
+      const frozenTarget = LISTEN_TRACE_MANIFEST_RECOGNITION_TARGET_COUNTS.find((target) => (
+        target.rendererKey === renderer.rendererKey && target.metric === definition.metric
+      ));
+      if (!frozenTarget) {
+        throw new Error(
+          `Manifest v2 has no frozen ${renderer.rendererKey}/${definition.metric} target.`,
+        );
+      }
+      // A focused run still participates in paired correctness, but it cannot
+      // state full-corpus product debt. Only the measured frozen census may be
+      // assessed against the manifest-owned absolute target.
+      if (definition.census === frozenTarget.census) {
+        const targetAssessment = assessListenRecognitionTarget({
+          rendererKey: renderer.rendererKey,
+          metric: definition.metric,
+          census: definition.census,
+          observedCount: definition.profileCount,
+        });
+        const reached = definition.profileCount >= frozenTarget.targetCount;
+        recognitionTargets.push({
+          ...targetAssessment,
+          targetRate: frozenTarget.targetRate,
+          census: frozenTarget.census,
+          targetCount: frozenTarget.targetCount,
+          reached,
+          debtCount: Math.max(0, frozenTarget.targetCount - definition.profileCount),
+          debtRate: Math.max(0, frozenTarget.targetRate - targetAssessment.observedRate),
+        });
+      }
+    }
+  }
+
   const unapplied = unappliedRequiredListenGateCodes(evidenceComplete, gates)
     .map((code) => code as ListenProfileGateCode);
   return {

@@ -426,6 +426,66 @@ const EVIDENCE_ARTIFACTS = [
     },
   },
   {
+    name: "Task 29 round-two approved-profile list",
+    path: "benchmark-results/listen-round-two-approved-profiles-task29.json",
+    fileSha256: "c71624cefb4db1f5ac7b0981ca4e62f3756dbd999d279ff6718c7ae7bc346873",
+    /**
+     * The third and last link of the round-two artifact chain.
+     *
+     * The round approved no candidate, so the list is exactly the measured
+     * incumbent and the default is unchanged. These are the pins this repository
+     * ships; the checks that read them recompute the membership, the bounded
+     * outcome, the ablation record, and every digest link from the artifacts
+     * themselves, because a decision that only agrees with itself is not
+     * auditable.
+     */
+    roundTwoApprovedProfiles: {
+      name: "listen-round-two-approved-profiles",
+      formatVersion: 1,
+      roundId: "round-two",
+      outcome: "round-two-grid-produced-no-eligible-improvement",
+      reason: "no-ablation-accepted",
+      selectedDefaultProfileId: "baseline-v1",
+      eligibilityRunStatus: "not-run-no-confirmable-candidate",
+      eligibilityManifestDigest: "20be9d6d",
+      candidateManifestDigest: "21655efa",
+      task26TerminalOutcome: "bass-axis-unsupported",
+      task26EvidenceDigest: "8dfe2f1b",
+      digest: "dbf777ba",
+      /** The residual is carried by this file, referenced by its content digest. */
+      modelEvidenceRequirementPath: "plans/listen-decoder-model-evidence-requirement.md",
+      eligibilityManifestPath:
+        "benchmark-results/listen-round-two-eligibility-manifest-task28.json",
+      candidateManifestPath:
+        "benchmark-results/listen-round-two-candidate-manifest-task27.json",
+      /** Both repetitions must independently rerun to the chain this concludes. */
+      evidencePaths: [
+        "benchmark-results/listen-round-two-ablation-task26-run1.json",
+        "benchmark-results/listen-round-two-ablation-task26-run2.json",
+      ],
+      /** Task 24's frozen boundaries, restated so the stop rule can be rerun here. */
+      repeatedRecoveryBoundaries: {
+        sourceDistanceNoRegression: 0,
+        attributionDelayNoRegressionMs: 32,
+        sourceDistanceMaterialGain: 1,
+        attributionDelayMaterialGainMs: 500,
+      },
+      domainRegretMaterialBoundary: 0.01,
+      knownDiscoveryGroupIds: [
+        "dynamics-constant/tone/salamander/v05",
+        "dynamics-constant/tone/salamander/v13",
+        "dynamics-mixed/tone/salamander",
+      ],
+      processLocalDigestFields: [
+        "lowestLimitingUpperVoiceEvidence",
+        "onsetConfidence",
+        "targetEvidence",
+        "task22LimitingUpperVoiceEvidence",
+        "transitionLowestLimitingUpperVoiceEvidence",
+      ],
+    },
+  },
+  {
     name: "Task 22 bass-onset and repeated-chord qualification",
     path: "benchmark-results/listen-bass-qualification-task22.json",
     fileSha256: "3b7085969a15242ff06b6a9fc58de72882626609c1e816a3dc7d7cb6c318279e",
@@ -2044,7 +2104,12 @@ export function rerunRoundTwoSelection(record, pins) {
       );
       return { support };
     });
-    return { ablation: ablation.ablation, stop, matchedPairs };
+    return {
+      ablation: ablation.ablation,
+      selectedProfileIds: [...(ablation.selectedProfileIds ?? [])],
+      stop,
+      matchedPairs,
+    };
   });
   const terminalOutcome = recomputedRoundTwoOutcome(ablations);
   const accepted = ablations.find(({ stop }) => stop.satisfied) ?? null;
@@ -4701,7 +4766,1249 @@ export function roundTwoSearchArchiveProblems(fileNames, manifestPath) {
     : [`The zero branch wrote no search archive, but found ${strays.join(", ")}`];
 }
 
-/** Verifies the committed Task 08, 10, 11, 22, 24, 26, 27, and 28 evidence against frozen pins. */
+/* ------------------------------------------------------------------------- *
+ * Task 29: the approved-profile list
+ * ------------------------------------------------------------------------- */
+
+const APPROVED_PROFILES_KEYS = [
+  "name",
+  "formatVersion",
+  "roundId",
+  "outcome",
+  "reason",
+  "selectedDefaultProfileId",
+  "incumbentProfileId",
+  "approvedProfileIds",
+  "eligibilityRunStatus",
+  "eligibilityManifestDigest",
+  "candidateManifestDigest",
+  "task26TerminalOutcome",
+  "task26EvidenceDigest",
+  "liveCorpus",
+  "repeatedChordResult",
+  "confirmationPartition",
+  "ablations",
+  "digest",
+];
+
+const DECISION_OUTCOMES = [
+  "promoted-candidate",
+  // Candidates passed every gate and are offerable by calibration, but the frozen
+  // ordered rule did not separate them or the winner was not materially better,
+  // so the global default did not move. Approval and promotion are different.
+  "approved-without-material-improvement",
+  "round-two-candidate-set-exhausted",
+  "round-two-grid-produced-no-eligible-improvement",
+];
+
+const LIVE_GATE_STATUSES = ["passed", "failed", "not-collected"];
+
+const APPROVED_INCUMBENT_PROFILE_ID = "baseline-v1";
+
+/**
+ * The membership rule, recomputed from the eligibility manifest and the live
+ * results the list itself carries.
+ *
+ * The incumbent is approved in every branch; a candidate is approved only when
+ * the automated matrix cleared it *and* its live gates were collected and
+ * passed. A live row for a profile the automated matrix did not clear is a fault
+ * rather than an approval, because live evidence cannot promote a candidate
+ * around the automated gates.
+ */
+export function rederiveApprovedProfileIds(eligibility, liveResults) {
+  const problems = [];
+  const entries = eligibility?.runStatus === "completed" ? (eligibility.entries ?? []) : [];
+  const automatedEligible = new Set(
+    entries.filter(({ automatedEligible: eligible }) => eligible === true)
+      .map(({ profileId }) => profileId),
+  );
+  const passed = new Set();
+  const seen = new Set();
+  for (const row of liveResults ?? []) {
+    if (!LIVE_GATE_STATUSES.includes(row?.status)) {
+      problems.push(`a live-corpus result records status ${printable(row?.status)}`);
+      continue;
+    }
+    if (seen.has(row.profileId)) {
+      problems.push(`the live corpus reports on ${row.profileId} twice`);
+      continue;
+    }
+    seen.add(row.profileId);
+    if (!automatedEligible.has(row.profileId)) {
+      problems.push(
+        `the live corpus reports on ${row.profileId}, which the eligibility manifest does not ` +
+          "mark automated-eligible",
+      );
+      continue;
+    }
+    if (row.status === "passed") passed.add(row.profileId);
+  }
+  const approved = [...automatedEligible].filter((profileId) => passed.has(profileId));
+  return { approved: [APPROVED_INCUMBENT_PROFILE_ID, ...approved].sort(), problems };
+}
+
+/* --- The live corpus, read and rederived ---------------------------------- */
+
+const LIVE_ARCHIVE_NAME = "listen-round-two-live-corpus";
+const LIVE_BASELINE_PROFILE_ID = "baseline-v1";
+const LIVE_SOURCE_FAMILIES = Object.freeze({
+  "acoustic-piano": "acoustic",
+  "digital-piano-speakers": "digital",
+  "digital-line-output": "digital",
+});
+const LIVE_REQUIRED_SOURCE_FAMILIES = Object.freeze(["acoustic", "digital"]);
+const LIVE_REQUIRED_TRIAL_CLASSES = Object.freeze([
+  "single-note",
+  "chord",
+  "repeated-chord",
+  "wrong-note",
+  "wrong-chord-member",
+  "added-note",
+  "omitted-bass",
+  "silence-noise",
+]);
+const LIVE_NEGATIVE_TRIAL_CLASSES = Object.freeze([
+  "wrong-note",
+  "wrong-chord-member",
+  "added-note",
+  "omitted-bass",
+  "silence-noise",
+]);
+const LIVE_UNSAFE_COUNTERS = Object.freeze([
+  "falseAdvanceCount",
+  "skippedAdvanceCount",
+  "duplicateAdvanceCount",
+  "incompleteCarriedBassAdvanceCount",
+]);
+/** Task 24's frozen repeated-chord boundaries, and one decoder hop of latency. */
+const LIVE_REPEATED_SOURCE_DISTANCE_NO_REGRESSION = 0;
+const LIVE_REPEATED_DELAY_NO_REGRESSION_MS = 32;
+const LIVE_LATENCY_REGRESSION_TOLERANCE_MS = 32;
+const LIVE_GATE_CODES = Object.freeze([
+  "live-coverage",
+  "live-safety",
+  "live-correctness",
+  "live-repeated-recovery",
+  "live-latency",
+]);
+
+/**
+ * Reads the live archives a decision names, by path and by content.
+ *
+ * The record states a file SHA-256 and a record digest for each session; both are
+ * recomputed here, so a decision cannot cite a corpus whose bytes have moved
+ * since it read them, or one that is not in the repository at all.
+ */
+export async function readRoundTwoLiveArchives(references, root = REPOSITORY_ROOT) {
+  const archives = [];
+  for (const reference of references ?? []) {
+    const path = reference?.path;
+    if (typeof path !== "string" || path.length === 0) {
+      archives.push({ reference, unreadable: "the reference names no file" });
+      continue;
+    }
+    try {
+      const bytes = await readFile(resolve(root, path));
+      const record = JSON.parse(bytes.toString("utf8"));
+      archives.push({ reference, path, fileSha256: sha256(bytes), record });
+    } catch (error) {
+      archives.push({ reference, path, unreadable: error.message });
+    }
+  }
+  return archives;
+}
+
+/**
+ * Everything that must be true of the live archives a decision cites.
+ *
+ * They are bound to the eligibility manifest they were collected against and to
+ * the candidate set that manifest cleared, so a corpus collected for another
+ * round, or one that replayed a profile the automated matrix rejected, is refused
+ * before any of its trials are read.
+ */
+export function roundTwoLiveArchiveProblems(label, archives, options) {
+  const problems = [];
+  for (const archive of archives) {
+    const where = `${label}: ${archive.path ?? "live archive"}`;
+    if (archive.unreadable !== undefined) {
+      problems.push(`${where} could not be read: ${archive.unreadable}`);
+      continue;
+    }
+    if (archive.reference?.sha256 !== archive.fileSha256) {
+      problems.push(
+        `${where} records SHA-256 ${printable(archive.reference?.sha256)}, and that file hashes ` +
+          `to ${archive.fileSha256}`,
+      );
+    }
+    const record = archive.record ?? {};
+    const { digest: _digest, ...rest } = record;
+    const digest = canonicalJsonDigest(rest);
+    if (record.digest?.value !== digest) {
+      problems.push(
+        `${where} records digest ${printable(record.digest?.value)}, recomputed ${digest}`,
+      );
+    }
+    if (archive.reference?.digest !== digest) {
+      problems.push(
+        `${where} is cited as digest ${printable(archive.reference?.digest)}, and that record ` +
+          `hashes to ${digest}`,
+      );
+    }
+    if (record.name !== LIVE_ARCHIVE_NAME) {
+      problems.push(`${where} names ${printable(record.name)}`);
+    }
+    if (record.eligibilityManifestDigest !== options.eligibilityManifestDigest) {
+      problems.push(
+        `${where} was collected against eligibility manifest ` +
+          `${printable(record.eligibilityManifestDigest)}, and this decision concludes ` +
+          `${options.eligibilityManifestDigest}`,
+      );
+    }
+    if (record.baselineProfileId !== LIVE_BASELINE_PROFILE_ID) {
+      problems.push(`${where} replays incumbent ${printable(record.baselineProfileId)}`);
+    }
+    for (const profileId of record.profileIds ?? []) {
+      if (profileId === LIVE_BASELINE_PROFILE_ID) continue;
+      if (!options.automatedEligibleProfileIds.includes(profileId)) {
+        problems.push(
+          `${where} replayed ${profileId}, which the eligibility manifest does not mark ` +
+            "automated-eligible",
+        );
+      }
+    }
+    for (const setup of record.setups ?? []) {
+      for (const trial of setup.trials ?? []) {
+        const reported = new Set((trial.outcomes ?? []).map(({ profileId }) => profileId));
+        for (const profileId of record.profileIds ?? []) {
+          if (!reported.has(profileId)) {
+            problems.push(`${where}: trial ${trial.trialId} has no outcome for ${profileId}`);
+          }
+        }
+        // The trial has to be replayable evidence, not a verdict: the authored
+        // score it was played against and the decoded trace the harness captured
+        // once, with no audio in the export.
+        if (!Array.isArray(trial.sequence?.targets) || trial.sequence.targets.length === 0 ||
+            !Array.isArray(trial.sequence?.attacks) || trial.sequence.attacks.length === 0) {
+          problems.push(
+            `${where}: trial ${trial.trialId} carries no authored score, so its target and ` +
+              "played pitches are unrecorded and the matcher cannot be replayed over it",
+          );
+        }
+        if (!Array.isArray(trial.decodedTrace?.frames) || trial.decodedTrace.frames.length === 0) {
+          problems.push(
+            `${where}: trial ${trial.trialId} carries no decoded recognition trace`,
+          );
+        }
+        if (trial.decodedTrace !== undefined && Object.hasOwn(trial.decodedTrace, "pcm")) {
+          problems.push(`${where}: trial ${trial.trialId} exports audio`);
+        }
+        if (typeof trial.musical !== "object" || trial.musical === null) {
+          problems.push(`${where}: trial ${trial.trialId} records no musical context`);
+        }
+        // The class decides the flag, in both directions.
+        const expectedForClass = !LIVE_NEGATIVE_TRIAL_CLASSES.includes(trial.trialClass);
+        if (trial.expectedCorrect !== expectedForClass) {
+          problems.push(
+            `${where}: trial ${trial.trialId} is a ${trial.trialClass} trial and records ` +
+              `expectedCorrect ${printable(trial.expectedCorrect)}; the class requires ` +
+              `${expectedForClass}`,
+          );
+        }
+        for (const outcome of trial.outcomes ?? []) {
+          const unsafe = LIVE_UNSAFE_COUNTERS
+            .reduce((total, counter) => total + (outcome[counter] ?? 0), 0);
+          if (unsafe > 0 && outcome.advanced !== true) {
+            problems.push(
+              `${where}: trial ${trial.trialId} reports an unsafe advance for ` +
+                `${outcome.profileId} without advancing`,
+            );
+          }
+          if (outcome.correctAdvance === true && outcome.advanced !== true) {
+            problems.push(
+              `${where}: trial ${trial.trialId} records a correct advance for ` +
+                `${outcome.profileId} without advancing`,
+            );
+          }
+          if (outcome.advanced === false && outcome.latencyMs !== null) {
+            problems.push(
+              `${where}: trial ${trial.trialId} records a latency for ${outcome.profileId} ` +
+                "without advancing",
+            );
+          }
+        }
+      }
+    }
+  }
+  return problems;
+}
+
+function liveTrialRows(archives, profileId) {
+  return archives.flatMap((archive) => (archive.record?.setups ?? []).flatMap((setup) => (
+    (setup.trials ?? []).map((trial) => ({
+      setup,
+      trial,
+      baseline: (trial.outcomes ?? [])
+        .find((row) => row.profileId === LIVE_BASELINE_PROFILE_ID),
+      candidate: (trial.outcomes ?? []).find((row) => row.profileId === profileId),
+    }))
+  )).filter(({ baseline }) => baseline !== undefined));
+}
+
+/**
+ * Rederives one candidate's live gates from the archived trials.
+ *
+ * This repeats, independently of the application code, the comparison the
+ * decision claims: per trial, per counter, per setup. A corpus total is never
+ * formed, so an acoustic safety failure cannot be paid for with a digital gain.
+ */
+export function rederiveLiveGateResult(profileId, archives) {
+  const rows = liveTrialRows(archives, profileId);
+  const measured = rows.filter(({ candidate }) => candidate !== undefined);
+  const setups = [...new Map(measured.map(({ setup }) => [setup.setupId, setup])).values()];
+  const setupCoverage = setups.map((setup) => ({
+    setupId: setup.setupId,
+    sourceFamily: LIVE_SOURCE_FAMILIES[setup.source],
+    trialCount: measured.filter(({ setup: owner }) => owner.setupId === setup.setupId).length,
+  }));
+  if (measured.length === 0) {
+    return { profileId, status: "not-collected", setupCoverage: [], failures: [] };
+  }
+  const failures = [];
+  const fail = (gate, measure, detail) => failures.push({ gate, measure, ...detail });
+  for (const family of LIVE_REQUIRED_SOURCE_FAMILIES) {
+    if (!setupCoverage.some((setup) => setup.sourceFamily === family)) {
+      fail("live-coverage", `${family}-setup-count`, { setupId: "", trialId: null });
+    }
+  }
+  for (const setup of setups) {
+    const classes = new Set(measured
+      .filter(({ setup: owner }) => owner.setupId === setup.setupId)
+      .map(({ trial }) => trial.trialClass));
+    for (const trialClass of LIVE_REQUIRED_TRIAL_CLASSES) {
+      if (!classes.has(trialClass)) {
+        fail("live-coverage", `${trialClass}-trial-count`, {
+          setupId: setup.setupId,
+          trialId: null,
+        });
+      }
+    }
+  }
+  for (const row of rows) {
+    if (row.candidate === undefined) {
+      fail("live-coverage", "candidate-outcome", {
+        setupId: row.setup.setupId,
+        trialId: row.trial.trialId,
+      });
+    }
+  }
+  for (const { setup, trial, baseline, candidate } of measured) {
+    const where = { setupId: setup.setupId, trialId: trial.trialId };
+    for (const counter of LIVE_UNSAFE_COUNTERS) {
+      if ((candidate[counter] ?? 0) > (baseline[counter] ?? 0)) {
+        fail("live-safety", counter, where);
+      }
+    }
+    if (LIVE_NEGATIVE_TRIAL_CLASSES.includes(trial.trialClass) && candidate.advanced === true) {
+      fail("live-safety", "advanced", where);
+    }
+    if (trial.expectedCorrect === true && baseline.correctAdvance === true &&
+        candidate.correctAdvance !== true) {
+      fail("live-correctness", "correctAdvance", where);
+    }
+    if (trial.trialClass === "repeated-chord" &&
+        baseline.repeatedRecovery?.sourceDistance != null) {
+      const candidateRecovery = candidate.repeatedRecovery;
+      if (candidateRecovery?.sourceDistance == null) {
+        fail("live-repeated-recovery", "sourceDistance", where);
+      } else {
+        if (candidateRecovery.sourceDistance - baseline.repeatedRecovery.sourceDistance >
+            LIVE_REPEATED_SOURCE_DISTANCE_NO_REGRESSION) {
+          fail("live-repeated-recovery", "sourceDistance", where);
+        }
+        if ((candidateRecovery.attributionDelayMs ?? 0) -
+            (baseline.repeatedRecovery.attributionDelayMs ?? 0) >
+            LIVE_REPEATED_DELAY_NO_REGRESSION_MS) {
+          fail("live-repeated-recovery", "attributionDelayMs", where);
+        }
+      }
+    }
+    if (trial.expectedCorrect === true && baseline.latencyMs !== null &&
+        candidate.latencyMs !== null && candidate.latencyMs !== undefined &&
+        candidate.latencyMs - baseline.latencyMs > LIVE_LATENCY_REGRESSION_TOLERANCE_MS) {
+      fail("live-latency", "latencyMs", where);
+    }
+  }
+  return {
+    profileId,
+    status: failures.length === 0 ? "passed" : "failed",
+    setupCoverage,
+    failures,
+  };
+}
+
+/** Rederives every automated-eligible candidate's live result. */
+export function rederiveLiveGateResults(eligibility, archives) {
+  const entries = eligibility?.runStatus === "completed" ? (eligibility.entries ?? []) : [];
+  return entries
+    .filter(({ automatedEligible }) => automatedEligible === true)
+    .map(({ profileId }) => rederiveLiveGateResult(profileId, archives));
+}
+
+/* --- The ordered selection rule, rederived -------------------------------- */
+
+const SELECTION_STEPS = Object.freeze([
+  "live-safety",
+  "live-correct-advancement",
+  "automated-independent-recognition",
+  "ordered-and-complete-progress",
+  "latency",
+  "distance-from-baseline",
+]);
+
+const ARCHIVE_UNSAFE_COUNTERS = Object.freeze([
+  "falseAdvanceCount",
+  "skippedAdvanceCount",
+  "duplicateAdvanceCount",
+  "incompleteCarriedBassAdvances",
+]);
+
+/** The registry generation the ranking's last step measures distance against. */
+const REGISTRY_THRESHOLDS = Object.freeze({
+  "baseline-v1": Object.freeze([0.6, 0.5, 0.35, 0.97]),
+  "balanced-v1": Object.freeze([0.5, 0.5, 0.35, 0.99]),
+  "sensitive-v1": Object.freeze([0.45, 0.5, 0.2, 0.99]),
+  "early-open-v2": Object.freeze([0.45, 0.5, 0.2, 0.99]),
+  "steady-open-v2": Object.freeze([0.5, 0.5, 0.2, 0.99]),
+  "early-held-v2": Object.freeze([0.45, 0.5, 0.275, 0.99]),
+  "steady-held-v2": Object.freeze([0.5, 0.5, 0.275, 0.99]),
+});
+
+function profileDistanceFromBaseline(profileId) {
+  const profile = REGISTRY_THRESHOLDS[profileId];
+  const baseline = REGISTRY_THRESHOLDS[LIVE_BASELINE_PROFILE_ID];
+  if (profile === undefined) return null;
+  return profile.reduce((total, value, index) => total + Math.abs(value - baseline[index]), 0);
+}
+
+function liveStepValues(archives, profileId, field) {
+  const values = new Map();
+  for (const archive of archives) {
+    for (const setup of archive.record?.setups ?? []) {
+      const rows = (setup.trials ?? []).map((trial) => ({
+        trial,
+        outcome: (trial.outcomes ?? []).find((row) => row.profileId === profileId),
+      })).filter(({ outcome }) => outcome !== undefined);
+      values.set(setup.setupId, field === "unsafe"
+        ? rows.reduce((total, { outcome }) => (
+          total + LIVE_UNSAFE_COUNTERS.reduce((sum, counter) => sum + (outcome[counter] ?? 0), 0)
+        ), 0)
+        : rows.filter(({ trial, outcome }) => (
+          trial.expectedCorrect === true && outcome.correctAdvance === true
+        )).length);
+    }
+  }
+  return values;
+}
+
+/**
+ * The automated values of one step, keyed by leaf.
+ *
+ * A leaf is a renderer *and* an instrument, because the plan ranks independent
+ * recognition across renderers and instruments: a renderer total that averages a
+ * gain on one piano over a loss on another has already hidden the comparison.
+ * Ordered advances and complete passages are two keys rather than a sum, so an
+ * ordered gain cannot conceal a complete-passage loss.
+ */
+function automatedStepValues(archive, profileId, field) {
+  const record = Array.isArray(archive) ? archive[0] : archive;
+  const leafByTrace = new Map((record?.captures ?? []).map((capture) => [
+    capture.traceId,
+    `${capture.rendererKey}/${capture.piano ?? "none"}`,
+  ]));
+  const rows = (record?.outcomes ?? []).filter((row) => row.profileId === profileId);
+  const leaves = [...new Set([...leafByTrace.values()])].sort();
+  const values = new Map();
+  for (const leaf of leaves) {
+    const leafRows = rows.filter((row) => leafByTrace.get(row.traceId) === leaf);
+    if (field === "latency") {
+      const percentiles = (record?.domainSummaries ?? [])
+        .filter((summary) => summary.profileId === profileId &&
+          (summary.traceIds ?? []).some((traceId) => leafByTrace.get(traceId) === leaf))
+        .map((summary) => summary.p95OnsetToAdvanceMs)
+        .filter((value) => typeof value === "number" && Number.isFinite(value));
+      values.set(leaf, percentiles.length === 0 ? null : Math.max(...percentiles));
+      continue;
+    }
+    const sum = (counter) => leafRows.reduce((total, row) => total + (row[counter] ?? 0), 0);
+    if (field === "independent") {
+      values.set(leaf, sum("independentMatchCount"));
+      continue;
+    }
+    values.set(`${leaf}:ordered`, sum("orderedAdvanceCount"));
+    values.set(`${leaf}:complete`, sum("completePassageCount"));
+  }
+  return values;
+}
+
+function stepDominance(left, right, better) {
+  let leftBetter = false;
+  let rightBetter = false;
+  for (const key of new Set([...left.keys(), ...right.keys()])) {
+    const a = left.get(key) ?? null;
+    const b = right.get(key) ?? null;
+    if (a === null || b === null) {
+      if (a === null && b !== null) rightBetter = true;
+      if (b === null && a !== null) leftBetter = true;
+      continue;
+    }
+    if (a === b) continue;
+    if (better === "higher" ? a > b : a < b) leftBetter = true;
+    else rightBetter = true;
+  }
+  if (leftBetter && !rightBetter) return -1;
+  if (rightBetter && !leftBetter) return 1;
+  return 0;
+}
+
+function selectionStepValues(step, profileId, liveArchives, confirmationArchive) {
+  switch (step) {
+    case "live-safety":
+      return { values: liveStepValues(liveArchives, profileId, "unsafe"), better: "lower" };
+    case "live-correct-advancement":
+      return { values: liveStepValues(liveArchives, profileId, "correct"), better: "higher" };
+    case "automated-independent-recognition":
+      return {
+        values: automatedStepValues(confirmationArchive, profileId, "independent"),
+        better: "higher",
+      };
+    case "ordered-and-complete-progress":
+      return {
+        values: automatedStepValues(confirmationArchive, profileId, "ordered"),
+        better: "higher",
+      };
+    case "latency":
+      return {
+        values: automatedStepValues(confirmationArchive, profileId, "latency"),
+        better: "lower",
+      };
+    default:
+      return {
+        values: new Map([["registry", profileDistanceFromBaseline(profileId)]]),
+        better: "lower",
+      };
+  }
+}
+
+/* --- The frozen promotion materiality, rederived --------------------------- */
+
+/** Task 23's frozen boundaries, restated so materiality can be recomputed here. */
+export const PROMOTION_MATERIAL_IMPROVEMENT = Object.freeze({
+  minimumRateGain: 0.01,
+  rateComparisonEpsilon: 1e-12,
+  minimumLatencyReductionMs: 32,
+  latencyComparisonEpsilonMs: 1e-9,
+  minimumUnsafeEventReduction: 1,
+});
+
+function rateGain(id, baselineRate, profileRate) {
+  const improvement = profileRate - baselineRate;
+  return {
+    id,
+    kind: "rate-gain",
+    improvement,
+    material: improvement + PROMOTION_MATERIAL_IMPROVEMENT.rateComparisonEpsilon >=
+      PROMOTION_MATERIAL_IMPROVEMENT.minimumRateGain,
+  };
+}
+
+function latencyReduction(id, baselineMs, profileMs) {
+  const improvement = baselineMs - profileMs;
+  return {
+    id,
+    kind: "latency-reduction",
+    improvement,
+    material: improvement + PROMOTION_MATERIAL_IMPROVEMENT.latencyComparisonEpsilonMs >=
+      PROMOTION_MATERIAL_IMPROVEMENT.minimumLatencyReductionMs,
+  };
+}
+
+function unsafeEventReduction(id, baselineCount, profileCount) {
+  const improvement = baselineCount - profileCount;
+  return {
+    id,
+    kind: "unsafe-event-reduction",
+    improvement,
+    material: improvement >= PROMOTION_MATERIAL_IMPROVEMENT.minimumUnsafeEventReduction,
+  };
+}
+
+function summaryFor(renderer, profileId) {
+  return (renderer?.profiles ?? []).find((row) => row.profileId === profileId);
+}
+
+/**
+ * Rederives Task 23's promotion materiality from one archived repetition.
+ *
+ * The axes are the policy's own — isolated correct-advance and Course Clear
+ * rates and latency, the sequence independent, ordered, and complete-passage
+ * rates and latency, the dynamics equal-piano suites, and cross-domain
+ * unsafe-event reduction — recomputed here rather than taken from the decision,
+ * so a promotion earned on an axis the policy does not name, or refused on one it
+ * does, fails verification instead of shipping.
+ */
+export function rederivePromotionMateriality(archive, profileId) {
+  const record = Array.isArray(archive) ? archive[0] : archive;
+  const assessments = [];
+  const baselineId = LIVE_BASELINE_PROFILE_ID;
+  for (const renderer of record?.isolated?.renderers ?? []) {
+    const profile = summaryFor(renderer, profileId);
+    const baseline = summaryFor(renderer, baselineId);
+    if (profile === undefined || baseline === undefined) continue;
+    for (const [metric, census, baselineCount, profileCount] of [
+      [
+        "isolated-correct-advance-rate",
+        renderer.correctTrialCount,
+        baseline.correctAdvanceCount,
+        profile.correctAdvanceCount,
+      ],
+      [
+        "course-clear-correct-advance-rate",
+        baseline.courseClearCorrectTrialCount,
+        baseline.courseClearAdvanceCount,
+        profile.courseClearAdvanceCount,
+      ],
+    ]) {
+      assessments.push(rateGain(
+        `isolated/${renderer.rendererKey}/${metric}`,
+        census === 0 ? 0 : baselineCount / census,
+        census === 0 ? 0 : profileCount / census,
+      ));
+    }
+    if (profile.summary?.p95OnsetToAdvanceMs != null &&
+        baseline.summary?.p95OnsetToAdvanceMs != null) {
+      assessments.push(latencyReduction(
+        `isolated/${renderer.rendererKey}/p95-onset-to-advance-ms`,
+        baseline.summary.p95OnsetToAdvanceMs,
+        profile.summary.p95OnsetToAdvanceMs,
+      ));
+    }
+  }
+  for (const renderer of record?.sequence?.renderers ?? []) {
+    const profile = summaryFor(renderer, profileId);
+    const baseline = summaryFor(renderer, baselineId);
+    if (profile === undefined || baseline === undefined) continue;
+    for (const metric of [
+      "independentMatchRate",
+      "orderedAdvanceRate",
+      "completePassageRate",
+    ]) {
+      const label = metric.replace(/([A-Z])/g, "-$1").toLowerCase();
+      assessments.push(rateGain(
+        `sequence/${renderer.rendererKey}/${label}`,
+        baseline.totals?.[metric] ?? 0,
+        profile.totals?.[metric] ?? 0,
+      ));
+    }
+    if (profile.totals?.p95OrderedAdvanceLatencyMs != null &&
+        baseline.totals?.p95OrderedAdvanceLatencyMs != null) {
+      assessments.push(latencyReduction(
+        `sequence/${renderer.rendererKey}/p95-ordered-advance-ms`,
+        baseline.totals.p95OrderedAdvanceLatencyMs,
+        profile.totals.p95OrderedAdvanceLatencyMs,
+      ));
+    }
+  }
+  for (const renderer of record?.dynamics?.renderers ?? []) {
+    const profile = summaryFor(renderer, profileId);
+    const baseline = summaryFor(renderer, baselineId);
+    if (profile === undefined || baseline === undefined) continue;
+    for (const suite of profile.equalPiano ?? []) {
+      const baselineSuite = (baseline.equalPiano ?? [])
+        .find((row) => row.suite === suite.suite);
+      if (baselineSuite === undefined) continue;
+      for (const metric of [
+        "independentMatchRate",
+        "orderedAdvanceRate",
+        "completePassageRate",
+      ]) {
+        if (baselineSuite[metric] == null || suite[metric] == null) continue;
+        const label = metric.replace(/([A-Z])/g, "-$1").toLowerCase();
+        assessments.push(rateGain(
+          `dynamics/${renderer.rendererKey}/${suite.suite}/${label}`,
+          baselineSuite[metric],
+          suite[metric],
+        ));
+      }
+    }
+  }
+  const unsafeTotal = (id) => {
+    const isolated = (record?.isolated?.renderers ?? []).reduce((total, renderer) => (
+      total + (summaryFor(renderer, id)?.summary?.falseAdvanceCount ?? 0)
+    ), 0);
+    const sequence = (record?.sequence?.renderers ?? []).reduce((total, renderer) => {
+      const row = summaryFor(renderer, id);
+      return total +
+        (row?.totals?.falseAdvanceCount ?? 0) + (row?.totals?.skippedAdvanceCount ?? 0) +
+        (row?.totals?.duplicateAdvanceCount ?? 0) +
+        (row?.regressionTotals?.falseAdvanceCount ?? 0) +
+        (row?.regressionTotals?.skippedAdvanceCount ?? 0) +
+        (row?.regressionTotals?.duplicateAdvanceCount ?? 0);
+    }, 0);
+    const dynamics = (record?.dynamics?.renderers ?? []).reduce((total, renderer) => {
+      const row = summaryFor(renderer, id);
+      return total + (row?.safety?.falseAdvanceCount ?? 0) +
+        (row?.safety?.skippedAdvanceCount ?? 0) + (row?.safety?.duplicateAdvanceCount ?? 0);
+    }, 0);
+    return isolated + sequence + dynamics;
+  };
+  assessments.push(unsafeEventReduction(
+    "cross-domain/unsafe-event-count",
+    unsafeTotal(baselineId),
+    unsafeTotal(profileId),
+  ));
+  return assessments;
+}
+
+/**
+ * Rederives which approved candidate the frozen ordered rule promotes.
+ *
+ * The winner must beat every other approved candidate pairwise, and dominance is
+ * a partial order, so "no winner" is a real answer. This reports the identifier
+ * the rule produces and the step that decided each pair; it deliberately does not
+ * reproduce the material-improvement assessment, which the decision records and
+ * which is checked as agreement between the record and its own promotion.
+ */
+export function rederiveSelectedDefault(options) {
+  const candidates = [...options.approvedCandidateProfileIds];
+  const comparisons = [];
+  if (candidates.length === 0) return { winner: null, comparisons };
+  const wins = new Map(candidates.map((profileId) => [profileId, 0]));
+  for (const [index, left] of candidates.entries()) {
+    for (const right of candidates.slice(index + 1)) {
+      let order = 0;
+      let decidedByStep = null;
+      for (const step of SELECTION_STEPS) {
+        const leftValues = selectionStepValues(
+          step, left, options.liveArchives, options.confirmationArchive,
+        );
+        const rightValues = selectionStepValues(
+          step, right, options.liveArchives, options.confirmationArchive,
+        );
+        order = stepDominance(leftValues.values, rightValues.values, leftValues.better);
+        if (order !== 0) {
+          decidedByStep = step;
+          break;
+        }
+      }
+      const winner = order === -1 ? left : order === 1 ? right : null;
+      if (winner !== null) wins.set(winner, wins.get(winner) + 1);
+      comparisons.push({ left, right, winner, decidedByStep });
+    }
+  }
+  const outright = candidates.filter((profileId) => wins.get(profileId) === candidates.length - 1);
+  return { winner: outright.length === 1 ? outright[0] : null, comparisons };
+}
+
+/**
+ * Everything that makes the Task 29 file the round's production decision.
+ *
+ * The list is never read as a conclusion. Both digest links are recomputed from
+ * the records they name, the Task 26 root is rerun from both archived
+ * repetitions, membership is rederived from the eligibility manifest under the
+ * rule above, the bounded outcome is rederived from the branch and that
+ * membership, and the ablation record is recomputed from the archives rather than
+ * copied — so a decision that states a conclusion its own chain does not produce
+ * fails here.
+ */
+export function roundTwoApprovedProfilesProblems(
+  artifact,
+  result,
+  eligibility,
+  candidateManifest,
+  evidenceRuns,
+  requirementBytes,
+  liveArchives = [],
+  confirmationArchives = [],
+) {
+  const expected = artifact.roundTwoApprovedProfiles;
+  if (expected === undefined) return [];
+  if (Array.isArray(result) || typeof result !== "object" || result === null) {
+    return [`${artifact.name}: the approved-profile list is one record, not a list`];
+  }
+  const problems = [];
+  const check = (label, actual, wanted) => {
+    if (actual !== wanted) {
+      problems.push(
+        `${artifact.name}: ${label} ${printable(actual)}, expected ${printable(wanted)}`,
+      );
+    }
+  };
+  check("command", result.name, expected.name);
+  check("format version", result.formatVersion, expected.formatVersion);
+  check("round", result.roundId, expected.roundId);
+  check("outcome", result.outcome, expected.outcome);
+  check("reason", result.reason, expected.reason);
+  check("selected default", result.selectedDefaultProfileId, expected.selectedDefaultProfileId);
+  check("incumbent", result.incumbentProfileId, APPROVED_INCUMBENT_PROFILE_ID);
+  check("eligibility run status", result.eligibilityRunStatus, expected.eligibilityRunStatus);
+  check("eligibility manifest digest", result.eligibilityManifestDigest,
+    expected.eligibilityManifestDigest);
+  check("candidate manifest digest", result.candidateManifestDigest,
+    expected.candidateManifestDigest);
+  check("terminal outcome", result.task26TerminalOutcome, expected.task26TerminalOutcome);
+  check("Task 26 evidence digest", result.task26EvidenceDigest, expected.task26EvidenceDigest);
+  check("digest algorithm", result.digest?.algorithm, "fnv1a-32-canonical-json");
+  check("digest", result.digest?.value, expected.digest);
+  if (!DECISION_OUTCOMES.includes(result.outcome)) {
+    problems.push(`${artifact.name}: unknown outcome ${printable(result.outcome)}`);
+  }
+  const requirementOwed = result.outcome !== "promoted-candidate" ||
+    (result.repeatedChordResult ?? []).find(
+      ({ profileId }) => profileId === result.selectedDefaultProfileId,
+    )?.repeatedRecoveryOutcome !== "confirmed-full-resolution";
+  const keys = [
+    ...APPROVED_PROFILES_KEYS,
+    ...(Object.hasOwn(result, "selection") ? ["selection"] : []),
+    ...(requirementOwed ? ["modelEvidenceRequirement"] : []),
+  ];
+  for (const key of keys) {
+    if (!Object.hasOwn(result, key)) problems.push(`${artifact.name}: missing ${key}`);
+  }
+  for (const key of Object.keys(result)) {
+    if (!keys.includes(key)) problems.push(`${artifact.name}: carries forbidden field ${key}`);
+  }
+
+  const { digest: _digest, ...digestInput } = result;
+  check("recomputed digest", canonicalJsonDigest(digestInput), expected.digest);
+
+  // The residual is carried by a written requirement, referenced by the digest of
+  // its actual bytes: a requirement that can be emptied after the decision cites
+  // it is not a carried residual.
+  if (requirementOwed) {
+    const requirement = result.modelEvidenceRequirement ?? {};
+    check("requirement path", requirement.path, expected.modelEvidenceRequirementPath);
+    if (requirementBytes === null || requirementBytes === undefined) {
+      problems.push(
+        `${artifact.name}: ${printable(requirement.path)} is not in the repository`,
+      );
+    } else {
+      const digest = sha256(requirementBytes);
+      if (requirement.sha256 !== digest) {
+        problems.push(
+          `${artifact.name}: the requirement records SHA-256 ${printable(requirement.sha256)}, ` +
+            `and that file hashes to ${digest}`,
+        );
+      }
+    }
+  } else if (result.modelEvidenceRequirement !== undefined) {
+    problems.push(
+      `${artifact.name}: a confirmed full resolution still carries a residual requirement`,
+    );
+  }
+
+  // The chain: this record to the eligibility manifest, that one to the candidate
+  // manifest, and that one to the Task 26 archives, each recomputed from the
+  // record it describes rather than compared to the digest it states about itself.
+  if (typeof eligibility !== "object" || eligibility === null || Array.isArray(eligibility)) {
+    problems.push(`${artifact.name}: the eligibility manifest it chains to is not a record`);
+    return problems;
+  }
+  const { digest: _eligibilityDigest, ...eligibilityInput } = eligibility;
+  const eligibilityDigest = canonicalJsonDigest(eligibilityInput);
+  if (eligibility.digest?.value !== eligibilityDigest) {
+    problems.push(
+      `${artifact.name}: the eligibility manifest records digest ` +
+        `${printable(eligibility.digest?.value)}, recomputed ${eligibilityDigest}`,
+    );
+  }
+  if (result.eligibilityManifestDigest !== eligibilityDigest) {
+    problems.push(
+      `${artifact.name}: chains to eligibility manifest ` +
+        `${printable(result.eligibilityManifestDigest)}, and that record hashes to ` +
+        `${eligibilityDigest}`,
+    );
+  }
+  const { digest: _candidateDigest, ...candidateInput } = candidateManifest ?? {};
+  const candidateDigest = canonicalJsonDigest(candidateInput);
+  if (candidateManifest?.digest?.value !== candidateDigest) {
+    problems.push(
+      `${artifact.name}: the candidate manifest records digest ` +
+        `${printable(candidateManifest?.digest?.value)}, recomputed ${candidateDigest}`,
+    );
+  }
+  for (const [label, stated] of [
+    ["the approved-profile list", result.candidateManifestDigest],
+    ["the eligibility manifest", eligibility.candidateManifestDigest],
+  ]) {
+    if (stated !== candidateDigest) {
+      problems.push(
+        `${artifact.name}: ${label} chains to candidate manifest ${printable(stated)}, and that ` +
+          `record hashes to ${candidateDigest}`,
+      );
+    }
+  }
+  // The outcome, the reason, and the run status have to agree at every step, or
+  // the conclusion describes a round the chain did not measure.
+  if (result.eligibilityRunStatus !== eligibility.runStatus) {
+    problems.push(
+      `${artifact.name}: records run status ${printable(result.eligibilityRunStatus)}, and the ` +
+        `eligibility manifest records ${printable(eligibility.runStatus)}`,
+    );
+  }
+  for (const key of ["task26TerminalOutcome", "task26EvidenceDigest"]) {
+    for (const [label, record] of [
+      ["the eligibility manifest", eligibility],
+      ["the candidate manifest", candidateManifest ?? {}],
+    ]) {
+      if (result[key] !== record[key]) {
+        problems.push(
+          `${artifact.name}: the chain disagrees about ${key}: ${printable(result[key])} against ` +
+            `${label} ${printable(record[key])}`,
+        );
+      }
+    }
+  }
+  const expectedReason = eligibility.runStatus === "not-run-no-confirmable-candidate"
+    ? eligibility.reason
+    : null;
+  if (result.reason !== expectedReason) {
+    problems.push(
+      `${artifact.name}: records reason ${printable(result.reason)}, and the eligibility ` +
+        `manifest records ${printable(expectedReason)}`,
+    );
+  }
+  if (result.reason !== (candidateManifest?.notRunReason ?? null)) {
+    problems.push(
+      `${artifact.name}: records reason ${printable(result.reason)}, and the candidate manifest ` +
+        `records ${printable(candidateManifest?.notRunReason)}`,
+    );
+  }
+  if (!sameCanonicalValue(result.confirmationPartition, eligibility.confirmationPartition)) {
+    problems.push(
+      `${artifact.name}: its confirmation partition is not the one the eligibility manifest ` +
+        "measured",
+    );
+  }
+
+  // Membership, the bounded outcome, the live corpus, and the promoted default,
+  // all rederived from the archives rather than read from the record.
+  const liveResults = Array.isArray(result.liveCorpus?.results) ? result.liveCorpus.results : null;
+  const automatedEligibleProfileIds = (eligibility.runStatus === "completed"
+    ? (eligibility.entries ?? [])
+    : []).filter(({ automatedEligible }) => automatedEligible === true)
+    .map(({ profileId }) => profileId);
+  if (liveResults === null) {
+    problems.push(`${artifact.name}: records no live-corpus result list`);
+  } else {
+    const status = liveResults.length > 0 ? "collected" : "not-collected";
+    if (result.liveCorpus?.status !== status) {
+      problems.push(
+        `${artifact.name}: the live corpus reports status ${printable(result.liveCorpus?.status)} ` +
+          `with ${liveResults.length} results`,
+      );
+    }
+    if (eligibility.runStatus === "not-run-no-confirmable-candidate" && liveResults.length > 0) {
+      problems.push(
+        `${artifact.name}: the not-run branch confirmed no candidate, and a live corpus was ` +
+          "collected for one",
+      );
+    }
+    if (liveResults.length > 0) {
+      // A stated live result is an approval, so it is checked against the trials
+      // that produced it. Without the archives there is nothing to check it
+      // against, and an unverifiable approval is refused rather than accepted.
+      if (!Array.isArray(result.liveCorpus?.archives) ||
+          result.liveCorpus.archives.length === 0) {
+        problems.push(
+          `${artifact.name}: states live results and names no archive they came from`,
+        );
+      } else if (liveArchives.length === 0) {
+        problems.push(
+          `${artifact.name}: the live archives it names could not be read for verification`,
+        );
+      } else {
+        problems.push(...roundTwoLiveArchiveProblems(artifact.name, liveArchives, {
+          eligibilityManifestDigest: eligibilityDigest,
+          automatedEligibleProfileIds,
+        }));
+        const rederived = rederiveLiveGateResults(eligibility, liveArchives);
+        const stateStated = liveResults.map((row) => ({
+          profileId: row.profileId,
+          status: row.status,
+          failures: (row.gates ?? []).flatMap((gate) => (gate.failures ?? []).map((failure) => ({
+            gate: failure.gate,
+            measure: failure.measure,
+            setupId: failure.setupId,
+            trialId: failure.trialId,
+          }))),
+          setupCoverage: row.setupCoverage,
+        }));
+        const stateDerived = rederived.map((row) => ({
+          profileId: row.profileId,
+          status: row.status,
+          failures: row.failures,
+          setupCoverage: row.setupCoverage,
+        }));
+        if (canonicalJson(stateStated) !== canonicalJson(stateDerived)) {
+          problems.push(
+            `${artifact.name}: its live results are not what its own archives produce; the ` +
+              `archives rederive ${canonicalJson(stateDerived.map(({ profileId, status }) => (
+                `${profileId}=${status}`
+              )))}`,
+          );
+        }
+      }
+    }
+  }
+  const verifiedLiveResults = liveArchives.length > 0
+    ? rederiveLiveGateResults(eligibility, liveArchives)
+    : (liveResults ?? []);
+  const { approved, problems: membershipProblems } =
+    rederiveApprovedProfileIds(eligibility, verifiedLiveResults);
+  for (const problem of membershipProblems) problems.push(`${artifact.name}: ${problem}`);
+  const stated = Array.isArray(result.approvedProfileIds) ? result.approvedProfileIds : [];
+  if (new Set(stated).size !== stated.length) {
+    problems.push(`${artifact.name}: the approved list names a profile twice`);
+  }
+  if (stated[0] !== APPROVED_INCUMBENT_PROFILE_ID) {
+    problems.push(
+      `${artifact.name}: the approved list heads with ${printable(stated[0])} rather than the ` +
+        `measured incumbent ${APPROVED_INCUMBENT_PROFILE_ID}`,
+    );
+  }
+  if (!sameList([...stated].sort(), approved)) {
+    problems.push(
+      `${artifact.name}: approves ${stated.join(", ") || "nothing"}, and its own evidence ` +
+        `approves ${approved.join(", ")}`,
+    );
+  }
+  if (!stated.includes(result.selectedDefaultProfileId)) {
+    problems.push(
+      `${artifact.name}: the selected default ${printable(result.selectedDefaultProfileId)} is ` +
+        "not a member of the list it heads",
+    );
+  }
+  const approvedCandidates = approved
+    .filter((profileId) => profileId !== APPROVED_INCUMBENT_PROFILE_ID);
+  // The promoted identifier is rederived from the frozen ordered rule over the
+  // same archives. A record that names the top of a sweep, a caller's preference,
+  // or a tie resolved by hand fails here rather than shipping.
+  let ruleWinner = null;
+  if (approvedCandidates.length > 0) {
+    if (confirmationArchives.length < 2) {
+      problems.push(
+        `${artifact.name}: ranking approved candidates needs both archived confirmation ` +
+          "repetitions, and they were not available for verification",
+      );
+    } else {
+      const rankings = confirmationArchives.map((archive) => rederiveSelectedDefault({
+        approvedCandidateProfileIds: approvedCandidates,
+        liveArchives,
+        confirmationArchive: archive,
+      }));
+      const [first, ...rest] = rankings;
+      if (rest.some((ranking) => canonicalJson(ranking) !== canonicalJson(first))) {
+        problems.push(
+          `${artifact.name}: the confirmation repetitions rank the approved candidates ` +
+            "differently, so the ranking is a ranking of one run",
+        );
+      }
+      ruleWinner = first.winner;
+      // Materiality is rederived here rather than accepted from the record: a
+      // promotion earned on an axis Task 23's policy does not name, or refused on
+      // one it does, must fail verification rather than ship.
+      if (ruleWinner !== null) {
+        const assessments = confirmationArchives
+          .map((archive) => rederivePromotionMateriality(archive, ruleWinner));
+        const [firstAssessment, ...otherAssessments] = assessments;
+        if (otherAssessments.some((other) => (
+          canonicalJson(other) !== canonicalJson(firstAssessment)
+        ))) {
+          problems.push(
+            `${artifact.name}: the confirmation repetitions assess ${ruleWinner}'s materiality ` +
+              "differently, so the promotion rests on one run",
+          );
+        }
+        const material = firstAssessment.filter(({ material: met }) => met);
+        const promotedProfile = result.selection?.promotedProfileId ?? null;
+        if (material.length === 0 && promotedProfile !== null) {
+          problems.push(
+            `${artifact.name}: promotes ${printable(promotedProfile)}, and the frozen Task 23 ` +
+              "materiality finds no material axis in the archived measurements",
+          );
+        }
+        if (material.length > 0 && promotedProfile === null &&
+            result.selection?.notPromotedReason === "no-material-improvement") {
+          problems.push(
+            `${artifact.name}: refuses ${ruleWinner} for no material improvement, and the frozen ` +
+              `Task 23 materiality finds ${material.map(({ id }) => id).join(", ")}`,
+          );
+        }
+        // The record's own assessment must be the policy's, axis for axis.
+        const statedMaterial = (result.selection?.materialImprovement ?? [])
+          .map(({ id, material: met }) => `${id}=${met === true}`).sort();
+        const derivedMaterial = firstAssessment
+          .map(({ id, material: met }) => `${id}=${met === true}`).sort();
+        if (statedMaterial.length > 0 &&
+            canonicalJson(statedMaterial) !== canonicalJson(derivedMaterial)) {
+          problems.push(
+            `${artifact.name}: its material-improvement record is not the frozen Task 23 ` +
+              "assessment of its own archives",
+          );
+        }
+      }
+      const statedComparisons = (result.selection?.comparisons ?? []).map((comparison) => ({
+        winner: comparison.winnerProfileId === "" ? null : comparison.winnerProfileId,
+        decidedByStep: comparison.decidedByStep,
+      }));
+      const derivedComparisons = first.comparisons
+        .map(({ winner, decidedByStep }) => ({ winner, decidedByStep }));
+      if (canonicalJson(statedComparisons) !== canonicalJson(derivedComparisons)) {
+        problems.push(
+          `${artifact.name}: its selection record is not the comparison the frozen ordered rule ` +
+            "produces from its own archives",
+        );
+      }
+      const promotedProfileId = result.selection?.promotedProfileId ?? null;
+      if (promotedProfileId !== null && promotedProfileId !== ruleWinner) {
+        problems.push(
+          `${artifact.name}: promotes ${printable(promotedProfileId)}, and the frozen ordered ` +
+            `rule produces ${printable(ruleWinner)}`,
+        );
+      }
+      if (ruleWinner === null && result.selection?.notPromotedReason !==
+          "ordered-rule-did-not-separate") {
+        problems.push(
+          `${artifact.name}: the ordered rule separates no candidate, and the record records ` +
+            `${printable(result.selection?.notPromotedReason)}`,
+        );
+      }
+    }
+  } else if (result.selection !== undefined) {
+    problems.push(
+      `${artifact.name}: carries a selection record for a round that approved no candidate`,
+    );
+  }
+  const promotedProfileId = approvedCandidates.length > 0
+    ? (result.selection?.promotedProfileId ?? null)
+    : null;
+  const derivedOutcome = promotedProfileId !== null
+    ? "promoted-candidate"
+    : approvedCandidates.length > 0
+    ? "approved-without-material-improvement"
+    : eligibility.runStatus === "completed"
+    ? "round-two-candidate-set-exhausted"
+    : "round-two-grid-produced-no-eligible-improvement";
+  if (result.outcome !== derivedOutcome) {
+    problems.push(
+      `${artifact.name}: records outcome ${printable(result.outcome)}, and its own evidence ` +
+        `produces ${derivedOutcome}`,
+    );
+  }
+  if (derivedOutcome !== "promoted-candidate" &&
+      result.selectedDefaultProfileId !== APPROVED_INCUMBENT_PROFILE_ID) {
+    problems.push(
+      `${artifact.name}: the round promoted nothing and records default ` +
+        `${printable(result.selectedDefaultProfileId)}`,
+    );
+  }
+  if (derivedOutcome === "promoted-candidate" &&
+      result.selectedDefaultProfileId !== ruleWinner) {
+    problems.push(
+      `${artifact.name}: records default ${printable(result.selectedDefaultProfileId)}, and the ` +
+        `frozen ordered rule produces ${printable(ruleWinner)}`,
+    );
+  }
+  // Task 24's two labels are copied from the eligibility entries, never restated,
+  // so a recovery cannot be claimed here without the per-group evidence behind it.
+  const copied = (eligibility.runStatus === "completed" ? (eligibility.entries ?? []) : [])
+    .map(({ profileId, repeatedRecoveryOutcome, confirmationReproductionStatus }) => ({
+      profileId,
+      repeatedRecoveryOutcome,
+      confirmationReproductionStatus,
+    }));
+  if (!sameCanonicalValue(result.repeatedChordResult, copied)) {
+    problems.push(
+      `${artifact.name}: its repeated-chord result is not a copy of the eligibility manifest's ` +
+        "own labels",
+    );
+  }
+
+  // What each ablation selected and which rule refused it, recomputed from both
+  // archived repetitions. A conclusion that reports the round as having found
+  // nothing, when the stop rule refused ablations that did select profiles, fails
+  // here rather than reading as a bounded finding.
+  if (!Array.isArray(evidenceRuns) || evidenceRuns.length !== expected.evidencePaths.length) {
+    problems.push(`${artifact.name}: expected ${expected.evidencePaths.length} Task 26 repetitions`);
+    return problems;
+  }
+  evidenceRuns.forEach((run, index) => {
+    const label = `${artifact.name}: ${expected.evidencePaths[index]}`;
+    const [record] = Array.isArray(run) ? run : [];
+    if (record === undefined) {
+      problems.push(`${label} is not one Task 26 record`);
+      return;
+    }
+    const rerun = rerunRoundTwoSelection(record, expected);
+    if (rerun.evidenceDigest !== result.task26EvidenceDigest) {
+      problems.push(
+        `${label} recomputes to digest ${rerun.evidenceDigest}, and the chain references ` +
+          `${printable(result.task26EvidenceDigest)}`,
+      );
+    }
+    if (rerun.terminalOutcome !== result.task26TerminalOutcome) {
+      problems.push(
+        `${label} reruns to terminal outcome ${rerun.terminalOutcome}, and the chain records ` +
+          `${printable(result.task26TerminalOutcome)}`,
+      );
+    }
+    if (rerun.notRunReason !== result.reason) {
+      problems.push(
+        `${label} reruns to reason ${printable(rerun.notRunReason)}, and the chain records ` +
+          `${printable(result.reason)}`,
+      );
+    }
+    const recomputed = rerun.ablations.map(({ ablation, selectedProfileIds, stop }) => ({
+      ablation,
+      selectedProfileIds,
+      stopSatisfied: stop.satisfied,
+      stopReasons: stop.reasons,
+      registrable: stop.satisfied && rerun.ablationId === ablation,
+    }));
+    if (!sameCanonicalValue(result.ablations, recomputed)) {
+      problems.push(
+        `${label} reruns to ablations ${canonicalJson(recomputed)}, and the chain records ` +
+          `${canonicalJson(result.ablations ?? [])}`,
+      );
+    }
+  });
+  return problems;
+}
+
+/** Canonical-form equality, so field order never decides whether two records agree. */
+function sameCanonicalValue(left, right) {
+  return canonicalJson(left ?? null) === canonicalJson(right ?? null);
+}
+
+/**
+ * A decision that collected no live corpus wrote no live-corpus archive.
+ *
+ * The not-run branch's live outcome is that no session happened, so any other
+ * Task 29 file in `benchmark-results` is either a corpus this branch forbids or a
+ * placeholder that would later read as one.
+ */
+export function roundTwoLiveCorpusArchiveProblems(fileNames, listPath, liveCorpusStatus) {
+  if (liveCorpusStatus !== "not-collected") return [];
+  const listFile = listPath.split("/").at(-1);
+  const strays = fileNames
+    .filter((name) => /task29/i.test(name) && name !== listFile)
+    .sort();
+  return strays.length === 0
+    ? []
+    : [`No live corpus was collected, but found ${strays.join(", ")}`];
+}
+
+/** Verifies the committed Task 08, 10, 11, 22, 24, 26, 27, 28, and 29 evidence against frozen pins. */
 export async function verifyFrozenEvidence() {
   const problems = [];
   for (const artifact of EVIDENCE_ARTIFACTS) {
@@ -4775,6 +6082,54 @@ export async function verifyFrozenEvidence() {
         artifact.path,
       ));
     }
+    if (artifact.roundTwoApprovedProfiles !== undefined) {
+      const expected = artifact.roundTwoApprovedProfiles;
+      const [eligibility, candidateManifest, ...evidenceRuns] = await Promise.all([
+        expected.eligibilityManifestPath,
+        expected.candidateManifestPath,
+        ...expected.evidencePaths,
+      ].map(async (path) => JSON.parse(
+        (await readFile(join(REPOSITORY_ROOT, path))).toString("utf8"),
+      )));
+      // The requirement is read rather than trusted: the decision references it by
+      // the digest of its actual bytes, so those bytes have to exist.
+      let requirementBytes = null;
+      try {
+        requirementBytes = await readFile(join(
+          REPOSITORY_ROOT,
+          result.modelEvidenceRequirement?.path ?? expected.modelEvidenceRequirementPath,
+        ));
+      } catch (error) {
+        if (error.code !== "ENOENT") throw error;
+      }
+      // A collected live corpus is read from the files the record names, and the
+      // ranking from the confirmation repetitions the eligibility manifest names,
+      // so both are rederived from bytes rather than from the record's summary.
+      const liveArchives = await readRoundTwoLiveArchives(result.liveCorpus?.archives ?? []);
+      const confirmationArchives = eligibility.runStatus === "completed"
+        ? [...(await readRoundTwoConfirmationArchives([
+          eligibility.confirmationEvidence?.runOneArchive,
+          eligibility.confirmationEvidence?.runTwoArchive,
+        ])).values()]
+          .filter((archive) => archive.record !== undefined)
+          .map((archive) => archive.record)
+        : [];
+      problems.push(...roundTwoApprovedProfilesProblems(
+        artifact,
+        result,
+        eligibility,
+        candidateManifest,
+        evidenceRuns,
+        requirementBytes,
+        liveArchives,
+        confirmationArchives,
+      ));
+      problems.push(...roundTwoLiveCorpusArchiveProblems(
+        await readdir(join(REPOSITORY_ROOT, "benchmark-results")),
+        artifact.path,
+        result.liveCorpus?.status,
+      ));
+    }
     if (artifact.roundTwoEligibilityManifest !== undefined) {
       const expected = artifact.roundTwoEligibilityManifest;
       const [candidateManifest, ...evidenceRuns] = await Promise.all(
@@ -4839,6 +6194,17 @@ export async function verifyFrozenEvidence() {
           `${result.confirmationPartition?.traceCount}`,
         `candidateManifest=${result.candidateManifestDigest}`,
         `manifest=${result.digest?.value}`,
+      );
+    }
+    if (artifact.roundTwoApprovedProfiles !== undefined) {
+      details.push(
+        `outcome=${result.outcome}`,
+        `reason=${result.reason ?? "none"}`,
+        `default=${result.selectedDefaultProfileId}`,
+        `approved=${(result.approvedProfileIds ?? []).join("+")}`,
+        `liveCorpus=${result.liveCorpus?.status}`,
+        `eligibility=${result.eligibilityManifestDigest}`,
+        `list=${result.digest?.value}`,
       );
     }
     if (artifact.roundTwoCandidateManifest !== undefined) {

@@ -841,7 +841,9 @@ Tasks 01-13 and 16 are complete and closed the first discovery round with
 `no-safe-candidate`. Tasks 22-29 are the second round described above: Tasks 22-24
 diagnosed and scoped it, Task 25 built its corpus, Task 26 decided how much new
 parameter the evidence justified, Task 27 searched, Task 28 confirmed on its
-not-run branch, and Task 29 decides next. The corpus precedes the axis
+not-run branch, and Task 29 closed the round on August 25, 2026 by retaining
+`baseline-v1`, freezing the approved-profile list as `[baseline-v1]`, and emitting
+the decoder/model-evidence requirement as a separate document. The corpus precedes the axis
 deliberately, because Task 26's first ablation is the existing grid measured
 against Task 25's corpus.
 Tasks 27-29 form an immutable artifact chain — candidate manifest, then eligibility
@@ -850,7 +852,8 @@ manifest referencing its digest, then approved-profile list referencing that one
 may be built in parallel with Tasks 22-27, since the harness reads whichever
 eligibility manifest a confirmation task last froze rather than any one round's
 candidate list. Task 15 stays deferred with its `no-safe-candidate` record: Task 28
-produced no eligible candidate, so Task 29 does not require it this round.
+produced no eligible candidate, so Task 29 did not require it this round and
+collected no live corpus.
 
 Task 17 additionally requires Task 29's approved-profile list to hold more than
 `baseline-v1`. Calibration selects among approved profiles and cannot approve one,
@@ -860,7 +863,10 @@ Task 17 concludes `fixed-profile-sufficient`, mark Tasks 18-20 skipped with that
 decision as their completion evidence. Task 21 remains a separate later research
 branch and is reachable only through Task 17; if round two produces no approved
 alternative, Task 21's own prerequisite cannot be met, and Task 29 instead emits a
-written requirement for a new decoder and model-evidence plan. That requirement is
+written requirement for a new decoder and model-evidence plan. Round two did end
+that way: Task 29's approved-profile list holds `baseline-v1` alone, so Tasks 17
+and 21 are unreachable until a later round approves an alternative, and the
+requirement is `plans/listen-decoder-model-evidence-requirement.md`. That requirement is
 also emitted if an approved profile provides only partial repeated-chord recovery
 or lacks reproducing confirmation evidence. It is this plan's output, not another
 task inside it, because model work is an explicit non-goal here.
@@ -1989,7 +1995,10 @@ the shipped identifier.
 
 ### Task 17 — Run the calibration feasibility experiment and make a go/no-go decision
 
-**Status:** Required research decision. **Prerequisites:** Tasks 15 and 29
+**Status:** Blocked as of August 25, 2026. Task 29 is complete, and its
+approved-profile list holds `baseline-v1` alone, so this task's second
+prerequisite is unmet until a later round approves an alternative profile.
+**Prerequisites:** Tasks 15 and 29
 complete, and Task 29's versioned approved-profile list holds at least one entry
 besides `baseline-v1`. Registry membership does not satisfy this: the registry
 retains every historical and rejected profile, so only the approved list counts.
@@ -2125,7 +2134,11 @@ matches the shipped implementation.
 
 ### Task 21 — Evaluate confidence normalization only as a separate later branch
 
-**Status:** Optional future research. **Prerequisites:** Task 17 complete and a
+**Status:** Optional future research, and unreachable as of August 25, 2026: it
+requires Task 17, which round two left blocked with an approved-profile list of
+`baseline-v1` alone. Task 29 therefore routed the round's residual decoder
+evidence to `plans/listen-decoder-model-evidence-requirement.md` rather than here.
+**Prerequisites:** Task 17 complete and a
 documented residual instrument-dependent domain shift that approved-profile
 selection cannot safely address.
 
@@ -3442,7 +3455,17 @@ be quoted as this task's evidence. The full suite and the production build pass.
 
 ### Task 29 — Make the round-two production decision
 
-**Status:** Required. **Prerequisites:** Task 28 complete, and Tasks 14-15 complete
+**Status:** Completed August 25, 2026, on the no-candidate branch. The bounded
+conclusion is `round-two-grid-produced-no-eligible-improvement`, described by
+reason `no-ablation-accepted` carried through from Tasks 27 and 28;
+`DEFAULT_LISTEN_MATCHER_PROFILE_ID` is unchanged at `baseline-v1`; and the
+approved-profile list is frozen at
+`benchmark-results/listen-round-two-approved-profiles-task29.json`, digest
+`dbf777ba`, chained to eligibility manifest `20be9d6d`. Tasks 14-15 were not
+required, because the eligibility manifest holds no automated-eligible candidate
+and no live corpus was collected. The residual is routed to
+`plans/listen-decoder-model-evidence-requirement.md`, referenced by content digest.
+**Prerequisites:** Task 28 complete, and Tasks 14-15 complete
 if the eligibility manifest holds any automated-eligible candidate.
 
 **Objective:** Make one auditable global-default decision, and produce the
@@ -3546,6 +3569,44 @@ retains baseline with a conclusion bounded to what this round measured, an
 approved-profile list exists with defined membership, the residual work is carried
 either by a reachable task or by a written new-plan requirement, and rollback still
 requires changing only the default identifier.
+
+**Completed-branch enforcement:** The round approved no candidate, so its own
+artifact exercises none of the live or promotion rules. Those rules are
+nonetheless enforced rather than described. A completed round's live archives carry the
+performance — the authored score with its target and played pitches, score
+position, chord size, register, dynamic, articulation, tempo, ambiguity, and
+safety reason, plus the target-independent decoded trace captured once and shared
+by every column, with no audio — and every archived outcome is reproduced by
+replaying that trace through the profile's thresholds. Live results are then
+rederived from those trials by path, SHA-256, and record digest — per setup, per
+trial, and per counter, with required trial-class and acoustic and digital
+coverage, absolute safety on the negative classes, Task 24's frozen repeated-chord
+boundaries, and one decoder hop of latency tolerance — so neither a
+`{profileId, status: "passed"}` row nor an overstated outcome can approve anything.
+The promoted default is rederived by applying this plan's ordered Candidate
+selection rule to the same archives, comparing each step by dominance per renderer
+and per instrument with ordered and complete-passage counts kept apart, requiring
+both confirmation repetitions to rank alike, and requiring the winner to be
+material under Task 23's frozen recipe as the confirmation matrix applies it. A round that approves
+candidates but cannot separate them, or whose winner is not materially better,
+records `approved-without-material-improvement`: the profiles stay approved and
+offerable by calibration, and the default does not move.
+
+**Measured outcome:** All three staged ablations selected profiles — three, two,
+and two respectively — and Task 24's stop rule refused every one of them for
+`selected-set-has-no-material-repeated-recovery`, because `baseline-v1` reproduces
+the late-recovery phenomenon on neither round-two authored group and no candidate
+can therefore show a material gain in that stratum. Nothing was registrable, so
+nothing was searched, registered, or confirmed. The eligibility manifest holds no
+entry, so the round carries neither `repeatedRecoveryOutcome` nor
+`confirmationReproductionStatus`, and nothing is described as fixing `v05`; the
+shipped default still recovers that chord at source distance 2 and 2,220 ms and
+never arms it in `v13` or the mixed run. Round one's candidates had cleared the
+Task 06 false advance, improved 16 of 21 leaf domains, and cut late advances from 8
+to 2; round two recovers none of that. The version-2 confirmation fixtures remain
+unobserved — 12 traces, 0 decoded, ledger `1f9613bd` unchanged — and stay available
+to a later round. The complete record is the August 25 entry in
+`tools/online_amt/LISTEN_BENCHMARK.md`.
 
 ## Production rollout and rollback
 

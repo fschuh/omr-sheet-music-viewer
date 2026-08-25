@@ -234,6 +234,21 @@ export const LISTEN_MATCHER_PROFILES: Readonly<
  * measurements would be post-result retuning; a different default needs a new
  * discovery round whose search accounts for isolated omitted-bass evidence.
  *
+ * The August 25, 2026 round-two production decision leaves it unchanged again.
+ * That round accepted no ablation, registered no candidate, and confirmed
+ * nothing, so its bounded conclusion is
+ * `round-two-grid-produced-no-eligible-improvement` with reason
+ * `no-ablation-accepted`, and the approved-profile list it froze is exactly
+ * `[baseline-v1]`. The searched grids did select profiles the stop rule then
+ * refused; adopting one of them here would be choosing a value in response to
+ * the measurements that refused it.
+ *
+ * Registry membership is not approval. This registry deliberately retains every
+ * historical and rejected profile so a regression can be reproduced and a default
+ * rolled back, which is why the approved list lives in
+ * `listenRoundTwoProductionDecision.ts` and why any later calibration path must
+ * ask that module — not this one — what it may offer.
+ *
  * This constant is also the rollback. Every released profile stays in the
  * registry, so reverting a future default is one edit here rather than a
  * reconstruction of its values from the benchmark history.

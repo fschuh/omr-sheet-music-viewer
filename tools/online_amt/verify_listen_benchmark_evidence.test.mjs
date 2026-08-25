@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -26,12 +27,19 @@ import {
   partitionEvidenceRole,
   readRoundTwoConfirmationArchives,
   roundTwoCaptureIdentityRows,
+  rederiveApprovedProfileIds,
   rederiveRoundTwoEligibilityEntries,
   rederiveRoundTwoGateVerdicts,
   confirmationArchiveEvidenceProblems,
   roundTwoConfirmationArchiveProblems,
   roundTwoConfirmationMatrixProblems,
+  rederiveLiveGateResults,
+  rederivePromotionMateriality,
+  rederiveSelectedDefault,
+  roundTwoApprovedProfilesProblems,
   roundTwoEligibilityManifestProblems,
+  roundTwoLiveArchiveProblems,
+  roundTwoLiveCorpusArchiveProblems,
   roundTwoSearchArchiveProblems,
   rerunRoundTwoSelection,
   task24DomainArchiveProblems,
@@ -2794,6 +2802,785 @@ test("the zero branch may not leave a search archive behind", () => {
     [manifestFile, "listen-round-two-search-task27-run1.json"],
     TASK27_ARTIFACT.path,
   )[0].includes("listen-round-two-search-task27-run1.json"));
+});
+
+/* ------------------------------------------------------------------------- *
+ * Task 29: the approved-profile list
+ * ------------------------------------------------------------------------- */
+
+const TASK29_ARTIFACT = {
+  name: "Task 29 round-two approved-profile list",
+  path: "benchmark-results/listen-round-two-approved-profiles-task29.json",
+  roundTwoApprovedProfiles: {
+    name: "listen-round-two-approved-profiles",
+    formatVersion: 1,
+    roundId: "round-two",
+    outcome: "round-two-grid-produced-no-eligible-improvement",
+    reason: "no-ablation-accepted",
+    selectedDefaultProfileId: "baseline-v1",
+    eligibilityRunStatus: "not-run-no-confirmable-candidate",
+    eligibilityManifestDigest: "20be9d6d",
+    candidateManifestDigest: "21655efa",
+    task26TerminalOutcome: "bass-axis-unsupported",
+    task26EvidenceDigest: "8dfe2f1b",
+    digest: "dbf777ba",
+    modelEvidenceRequirementPath: "plans/listen-decoder-model-evidence-requirement.md",
+    eligibilityManifestPath: TASK28_ARTIFACT.path,
+    candidateManifestPath: TASK27_ARTIFACT.path,
+    evidencePaths: TASK27_ARTIFACT.roundTwoCandidateManifest.evidencePaths,
+    repeatedRecoveryBoundaries:
+      TASK27_ARTIFACT.roundTwoCandidateManifest.repeatedRecoveryBoundaries,
+    domainRegretMaterialBoundary: 0.01,
+    knownDiscoveryGroupIds: TASK27_ARTIFACT.roundTwoCandidateManifest.knownDiscoveryGroupIds,
+    processLocalDigestFields: TASK27_ARTIFACT.roundTwoCandidateManifest.processLocalDigestFields,
+  },
+};
+
+async function task29List() {
+  return JSON.parse(await readFile(
+    join(import.meta.dirname, "../..", TASK29_ARTIFACT.path),
+    "utf8",
+  ));
+}
+
+async function task29Requirement() {
+  return readFile(join(
+    import.meta.dirname,
+    "../..",
+    TASK29_ARTIFACT.roundTwoApprovedProfiles.modelEvidenceRequirementPath,
+  ));
+}
+
+async function task29Chain() {
+  return Promise.all([
+    task29List(),
+    task28Manifest(),
+    task27Manifest(),
+    task27Evidence(),
+    task29Requirement(),
+  ]);
+}
+
+test("the committed approved list resolves all three chain links", async () => {
+  const [list, eligibility, candidate, evidence, requirement] = await task29Chain();
+  assert.deepEqual(
+    roundTwoApprovedProfilesProblems(
+      TASK29_ARTIFACT,
+      list,
+      eligibility,
+      candidate,
+      evidence,
+      requirement,
+    ),
+    [],
+  );
+  // Link three to two, two to one, one to the archives, with the terminal outcome
+  // and the reason agreeing at every step.
+  assert.equal(list.eligibilityManifestDigest, canonicalJsonDigest(
+    Object.fromEntries(Object.entries(eligibility).filter(([key]) => key !== "digest")),
+  ));
+  assert.equal(list.candidateManifestDigest, eligibility.candidateManifestDigest);
+  assert.equal(list.reason, eligibility.reason);
+  assert.equal(list.reason, candidate.notRunReason);
+  for (const run of evidence) {
+    const rerun = rerunRoundTwoSelection(run[0], TASK29_ARTIFACT.roundTwoApprovedProfiles);
+    assert.equal(rerun.evidenceDigest, list.task26EvidenceDigest);
+    assert.equal(rerun.terminalOutcome, list.task26TerminalOutcome);
+    assert.equal(rerun.notRunReason, list.reason);
+  }
+});
+
+test("a decision that reports the round as finding nothing is refused", async () => {
+  const [list, eligibility, candidate, evidence, requirement] = await task29Chain();
+  const problemsFor = (record) => roundTwoApprovedProfilesProblems(
+    TASK29_ARTIFACT,
+    record,
+    eligibility,
+    candidate,
+    evidence,
+    requirement,
+  );
+  // The stop rule refused three ablations that each selected profiles. A
+  // conclusion that drops what they selected, or claims one was registrable,
+  // fails against the rerun rather than reading as a bounded finding.
+  assert.ok(problemsFor(withRecomputedDigest({
+    ...list,
+    ablations: list.ablations.map((ablation) => ({ ...ablation, selectedProfileIds: [] })),
+  })).some((problem) => problem.includes("reruns to ablations")));
+  assert.ok(problemsFor(withRecomputedDigest({
+    ...list,
+    ablations: list.ablations.map((ablation) => ({ ...ablation, registrable: true })),
+  })).some((problem) => problem.includes("reruns to ablations")));
+  assert.deepEqual(
+    list.ablations.map(({ selectedProfileIds }) => selectedProfileIds.length),
+    [3, 2, 2],
+  );
+});
+
+test("the two bounded conclusions are not interchangeable", async () => {
+  const [list, eligibility, candidate, evidence, requirement] = await task29Chain();
+  // A matrix that never ran cannot report its candidate set as exhausted: that
+  // conclusion belongs to a run that spent the confirmation fixtures.
+  const relabelled = withRecomputedDigest({
+    ...list,
+    outcome: "round-two-candidate-set-exhausted",
+  });
+  const problems = roundTwoApprovedProfilesProblems(
+    { ...TASK29_ARTIFACT, roundTwoApprovedProfiles: {
+      ...TASK29_ARTIFACT.roundTwoApprovedProfiles,
+      outcome: "round-two-candidate-set-exhausted",
+      digest: relabelled.digest.value,
+    } },
+    relabelled,
+    eligibility,
+    candidate,
+    evidence,
+    requirement,
+  );
+  assert.ok(problems.some((problem) => problem.includes("its own evidence produces")));
+});
+
+test("membership is rederived, and live evidence cannot approve around the gates", () => {
+  const notRun = { runStatus: "not-run-no-confirmable-candidate", entries: [] };
+  assert.deepEqual(rederiveApprovedProfileIds(notRun, []).approved, ["baseline-v1"]);
+  const completed = {
+    runStatus: "completed",
+    entries: [
+      { profileId: "early-open-v3", automatedEligible: true },
+      { profileId: "steady-open-v3", automatedEligible: true },
+      { profileId: "early-held-v3", automatedEligible: false },
+    ],
+  };
+  // Passed live gates approve; failed and skipped ones do not.
+  assert.deepEqual(
+    rederiveApprovedProfileIds(completed, [
+      { profileId: "early-open-v3", status: "passed" },
+      { profileId: "steady-open-v3", status: "failed" },
+    ]).approved,
+    ["baseline-v1", "early-open-v3"],
+  );
+  assert.deepEqual(rederiveApprovedProfileIds(completed, []).approved, ["baseline-v1"]);
+  assert.deepEqual(
+    rederiveApprovedProfileIds(completed, [
+      { profileId: "early-open-v3", status: "not-collected" },
+    ]).approved,
+    ["baseline-v1"],
+  );
+  // A live row for a candidate the automated matrix rejected is a fault.
+  assert.equal(
+    rederiveApprovedProfileIds(completed, [
+      { profileId: "early-held-v3", status: "passed" },
+    ]).problems.length,
+    1,
+  );
+});
+
+test("an overstated approved list fails against its own evidence", async () => {
+  const [list, eligibility, candidate, evidence, requirement] = await task29Chain();
+  const problemsFor = (record) => roundTwoApprovedProfilesProblems(
+    TASK29_ARTIFACT,
+    record,
+    eligibility,
+    candidate,
+    evidence,
+    requirement,
+  );
+  assert.ok(problemsFor(withRecomputedDigest({
+    ...list,
+    approvedProfileIds: ["baseline-v1", "early-open-v2"],
+  })).some((problem) => problem.includes("its own evidence approves")));
+  // The not-run branch collected no live corpus, and a collected one here would
+  // describe a session played against candidates the round never confirmed.
+  assert.ok(problemsFor(withRecomputedDigest({
+    ...list,
+    liveCorpus: { status: "collected", results: [{ profileId: "early-open-v2", status: "passed" }] },
+  })).some((problem) => problem.includes("a live corpus was collected")));
+  // Task 24's labels are copied from the eligibility entries, never restated.
+  assert.ok(problemsFor(withRecomputedDigest({
+    ...list,
+    repeatedChordResult: [{
+      profileId: "early-open-v2",
+      repeatedRecoveryOutcome: "confirmed-full-resolution",
+      confirmationReproductionStatus: "reproduced",
+    }],
+  })).some((problem) => problem.includes("not a copy of the eligibility manifest")));
+});
+
+test("the residual requirement is checked against the bytes it names", async () => {
+  const [list, eligibility, candidate, evidence, requirement] = await task29Chain();
+  const problemsFor = (record, bytes = requirement) => roundTwoApprovedProfilesProblems(
+    TASK29_ARTIFACT,
+    record,
+    eligibility,
+    candidate,
+    evidence,
+    bytes,
+  );
+  // A requirement that can be emptied after the decision cites it is not a
+  // carried residual, so the digest is recomputed from the file.
+  assert.ok(problemsFor(list, Buffer.from("# emptied\n"))
+    .some((problem) => problem.includes("that file hashes to")));
+  assert.ok(problemsFor(list, null)
+    .some((problem) => problem.includes("is not in the repository")));
+  const { modelEvidenceRequirement: _requirement, ...stripped } = list;
+  assert.ok(problemsFor(withRecomputedDigest(stripped))
+    .some((problem) => problem.includes("missing modelEvidenceRequirement")));
+});
+
+/* --- The completed branch: live approval and the ordered rule -------------- */
+
+const LIVE_TRIAL_CLASSES = [
+  "single-note",
+  "chord",
+  "repeated-chord",
+  "wrong-note",
+  "wrong-chord-member",
+  "added-note",
+  "omitted-bass",
+  "silence-noise",
+];
+const LIVE_NEGATIVE = new Set([
+  "wrong-note",
+  "wrong-chord-member",
+  "added-note",
+  "omitted-bass",
+  "silence-noise",
+]);
+const TASK29_CANDIDATES = ["early-open-v2", "steady-open-v2"];
+
+/** One archived live session, uneventful unless a trial is overridden. */
+function liveArchiveRecord(eligibilityManifestDigest, override = () => ({})) {
+  const columns = ["baseline-v1", ...TASK29_CANDIDATES];
+  const setups = [
+    { setupId: "acoustic-upright-room-a", source: "acoustic-piano" },
+    { setupId: "digital-stage-line", source: "digital-line-output" },
+  ];
+  const record = {
+    name: "listen-round-two-live-corpus",
+    formatVersion: 1,
+    roundId: "round-two",
+    eligibilityManifestDigest,
+    baselineProfileId: "baseline-v1",
+    profileIds: columns,
+    setups: setups.map((setup) => ({
+      ...setup,
+      instrumentLabel: `${setup.setupId} instrument`,
+      microphoneLabel: "cardioid at 1 m",
+      roomLabel: "ordinary",
+      trials: LIVE_TRIAL_CLASSES.map((trialClass) => ({
+        trialId: `${setup.setupId}/${trialClass}`,
+        sessionId: setup.setupId,
+        trialClass,
+        expectedCorrect: !LIVE_NEGATIVE.has(trialClass),
+        // The performance the outcomes were replayed from. The verifier has no
+        // matcher, so it checks that the evidence is present, coherent, and
+        // shared by every column; the replay itself is enforced where the matcher
+        // lives, in `listenRoundTwoLiveEvidence.ts` and its tests.
+        musical: {
+          scorePosition: 0,
+          chordSize: 3,
+          registerBand: "middle",
+          dynamic: "medium",
+          articulation: "normal",
+          tempoIntervalMs: 1_000,
+          ambiguity: "distinguishable",
+          safetyReason: LIVE_NEGATIVE.has(trialClass) ? "a required pitch was replaced" : null,
+          repeatedChordPitches: trialClass === "repeated-chord" ? [62, 74, 82] : null,
+        },
+        intervalMs: 1_000,
+        sequence: {
+          id: `${setup.setupId}/${trialClass}`,
+          family: LIVE_NEGATIVE.has(trialClass) ? "safety" : "correct",
+          label: trialClass,
+          targets: [[55, 59, 62]],
+          attacks: [{
+            at: 0,
+            targetIndex: 0,
+            notes: [{ midi: 55 }, { midi: 59 }, { midi: 62 }],
+            expectedAdvance: !LIVE_NEGATIVE.has(trialClass),
+            targetStart: LIVE_NEGATIVE.has(trialClass) ? true : undefined,
+          }],
+        },
+        decodedTrace: {
+          sampleRate: 16_000,
+          chunkSize: 512,
+          relevantPitches: [55, 59, 62],
+          renderer: { key: "live" },
+          audioDiagnostics: { frameCount: 512, durationMs: 32, peak: 0.4, rms: 0.1 },
+          maximumInferenceMs: 4,
+          frames: [{ capturedAtMs: 0, onsets: [], noteEvents: [], activePitches: [] }],
+        },
+        outcomes: columns.map((profileId) => {
+          const negative = LIVE_NEGATIVE.has(trialClass);
+          const isBaseline = profileId === "baseline-v1";
+          return {
+            profileId,
+            advanced: !negative,
+            correctAdvance: !negative,
+            falseAdvanceCount: 0,
+            skippedAdvanceCount: 0,
+            duplicateAdvanceCount: 0,
+            incompleteCarriedBassAdvanceCount: 0,
+            latencyMs: negative ? null : 200,
+            repeatedRecovery: trialClass === "repeated-chord"
+              ? {
+                sourceDistance: isBaseline ? 1 : 0,
+                attributionDelayMs: isBaseline ? 720 : 240,
+              }
+              : null,
+            ...override({ profileId, trialClass, setupId: setup.setupId, isBaseline }),
+          };
+        }),
+      })),
+    })),
+  };
+  const { digest: _digest, ...rest } = record;
+  return { ...record, digest: { algorithm: "fnv1a-32-canonical-json", value: canonicalJsonDigest(rest) } };
+}
+
+/** The read form the verifier consumes: the reference, the bytes, and the record. */
+function liveArchiveFile(record, path = "benchmark-results/listen-round-two-live-task29-a.json") {
+  const bytes = `${JSON.stringify(record, null, 2)}\n`;
+  const fileSha256 = createHash("sha256").update(bytes).digest("hex");
+  return {
+    reference: { path, sha256: fileSha256, digest: record.digest.value },
+    path,
+    fileSha256,
+    record,
+  };
+}
+
+/** One confirmation repetition, reduced to what the ranking reads from it. */
+function confirmationArchiveRecord(tune = () => ({}), materiality = undefined) {
+  const columns = ["baseline-v1", ...TASK29_CANDIDATES];
+  const captures = ["direct", "tone"].flatMap((rendererKey) => (
+    [0, 1, 2, 3].map((index) => ({ traceId: `${rendererKey}/trace-${index}`, rendererKey }))
+  ));
+  return {
+    name: "listen-profile-validation",
+    captures,
+    outcomes: captures.flatMap((capture, index) => columns.map((profileId) => ({
+      traceId: capture.traceId,
+      profileId,
+      correctAdvanceCount: profileId === "baseline-v1" && index % 4 === 0 ? 0 : 1,
+      independentMatchCount: profileId === "baseline-v1" ? 3 : 4,
+      orderedAdvanceCount: profileId === "baseline-v1" ? 1 : 2,
+      completePassageCount: 1,
+      falseAdvanceCount: 0,
+      skippedAdvanceCount: 0,
+      duplicateAdvanceCount: 0,
+      incompleteCarriedBassAdvances: 0,
+      ...tune({ profileId, rendererKey: capture.rendererKey }),
+    }))),
+    domainSummaries: ["direct", "tone"].flatMap((rendererKey) => columns.map((profileId) => ({
+      profileId,
+      gateCode: "release-isolated-latency",
+      domainId: `release-isolated-latency#${rendererKey}`,
+      traceIds: captures.filter((capture) => capture.rendererKey === rendererKey)
+        .map(({ traceId }) => traceId),
+      p95OnsetToAdvanceMs: 180,
+    }))),
+    // The measured isolated domain, in the shape Task 23's frozen materiality
+    // reads. Without it a promotion has no authorized axis to rest on, which is
+    // itself one of the things the verifier now refuses.
+    isolated: {
+      renderers: ["direct", "tone"].map((rendererKey) => ({
+        rendererKey,
+        correctTrialCount: 100,
+        profiles: columns.map((profileId) => ({
+          profileId,
+          correctAdvanceCount: profileId === "baseline-v1" ? 90 : (materiality?.(profileId) ?? 95),
+          courseClearAdvanceCount: 50,
+          courseClearCorrectTrialCount: 54,
+          summary: { p95OnsetToAdvanceMs: 180, falseAdvanceCount: 0 },
+        })),
+      })),
+    },
+  };
+}
+
+/**
+ * A completed Task 29 chain: candidate manifest, eligibility manifest, live
+ * archives, confirmation repetitions, and the decision over them.
+ *
+ * Round two took the not-run branch, so none of this exists in the repository.
+ * The completed branch's rules are real rules all the same, and they are only
+ * enforced if they can be exercised.
+ */
+async function completedTask29Chain(options = {}) {
+  const candidateManifest = withRecomputedDigest({
+    ...(await task27Manifest()),
+    candidateProfileIds: TASK29_CANDIDATES,
+    notRunReason: null,
+    ablationId: "ablation-2-refined-family",
+  });
+  const eligibility = withRecomputedDigest({
+    ...(await task28Manifest()),
+    runStatus: "completed",
+    reason: undefined,
+    candidateManifestDigest: candidateManifest.digest.value,
+    entries: TASK29_CANDIDATES.map((profileId) => ({
+      profileId,
+      automatedEligible: true,
+      rejectionReasons: [],
+      repeatedRecoveryOutcome: "material-partial-recovery",
+      confirmationReproductionStatus: "reproduced",
+    })),
+    confirmationPartition: {
+      traceCount: 12,
+      decodedTraceCount: 12,
+      priorLedgerHash: "1f9613bd",
+      traceGenerationHash: "d1971fa3",
+      traceIdentityHash: "a5695acc",
+    },
+    confirmationEvidence: {
+      runOneArchive: "run1.json",
+      runOneSha256: "a".repeat(64),
+      runTwoArchive: "run2.json",
+      runTwoSha256: "b".repeat(64),
+      comparisonDigest: "c".repeat(64),
+    },
+  });
+  const { digest: _eligibilityDigest, ...eligibilityRest } = eligibility;
+  const eligibilityDigest = canonicalJsonDigest(eligibilityRest);
+  const liveArchives = [liveArchiveFile(
+    liveArchiveRecord(eligibilityDigest, options.liveOverride),
+  )];
+  const confirmationArchives = [confirmationArchiveRecord(), confirmationArchiveRecord()];
+  const liveResults = rederiveLiveGateResults(eligibility, liveArchives);
+  const approvedCandidates = liveResults
+    .filter(({ status }) => status === "passed")
+    .map(({ profileId }) => profileId);
+  const ranking = rederiveSelectedDefault({
+    approvedCandidateProfileIds: approvedCandidates,
+    liveArchives,
+    confirmationArchive: confirmationArchives[0],
+  });
+  const record = {
+    name: "listen-round-two-approved-profiles",
+    formatVersion: 1,
+    roundId: "round-two",
+    outcome: ranking.winner === null
+      ? "approved-without-material-improvement"
+      : "promoted-candidate",
+    reason: null,
+    selectedDefaultProfileId: ranking.winner ?? "baseline-v1",
+    incumbentProfileId: "baseline-v1",
+    approvedProfileIds: ["baseline-v1", ...approvedCandidates],
+    eligibilityRunStatus: "completed",
+    eligibilityManifestDigest: eligibilityDigest,
+    candidateManifestDigest: candidateManifest.digest.value,
+    task26TerminalOutcome: eligibility.task26TerminalOutcome,
+    task26EvidenceDigest: eligibility.task26EvidenceDigest,
+    liveCorpus: {
+      status: "collected",
+      archives: liveArchives.map(({ reference }) => reference),
+      results: liveResults.map((row) => ({
+        profileId: row.profileId,
+        status: row.status,
+        setupCoverage: row.setupCoverage,
+        gates: [
+          "live-coverage",
+          "live-safety",
+          "live-correctness",
+          "live-repeated-recovery",
+          "live-latency",
+        ].map((gate) => ({
+          gate,
+          passed: !row.failures.some((failure) => failure.gate === gate),
+          failures: row.failures.filter((failure) => failure.gate === gate)
+            .map((failure) => ({ ...failure })),
+        })),
+      })),
+    },
+    repeatedChordResult: eligibility.entries.map(({
+      profileId,
+      repeatedRecoveryOutcome,
+      confirmationReproductionStatus,
+    }) => ({ profileId, repeatedRecoveryOutcome, confirmationReproductionStatus })),
+    confirmationPartition: eligibility.confirmationPartition,
+    ablations: (await task29List()).ablations,
+    selection: {
+      selectedProfileId: ranking.winner ?? "baseline-v1",
+      promotedProfileId: ranking.winner,
+      comparisons: ranking.comparisons.map((comparison) => ({
+        winnerProfileId: comparison.winner ?? "",
+        loserProfileId: comparison.winner === null
+          ? ""
+          : comparison.winner === comparison.left ? comparison.right : comparison.left,
+        decidedByStep: comparison.decidedByStep,
+        reason: "rederived",
+      })),
+      materialImprovement: [],
+      notPromotedReason: ranking.winner === null ? "ordered-rule-did-not-separate" : null,
+    },
+    modelEvidenceRequirement: {
+      path: TASK29_ARTIFACT.roundTwoApprovedProfiles.modelEvidenceRequirementPath,
+      sha256: createHash("sha256").update(await task29Requirement()).digest("hex"),
+    },
+  };
+  const complete = withRecomputedDigest(record);
+  const artifact = {
+    ...TASK29_ARTIFACT,
+    roundTwoApprovedProfiles: {
+      ...TASK29_ARTIFACT.roundTwoApprovedProfiles,
+      outcome: complete.outcome,
+      reason: null,
+      selectedDefaultProfileId: complete.selectedDefaultProfileId,
+      eligibilityRunStatus: "completed",
+      eligibilityManifestDigest: eligibilityDigest,
+      candidateManifestDigest: candidateManifest.digest.value,
+      digest: complete.digest.value,
+    },
+  };
+  const check = async (draft = complete, overrides = {}) => roundTwoApprovedProfilesProblems(
+    overrides.artifact ?? artifact,
+    draft,
+    overrides.eligibility ?? eligibility,
+    candidateManifest,
+    await task27Evidence(),
+    await task29Requirement(),
+    overrides.liveArchives ?? liveArchives,
+    overrides.confirmationArchives ?? confirmationArchives,
+  );
+  return { record: complete, artifact, eligibility, eligibilityDigest, liveArchives, confirmationArchives, ranking, check };
+}
+
+test("a completed decision is accepted only when its archives produce it", async () => {
+  const { record, ranking, check } = await completedTask29Chain();
+  // The chain root is the round's real Task 26 archives, which rerun to
+  // `no-ablation-accepted`; a genuinely completed round would carry archives that
+  // rerun to an accepted ablation. That mismatch is the root check doing its job,
+  // and it is the only thing this synthetic chain cannot satisfy.
+  const problems = await check();
+  assert.deepEqual(problems.filter((problem) => !/reruns to reason/.test(problem)), []);
+  assert.equal(problems.length, 2);
+  assert.equal(record.outcome, "promoted-candidate");
+  assert.equal(record.selectedDefaultProfileId, ranking.winner);
+  // The rule, not the record, produced that identifier.
+  assert.equal(ranking.winner, "steady-open-v2");
+  assert.equal(ranking.comparisons[0].decidedByStep, "distance-from-baseline");
+});
+
+test("a live result the archives do not produce cannot approve a profile", async () => {
+  // The archive records a false advance on an acoustic omitted-bass trial; the
+  // record reports the candidate as clean.
+  const { record, check } = await completedTask29Chain({
+    liveOverride: ({ profileId, trialClass, setupId }) => (
+      profileId === "steady-open-v2" && trialClass === "omitted-bass" &&
+        setupId === "acoustic-upright-room-a"
+        ? { advanced: true, falseAdvanceCount: 1, latencyMs: 190 }
+        : {}
+    ),
+  });
+  // Built honestly, the candidate fails and is not approved.
+  assert.ok(!record.approvedProfileIds.includes("steady-open-v2"));
+  const tampered = withRecomputedDigest({
+    ...record,
+    approvedProfileIds: ["baseline-v1", "early-open-v2", "steady-open-v2"],
+    liveCorpus: {
+      ...record.liveCorpus,
+      results: record.liveCorpus.results.map((row) => ({
+        ...row,
+        status: "passed",
+        gates: row.gates.map((gate) => ({ ...gate, passed: true, failures: [] })),
+      })),
+    },
+  });
+  const problems = await check(tampered);
+  assert.ok(problems.some((problem) => /not what its own archives produce/.test(problem)));
+  assert.ok(problems.some((problem) => /its own evidence approves/.test(problem)));
+});
+
+test("a promoted default the ordered rule does not produce is refused", async () => {
+  const { record, artifact, check } = await completedTask29Chain();
+  const swapped = withRecomputedDigest({
+    ...record,
+    selectedDefaultProfileId: "early-open-v2",
+    selection: { ...record.selection, selectedProfileId: "early-open-v2", promotedProfileId: "early-open-v2" },
+  });
+  const problems = await check(swapped, {
+    artifact: {
+      ...artifact,
+      roundTwoApprovedProfiles: {
+        ...artifact.roundTwoApprovedProfiles,
+        selectedDefaultProfileId: "early-open-v2",
+        digest: swapped.digest.value,
+      },
+    },
+  });
+  assert.ok(problems.some((problem) => /the frozen ordered rule produces/.test(problem)));
+});
+
+test("a ranking supported by one repetition is not the round's ranking", async () => {
+  const { record, confirmationArchives, check } = await completedTask29Chain();
+  assert.ok((await check(record, { confirmationArchives: confirmationArchives.slice(0, 1) }))
+    .some((problem) => /both archived confirmation repetitions/.test(problem)));
+  // Two repetitions that rank differently are not one ranking either.
+  const divergent = [
+    confirmationArchives[0],
+    confirmationArchiveRecord(({ profileId }) => (
+      profileId === "steady-open-v2" ? { independentMatchCount: 1 } : {}
+    )),
+  ];
+  assert.ok((await check(record, { confirmationArchives: divergent }))
+    .some((problem) => /rank the approved candidates differently/.test(problem)));
+});
+
+test("a live corpus stated without readable archives is refused", async () => {
+  const { record, check } = await completedTask29Chain();
+  assert.ok((await check(record, { liveArchives: [] }))
+    .some((problem) => /could not be read for verification/.test(problem)));
+  const unnamed = withRecomputedDigest({
+    ...record,
+    liveCorpus: { status: "collected", results: record.liveCorpus.results },
+  });
+  assert.ok((await check(unnamed)).some((problem) => /names no archive/.test(problem)));
+});
+
+test("a live archive is bound to the round and the candidates it replayed", async () => {
+  const { eligibilityDigest, liveArchives } = await completedTask29Chain();
+  assert.deepEqual(
+    roundTwoLiveArchiveProblems("Task 29", liveArchives, {
+      eligibilityManifestDigest: eligibilityDigest,
+      automatedEligibleProfileIds: TASK29_CANDIDATES,
+    }),
+    [],
+  );
+  // A session collected against another confirmation, and one that replayed a
+  // profile the automated matrix never cleared, are both refused.
+  assert.ok(roundTwoLiveArchiveProblems("Task 29", liveArchives, {
+    eligibilityManifestDigest: "deadbeef",
+    automatedEligibleProfileIds: TASK29_CANDIDATES,
+  }).some((problem) => /this decision concludes/.test(problem)));
+  assert.ok(roundTwoLiveArchiveProblems("Task 29", liveArchives, {
+    eligibilityManifestDigest: eligibilityDigest,
+    automatedEligibleProfileIds: ["early-open-v2"],
+  }).some((problem) => /does not mark automated-eligible/.test(problem)));
+  // The cited bytes are the bytes: a moved file hash fails.
+  const moved = [{ ...liveArchives[0], fileSha256: "f".repeat(64) }];
+  assert.ok(roundTwoLiveArchiveProblems("Task 29", moved, {
+    eligibilityManifestDigest: eligibilityDigest,
+    automatedEligibleProfileIds: TASK29_CANDIDATES,
+  }).some((problem) => /that file hashes to/.test(problem)));
+});
+
+test("a live archive must carry replayable evidence and coherent rows", async () => {
+  const { eligibilityDigest, liveArchives } = await completedTask29Chain();
+  const bind = (archives) => roundTwoLiveArchiveProblems("Task 29", archives, {
+    eligibilityManifestDigest: eligibilityDigest,
+    automatedEligibleProfileIds: TASK29_CANDIDATES,
+  });
+  assert.deepEqual(bind(liveArchives), []);
+  const mutate = (amend) => {
+    const archive = structuredClone(liveArchives[0]);
+    amend(archive.record);
+    const { digest: _digest, ...rest } = archive.record;
+    archive.record.digest = {
+      algorithm: "fnv1a-32-canonical-json",
+      value: canonicalJsonDigest(rest),
+    };
+    const bytes = `${JSON.stringify(archive.record, null, 2)}\n`;
+    archive.fileSha256 = createHash("sha256").update(bytes).digest("hex");
+    archive.reference = {
+      path: archive.path,
+      sha256: archive.fileSha256,
+      digest: archive.record.digest.value,
+    };
+    return [archive];
+  };
+  // A trial with no score or no decoded trace is a verdict, not evidence.
+  assert.ok(bind(mutate((record) => { delete record.setups[0].trials[0].sequence; }))
+    .some((problem) => /carries no authored score/.test(problem)));
+  assert.ok(bind(mutate((record) => { record.setups[0].trials[0].decodedTrace.frames = []; }))
+    .some((problem) => /carries no decoded recognition trace/.test(problem)));
+  assert.ok(bind(mutate((record) => { record.setups[0].trials[0].decodedTrace.pcm = [0.1]; }))
+    .some((problem) => /exports audio/.test(problem)));
+  // A positive trial relabelled negative would drop out of the correctness gate.
+  assert.ok(bind(mutate((record) => { record.setups[0].trials[0].expectedCorrect = false; }))
+    .some((problem) => /the class requires true/.test(problem)));
+  // A row reporting an unsafe advance while claiming the playhead never moved.
+  assert.ok(bind(mutate((record) => {
+    record.setups[0].trials[3].outcomes[0].falseAdvanceCount = 1;
+  })).some((problem) => /without advancing/.test(problem)));
+});
+
+test("promotion materiality is rederived from the archive, not read from the record", async () => {
+  const { record, check } = await completedTask29Chain();
+  // The axes are Task 23's own, named by domain, renderer, and metric.
+  const assessments = rederivePromotionMateriality(confirmationArchiveRecord(), "steady-open-v2");
+  const ids = assessments.map(({ id }) => id);
+  assert.ok(ids.includes("isolated/direct/isolated-correct-advance-rate"));
+  assert.ok(ids.includes("isolated/tone/course-clear-correct-advance-rate"));
+  assert.ok(ids.includes("cross-domain/unsafe-event-count"));
+  assert.ok(assessments.some(({ material }) => material));
+
+  // A promotion whose archives hold no material axis is refused, whatever the
+  // record's own assessment says.
+  const immaterial = [
+    confirmationArchiveRecord(() => ({}), () => 90),
+    confirmationArchiveRecord(() => ({}), () => 90),
+  ];
+  const problems = await check(record, { confirmationArchives: immaterial });
+  assert.ok(problems.some((problem) => (
+    /materiality finds no material axis/.test(problem)
+  )));
+});
+
+test("a stated material-improvement record must be the policy's assessment", async () => {
+  const { record, check } = await completedTask29Chain();
+  const invented = withRecomputedDigest({
+    ...record,
+    selection: {
+      ...record.selection,
+      materialImprovement: [{ id: "invented/axis", material: true }],
+    },
+  });
+  assert.ok((await check(invented))
+    .some((problem) => /not the frozen Task 23 assessment/.test(problem)));
+});
+
+test("the ranking keeps renderers, instruments, ordered and complete apart", () => {
+  const archive = confirmationArchiveRecord(({ profileId, rendererKey }) => (
+    // A Direct ordered gain paid for with a Direct complete-passage loss.
+    profileId === "steady-open-v2" && rendererKey === "direct"
+      ? { orderedAdvanceCount: 9, completePassageCount: 0 }
+      : {}
+  ));
+  const { comparisons } = rederiveSelectedDefault({
+    approvedCandidateProfileIds: TASK29_CANDIDATES,
+    liveArchives: [liveArchiveFile(liveArchiveRecord("1a2b3c4d"))],
+    confirmationArchive: archive,
+  });
+  // Summed, `steady-open-v2` would win the step; as two measures it holds
+  // neither side and the step ties, so a later step has to decide.
+  assert.notEqual(comparisons[0].decidedByStep, "ordered-and-complete-progress");
+});
+
+test("a decision that collected no live corpus may leave no live archive behind", () => {
+  const listFile = "listen-round-two-approved-profiles-task29.json";
+  assert.deepEqual(
+    roundTwoLiveCorpusArchiveProblems(
+      ["README.md", listFile, "listen-round-two-ablation-task26-run1.json"],
+      TASK29_ARTIFACT.path,
+      "not-collected",
+    ),
+    [],
+  );
+  assert.ok(roundTwoLiveCorpusArchiveProblems(
+    [listFile, "listen-round-two-live-task29-acoustic.json"],
+    TASK29_ARTIFACT.path,
+    "not-collected",
+  )[0].includes("listen-round-two-live-task29-acoustic.json"));
+  // A round that did collect one records it, so the prohibition is branch-scoped.
+  assert.deepEqual(
+    roundTwoLiveCorpusArchiveProblems(
+      [listFile, "listen-round-two-live-task29-acoustic.json"],
+      TASK29_ARTIFACT.path,
+      "collected",
+    ),
+    [],
+  );
 });
 
 test("cross-run comparison ignores only the documented host-dependent fields", () => {

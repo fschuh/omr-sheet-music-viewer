@@ -84,9 +84,19 @@ recorded what a bass-onset gate costs on both sides: it is free on the isolated
 fixtures and refuses genuine attacks as low as 0.5093 on continuous passages,
 while the repeated Course Clear chord is limited on its first attack by an upper
 voice the decoder never re-onsets rather than by the bass. Both omitted-bass
-failures are now committed regressions. With the debug panel enabled,
-Settings offers a session-only profile override for hearing a profile on real
-input, and the Diagnostics panel names the profile listen mode is running.
+failures are now committed regressions. The second round closed on August 25, 2026
+with `round-two-grid-produced-no-eligible-improvement`: its three staged grids each
+selected profiles that the frozen stop rule then refused for having no material
+repeated-chord recovery, so no candidate was registered or confirmed, the default
+is unchanged again, and the round's confirmation fixtures stay unspent for a later
+round. Its approved-profile list — the only profiles any later calibration may
+offer — is exactly `baseline-v1`; registry membership is not approval, because the
+registry keeps rejected profiles for rollback and replay. The unresolved decoder
+evidence is carried by
+`plans/listen-decoder-model-evidence-requirement.md`. With the
+debug panel enabled, Settings offers a session-only profile override for hearing a
+profile on real input, and the Diagnostics panel names the profile listen mode is
+running.
 
 The adapted PitchPlease spectral implementation and its historical benchmark
 remain in `webapp/src/vendor/pitchplease/`. The `online_amt` export procedure,

@@ -7,14 +7,15 @@ command:
 npm --prefix webapp run dev:wasm-benchmark
 ```
 
-Verify all nine frozen artifacts, their exact file hashes, the Task 08 candidate
+Verify all ten frozen artifacts, their exact file hashes, the Task 08 candidate
 archive digest and row count, the Task 24 complete per-domain control and policy,
 the Task 10/11 canonical evidence digests, the Task 22 corpus census and pinned
 omitted-bass identities, the Task 26 staged ablation record and its recomputed
 terminal outcome, the Task 27 candidate manifest re-derived by rerunning that stop
 rule over both Task 26 repetitions, the Task 28 eligibility manifest chained to
-that record and to the same rerun, forensic schemas, and non-overlapping
-late-advance counts with:
+that record and to the same rerun, the Task 29 approved-profile list whose
+membership, bounded outcome, and ablation record are recomputed from that chain,
+forensic schemas, and non-overlapping late-advance counts with:
 
 ```text
 node tools/online_amt/verify_listen_benchmark_evidence.mjs
@@ -706,6 +707,103 @@ it byte for byte rather than revise it:
 
 ```text
 npm --prefix webapp run emit:round-two-eligibility-manifest
+```
+
+## Task 29 round-two approved-profile list
+
+`listen-round-two-approved-profiles-task29.json` is the third and last link of the
+round-two artifact chain, and the round's only Task 29 file. It records one
+auditable production decision and the approved-profile list every later
+calibration path is limited to.
+
+- Outcome: `round-two-grid-produced-no-eligible-improvement`; `reason` is
+  `no-ablation-accepted`, carried through from Tasks 27 and 28
+- Selected default: `baseline-v1`, unchanged, and identical to
+  `DEFAULT_LISTEN_MATCHER_PROFILE_ID`
+- Approved profiles: exactly `baseline-v1`
+- Live corpus: `not-collected`, with no result rows and no live archive
+- Repeated-chord result: empty, because the not-run branch froze no eligibility
+  entry and therefore neither of Task 24's two labels
+- Chained to eligibility manifest `fnv1a-32-canonical-json:20be9d6d`, which chains
+  to candidate manifest `fnv1a-32-canonical-json:21655efa`, which chains to Task 26
+  evidence `bass-axis-unsupported` at `fnv1a-32-canonical-json:8dfe2f1b`
+- Residual: `plans/listen-decoder-model-evidence-requirement.md`, referenced by the
+  SHA-256 of its own bytes
+- List digest: `fnv1a-32-canonical-json:dbf777ba`
+- File SHA-256:
+  `c71624cefb4db1f5ac7b0981ca4e62f3756dbd999d279ff6718c7ae7bc346873`
+
+Membership is a different statement from the registry. The registry retains every
+historical and rejected profile so a regression can be reproduced and a default
+rolled back, so being in it is not approval; a member is `baseline-v1` plus every
+candidate that passed all automated gates **and** all required live gates. A
+candidate that cleared the automated matrix and whose live gates failed or were
+never collected is not a member, and the selected default must be one. This round
+confirmed no candidate at all, so the list is the incumbent alone.
+
+A live gate outcome is a measurement rather than a status, and a live archive is a
+performance rather than a verdict. Each trial carries the authored score — target
+pitches, the notes every attack played, score position, chord size, register,
+dynamic, articulation, tempo, ambiguity, and a negative trial's stated reason —
+and the target-independent decoded trace the harness captured once, with no audio
+in the export; every archived outcome is reproduced by replaying that trace
+through the profile's thresholds, and one the replay does not reproduce is
+refused. A completed round names its Task 15 sessions by path, file SHA-256, and
+record digest, and every candidate's live result is recomputed from those archived
+trials — per setup, per trial, and per counter — before membership is decided. The archives are bound to
+the eligibility manifest they were collected against and may replay only profiles
+that manifest marks automated-eligible, so a session cannot add a candidate; each
+setup must carry every required trial class and the corpus must cover an acoustic
+and a digital instrument, so a missing class fails closed rather than passing
+silently; safety, correctness, repeated-chord recovery under Task 24's frozen
+boundaries, and latency are each decided per trial, so an acoustic false advance
+is never paid for with a digital recognition gain. A stated live result the
+archives do not reproduce is refused, and a collected corpus whose archives cannot
+be read is refused rather than accepted unverified.
+
+Promotion is separate from approval, and the promoted identifier is rederived
+rather than named. The plan's ordered rule — fewer live safety failures, then
+higher live correct advancement, then higher automated independent recognition,
+then ordered and complete progress, then lower latency, then smaller distance from
+`baseline-v1` — is applied to the same archives, comparing by dominance across
+setups and renderers so no step is won by a total that hides a loss. Every step is compared per renderer and per instrument, with ordered advances and
+complete passages kept as two measures, so an ordered gain cannot conceal a
+complete-passage loss. Both confirmation repetitions must rank alike; a winner must
+beat every other approved candidate; and it is promoted only under Task 23's frozen
+materiality recipe, invoked as the confirmation matrix invokes it and recomputed
+independently by the evidence verifier. When the rule does not separate the
+candidates, or the winner is not materially better, the round records
+`approved-without-material-improvement`: the profiles stay approved and offerable
+by calibration, and the global default does not move.
+
+Nothing here is read as a conclusion. The verifier recomputes the membership from
+the eligibility manifest and the live rows this record carries, derives the bounded
+outcome from the branch and that membership, recomputes both digest links from the
+records they name, and reruns Task 24's stop rule over both Task 26 repetitions —
+so a decision whose own chain does not produce its conclusion fails rather than
+reading as auditable. It also refuses any other Task 29 file in this directory
+while the live corpus is `not-collected`.
+
+The ablation record is recomputed rather than copied, because a round that
+accepted no ablation is not a round that found nothing. All three staged grids
+selected profiles — `ablation-1-round-one-grid` three, `ablation-2-refined-family`
+two, and `ablation-3-bass-axis` two — and Task 24's stop rule refused each of them
+for `selected-set-has-no-material-repeated-recovery`. None was registrable, so no
+candidate could be searched, registered, or confirmed from any of them.
+
+The bounded conclusions are not interchangeable, and the verifier enforces the
+difference. `round-two-candidate-set-exhausted` belongs to a confirmation matrix
+that ran and rejected every candidate it froze;
+`round-two-grid-produced-no-eligible-improvement` is this branch, where the matrix
+never ran and the version-2 confirmation fixtures were never spent. Neither says
+anything about profiles the round never confirmed, and no branch of this round
+supports a claim that the scalar-threshold family is exhausted.
+
+Reproduce the list from the committed chain; a second emission must reproduce it
+byte for byte rather than revise it:
+
+```text
+npm --prefix webapp run emit:round-two-approved-profiles
 ```
 
 ## Task 13 frozen automated confirmation evidence

@@ -1,0 +1,76 @@
+{
+  "name": "listen-round-two-approved-profiles",
+  "formatVersion": 1,
+  "roundId": "round-two",
+  "outcome": "round-two-grid-produced-no-eligible-improvement",
+  "reason": "no-ablation-accepted",
+  "selectedDefaultProfileId": "baseline-v1",
+  "incumbentProfileId": "baseline-v1",
+  "approvedProfileIds": [
+    "baseline-v1"
+  ],
+  "eligibilityRunStatus": "not-run-no-confirmable-candidate",
+  "eligibilityManifestDigest": "20be9d6d",
+  "candidateManifestDigest": "21655efa",
+  "task26TerminalOutcome": "bass-axis-unsupported",
+  "task26EvidenceDigest": "8dfe2f1b",
+  "liveCorpus": {
+    "status": "not-collected",
+    "results": []
+  },
+  "repeatedChordResult": [],
+  "confirmationPartition": {
+    "traceCount": 12,
+    "decodedTraceCount": 0,
+    "priorLedgerHash": "1f9613bd",
+    "traceGenerationHash": "d1971fa3",
+    "traceIdentityHash": "a5695acc"
+  },
+  "ablations": [
+    {
+      "ablation": "ablation-1-round-one-grid",
+      "selectedProfileIds": [
+        "o0p550-t0p500-a0p350-x0p990-b1",
+        "o0p450-t0p575-a0p275-x0p970-b1",
+        "o0p550-t0p500-a0p200-x0p970-b1"
+      ],
+      "stopSatisfied": false,
+      "stopReasons": [
+        "selected-set-has-no-material-repeated-recovery"
+      ],
+      "registrable": false
+    },
+    {
+      "ablation": "ablation-2-refined-family",
+      "selectedProfileIds": [
+        "o0p450-t0p5375-a0p300-x0p990-b1",
+        "o0p450-t0p5375-a0p075-x0p970-b1"
+      ],
+      "stopSatisfied": false,
+      "stopReasons": [
+        "selected-set-has-no-material-repeated-recovery"
+      ],
+      "registrable": false
+    },
+    {
+      "ablation": "ablation-3-bass-axis",
+      "selectedProfileIds": [
+        "o0p450-t0p500-a0p075-x0p990-b1-B0p550",
+        "o0p450-t0p5375-a0p075-x0p970-b1"
+      ],
+      "stopSatisfied": false,
+      "stopReasons": [
+        "selected-set-has-no-material-repeated-recovery"
+      ],
+      "registrable": false
+    }
+  ],
+  "modelEvidenceRequirement": {
+    "path": "plans/listen-decoder-model-evidence-requirement.md",
+    "sha256": "195737b2e85fe02e039d9a9bee25173987e960d802c3689576412cadc7b56aaa"
+  },
+  "digest": {
+    "algorithm": "fnv1a-32-canonical-json",
+    "value": "dbf777ba"
+  }
+}
