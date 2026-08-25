@@ -1,0 +1,22 @@
+{
+  "name": "listen-round-two-eligibility-manifest",
+  "formatVersion": 1,
+  "roundId": "round-two",
+  "runStatus": "not-run-no-confirmable-candidate",
+  "candidateManifestDigest": "21655efa",
+  "task26TerminalOutcome": "bass-axis-unsupported",
+  "task26EvidenceDigest": "8dfe2f1b",
+  "entries": [],
+  "confirmationPartition": {
+    "traceCount": 12,
+    "decodedTraceCount": 0,
+    "priorLedgerHash": "1f9613bd",
+    "traceGenerationHash": "d1971fa3",
+    "traceIdentityHash": "a5695acc"
+  },
+  "reason": "no-ablation-accepted",
+  "digest": {
+    "algorithm": "fnv1a-32-canonical-json",
+    "value": "20be9d6d"
+  }
+}

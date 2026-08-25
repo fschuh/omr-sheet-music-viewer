@@ -7,12 +7,13 @@ command:
 npm --prefix webapp run dev:wasm-benchmark
 ```
 
-Verify all eight frozen artifacts, their exact file hashes, the Task 08 candidate
+Verify all nine frozen artifacts, their exact file hashes, the Task 08 candidate
 archive digest and row count, the Task 24 complete per-domain control and policy,
 the Task 10/11 canonical evidence digests, the Task 22 corpus census and pinned
 omitted-bass identities, the Task 26 staged ablation record and its recomputed
 terminal outcome, the Task 27 candidate manifest re-derived by rerunning that stop
-rule over both Task 26 repetitions, forensic schemas, and non-overlapping
+rule over both Task 26 repetitions, the Task 28 eligibility manifest chained to
+that record and to the same rerun, forensic schemas, and non-overlapping
 late-advance counts with:
 
 ```text
@@ -473,6 +474,238 @@ reproduce it byte for byte rather than revise it:
 
 ```text
 npm --prefix webapp run emit:round-two-candidate-manifest
+```
+
+## Task 28 round-two eligibility manifest
+
+`listen-round-two-eligibility-manifest-task28.json` is the second link of the
+round-two artifact chain and the round's only Task 28 file. Task 27 froze an empty
+candidate manifest, so the round has nothing it can both register and confirm and
+Task 28 took its not-run branch: the confirmation matrix did not run, the
+version-2 confirmation fixtures were not decoded, and the corpus was not touched.
+
+- Run status: `not-run-no-confirmable-candidate`; `reason` is
+  `no-ablation-accepted`, carried through from Task 27
+- Candidate entries: none, and no confirmation-evidence field
+- Confirmation partition: 12 traces, 0 decoded, fixture identity `a5695acc`,
+  generation `d1971fa3`, first-observed ledger `1f9613bd`
+- Chained to candidate manifest `fnv1a-32-canonical-json:21655efa`, which chains to
+  Task 26 evidence `bass-axis-unsupported` at `fnv1a-32-canonical-json:8dfe2f1b`
+- Manifest digest: `fnv1a-32-canonical-json:20be9d6d`
+- File SHA-256:
+  `3c0ac0571d04ec8a453558fec9fd1ab6ae84c8377ffcfb55e499cf221219e7ce`
+
+The version-2 confirmation fixtures are the round's only genuinely unseen
+evidence and can be spent exactly once. Spending them on a round that produced no
+registrable candidate would burn them for nothing, so they stay unobserved and
+remain valid confirmation evidence for a later round. That claim is measured
+rather than stated: `confirmationPartition` is recomputed from the trace manifest,
+counting a confirmation row as decoded once it stops carrying
+`not-decoded-until-task-28` or gains a pinned decoded-structure identity.
+
+Identity is checked at two scales, because the count is neither of them.
+`traceIdentityHash` covers every confirmation row — decoded or not, so the pin
+holds in both branches — over what makes a row that evidence rather than a name:
+its identifier, its rendered-content key, its musical input, and its authored
+pair. A fixture decoded elsewhere and renamed into the partition moves it, and so
+does one re-pointed at different rendered content while keeping its name.
+`traceGenerationHash` covers the whole generation those rows live in, and the
+corpus hash and the manifest's own validation rules are checked alongside it,
+because a row can keep its identity while the corpus it is drawn from moves
+underneath it. That generation hash holds the confirmation partition's decode
+state at its authored value: `listenTraceManifestHash` folds `decodeStatus` and
+`fixtureVersion` in, so pinning it raw would move the moment the fixtures were
+decoded and describe a corpus no completed round could produce. Whether they were
+decoded is a separate question, measured by `decodedTraceCount` and constrained
+per branch. No confirmation archive was written either, because a placeholder
+would later read as a matrix that rejected everything rather than one that never
+ran — a prohibition that belongs to this branch alone, since a completed round is
+required to produce exactly those two archives.
+
+The schema is discriminated by `runStatus`, and the two branches carry disjoint
+fields. Under `completed` the candidate entries and the confirmation evidence —
+two named archived repetitions with their SHA-256 values and the canonical
+comparison digest — are required, and `reason` is forbidden. Under
+`not-run-no-confirmable-candidate` the entry list must be empty, the evidence
+fields are forbidden outright rather than nulled, and `reason` is required.
+
+The repetition is proven against the files, because a name is not evidence. The
+verifier resolves both recorded names, reads and hashes them, requires the
+recorded SHA-256 to be each file's own, requires them to be two different files by
+filesystem identity — `realpath` plus device and inode, so `run1.json` and
+`./run1.json`, or a symlink beside its target, are one run rather than two — and
+requires both archives to recompute to the recorded canonical comparison digest
+under the Task 04 omissions. Their bytes are not required to differ: two runs of a
+deterministic matrix may legitimately hash alike, and demanding otherwise would
+refuse the cleanest possible evidence.
+
+Agreement between two files is not evidence either, since two archives of the same
+narrowed smoke agree perfectly and a smoke can reject a candidate but never clear
+one. Each archive is therefore held to the round-two confirmation matrix in its own
+right, and none of what it says about its own coverage is taken as coverage.
+
+Coverage is recomputed from the archived captures against the version-2 census
+partition by partition and suite by suite — 212/120/8/39/4/12 discovery, 12
+confirmation, 56/36/1/4 regression-only — because a total is not coverage: 504
+rows of anything sum to 504. Per-suite counts are not identity either: the exact
+captured corpus is frozen as a list of 504 trace identifiers with their renderers,
+partitions, and suites, hashed to `baa79d30`, so 504 fabricated identifiers in the
+right buckets fail and the missing traces are named rather than only a moved
+digest reported. Every capture must record its trace, renderer, and its
+decoded-structure and process-local hashes as real digests rather than
+placeholders; no trace may be captured twice; no suite outside the census may
+appear; and the totals the archive states must agree with what it archived.
+
+Every column — the baseline and each candidate — must carry an outcome row for
+every captured trace, and each row must record what that column decided: its own
+outcome digest and the ordered, false, skipped, and duplicate advance counts. A
+row of `{traceId, profileId}` says a column ran, not what it found. The archive's
+stated outcome identity is recomputed from those rows under the Task 13
+`traceId:profileId:outcomeDigest` recipe.
+
+An identifier is a label, so the columns are bound to values by an identity
+chained from Task 27. The archive records the whole registry generation it
+replayed from — version, default, shared fixed policy, and every profile's
+complete threshold set in registry order — and that generation must hash to the
+`registryDigest` the candidate manifest froze under Task 27's own recipe. Each
+column's replayed thresholds must then be that generation's entry for its
+identifier, in shape as well as value, and the incumbent's entry must be the
+frozen `baseline-v1` values. A run measured under altered thresholds keeps every
+expected name and every expected digest field, and now fails on the values.
+
+Every archived repeated-chord observation must be a measurement: evaluated,
+structurally valid, carrying all five qualification flags and non-negative safety
+counters, with source distance and attribution delay present or absent together.
+The comparison reads an absent flag as false and an absent count as zero, so a row
+of `{}` would otherwise read as clean and unregressed and clear a candidate.
+
+The repeated-chord census is frozen whole, both halves: the three known
+round-one groups, Task 25's two newly authored discovery groups, and the two
+authored confirmation groups, each with its role and stratum, and every
+measurement filed under the stratum the census fixes. Pinning only the
+confirmation half would let a run declare whichever discovery groups suited it and
+still reach a resolution verdict over a census the policy never froze.
+
+The gate set is frozen by identity, not by count: the archive must define the same
+18 gates Task 13 froze, and every candidate must report an outcome for all of them
+under each gate's own role and domain, with every gate applied — one invented gate
+marked applied would otherwise clear a candidate while omitting every real Task 23
+gate. Task 13's own scope and failure checks apply unchanged: each gate names the
+rows it read, a complete matrix reads exactly the rows that gate is scoped to,
+each failure names what it measured with a baseline and candidate value and an
+explanation, `passed` must agree with the failures recorded beside it, the
+per-role failure counters are recomputed from the outcomes, the evidence must be
+marked complete with no incompleteness reason named beside that claim, and no
+layer-loss waiver may be declared — a waiver is a decision taken after seeing a
+measured loss, which cannot precede the run.
+
+A gate verdict is a claim about the archived rows, and both halves of a report can
+agree with each other and still be false, so every one of the eighteen verdicts is
+rederived from the archive's own measurements and compared to what it reported —
+in both directions, so the check cannot be satisfied by pessimism either. This is
+possible without freezing a second copy of any threshold because the validation
+policy decides eligibility by paired non-regression: the absolute recognition
+rates are recorded as product debt rather than as eligibility.
+
+Each re-derivation restates that gate's own rule rather than a convenient
+approximation of it. Ordered progress fails on a lost complete passage as well as
+a lost ordered advance. Family breadth is netted per family across renderers,
+asked only of a candidate that claims a gain, and requires both more than one
+improved family and a family whose ordered gain is corroborated by an independent
+gain *in that same family*. The dedicated sequence families hold four counts at
+zero at every domain, incomplete carried-bass advances included. Layer loss allows
+one independent event and fails beyond it. The isolated latency gate rejects an
+absent percentile and applies the 400 ms limit and the 32 ms tolerance; the
+sequence latency gate applies only the tolerance, and only where both percentiles
+exist. The committed-regression gate holds each diagnosed case to not worsening
+rather than to absolute zero — the known Tone 333 ms false advance may stay
+exactly as diagnosed — while a pinned late advance may move earlier but may never
+become unsafe. Its census is frozen too: exactly
+`tone-salamander-v05-repeated-chord-late-advance` as `late-advance` and
+`tone-course-clear-333-shared-pitch-false-advance` as `reported-unsafe-advance`,
+once each, so one invented safe row cannot stand in for both diagnosed cases.
+
+Coverage is derived from the frozen corpus, not from the archive. Each gate's
+domains are the distinct combinations of the manifest fields that gate groups on —
+renderer, speed, family, piano, layer, articulation — over the rows its
+partitions, suites, and evidence role select, and the archive's grouping is
+compared as a partition of trace identifiers rather than by label. The dynamics
+layer gates take one leaf per constant layer, per mixed run, and per articulation,
+so one leaf's loss cannot be offset inside a combined domain; the piano groupings
+exclude articulation, which has no piano leaf of its own. The frozen 504-row
+corpus carries those grouping fields, and the identity digest covers all of them,
+so a copy whose speeds, layers, articulations, or evidence roles had drifted
+cannot keep the pin while silently re-grouping every domain. A losing speed, layer, or family therefore
+cannot be dropped, dropped for one column, re-cut into two clean-looking rows, or
+duplicated away. Every counter a summary states is then reconciled against the
+outcome rows it names, so a per-trace regression cannot be smoothed away by a
+clean summary and an invented summary cannot outvote clean per-trace records.
+Percentiles must be null or a finite, non-negative number.
+
+**One round-two policy gap is enforced rather than papered over.** Task 13 froze
+the gate partitions against manifest version 1, where `confirmation` still held
+the isolated and dynamics corpora. Version 2 re-partitioned those into discovery
+and regression-only and left `confirmation` holding only the twelve authored
+paired rows, so `safety-isolated-false-advance` and all five `release-*` gates
+read no version-2 row at all. The verifier reports each of them by name, and the eligibility derivation
+itself fails closed while any remain: a gate that read no row produces no failure,
+and that is the one case where an absent failure is not evidence of safety, so the
+derivation must not contradict the rule rather than quietly agree with a report. Choosing new partitions here would be
+freezing round-two policy inside a verifier, which is the one thing this chain
+exists to prevent: a round-two gate scope has to be frozen as policy before any
+confirmation matrix can be judged complete.
+
+Introduced unsafe advances are additionally recomputed per trace and per counter
+from the outcome rows, beside the per-domain comparison, because a domain or
+corpus total can absorb a regression on one trace behind an improvement on
+another. Eligibility is derived from the rederived verdicts and never from the
+reported ones — trusting `passed` would make the re-derivation decorative — so an
+archive whose gate report clears a candidate its own measurements condemn derives
+ineligible.
+
+Each candidate's Task 24 labels and its eligibility are then **re-derived** from
+the archived measurements and from every gate's own pass verdict — never from a
+list of failures the archive supplies — and compared to what the manifest
+recorded, so a label the evidence does not produce fails verification rather than
+reaching Task 29 as a self-report. A candidate with no gate record is ineligible
+rather than unjudged. The 12-trace census and both identity hashes are pinned
+in either branch, so a completed run cannot satisfy
+`decodedTraceCount === traceCount` with an empty partition. Every completed entry
+carries Task 24's `repeatedRecoveryOutcome` and `confirmationReproductionStatus`,
+and the labels are gates as well as descriptions: a candidate recorded as
+`regressed` cannot also be automated-eligible, and `confirmed-full-resolution` is
+refused unless a confirmation group reproduced the phenomenon.
+
+One undifferentiated schema would instead force this branch to invent placeholder
+archive hashes for a run that never happened, which is exactly the fabricated
+evidence the chain exists to prevent. Every consumer —
+Tasks 14, 15, and 29 — branches once on `runStatus` and never on whether the entry
+list happens to be empty: a completed matrix that rejected every candidate still
+has entries, and reading emptiness as "not run" would erase the difference between
+a round that spent its single-use fixtures and one that did not. Only Task 29's
+recorded conclusion reads the reason, which is why the two zero-branch findings
+are distinguished there rather than by a third status.
+
+Nothing here is read as a conclusion. The verifier re-derives the whole chain:
+Task 24's frozen stop rule is rerun over both archived Task 26 repetitions, the
+candidate manifest's digest is recomputed from its own fields, and this record's
+from its own, so an eligibility manifest that merely states the round's result
+fails. The reason, the terminal outcome, the evidence digest, and the originating
+ablation must agree across all three artifacts; a chain whose links each verify in
+isolation while disagreeing with one another is refused. Completeness is pinned to
+the round's own generation — registry version 2 at `d1b3f6a3`, trace manifest
+version 2 at `d1971fa3`, musical corpus `1213016e`, policy version 1 `840b07ec`,
+generator version 1 — so neither a round-one archive nor a narrowed smoke can be
+quoted as this task's evidence.
+
+Task 27's candidate manifest is untouched by this task, and a test holds its
+committed bytes against the record Task 27's own emitter reproduces.
+
+Reproduce the manifest from the committed chain; a second emission must reproduce
+it byte for byte rather than revise it:
+
+```text
+npm --prefix webapp run emit:round-two-eligibility-manifest
 ```
 
 ## Task 13 frozen automated confirmation evidence

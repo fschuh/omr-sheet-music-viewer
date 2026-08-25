@@ -489,6 +489,42 @@ export type ListenConfirmationReproductionStatus =
 
 export type ListenDiscoveryEvaluationStatus = "complete" | "incomplete";
 
+/**
+ * The two label vocabularies, enumerated so an artifact schema can validate
+ * against them.
+ *
+ * Each is built from a `Record` keyed by its own union, so adding a label to the
+ * type without adding it here fails to compile. A hand-written list would drift
+ * silently, and a downstream schema validating against a stale list would accept
+ * a label the policy no longer produces or reject one it does.
+ */
+const REPEATED_RECOVERY_OUTCOME_MEMBERS:
+  Readonly<Record<ListenRepeatedRecoveryOutcome, true>> = Object.freeze({
+    "unchanged": true,
+    "regressed": true,
+    "material-partial-recovery": true,
+    "discovery-full-resolution": true,
+    "confirmed-full-resolution": true,
+  });
+
+export const LISTEN_REPEATED_RECOVERY_OUTCOMES: readonly ListenRepeatedRecoveryOutcome[] =
+  Object.freeze(
+    Object.keys(REPEATED_RECOVERY_OUTCOME_MEMBERS) as ListenRepeatedRecoveryOutcome[],
+  );
+
+const CONFIRMATION_REPRODUCTION_STATUS_MEMBERS:
+  Readonly<Record<ListenConfirmationReproductionStatus, true>> = Object.freeze({
+    "reproduced": true,
+    "inconclusive-no-reproduction": true,
+    "not-run": true,
+  });
+
+export const LISTEN_CONFIRMATION_REPRODUCTION_STATUSES:
+  readonly ListenConfirmationReproductionStatus[] = Object.freeze(
+    Object.keys(CONFIRMATION_REPRODUCTION_STATUS_MEMBERS) as
+      ListenConfirmationReproductionStatus[],
+  );
+
 export interface ListenRepeatedRecoveryEvaluation {
   repeatedRecoveryOutcome: ListenRepeatedRecoveryOutcome;
   confirmationReproductionStatus: ListenConfirmationReproductionStatus;

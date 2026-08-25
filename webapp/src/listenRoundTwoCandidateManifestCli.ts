@@ -13,23 +13,21 @@
  */
 
 import { readFile, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
+  LISTEN_ROUND_TWO_ABLATION_EVIDENCE_PATHS,
+  LISTEN_ROUND_TWO_CANDIDATE_MANIFEST_FILE,
   assertListenRoundTwoCandidateManifestUnchanged,
   listenRoundTwoCandidateManifestFromRepetitions,
 } from "./listenRoundTwoCandidateManifest";
 
 const REPOSITORY_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
-export const LISTEN_ROUND_TWO_EVIDENCE_PATHS: readonly string[] = Object.freeze([
-  "benchmark-results/listen-round-two-ablation-task26-run1.json",
-  "benchmark-results/listen-round-two-ablation-task26-run2.json",
-]);
+export const LISTEN_ROUND_TWO_EVIDENCE_PATHS = LISTEN_ROUND_TWO_ABLATION_EVIDENCE_PATHS;
 
-export const LISTEN_ROUND_TWO_CANDIDATE_MANIFEST_PATH =
-  "benchmark-results/listen-round-two-candidate-manifest-task27.json";
+export const LISTEN_ROUND_TWO_CANDIDATE_MANIFEST_PATH = LISTEN_ROUND_TWO_CANDIDATE_MANIFEST_FILE;
 
 async function readJson(path: string): Promise<unknown> {
   return JSON.parse(await readFile(join(REPOSITORY_ROOT, path), "utf8"));
@@ -79,7 +77,18 @@ async function main(): Promise<number> {
   return 0;
 }
 
-if (resolve(process.argv[1] ?? "") === resolve(fileURLToPath(import.meta.url))) {
+/**
+ * Runs only when this command is itself the process entry point.
+ *
+ * `import.meta.url` is the bundle's own path once esbuild has inlined this
+ * module, so comparing it to `process.argv[1]` is true for *any* bundle that
+ * happens to contain this file — importing one command from another, or from a
+ * test, would silently run its `main` as a side effect. Matching the entry
+ * point's basename instead keeps each command bound to the bundle built for it.
+ */
+const COMMAND_ENTRY_POINT = "listenRoundTwoCandidateManifestCli";
+
+if (basename(process.argv[1] ?? "").replace(/\.[^.]*$/, "") === COMMAND_ENTRY_POINT) {
   main().then(
     (code) => process.exit(code),
     (error) => {

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readdir, readFile } from "node:fs/promises";
+import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -306,6 +306,99 @@ const EVIDENCE_ARTIFACTS = [
       notRunReason: "no-ablation-accepted",
       digest: "21655efa",
       /** Both archived repetitions must independently re-derive this manifest. */
+      evidencePaths: [
+        "benchmark-results/listen-round-two-ablation-task26-run1.json",
+        "benchmark-results/listen-round-two-ablation-task26-run2.json",
+      ],
+      /** Task 24's frozen boundaries, restated so the stop rule can be rerun here. */
+      repeatedRecoveryBoundaries: {
+        sourceDistanceNoRegression: 0,
+        attributionDelayNoRegressionMs: 32,
+        sourceDistanceMaterialGain: 1,
+        attributionDelayMaterialGainMs: 500,
+      },
+      domainRegretMaterialBoundary: 0.01,
+      knownDiscoveryGroupIds: [
+        "dynamics-constant/tone/salamander/v05",
+        "dynamics-constant/tone/salamander/v13",
+        "dynamics-mixed/tone/salamander",
+      ],
+      processLocalDigestFields: [
+        "lowestLimitingUpperVoiceEvidence",
+        "onsetConfidence",
+        "targetEvidence",
+        "task22LimitingUpperVoiceEvidence",
+        "transitionLowestLimitingUpperVoiceEvidence",
+      ],
+    },
+  },
+  {
+    name: "Task 28 round-two eligibility manifest",
+    path: "benchmark-results/listen-round-two-eligibility-manifest-task28.json",
+    fileSha256: "3c0ac0571d04ec8a453558fec9fd1ab6ae84c8377ffcfb55e499cf221219e7ce",
+    /**
+     * The second link of the round-two artifact chain.
+     *
+     * The round took the not-run branch, so this file records that the
+     * confirmation matrix never ran and the version-2 confirmation fixtures were
+     * never decoded. Every value below is pinned, and none of them is accepted
+     * because it matches: the branch, the reason, the terminal outcome, and the
+     * candidate-manifest digest are all re-derived from the committed Task 26
+     * archives and the Task 27 record, so an eligibility manifest that merely
+     * states the round's result fails here.
+     *
+     * The completeness pins are the round's own — registry version 2, manifest
+     * version 2 at `d1971fa3`, the version-2 trace census, policy version 1, and
+     * the Task 27 digest — so neither a round-one archive nor a narrowed smoke
+     * can be quoted as this task's evidence.
+     */
+    roundTwoEligibilityManifest: {
+      name: "listen-round-two-eligibility-manifest",
+      formatVersion: 1,
+      roundId: "round-two",
+      runStatus: "not-run-no-confirmable-candidate",
+      reason: "no-ablation-accepted",
+      entryCount: 0,
+      candidateManifestDigest: "21655efa",
+      task26TerminalOutcome: "bass-axis-unsupported",
+      task26EvidenceDigest: "8dfe2f1b",
+      digest: "20be9d6d",
+      /**
+       * The corpus this branch's central claim is measured against.
+       *
+       * `traceCount` is pinned as well as compared to `decodedTraceCount`,
+       * because `decodedTraceCount === traceCount` is satisfied by an empty
+       * partition too, and a completed run over no fixtures is not a
+       * confirmation. `traceIdentityHash` covers every confirmation row's
+       * identifier, rendered-content key, musical input, and authored pair, so
+       * rows renamed or re-pointed at other content fail at the same count.
+       * `traceGenerationHash` covers the whole generation those rows live in,
+       * with the confirmation partition's decode state normalized out, so one pin
+       * describes both branches: decoding the fixtures is what the completed
+       * branch does, and folding that into the generation's identity would make
+       * the pin unsatisfiable by any real completed run.
+       */
+      confirmationPartition: {
+        traceCount: 12,
+        decodedTraceCount: 0,
+        priorLedgerHash: "1f9613bd",
+        traceGenerationHash: "d1971fa3",
+        traceIdentityHash: "a5695acc",
+      },
+      /** Round-two completeness. A round-one artifact fails every one of these. */
+      completeness: {
+        registryVersion: 2,
+        registryDigest: "d1b3f6a3",
+        policyVersion: 1,
+        policyHash: "840b07ec",
+        traceManifestVersion: 2,
+        traceManifestHash: "d1971fa3",
+        traceManifestCorpusHash: "1213016e",
+        generatorVersion: 1,
+      },
+      candidateManifestPath:
+        "benchmark-results/listen-round-two-candidate-manifest-task27.json",
+      /** Both repetitions must independently rerun to the chain this references. */
       evidencePaths: [
         "benchmark-results/listen-round-two-ablation-task26-run1.json",
         "benchmark-results/listen-round-two-ablation-task26-run2.json",
@@ -977,7 +1070,7 @@ const DIGEST_PATTERN = /^[0-9a-f]{8}$/;
  * single space. If the benchmark ever changes either one, this fails loudly on
  * the next run instead of accepting a digest nothing checks.
  */
-function fnv1a32(parts) {
+export function fnv1a32(parts) {
   let hash = 0x811c9dc5;
   for (const character of parts.join(" ")) {
     hash = Math.imul(hash ^ (character.codePointAt(0) ?? 0), 0x01000193) >>> 0;
@@ -1035,7 +1128,7 @@ export function canonicalJson(value, omittedFields = new Set()) {
 }
 
 /** Independent restatement of DeterministicHasher.text(canonicalJson(value), false). */
-function canonicalJsonDigest(value, omittedFields = new Set()) {
+export function canonicalJsonDigest(value, omittedFields = new Set()) {
   let hash = 0x811c9dc5;
   const text = canonicalJson(value, omittedFields);
   const byte = (value) => {
@@ -1386,6 +1479,15 @@ export function task24DomainArchiveProblems(artifact, result) {
  * boundaries are the frozen policy's and are pinned by the caller.
  */
 function recomputeRepeatedRecovery(reference, candidate, boundaries, knownGroupIds) {
+  return aggregateRepeatedRecovery(
+    recomputeRepeatedRecoveryGroups(reference, candidate, boundaries),
+    knownGroupIds,
+    new Map(),
+  );
+}
+
+/** The per-group half of the comparison, shared by Task 26 and Task 28. */
+function recomputeRepeatedRecoveryGroups(reference, candidate, boundaries) {
   const referenceById = new Map((reference ?? []).map((row) => [row.groupId, row]));
   const unsafeCount = (observation) => (
     (observation?.falseAdvanceCount ?? 0) + (observation?.skippedAdvanceCount ?? 0) +
@@ -1428,6 +1530,25 @@ function recomputeRepeatedRecovery(reference, candidate, boundaries, knownGroupI
       fullResolution: candidateSafe && measured?.sourceDistance === 0,
     };
   });
+  return groups;
+}
+
+/**
+ * The frozen aggregation over recomputed per-group rows.
+ *
+ * `evidenceRoleByGroupId` names the confirmation groups. Task 26 declares none,
+ * so its call passes an empty map and the aggregation reduces to exactly what it
+ * recorded: no reproducing confirmation group, status `not-run`, and no
+ * confirmed full resolution. Task 28's completed branch passes the real roles,
+ * and the same code then applies the confirmation rules rather than a second
+ * implementation of them.
+ */
+function aggregateRepeatedRecovery(allGroups, knownGroupIds, evidenceRoleByGroupId) {
+  const roleOf = (groupId) => evidenceRoleByGroupId.get(groupId) ?? "discovery";
+  const groups = allGroups.filter(({ groupId }) => roleOf(groupId) === "discovery");
+  const confirmation = allGroups.filter(({ groupId, evaluated }) => (
+    roleOf(groupId) === "confirmation" && evaluated
+  ));
   const strata = [...new Set(groups.map(({ stratum }) => stratum))].sort();
   const materialRecoveryByStratum = strata.map((stratum) => {
     const rows = groups.filter((group) => group.stratum === stratum);
@@ -1446,18 +1567,31 @@ function recomputeRepeatedRecovery(reference, candidate, boundaries, knownGroupI
     knownGroupIds.includes(group.groupId) || group.baselineReproduces
   ));
   const noRegression = groups.filter(({ evaluated }) => evaluated)
-    .every(({ noRegression: clean }) => clean);
+    .every(({ noRegression: clean }) => clean) &&
+    confirmation.every(({ noRegression: clean }) => clean);
   const materialRecovery = groups.length > 0 && materialRecoveryByStratum.length > 0 &&
     materialRecoveryByStratum.every(({ material }) => material);
   const discoveryFullResolution = knownGroupIds.every((id) => byGroupId.has(id)) &&
     requiredForResolution.length >= knownGroupIds.length &&
     requiredForResolution.every(({ fullResolution }) => fullResolution);
-  // Task 26 declares no confirmation comparison, so the frozen aggregation over
-  // an empty confirmation set is what its record must show. A record that
-  // carried one would fail the evidence-role check beside this.
-  const confirmedFullResolution = false;
+  const reproducingConfirmation = confirmation.filter(({ baselineReproduces }) => (
+    baselineReproduces
+  ));
+  const inconclusiveConfirmation = confirmation.filter(({ baselineReproduces }) => (
+    !baselineReproduces
+  ));
+  const confirmationReproductionStatus = confirmation.length === 0
+    ? "not-run"
+    : reproducingConfirmation.length === 0
+    ? "inconclusive-no-reproduction"
+    : "reproduced";
+  // `confirmed-full-resolution` needs a confirmation group that actually
+  // reproduced the phenomenon, not merely a confirmation run that happened.
+  const confirmedFullResolution = discoveryFullResolution &&
+    reproducingConfirmation.length > 0 &&
+    reproducingConfirmation.every(({ fullResolution }) => fullResolution);
   return {
-    groups,
+    groups: allGroups,
     materialRecoveryByStratum,
     discoveryEvaluationStatus: materialRecoveryByStratum.length > 0 &&
       materialRecoveryByStratum.every(({ complete }) => complete) ? "complete" : "incomplete",
@@ -1465,11 +1599,15 @@ function recomputeRepeatedRecovery(reference, candidate, boundaries, knownGroupI
     materialRecovery,
     discoveryFullResolution,
     confirmedFullResolution,
-    confirmationReproductionStatus: "not-run",
-    reproducingConfirmationGroupIds: [],
-    inconclusiveConfirmationGroupIds: [],
+    confirmationReproductionStatus,
+    reproducingConfirmationGroupIds: reproducingConfirmation
+      .map(({ groupId }) => groupId).sort(),
+    inconclusiveConfirmationGroupIds: inconclusiveConfirmation
+      .map(({ groupId }) => groupId).sort(),
     repeatedRecoveryOutcome: !noRegression
       ? "regressed"
+      : confirmedFullResolution
+      ? "confirmed-full-resolution"
       : discoveryFullResolution
       ? "discovery-full-resolution"
       : materialRecovery
@@ -1982,7 +2120,9 @@ export function roundTwoCandidateManifestProblems(artifact, result, evidenceRuns
   const { digest: _digest, ...digestInput } = result;
   check("recomputed digest", canonicalJsonDigest(digestInput), expected.digest);
   if (!Array.isArray(evidenceRuns) || evidenceRuns.length !== expected.evidencePaths.length) {
-    problems.push(`${artifact.name}: expected ${expected.evidencePaths.length} Task 26 repetitions`);
+    problems.push(
+      `${artifact.name}: expected ${expected.evidencePaths.length} Task 26 repetitions`,
+    );
     return problems;
   }
   evidenceRuns.forEach((run, index) => {
@@ -2030,6 +2170,2520 @@ export function roundTwoCandidateManifestProblems(artifact, result, evidenceRuns
   return problems;
 }
 
+/* ------------------------------------------------------------------------- *
+ * Task 28: the eligibility manifest
+ * ------------------------------------------------------------------------- */
+
+/** The exact key set of each branch. "Forbidden" is enforced as an unknown key. */
+const ELIGIBILITY_COMMON_KEYS = [
+  "name",
+  "formatVersion",
+  "roundId",
+  "runStatus",
+  "candidateManifestDigest",
+  "task26TerminalOutcome",
+  "task26EvidenceDigest",
+  "entries",
+  "confirmationPartition",
+  "digest",
+];
+
+export const ELIGIBILITY_MANIFEST_KEYS = {
+  completed: [...ELIGIBILITY_COMMON_KEYS, "confirmationEvidence"],
+  "not-run-no-confirmable-candidate": [...ELIGIBILITY_COMMON_KEYS, "reason"],
+};
+
+const ELIGIBILITY_ENTRY_KEYS = [
+  "profileId",
+  "automatedEligible",
+  "rejectionReasons",
+  "repeatedRecoveryOutcome",
+  "confirmationReproductionStatus",
+];
+
+const REPEATED_RECOVERY_OUTCOMES = [
+  "unchanged",
+  "regressed",
+  "material-partial-recovery",
+  "discovery-full-resolution",
+  "confirmed-full-resolution",
+];
+
+const CONFIRMATION_REPRODUCTION_STATUSES = [
+  "reproduced",
+  "inconclusive-no-reproduction",
+  "not-run",
+];
+
+const SHA256_PATTERN = /^[0-9a-f]{64}$/;
+
+/**
+ * Resolves the archive names a completed manifest records into read files.
+ *
+ * Returns a map keyed by the recorded name, each entry carrying the canonical
+ * path the name resolved to, the file's actual SHA-256, and the canonical
+ * comparison digest recomputed from its contents under the Task 04 omissions. A
+ * name that resolves to nothing is recorded as unreadable rather than skipped.
+ */
+export async function readRoundTwoConfirmationArchives(names, root = REPOSITORY_ROOT) {
+  const archives = new Map();
+  for (const name of names) {
+    if (typeof name !== "string" || name.length === 0) continue;
+    const canonicalPath = resolve(root, name);
+    try {
+      const bytes = await readFile(canonicalPath);
+      const parsed = JSON.parse(bytes.toString("utf8"));
+      // Lexical normalization settles `.` and `..` and nothing else: a symlink
+      // and a hard link to one archive are two different strings and two
+      // different absolute paths. Filesystem identity is what "two files" means,
+      // so it is read from the filesystem.
+      const realPath = await realpath(canonicalPath);
+      const stats = await stat(realPath);
+      archives.set(name, {
+        canonicalPath,
+        realPath,
+        fileIdentity: `${stats.dev}:${stats.ino}`,
+        fileSha256: sha256(bytes),
+        comparisonDigest: sha256(`${canonicalJson(parsed, CROSS_RUN_OMITTED_FIELDS)}\n`),
+        record: parsed,
+      });
+    } catch (error) {
+      archives.set(name, { canonicalPath, unreadable: error.message });
+    }
+  }
+  return archives;
+}
+
+/**
+ * What makes two recorded names two archived repetitions.
+ *
+ * A name is not evidence. Two strings that merely differ can be two spellings of
+ * one file — `run1.json` and `./run1.json`, or a symlink beside its target — or
+ * two files that do not exist, so each name is resolved, read, and hashed: the
+ * recorded SHA-256 must be the file's own, the two names must resolve to
+ * different files by filesystem identity rather than by differing as strings,
+ * and both archives must recompute to the recorded canonical comparison digest.
+ * Requiring their bytes to differ would be the wrong test in the other
+ * direction, since two runs of a deterministic matrix may legitimately hash
+ * alike.
+ */
+export function confirmationArchiveEvidenceProblems(label, evidence, archives) {
+  const problems = [];
+  const names = [evidence.runOneArchive, evidence.runTwoArchive];
+  if (archives === null) {
+    return [`${label}: the named confirmation archives were not read`];
+  }
+  const resolved = [];
+  for (const [index, name] of names.entries()) {
+    const field = index === 0 ? "runOneArchive" : "runTwoArchive";
+    const archive = archives.get(name);
+    if (archive === undefined || archive.unreadable !== undefined) {
+      problems.push(
+        `${label}: ${field} ${printable(name)} could not be read` +
+          `${archive?.unreadable === undefined ? "" : ` (${archive.unreadable})`}`,
+      );
+      continue;
+    }
+    resolved.push({ field, name, archive });
+    const recorded = index === 0 ? evidence.runOneSha256 : evidence.runTwoSha256;
+    if (archive.fileSha256 !== recorded) {
+      problems.push(
+        `${label}: ${field} hashes to ${archive.fileSha256}, and the manifest records ` +
+          `${printable(recorded)}`,
+      );
+    }
+    if (archive.comparisonDigest !== evidence.comparisonDigest) {
+      problems.push(
+        `${label}: ${field} recomputes to comparison digest ${archive.comparisonDigest}, and ` +
+          `the manifest records ${printable(evidence.comparisonDigest)}`,
+      );
+    }
+  }
+  if (resolved.length === 2 &&
+      resolved[0].archive.fileIdentity === resolved[1].archive.fileIdentity) {
+    problems.push(
+      `${label}: both confirmation repetitions are the same file ` +
+        `(${resolved[0].archive.realPath}), so one run was quoted twice`,
+    );
+  }
+  return problems;
+}
+
+/**
+ * The round-two confirmation matrix, as an archived repetition must show it.
+ *
+ * This is the Task 13 contract restated for round two, and it exists for the
+ * same reason: without it the archive comparison establishes only that two files
+ * agree, and two agreeing files can both be a narrowed smoke. A smoke can reject
+ * a candidate but never clear one, so an eligibility manifest whose labels rest
+ * on one would be self-reported. Every value is fixed before the first run.
+ */
+export const ROUND_TWO_CONFIRMATION_MATRIX = Object.freeze({
+  /** The unified command's own name; the narrowed variants are refused by it. */
+  name: "listen-profile-validation",
+  formatVersion: 1,
+  manifestVersion: 2,
+  manifestHash: "d1971fa3",
+  manifestCorpusHash: "1213016e",
+  registryVersion: 2,
+  policyVersion: 1,
+  policyHash: "840b07ec",
+  baselineProfileId: "baseline-v1",
+  rendererKeys: ["direct", "tone"],
+  /**
+   * The version-2 census, per partition and suite.
+   *
+   * A total is not coverage: 504 rows of anything sums to 504. The matrix is
+   * recomputed from the archived captures against this breakdown, so a run that
+   * replaced held-back strata with duplicates of a cheap one fails even though
+   * its total is right.
+   */
+  census: Object.freeze([
+    Object.freeze({ partition: "discovery", suite: "isolated", traceCount: 212 }),
+    Object.freeze({ partition: "discovery", suite: "sequence", traceCount: 120 }),
+    Object.freeze({ partition: "discovery", suite: "articulation", traceCount: 8 }),
+    Object.freeze({ partition: "discovery", suite: "dynamics-constant", traceCount: 39 }),
+    Object.freeze({ partition: "discovery", suite: "dynamics-mixed", traceCount: 4 }),
+    Object.freeze({ partition: "discovery", suite: "round-two-paired", traceCount: 12 }),
+    Object.freeze({ partition: "confirmation", suite: "round-two-paired", traceCount: 12 }),
+    Object.freeze({ partition: "regression-only", suite: "isolated", traceCount: 56 }),
+    Object.freeze({ partition: "regression-only", suite: "sequence", traceCount: 36 }),
+    Object.freeze({ partition: "regression-only", suite: "dynamics-constant", traceCount: 1 }),
+    Object.freeze({ partition: "regression-only", suite: "safety-regression", traceCount: 4 }),
+  ]),
+  capturedTraceCount: 504,
+  confirmationTraceCountRead: 12,
+  /** Every capture must record what it actually rendered and decoded. */
+  captureFields: Object.freeze([
+    "traceId",
+    "rendererKey",
+    "partition",
+    "suite",
+    "recognitionStructureHash",
+    "processLocalPcmHash",
+    "processLocalTraceHash",
+  ]),
+  /**
+   * The identity of the captured corpus, not merely its shape.
+   *
+   * Counting rows per suite says how many of each kind were captured; it does
+   * not say that they were *these* traces. This digest is FNV-1a over the trace
+   * count and then every manifest trace's identifier, renderer, partition, and
+   * suite in manifest order, so 504 fabricated identifiers in the right buckets
+   * fail even though every count agrees.
+   */
+  captureIdentityDigest: "36d9d45c",
+  /** The frozen incumbent column, by value rather than by name. */
+  baselineThresholds: Object.freeze({
+    onsetThreshold: 0.6,
+    targetNoteThreshold: 0.5,
+    activeTargetThreshold: 0.35,
+    extraNoteThreshold: 0.97,
+    requireFreshBassOnset: true,
+  }),
+  /** Counters every archived outcome row must actually carry. */
+  outcomeCounters: Object.freeze([
+    "orderedAdvanceCount",
+    "falseAdvanceCount",
+    "skippedAdvanceCount",
+    "duplicateAdvanceCount",
+  ]),
+  /** The boolean qualifications a decoded repeated-chord observation records. */
+  observationFlags: Object.freeze([
+    "evaluated",
+    "structurallyValid",
+    "firstCorrectFullChordAttackIncomplete",
+    "carriedRequiredPitchWithoutFreshReOnset",
+    "laterIdenticalAttackRecoveredCorrectTarget",
+  ]),
+  /**
+   * The complete round-two repeated-chord census, both halves.
+   *
+   * Pinning only the confirmation half would let a run declare whichever
+   * discovery groups suited it — omitting Task 25's newly authored ones — and
+   * still reach a resolution verdict over a census the policy never froze.
+   */
+  repeatedChordCensus: Object.freeze([
+    Object.freeze({
+      groupId: "dynamics-constant/tone/salamander/v05",
+      stratum: "known-round-one-repeated-chord",
+      evidenceRole: "discovery",
+    }),
+    Object.freeze({
+      groupId: "dynamics-constant/tone/salamander/v13",
+      stratum: "known-round-one-repeated-chord",
+      evidenceRole: "discovery",
+    }),
+    Object.freeze({
+      groupId: "dynamics-mixed/tone/salamander",
+      stratum: "known-round-one-repeated-chord",
+      evidenceRole: "discovery",
+    }),
+    Object.freeze({
+      groupId: "round-two/r2-repeated-low-triad-direct-splendid-pp/correct",
+      stratum: "round-two-authored-repeated-chord",
+      evidenceRole: "discovery",
+    }),
+    Object.freeze({
+      groupId: "round-two/r2-repeated-mid-tetrad-tone-salamander-v13/correct",
+      stratum: "round-two-authored-repeated-chord",
+      evidenceRole: "discovery",
+    }),
+    Object.freeze({
+      groupId: "round-two/r2-repeated-high-triad-tone-splendid-mf/correct",
+      stratum: "round-two-confirmation-repeated-chord",
+      evidenceRole: "confirmation",
+    }),
+    Object.freeze({
+      groupId: "round-two/r2-repeated-mid-tetrad-direct-salamander-v03/correct",
+      stratum: "round-two-confirmation-repeated-chord",
+      evidenceRole: "confirmation",
+    }),
+  ]),
+});
+
+/** The frozen census as a lookup, for checks that need one group at a time. */
+const ROUND_TWO_REPEATED_CENSUS_BY_ID = new Map(
+  ROUND_TWO_CONFIRMATION_MATRIX.repeatedChordCensus.map((group) => [group.groupId, group]),
+);
+
+/**
+ * The exact captured corpus, in manifest order: identifier, renderer, partition,
+ * suite.
+ *
+ * A per-suite count says how many of each kind were captured; it does not say
+ * that they were these traces. Pinning the list rather than only its digest also
+ * lets the frozen corpus be named when an archive misses one, and the digest
+ * below is recomputed from this list at load so the two cannot drift apart.
+ */
+export const ROUND_TWO_CAPTURE_IDENTITIES = Object.freeze([
+  "sequence/direct/ascending-scale/1000ms|direct|discovery|sequence|scoring|1|scales|1000|splendid|mp||",
+  "sequence/direct/ascending-scale/500ms|direct|discovery|sequence|scoring|1|scales|500|splendid|mp||",
+  "sequence/direct/ascending-scale/333ms|direct|discovery|sequence|scoring|1|scales|333.3333333333333|splendid|mp||",
+  "sequence/direct/ascending-scale/250ms|direct|discovery|sequence|scoring|1|scales|250|splendid|mp||",
+  "sequence/direct/ascending-scale/167ms|direct|discovery|sequence|scoring|1|scales|167|splendid|mp||",
+  "sequence/direct/ascending-scale/125ms|direct|discovery|sequence|scoring|1|scales|125|splendid|mp||",
+  "sequence/direct/descending-scale/1000ms|direct|discovery|sequence|scoring|1|scales|1000|splendid|mp||",
+  "sequence/direct/descending-scale/500ms|direct|discovery|sequence|scoring|1|scales|500|splendid|mp||",
+  "sequence/direct/descending-scale/333ms|direct|discovery|sequence|scoring|1|scales|333.3333333333333|splendid|mp||",
+  "sequence/direct/descending-scale/250ms|direct|discovery|sequence|scoring|1|scales|250|splendid|mp||",
+  "sequence/direct/descending-scale/167ms|direct|discovery|sequence|scoring|1|scales|167|splendid|mp||",
+  "sequence/direct/descending-scale/125ms|direct|discovery|sequence|scoring|1|scales|125|splendid|mp||",
+  "sequence/direct/alternating-c4-g4/1000ms|direct|discovery|sequence|scoring|1|alternating-pitches|1000|splendid|mp||",
+  "sequence/direct/alternating-c4-g4/500ms|direct|discovery|sequence|scoring|1|alternating-pitches|500|splendid|mp||",
+  "sequence/direct/alternating-c4-g4/333ms|direct|discovery|sequence|scoring|1|alternating-pitches|333.3333333333333|splendid|mp||",
+  "sequence/direct/alternating-c4-g4/250ms|direct|discovery|sequence|scoring|1|alternating-pitches|250|splendid|mp||",
+  "sequence/direct/alternating-c4-g4/167ms|direct|discovery|sequence|scoring|1|alternating-pitches|167|splendid|mp||",
+  "sequence/direct/alternating-c4-g4/125ms|direct|discovery|sequence|scoring|1|alternating-pitches|125|splendid|mp||",
+  "sequence/direct/repeated-c4/1000ms|direct|discovery|sequence|scoring|1|repeated-notes|1000|splendid|mp||",
+  "sequence/direct/repeated-c4/500ms|direct|discovery|sequence|scoring|1|repeated-notes|500|splendid|mp||",
+  "sequence/direct/repeated-c4/333ms|direct|discovery|sequence|scoring|1|repeated-notes|333.3333333333333|splendid|mp||",
+  "sequence/direct/repeated-c4/250ms|direct|discovery|sequence|scoring|1|repeated-notes|250|splendid|mp||",
+  "sequence/direct/repeated-c4/167ms|direct|discovery|sequence|scoring|1|repeated-notes|167|splendid|mp||",
+  "sequence/direct/repeated-c4/125ms|direct|discovery|sequence|scoring|1|repeated-notes|125|splendid|mp||",
+  "sequence/direct/two-note-progressions/1000ms|direct|discovery|sequence|scoring|1|two-note-chords|1000|splendid|mp||",
+  "sequence/direct/two-note-progressions/500ms|direct|discovery|sequence|scoring|1|two-note-chords|500|splendid|mp||",
+  "sequence/direct/two-note-progressions/333ms|direct|discovery|sequence|scoring|1|two-note-chords|333.3333333333333|splendid|mp||",
+  "sequence/direct/two-note-progressions/250ms|direct|discovery|sequence|scoring|1|two-note-chords|250|splendid|mp||",
+  "sequence/direct/two-note-progressions/167ms|direct|discovery|sequence|scoring|1|two-note-chords|167|splendid|mp||",
+  "sequence/direct/two-note-progressions/125ms|direct|discovery|sequence|scoring|1|two-note-chords|125|splendid|mp||",
+  "sequence/direct/independent-triads/1000ms|direct|discovery|sequence|scoring|1|three-note-independent|1000|splendid|mp||",
+  "sequence/direct/independent-triads/500ms|direct|discovery|sequence|scoring|1|three-note-independent|500|splendid|mp||",
+  "sequence/direct/independent-triads/333ms|direct|discovery|sequence|scoring|1|three-note-independent|333.3333333333333|splendid|mp||",
+  "sequence/direct/independent-triads/250ms|direct|discovery|sequence|scoring|1|three-note-independent|250|splendid|mp||",
+  "sequence/direct/independent-triads/167ms|direct|discovery|sequence|scoring|1|three-note-independent|167|splendid|mp||",
+  "sequence/direct/independent-triads/125ms|direct|discovery|sequence|scoring|1|three-note-independent|125|splendid|mp||",
+  "sequence/direct/shared-sustained-bass/1000ms|direct|discovery|sequence|scoring|1|shared-sustain|1000|splendid|mp||",
+  "sequence/direct/shared-sustained-bass/500ms|direct|discovery|sequence|scoring|1|shared-sustain|500|splendid|mp||",
+  "sequence/direct/shared-sustained-bass/333ms|direct|discovery|sequence|scoring|1|shared-sustain|333.3333333333333|splendid|mp||",
+  "sequence/direct/shared-sustained-bass/250ms|direct|discovery|sequence|scoring|1|shared-sustain|250|splendid|mp||",
+  "sequence/direct/shared-sustained-bass/167ms|direct|discovery|sequence|scoring|1|shared-sustain|167|splendid|mp||",
+  "sequence/direct/shared-sustained-bass/125ms|direct|discovery|sequence|scoring|1|shared-sustain|125|splendid|mp||",
+  "sequence/direct/weak-53-65-74/1000ms|direct|discovery|sequence|scoring|1|known-weak-chord|1000|splendid|mp||",
+  "sequence/direct/weak-53-65-74/500ms|direct|discovery|sequence|scoring|1|known-weak-chord|500|splendid|mp||",
+  "sequence/direct/weak-53-65-74/333ms|direct|discovery|sequence|scoring|1|known-weak-chord|333.3333333333333|splendid|mp||",
+  "sequence/direct/weak-53-65-74/250ms|direct|discovery|sequence|scoring|1|known-weak-chord|250|splendid|mp||",
+  "sequence/direct/weak-53-65-74/167ms|direct|discovery|sequence|scoring|1|known-weak-chord|167|splendid|mp||",
+  "sequence/direct/weak-53-65-74/125ms|direct|discovery|sequence|scoring|1|known-weak-chord|125|splendid|mp||",
+  "sequence/direct/course-clear-27/1000ms|direct|discovery|sequence|scoring|1|course-clear|1000|splendid|mp||",
+  "sequence/direct/course-clear-27/500ms|direct|discovery|sequence|scoring|1|course-clear|500|splendid|mp||",
+  "sequence/direct/course-clear-27/333ms|direct|discovery|sequence|scoring|1|course-clear|333.3333333333333|splendid|mp||",
+  "sequence/direct/course-clear-27/250ms|direct|discovery|sequence|scoring|1|course-clear|250|splendid|mp||",
+  "sequence/direct/course-clear-27/167ms|direct|discovery|sequence|scoring|1|course-clear|167|splendid|mp||",
+  "sequence/direct/course-clear-27/125ms|direct|discovery|sequence|scoring|1|course-clear|125|splendid|mp||",
+  "sequence/direct/slightly-rolled-triads/1000ms|direct|discovery|sequence|scoring|1|rolled-chords|1000|splendid|mp||",
+  "sequence/direct/slightly-rolled-triads/500ms|direct|discovery|sequence|scoring|1|rolled-chords|500|splendid|mp||",
+  "sequence/direct/slightly-rolled-triads/333ms|direct|discovery|sequence|scoring|1|rolled-chords|333.3333333333333|splendid|mp||",
+  "sequence/direct/slightly-rolled-triads/250ms|direct|discovery|sequence|scoring|1|rolled-chords|250|splendid|mp||",
+  "sequence/direct/slightly-rolled-triads/167ms|direct|discovery|sequence|scoring|1|rolled-chords|167|splendid|mp||",
+  "sequence/direct/slightly-rolled-triads/125ms|direct|discovery|sequence|scoring|1|rolled-chords|125|splendid|mp||",
+  "sequence/direct/wrong-note-safety/1000ms|direct|regression-only|sequence|safety|0|safety|1000|splendid|mp||",
+  "sequence/direct/wrong-note-safety/500ms|direct|regression-only|sequence|safety|0|safety|500|splendid|mp||",
+  "sequence/direct/wrong-note-safety/333ms|direct|regression-only|sequence|safety|0|safety|333.3333333333333|splendid|mp||",
+  "sequence/direct/wrong-note-safety/250ms|direct|regression-only|sequence|safety|0|safety|250|splendid|mp||",
+  "sequence/direct/wrong-note-safety/167ms|direct|regression-only|sequence|safety|0|safety|167|splendid|mp||",
+  "sequence/direct/wrong-note-safety/125ms|direct|regression-only|sequence|safety|0|safety|125|splendid|mp||",
+  "sequence/direct/extra-note-safety/1000ms|direct|regression-only|sequence|safety|0|safety|1000|splendid|mp||",
+  "sequence/direct/extra-note-safety/500ms|direct|regression-only|sequence|safety|0|safety|500|splendid|mp||",
+  "sequence/direct/extra-note-safety/333ms|direct|regression-only|sequence|safety|0|safety|333.3333333333333|splendid|mp||",
+  "sequence/direct/extra-note-safety/250ms|direct|regression-only|sequence|safety|0|safety|250|splendid|mp||",
+  "sequence/direct/extra-note-safety/167ms|direct|regression-only|sequence|safety|0|safety|167|splendid|mp||",
+  "sequence/direct/extra-note-safety/125ms|direct|regression-only|sequence|safety|0|safety|125|splendid|mp||",
+  "sequence/direct/carried-bass-safety/1000ms|direct|regression-only|sequence|safety|0|safety|1000|splendid|mp||",
+  "sequence/direct/carried-bass-safety/500ms|direct|regression-only|sequence|safety|0|safety|500|splendid|mp||",
+  "sequence/direct/carried-bass-safety/333ms|direct|regression-only|sequence|safety|0|safety|333.3333333333333|splendid|mp||",
+  "sequence/direct/carried-bass-safety/250ms|direct|regression-only|sequence|safety|0|safety|250|splendid|mp||",
+  "sequence/direct/carried-bass-safety/167ms|direct|regression-only|sequence|safety|0|safety|167|splendid|mp||",
+  "sequence/direct/carried-bass-safety/125ms|direct|regression-only|sequence|safety|0|safety|125|splendid|mp||",
+  "sequence/tone/ascending-scale/1000ms|tone|discovery|sequence|scoring|1|scales|1000|splendid|mp||",
+  "sequence/tone/ascending-scale/500ms|tone|discovery|sequence|scoring|1|scales|500|splendid|mp||",
+  "sequence/tone/ascending-scale/333ms|tone|discovery|sequence|scoring|1|scales|333.3333333333333|splendid|mp||",
+  "sequence/tone/ascending-scale/250ms|tone|discovery|sequence|scoring|1|scales|250|splendid|mp||",
+  "sequence/tone/ascending-scale/167ms|tone|discovery|sequence|scoring|1|scales|167|splendid|mp||",
+  "sequence/tone/ascending-scale/125ms|tone|discovery|sequence|scoring|1|scales|125|splendid|mp||",
+  "sequence/tone/descending-scale/1000ms|tone|discovery|sequence|scoring|1|scales|1000|splendid|mp||",
+  "sequence/tone/descending-scale/500ms|tone|discovery|sequence|scoring|1|scales|500|splendid|mp||",
+  "sequence/tone/descending-scale/333ms|tone|discovery|sequence|scoring|1|scales|333.3333333333333|splendid|mp||",
+  "sequence/tone/descending-scale/250ms|tone|discovery|sequence|scoring|1|scales|250|splendid|mp||",
+  "sequence/tone/descending-scale/167ms|tone|discovery|sequence|scoring|1|scales|167|splendid|mp||",
+  "sequence/tone/descending-scale/125ms|tone|discovery|sequence|scoring|1|scales|125|splendid|mp||",
+  "sequence/tone/alternating-c4-g4/1000ms|tone|discovery|sequence|scoring|1|alternating-pitches|1000|splendid|mp||",
+  "sequence/tone/alternating-c4-g4/500ms|tone|discovery|sequence|scoring|1|alternating-pitches|500|splendid|mp||",
+  "sequence/tone/alternating-c4-g4/333ms|tone|discovery|sequence|scoring|1|alternating-pitches|333.3333333333333|splendid|mp||",
+  "sequence/tone/alternating-c4-g4/250ms|tone|discovery|sequence|scoring|1|alternating-pitches|250|splendid|mp||",
+  "sequence/tone/alternating-c4-g4/167ms|tone|discovery|sequence|scoring|1|alternating-pitches|167|splendid|mp||",
+  "sequence/tone/alternating-c4-g4/125ms|tone|discovery|sequence|scoring|1|alternating-pitches|125|splendid|mp||",
+  "sequence/tone/repeated-c4/1000ms|tone|discovery|sequence|scoring|1|repeated-notes|1000|splendid|mp||",
+  "sequence/tone/repeated-c4/500ms|tone|discovery|sequence|scoring|1|repeated-notes|500|splendid|mp||",
+  "sequence/tone/repeated-c4/333ms|tone|discovery|sequence|scoring|1|repeated-notes|333.3333333333333|splendid|mp||",
+  "sequence/tone/repeated-c4/250ms|tone|discovery|sequence|scoring|1|repeated-notes|250|splendid|mp||",
+  "sequence/tone/repeated-c4/167ms|tone|discovery|sequence|scoring|1|repeated-notes|167|splendid|mp||",
+  "sequence/tone/repeated-c4/125ms|tone|discovery|sequence|scoring|1|repeated-notes|125|splendid|mp||",
+  "sequence/tone/two-note-progressions/1000ms|tone|discovery|sequence|scoring|1|two-note-chords|1000|splendid|mp||",
+  "sequence/tone/two-note-progressions/500ms|tone|discovery|sequence|scoring|1|two-note-chords|500|splendid|mp||",
+  "sequence/tone/two-note-progressions/333ms|tone|discovery|sequence|scoring|1|two-note-chords|333.3333333333333|splendid|mp||",
+  "sequence/tone/two-note-progressions/250ms|tone|discovery|sequence|scoring|1|two-note-chords|250|splendid|mp||",
+  "sequence/tone/two-note-progressions/167ms|tone|discovery|sequence|scoring|1|two-note-chords|167|splendid|mp||",
+  "sequence/tone/two-note-progressions/125ms|tone|discovery|sequence|scoring|1|two-note-chords|125|splendid|mp||",
+  "sequence/tone/independent-triads/1000ms|tone|discovery|sequence|scoring|1|three-note-independent|1000|splendid|mp||",
+  "sequence/tone/independent-triads/500ms|tone|discovery|sequence|scoring|1|three-note-independent|500|splendid|mp||",
+  "sequence/tone/independent-triads/333ms|tone|discovery|sequence|scoring|1|three-note-independent|333.3333333333333|splendid|mp||",
+  "sequence/tone/independent-triads/250ms|tone|discovery|sequence|scoring|1|three-note-independent|250|splendid|mp||",
+  "sequence/tone/independent-triads/167ms|tone|discovery|sequence|scoring|1|three-note-independent|167|splendid|mp||",
+  "sequence/tone/independent-triads/125ms|tone|discovery|sequence|scoring|1|three-note-independent|125|splendid|mp||",
+  "sequence/tone/shared-sustained-bass/1000ms|tone|discovery|sequence|scoring|1|shared-sustain|1000|splendid|mp||",
+  "sequence/tone/shared-sustained-bass/500ms|tone|discovery|sequence|scoring|1|shared-sustain|500|splendid|mp||",
+  "sequence/tone/shared-sustained-bass/333ms|tone|discovery|sequence|scoring|1|shared-sustain|333.3333333333333|splendid|mp||",
+  "sequence/tone/shared-sustained-bass/250ms|tone|discovery|sequence|scoring|1|shared-sustain|250|splendid|mp||",
+  "sequence/tone/shared-sustained-bass/167ms|tone|discovery|sequence|scoring|1|shared-sustain|167|splendid|mp||",
+  "sequence/tone/shared-sustained-bass/125ms|tone|discovery|sequence|scoring|1|shared-sustain|125|splendid|mp||",
+  "sequence/tone/weak-53-65-74/1000ms|tone|discovery|sequence|scoring|1|known-weak-chord|1000|splendid|mp||",
+  "sequence/tone/weak-53-65-74/500ms|tone|discovery|sequence|scoring|1|known-weak-chord|500|splendid|mp||",
+  "sequence/tone/weak-53-65-74/333ms|tone|discovery|sequence|scoring|1|known-weak-chord|333.3333333333333|splendid|mp||",
+  "sequence/tone/weak-53-65-74/250ms|tone|discovery|sequence|scoring|1|known-weak-chord|250|splendid|mp||",
+  "sequence/tone/weak-53-65-74/167ms|tone|discovery|sequence|scoring|1|known-weak-chord|167|splendid|mp||",
+  "sequence/tone/weak-53-65-74/125ms|tone|discovery|sequence|scoring|1|known-weak-chord|125|splendid|mp||",
+  "sequence/tone/course-clear-27/1000ms|tone|discovery|sequence|scoring|1|course-clear|1000|splendid|mp||",
+  "sequence/tone/course-clear-27/500ms|tone|discovery|sequence|scoring|1|course-clear|500|splendid|mp||",
+  "sequence/tone/course-clear-27/333ms|tone|discovery|sequence|scoring|1|course-clear|333.3333333333333|splendid|mp||",
+  "sequence/tone/course-clear-27/250ms|tone|discovery|sequence|scoring|1|course-clear|250|splendid|mp||",
+  "sequence/tone/course-clear-27/167ms|tone|discovery|sequence|scoring|1|course-clear|167|splendid|mp||",
+  "sequence/tone/course-clear-27/125ms|tone|discovery|sequence|scoring|1|course-clear|125|splendid|mp||",
+  "sequence/tone/slightly-rolled-triads/1000ms|tone|discovery|sequence|scoring|1|rolled-chords|1000|splendid|mp||",
+  "sequence/tone/slightly-rolled-triads/500ms|tone|discovery|sequence|scoring|1|rolled-chords|500|splendid|mp||",
+  "sequence/tone/slightly-rolled-triads/333ms|tone|discovery|sequence|scoring|1|rolled-chords|333.3333333333333|splendid|mp||",
+  "sequence/tone/slightly-rolled-triads/250ms|tone|discovery|sequence|scoring|1|rolled-chords|250|splendid|mp||",
+  "sequence/tone/slightly-rolled-triads/167ms|tone|discovery|sequence|scoring|1|rolled-chords|167|splendid|mp||",
+  "sequence/tone/slightly-rolled-triads/125ms|tone|discovery|sequence|scoring|1|rolled-chords|125|splendid|mp||",
+  "sequence/tone/wrong-note-safety/1000ms|tone|regression-only|sequence|safety|0|safety|1000|splendid|mp||",
+  "sequence/tone/wrong-note-safety/500ms|tone|regression-only|sequence|safety|0|safety|500|splendid|mp||",
+  "sequence/tone/wrong-note-safety/333ms|tone|regression-only|sequence|safety|0|safety|333.3333333333333|splendid|mp||",
+  "sequence/tone/wrong-note-safety/250ms|tone|regression-only|sequence|safety|0|safety|250|splendid|mp||",
+  "sequence/tone/wrong-note-safety/167ms|tone|regression-only|sequence|safety|0|safety|167|splendid|mp||",
+  "sequence/tone/wrong-note-safety/125ms|tone|regression-only|sequence|safety|0|safety|125|splendid|mp||",
+  "sequence/tone/extra-note-safety/1000ms|tone|regression-only|sequence|safety|0|safety|1000|splendid|mp||",
+  "sequence/tone/extra-note-safety/500ms|tone|regression-only|sequence|safety|0|safety|500|splendid|mp||",
+  "sequence/tone/extra-note-safety/333ms|tone|regression-only|sequence|safety|0|safety|333.3333333333333|splendid|mp||",
+  "sequence/tone/extra-note-safety/250ms|tone|regression-only|sequence|safety|0|safety|250|splendid|mp||",
+  "sequence/tone/extra-note-safety/167ms|tone|regression-only|sequence|safety|0|safety|167|splendid|mp||",
+  "sequence/tone/extra-note-safety/125ms|tone|regression-only|sequence|safety|0|safety|125|splendid|mp||",
+  "sequence/tone/carried-bass-safety/1000ms|tone|regression-only|sequence|safety|0|safety|1000|splendid|mp||",
+  "sequence/tone/carried-bass-safety/500ms|tone|regression-only|sequence|safety|0|safety|500|splendid|mp||",
+  "sequence/tone/carried-bass-safety/333ms|tone|regression-only|sequence|safety|0|safety|333.3333333333333|splendid|mp||",
+  "sequence/tone/carried-bass-safety/250ms|tone|regression-only|sequence|safety|0|safety|250|splendid|mp||",
+  "sequence/tone/carried-bass-safety/167ms|tone|regression-only|sequence|safety|0|safety|167|splendid|mp||",
+  "sequence/tone/carried-bass-safety/125ms|tone|regression-only|sequence|safety|0|safety|125|splendid|mp||",
+  "articulation/direct/detached|direct|discovery|articulation|scoring|1|course-clear-articulation|1000|splendid|mp||detached",
+  "articulation/direct/normal|direct|discovery|articulation|scoring|1|course-clear-articulation|1000|splendid|mp||normal",
+  "articulation/direct/legato|direct|discovery|articulation|scoring|1|course-clear-articulation|1000|splendid|mp||legato",
+  "articulation/direct/sustained-shared|direct|discovery|articulation|scoring|1|course-clear-articulation|1000|splendid|mp||sustained-shared",
+  "articulation/tone/detached|tone|discovery|articulation|scoring|1|course-clear-articulation|1000|splendid|mp||detached",
+  "articulation/tone/normal|tone|discovery|articulation|scoring|1|course-clear-articulation|1000|splendid|mp||normal",
+  "articulation/tone/legato|tone|discovery|articulation|scoring|1|course-clear-articulation|1000|splendid|mp||legato",
+  "articulation/tone/sustained-shared|tone|discovery|articulation|scoring|1|course-clear-articulation|1000|splendid|mp||sustained-shared",
+  "dynamics-constant/direct/splendid/pp|direct|discovery|dynamics-constant|scoring|1|course-clear-articulation|1000|splendid|pp||normal",
+  "dynamics-constant/direct/splendid/mp|direct|discovery|dynamics-constant|scoring|1|course-clear-articulation|1000|splendid|mp||normal",
+  "dynamics-constant/direct/splendid/mf|direct|discovery|dynamics-constant|scoring|1|course-clear-articulation|1000|splendid|mf||normal",
+  "dynamics-constant/direct/splendid/ff|direct|discovery|dynamics-constant|scoring|1|course-clear-articulation|1000|splendid|ff||normal",
+  "dynamics-constant/direct/salamander/v01|direct|discovery|dynamics-constant|scoring|1|course-clear-articulation|1000|salamander|v01||normal",
+  "dynamics-constant/direct/salamander/v02|direct|discovery|dynamics-constant|scoring|1|course-clear-articulation|1000|salamander|v02||normal",
+  "dynamics-constant/direct/salamander/v03|direct|discovery|dynamics-constant|scoring|1|course-clear-articulation|1000|salamander|v03||normal",
+  "dynamics-constant/direct/salamander/v04|direct|discovery|dynamics-constant|scoring|1|course-clear-articulation|1000|salamander|v04||normal",
+  "dynamics-constant/direct/salamander/v05|direct|discovery|dynamics-constant|scoring|1|course-clear-articulation|1000|salamander|v05||normal",
+  "dynamics-constant/direct/salamander/v06|direct|discovery|dynamics-constant|scoring|1|course-clear-articulation|1000|salamander|v06||normal",
+  "dynamics-constant/direct/salamander/v07|direct|discovery|dynamics-constant|scoring|1|course-clear-articulation|1000|salamander|v07||normal",
+  "dynamics-constant/direct/salamander/v08|direct|discovery|dynamics-constant|scoring|1|course-clear-articulation|1000|salamander|v08||normal",
+  "dynamics-constant/direct/salamander/v09|direct|discovery|dynamics-constant|scoring|1|course-clear-articulation|1000|salamander|v09||normal",
+  "dynamics-constant/direct/salamander/v10|direct|discovery|dynamics-constant|scoring|1|course-clear-articulation|1000|salamander|v10||normal",
+  "dynamics-constant/direct/salamander/v11|direct|discovery|dynamics-constant|scoring|1|course-clear-articulation|1000|salamander|v11||normal",
+  "dynamics-constant/direct/salamander/v12|direct|discovery|dynamics-constant|scoring|1|course-clear-articulation|1000|salamander|v12||normal",
+  "dynamics-constant/direct/salamander/v13|direct|discovery|dynamics-constant|scoring|1|course-clear-articulation|1000|salamander|v13||normal",
+  "dynamics-constant/direct/salamander/v14|direct|discovery|dynamics-constant|scoring|1|course-clear-articulation|1000|salamander|v14||normal",
+  "dynamics-constant/direct/salamander/v15|direct|discovery|dynamics-constant|scoring|1|course-clear-articulation|1000|salamander|v15||normal",
+  "dynamics-constant/direct/salamander/v16|direct|discovery|dynamics-constant|scoring|1|course-clear-articulation|1000|salamander|v16||normal",
+  "dynamics-constant/tone/splendid/pp|tone|discovery|dynamics-constant|scoring|1|course-clear-articulation|1000|splendid|pp||normal",
+  "dynamics-constant/tone/splendid/mp|tone|discovery|dynamics-constant|scoring|1|course-clear-articulation|1000|splendid|mp||normal",
+  "dynamics-constant/tone/splendid/mf|tone|discovery|dynamics-constant|scoring|1|course-clear-articulation|1000|splendid|mf||normal",
+  "dynamics-constant/tone/splendid/ff|tone|discovery|dynamics-constant|scoring|1|course-clear-articulation|1000|splendid|ff||normal",
+  "dynamics-constant/tone/salamander/v01|tone|discovery|dynamics-constant|scoring|1|course-clear-articulation|1000|salamander|v01||normal",
+  "dynamics-constant/tone/salamander/v02|tone|discovery|dynamics-constant|scoring|1|course-clear-articulation|1000|salamander|v02||normal",
+  "dynamics-constant/tone/salamander/v03|tone|discovery|dynamics-constant|scoring|1|course-clear-articulation|1000|salamander|v03||normal",
+  "dynamics-constant/tone/salamander/v04|tone|discovery|dynamics-constant|scoring|1|course-clear-articulation|1000|salamander|v04||normal",
+  "dynamics-constant/tone/salamander/v05|tone|regression-only|dynamics-constant|safety|0|course-clear-articulation|1000|salamander|v05||normal",
+  "dynamics-constant/tone/salamander/v06|tone|discovery|dynamics-constant|scoring|1|course-clear-articulation|1000|salamander|v06||normal",
+  "dynamics-constant/tone/salamander/v07|tone|discovery|dynamics-constant|scoring|1|course-clear-articulation|1000|salamander|v07||normal",
+  "dynamics-constant/tone/salamander/v08|tone|discovery|dynamics-constant|scoring|1|course-clear-articulation|1000|salamander|v08||normal",
+  "dynamics-constant/tone/salamander/v09|tone|discovery|dynamics-constant|scoring|1|course-clear-articulation|1000|salamander|v09||normal",
+  "dynamics-constant/tone/salamander/v10|tone|discovery|dynamics-constant|scoring|1|course-clear-articulation|1000|salamander|v10||normal",
+  "dynamics-constant/tone/salamander/v11|tone|discovery|dynamics-constant|scoring|1|course-clear-articulation|1000|salamander|v11||normal",
+  "dynamics-constant/tone/salamander/v12|tone|discovery|dynamics-constant|scoring|1|course-clear-articulation|1000|salamander|v12||normal",
+  "dynamics-constant/tone/salamander/v13|tone|discovery|dynamics-constant|scoring|1|course-clear-articulation|1000|salamander|v13||normal",
+  "dynamics-constant/tone/salamander/v14|tone|discovery|dynamics-constant|scoring|1|course-clear-articulation|1000|salamander|v14||normal",
+  "dynamics-constant/tone/salamander/v15|tone|discovery|dynamics-constant|scoring|1|course-clear-articulation|1000|salamander|v15||normal",
+  "dynamics-constant/tone/salamander/v16|tone|discovery|dynamics-constant|scoring|1|course-clear-articulation|1000|salamander|v16||normal",
+  "dynamics-mixed/direct/splendid|direct|discovery|dynamics-mixed|scoring|1|course-clear-articulation|1000|splendid|||normal",
+  "dynamics-mixed/direct/salamander|direct|discovery|dynamics-mixed|scoring|1|course-clear-articulation|1000|salamander|||normal",
+  "dynamics-mixed/tone/splendid|tone|discovery|dynamics-mixed|scoring|1|course-clear-articulation|1000|splendid|||normal",
+  "dynamics-mixed/tone/salamander|tone|discovery|dynamics-mixed|scoring|1|course-clear-articulation|1000|salamander|||normal",
+  "isolated/direct/001|direct|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/direct/002|direct|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/direct/003|direct|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/direct/004|direct|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/direct/005|direct|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/direct/006|direct|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/direct/007|direct|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/direct/008|direct|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/direct/009|direct|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/direct/010|direct|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/direct/011|direct|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/direct/012|direct|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/direct/013|direct|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/direct/014|direct|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/direct/015|direct|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/direct/016|direct|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/direct/017|direct|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/direct/018|direct|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/direct/019|direct|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/direct/020|direct|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/direct/021|direct|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/direct/022|direct|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/direct/023|direct|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/direct/024|direct|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/direct/025|direct|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/direct/026|direct|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/direct/027|direct|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/direct/028|direct|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/direct/029|direct|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/direct/030|direct|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/direct/031|direct|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/direct/032|direct|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/direct/033|direct|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/direct/034|direct|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/direct/035|direct|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/direct/036|direct|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/direct/037|direct|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/direct/038|direct|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/direct/039|direct|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/direct/040|direct|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/direct/041|direct|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/direct/042|direct|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/direct/043|direct|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/direct/044|direct|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/direct/045|direct|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/direct/046|direct|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/direct/047|direct|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/direct/048|direct|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/direct/049|direct|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/direct/050|direct|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/direct/051|direct|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/direct/052|direct|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/direct/053|direct|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/direct/054|direct|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/direct/055|direct|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/direct/056|direct|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/direct/057|direct|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/direct/058|direct|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/direct/059|direct|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/direct/060|direct|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/direct/061|direct|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/direct/062|direct|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/direct/063|direct|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/direct/064|direct|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/direct/065|direct|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/direct/066|direct|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/direct/067|direct|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/direct/068|direct|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/direct/069|direct|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/direct/070|direct|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/direct/071|direct|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/direct/072|direct|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/direct/073|direct|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/direct/074|direct|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/direct/075|direct|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/direct/076|direct|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/direct/077|direct|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/direct/078|direct|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/direct/079|direct|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/direct/080|direct|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/direct/081|direct|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/direct/082|direct|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/direct/083|direct|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/direct/084|direct|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/direct/085|direct|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/direct/086|direct|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/direct/087|direct|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/direct/088|direct|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/direct/089|direct|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/direct/090|direct|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/direct/091|direct|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/direct/092|direct|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/direct/093|direct|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/direct/094|direct|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/direct/095|direct|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/direct/096|direct|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/direct/097|direct|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/direct/098|direct|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/direct/099|direct|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/direct/100|direct|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/direct/101|direct|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/direct/102|direct|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/direct/103|direct|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/direct/104|direct|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/direct/105|direct|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/direct/106|direct|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/direct/107|direct|regression-only|isolated|safety|0|general||splendid|mp|distinguishable-wrong|",
+  "isolated/direct/108|direct|regression-only|isolated|diagnostic|0|general||splendid|mp|ambiguous-harmonic|",
+  "isolated/direct/109|direct|regression-only|isolated|safety|0|general||splendid|mp|distinguishable-wrong|",
+  "isolated/direct/110|direct|regression-only|isolated|diagnostic|0|general||splendid|mp|ambiguous-harmonic|",
+  "isolated/direct/111|direct|regression-only|isolated|diagnostic|0|general||splendid|mp|ambiguous-harmonic|",
+  "isolated/direct/112|direct|regression-only|isolated|diagnostic|0|general||splendid|mp|ambiguous-harmonic|",
+  "isolated/direct/113|direct|regression-only|isolated|diagnostic|0|general||splendid|mp|ambiguous-harmonic|",
+  "isolated/direct/114|direct|regression-only|isolated|diagnostic|0|general||splendid|mp|ambiguous-harmonic|",
+  "isolated/direct/115|direct|regression-only|isolated|diagnostic|0|general||splendid|mp|ambiguous-harmonic|",
+  "isolated/direct/116|direct|regression-only|isolated|diagnostic|0|general||splendid|mp|ambiguous-harmonic|",
+  "isolated/direct/117|direct|regression-only|isolated|safety|0|course-clear||splendid|mp|omitted-bass|",
+  "isolated/direct/118|direct|regression-only|isolated|safety|0|course-clear||splendid|mp|omitted-bass|",
+  "isolated/direct/119|direct|regression-only|isolated|safety|0|course-clear||splendid|mp|omitted-bass|",
+  "isolated/direct/120|direct|regression-only|isolated|safety|0|course-clear||splendid|mp|omitted-bass|",
+  "isolated/direct/121|direct|regression-only|isolated|safety|0|course-clear||splendid|mp|omitted-bass|",
+  "isolated/direct/122|direct|regression-only|isolated|safety|0|course-clear||splendid|mp|omitted-bass|",
+  "isolated/direct/123|direct|regression-only|isolated|safety|0|course-clear||splendid|mp|omitted-bass|",
+  "isolated/direct/124|direct|regression-only|isolated|safety|0|course-clear||splendid|mp|omitted-bass|",
+  "isolated/direct/125|direct|regression-only|isolated|safety|0|course-clear||splendid|mp|omitted-bass|",
+  "isolated/direct/126|direct|regression-only|isolated|safety|0|course-clear||splendid|mp|omitted-bass|",
+  "isolated/direct/127|direct|regression-only|isolated|safety|0|course-clear||splendid|mp|omitted-bass|",
+  "isolated/direct/128|direct|regression-only|isolated|safety|0|course-clear||splendid|mp|omitted-bass|",
+  "isolated/direct/129|direct|regression-only|isolated|safety|0|course-clear||splendid|mp|omitted-bass|",
+  "isolated/direct/130|direct|regression-only|isolated|safety|0|course-clear||splendid|mp|omitted-bass|",
+  "isolated/direct/131|direct|regression-only|isolated|safety|0|course-clear||splendid|mp|omitted-bass|",
+  "isolated/direct/132|direct|regression-only|isolated|safety|0|course-clear||splendid|mp|omitted-bass|",
+  "isolated/direct/133|direct|regression-only|isolated|safety|0|course-clear||splendid|mp|omitted-bass|",
+  "isolated/direct/134|direct|regression-only|isolated|safety|0|course-clear||splendid|mp|omitted-bass|",
+  "isolated/tone/001|tone|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/tone/002|tone|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/tone/003|tone|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/tone/004|tone|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/tone/005|tone|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/tone/006|tone|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/tone/007|tone|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/tone/008|tone|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/tone/009|tone|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/tone/010|tone|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/tone/011|tone|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/tone/012|tone|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/tone/013|tone|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/tone/014|tone|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/tone/015|tone|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/tone/016|tone|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/tone/017|tone|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/tone/018|tone|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/tone/019|tone|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/tone/020|tone|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/tone/021|tone|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/tone/022|tone|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/tone/023|tone|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/tone/024|tone|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/tone/025|tone|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/tone/026|tone|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/tone/027|tone|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/tone/028|tone|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/tone/029|tone|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/tone/030|tone|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/tone/031|tone|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/tone/032|tone|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/tone/033|tone|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/tone/034|tone|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/tone/035|tone|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/tone/036|tone|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/tone/037|tone|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/tone/038|tone|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/tone/039|tone|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/tone/040|tone|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/tone/041|tone|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/tone/042|tone|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/tone/043|tone|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/tone/044|tone|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/tone/045|tone|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/tone/046|tone|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/tone/047|tone|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/tone/048|tone|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/tone/049|tone|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/tone/050|tone|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/tone/051|tone|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/tone/052|tone|discovery|isolated|scoring|1|general||splendid|mp|correct|",
+  "isolated/tone/053|tone|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/tone/054|tone|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/tone/055|tone|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/tone/056|tone|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/tone/057|tone|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/tone/058|tone|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/tone/059|tone|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/tone/060|tone|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/tone/061|tone|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/tone/062|tone|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/tone/063|tone|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/tone/064|tone|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/tone/065|tone|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/tone/066|tone|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/tone/067|tone|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/tone/068|tone|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/tone/069|tone|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/tone/070|tone|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/tone/071|tone|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/tone/072|tone|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/tone/073|tone|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/tone/074|tone|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/tone/075|tone|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/tone/076|tone|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/tone/077|tone|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/tone/078|tone|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/tone/079|tone|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/tone/080|tone|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/tone/081|tone|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/tone/082|tone|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/tone/083|tone|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/tone/084|tone|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/tone/085|tone|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/tone/086|tone|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/tone/087|tone|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/tone/088|tone|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/tone/089|tone|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/tone/090|tone|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/tone/091|tone|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/tone/092|tone|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/tone/093|tone|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/tone/094|tone|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/tone/095|tone|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/tone/096|tone|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/tone/097|tone|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/tone/098|tone|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/tone/099|tone|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/tone/100|tone|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/tone/101|tone|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/tone/102|tone|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/tone/103|tone|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/tone/104|tone|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/tone/105|tone|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/tone/106|tone|discovery|isolated|scoring|1|course-clear||splendid|mp|correct|",
+  "isolated/tone/107|tone|regression-only|isolated|safety|0|general||splendid|mp|distinguishable-wrong|",
+  "isolated/tone/108|tone|regression-only|isolated|diagnostic|0|general||splendid|mp|ambiguous-harmonic|",
+  "isolated/tone/109|tone|regression-only|isolated|safety|0|general||splendid|mp|distinguishable-wrong|",
+  "isolated/tone/110|tone|regression-only|isolated|diagnostic|0|general||splendid|mp|ambiguous-harmonic|",
+  "isolated/tone/111|tone|regression-only|isolated|diagnostic|0|general||splendid|mp|ambiguous-harmonic|",
+  "isolated/tone/112|tone|regression-only|isolated|diagnostic|0|general||splendid|mp|ambiguous-harmonic|",
+  "isolated/tone/113|tone|regression-only|isolated|diagnostic|0|general||splendid|mp|ambiguous-harmonic|",
+  "isolated/tone/114|tone|regression-only|isolated|diagnostic|0|general||splendid|mp|ambiguous-harmonic|",
+  "isolated/tone/115|tone|regression-only|isolated|diagnostic|0|general||splendid|mp|ambiguous-harmonic|",
+  "isolated/tone/116|tone|regression-only|isolated|diagnostic|0|general||splendid|mp|ambiguous-harmonic|",
+  "isolated/tone/117|tone|regression-only|isolated|safety|0|course-clear||splendid|mp|omitted-bass|",
+  "isolated/tone/118|tone|regression-only|isolated|safety|0|course-clear||splendid|mp|omitted-bass|",
+  "isolated/tone/119|tone|regression-only|isolated|safety|0|course-clear||splendid|mp|omitted-bass|",
+  "isolated/tone/120|tone|regression-only|isolated|safety|0|course-clear||splendid|mp|omitted-bass|",
+  "isolated/tone/121|tone|regression-only|isolated|safety|0|course-clear||splendid|mp|omitted-bass|",
+  "isolated/tone/122|tone|regression-only|isolated|safety|0|course-clear||splendid|mp|omitted-bass|",
+  "isolated/tone/123|tone|regression-only|isolated|safety|0|course-clear||splendid|mp|omitted-bass|",
+  "isolated/tone/124|tone|regression-only|isolated|safety|0|course-clear||splendid|mp|omitted-bass|",
+  "isolated/tone/125|tone|regression-only|isolated|safety|0|course-clear||splendid|mp|omitted-bass|",
+  "isolated/tone/126|tone|regression-only|isolated|safety|0|course-clear||splendid|mp|omitted-bass|",
+  "isolated/tone/127|tone|regression-only|isolated|safety|0|course-clear||splendid|mp|omitted-bass|",
+  "isolated/tone/128|tone|regression-only|isolated|safety|0|course-clear||splendid|mp|omitted-bass|",
+  "isolated/tone/129|tone|regression-only|isolated|safety|0|course-clear||splendid|mp|omitted-bass|",
+  "isolated/tone/130|tone|regression-only|isolated|safety|0|course-clear||splendid|mp|omitted-bass|",
+  "isolated/tone/131|tone|regression-only|isolated|safety|0|course-clear||splendid|mp|omitted-bass|",
+  "isolated/tone/132|tone|regression-only|isolated|safety|0|course-clear||splendid|mp|omitted-bass|",
+  "isolated/tone/133|tone|regression-only|isolated|safety|0|course-clear||splendid|mp|omitted-bass|",
+  "isolated/tone/134|tone|regression-only|isolated|safety|0|course-clear||splendid|mp|omitted-bass|",
+  "regression/tone-salamander-v05-repeated-chord-late-advance|tone|regression-only|safety-regression|safety|0|safety-regression|1000|salamander|v05||",
+  "regression/tone-course-clear-333-shared-pitch-false-advance|tone|regression-only|safety-regression|safety|0|safety-regression|333.3333333333333|splendid|mp||",
+  "regression/isolated-direct-122|direct|regression-only|safety-regression|safety|0|isolated-omitted-bass||splendid|mp|omitted-bass|",
+  "regression/isolated-tone-124|tone|regression-only|safety-regression|safety|0|isolated-omitted-bass||splendid|mp|omitted-bass|",
+  "round-two/r2-repeated-low-triad-direct-splendid-pp/correct|direct|discovery|round-two-paired|scoring|1|round-two-repeated-identical|167|splendid|pp|correct|detached",
+  "round-two/r2-repeated-low-triad-direct-splendid-pp/omitted-bass|direct|discovery|round-two-paired|safety|0|round-two-repeated-identical|167|splendid|pp|omitted-bass|detached",
+  "round-two/r2-repeated-low-triad-direct-splendid-pp/distinguishable-wrong|direct|discovery|round-two-paired|safety|0|round-two-repeated-identical|167|splendid|pp|distinguishable-wrong|detached",
+  "round-two/r2-repeated-mid-tetrad-tone-salamander-v13/correct|tone|discovery|round-two-paired|scoring|1|round-two-repeated-identical|500|salamander|v13|correct|sustained-shared",
+  "round-two/r2-repeated-mid-tetrad-tone-salamander-v13/omitted-bass|tone|discovery|round-two-paired|safety|0|round-two-repeated-identical|500|salamander|v13|omitted-bass|sustained-shared",
+  "round-two/r2-repeated-mid-tetrad-tone-salamander-v13/distinguishable-wrong|tone|discovery|round-two-paired|safety|0|round-two-repeated-identical|500|salamander|v13|distinguishable-wrong|sustained-shared",
+  "round-two/r2-paired-mid-triad-direct-salamander-v10/correct|direct|discovery|round-two-paired|scoring|1|round-two-paired|500|salamander|v10|correct|normal",
+  "round-two/r2-paired-mid-triad-direct-salamander-v10/omitted-bass|direct|discovery|round-two-paired|safety|0|round-two-paired|500|salamander|v10|omitted-bass|normal",
+  "round-two/r2-paired-mid-triad-direct-salamander-v10/distinguishable-wrong|direct|discovery|round-two-paired|safety|0|round-two-paired|500|salamander|v10|distinguishable-wrong|normal",
+  "round-two/r2-paired-high-tetrad-tone-splendid-ff/correct|tone|discovery|round-two-paired|scoring|1|round-two-paired|500|splendid|ff|correct|legato",
+  "round-two/r2-paired-high-tetrad-tone-splendid-ff/omitted-bass|tone|discovery|round-two-paired|safety|0|round-two-paired|500|splendid|ff|omitted-bass|legato",
+  "round-two/r2-paired-high-tetrad-tone-splendid-ff/distinguishable-wrong|tone|discovery|round-two-paired|safety|0|round-two-paired|500|splendid|ff|distinguishable-wrong|legato",
+  "round-two/r2-repeated-high-triad-tone-splendid-mf/correct|tone|confirmation|round-two-paired|scoring|1|round-two-repeated-identical|333|splendid|mf|correct|normal",
+  "round-two/r2-repeated-high-triad-tone-splendid-mf/omitted-bass|tone|confirmation|round-two-paired|safety|0|round-two-repeated-identical|333|splendid|mf|omitted-bass|normal",
+  "round-two/r2-repeated-high-triad-tone-splendid-mf/distinguishable-wrong|tone|confirmation|round-two-paired|safety|0|round-two-repeated-identical|333|splendid|mf|distinguishable-wrong|normal",
+  "round-two/r2-repeated-mid-tetrad-direct-salamander-v03/correct|direct|confirmation|round-two-paired|scoring|1|round-two-repeated-identical|500|salamander|v03|correct|legato",
+  "round-two/r2-repeated-mid-tetrad-direct-salamander-v03/omitted-bass|direct|confirmation|round-two-paired|safety|0|round-two-repeated-identical|500|salamander|v03|omitted-bass|legato",
+  "round-two/r2-repeated-mid-tetrad-direct-salamander-v03/distinguishable-wrong|direct|confirmation|round-two-paired|safety|0|round-two-repeated-identical|500|salamander|v03|distinguishable-wrong|legato",
+  "round-two/r2-paired-low-tetrad-tone-salamander-v05/correct|tone|confirmation|round-two-paired|scoring|1|round-two-paired|333|salamander|v05|correct|detached",
+  "round-two/r2-paired-low-tetrad-tone-salamander-v05/omitted-bass|tone|confirmation|round-two-paired|safety|0|round-two-paired|333|salamander|v05|omitted-bass|detached",
+  "round-two/r2-paired-low-tetrad-tone-salamander-v05/distinguishable-wrong|tone|confirmation|round-two-paired|safety|0|round-two-paired|333|salamander|v05|distinguishable-wrong|detached",
+  "round-two/r2-paired-high-triad-direct-splendid-mp/correct|direct|confirmation|round-two-paired|scoring|1|round-two-paired|500|splendid|mp|correct|sustained-shared",
+  "round-two/r2-paired-high-triad-direct-splendid-mp/omitted-bass|direct|confirmation|round-two-paired|safety|0|round-two-paired|500|splendid|mp|omitted-bass|sustained-shared",
+  "round-two/r2-paired-high-triad-direct-splendid-mp/distinguishable-wrong|direct|confirmation|round-two-paired|safety|0|round-two-paired|500|splendid|mp|distinguishable-wrong|sustained-shared",
+]);
+
+/** `DeterministicHasher` restated here, so an archive's identity is recomputed. */
+function deterministicDigest(write) {
+  let hash = 0x811c9dc5;
+  const scratch = new DataView(new ArrayBuffer(8));
+  const byte = (value) => {
+    hash = Math.imul(hash ^ (value & 0xff), 0x01000193) >>> 0;
+  };
+  write({
+    text(value, terminate = true) {
+      for (let index = 0; index < value.length; index += 1) {
+        const code = value.charCodeAt(index);
+        byte(code & 0xff);
+        byte(code >>> 8);
+      }
+      if (terminate) byte(0);
+    },
+    number(value) {
+      scratch.setFloat64(0, value);
+      for (let index = 0; index < 8; index += 1) byte(scratch.getUint8(index));
+    },
+  });
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+/** The captured corpus's identity, recomputed from the archived captures. */
+export const ROUND_TWO_CAPTURE_IDENTITY_FIELDS = Object.freeze([
+  "traceId",
+  "rendererKey",
+  "partition",
+  "suite",
+  "evidenceRole",
+  "scoreEligible",
+  "sequenceFamily",
+  "intervalMs",
+  "piano",
+  "layer",
+  "caseKind",
+  "articulation",
+]);
+
+/**
+ * The captured corpus's identity, recomputed from the archived captures.
+ *
+ * It covers every field a gate's domains are grouped on, not only the four that
+ * name a row: a copied corpus whose speeds, layers, or articulations had drifted
+ * would otherwise keep this digest while silently re-grouping every domain.
+ */
+export function capturedCorpusIdentity(captures) {
+  return deterministicDigest((hasher) => {
+    hasher.number(captures.length);
+    for (const capture of captures) {
+      for (const field of ROUND_TWO_CAPTURE_IDENTITY_FIELDS) {
+        const value = capture?.[field];
+        hasher.text(value === true ? "1" : value === false ? "0" : String(value ?? ""));
+      }
+    }
+  });
+}
+
+/**
+ * The frozen list, parsed into the shape a capture takes.
+ *
+ * The extra fields are the ones each gate groups its domains on — renderer,
+ * speed, family, piano, layer, case kind, and whether the row scores. They are
+ * part of the frozen corpus rather than of the archive, so a gate's domain
+ * membership is derived from the manifest instead of taken from whatever
+ * grouping an archive chose to report.
+ */
+export function roundTwoCaptureIdentityRows() {
+  return ROUND_TWO_CAPTURE_IDENTITIES.map((entry) => {
+    const [
+      traceId,
+      rendererKey,
+      partition,
+      suite,
+      evidenceRole,
+      scoreEligible,
+      sequenceFamily,
+      intervalMs,
+      piano,
+      layer,
+      caseKind,
+      articulation,
+    ] = entry.split("|");
+    return {
+      traceId,
+      rendererKey,
+      partition,
+      suite,
+      evidenceRole,
+      scoreEligible: scoreEligible === "1",
+      sequenceFamily,
+      intervalMs,
+      piano,
+      layer,
+      caseKind,
+      articulation,
+    };
+  });
+}
+
+// The list and the digest are two statements of one fact, so they are bound at
+// load rather than left to agree by inspection.
+if (capturedCorpusIdentity(roundTwoCaptureIdentityRows()) !==
+    ROUND_TWO_CONFIRMATION_MATRIX.captureIdentityDigest) {
+  throw new Error(
+    "The frozen capture identity list does not hash to the pinned capture identity digest.",
+  );
+}
+
+/**
+ * What each frozen gate compares, and on which rows.
+ *
+ * Every gate in this set is a paired non-regression against the incumbent on the
+ * identical corpus — the validation policy states it directly
+ * (`correctnessEligibility: "paired-non-regression"`, with the absolute
+ * recognition rates recorded as product debt rather than as eligibility). That is
+ * what makes independent re-derivation possible without freezing a second copy of
+ * any threshold here: for all but the latency gates the comparison is "this
+ * counter did not fall below the incumbent's on the same domain", and the two
+ * latency gates carry the only frozen scalars, restated from the benchmark.
+ *
+ * `counter` names the per-domain measure. `absolute` gates fail on any nonzero
+ * value rather than on a fall from the baseline.
+ */
+export const ROUND_TWO_LATENCY_LIMIT_MS = 400;
+export const ROUND_TWO_LATENCY_REGRESSION_TOLERANCE_MS = 32;
+/** A single row may lose one independent event before its layer gate fails. */
+export const ROUND_TWO_LAYER_INDEPENDENT_LOSS_ALLOWANCE = 1;
+/** An improvement must be present in more than one sequence family. */
+export const ROUND_TWO_FAMILY_BREADTH_MINIMUM = 2;
+
+export const ROUND_TWO_GATE_MEASURES = Object.freeze({
+  "replay-trace-reuse": Object.freeze({ kind: "replay-reuse" }),
+  "replay-baseline-parity": Object.freeze({ kind: "replay-parity" }),
+  // The dedicated families gate absolutely, at every speed, and the carried-bass
+  // rule is one of the four counts it reads.
+  "safety-isolated-false-advance": Object.freeze({ kind: "absolute-unsafe" }),
+  "safety-sequence-dedicated-families": Object.freeze({ kind: "absolute-unsafe" }),
+  "safety-sequence-introduced-advance": Object.freeze({ kind: "introduced-unsafe" }),
+  "safety-dynamics-introduced-advance": Object.freeze({ kind: "introduced-unsafe" }),
+  "safety-committed-regression": Object.freeze({ kind: "committed-regression" }),
+  "release-isolated-recognition": Object.freeze({ kind: "no-fall", counter: "correctAdvanceCount" }),
+  "release-isolated-course-clear": Object.freeze({
+    kind: "no-fall",
+    counter: "courseClearCorrectAdvanceCount",
+  }),
+  "release-isolated-latency": Object.freeze({ kind: "latency-absolute" }),
+  "release-dynamics-piano-recognition": Object.freeze({
+    kind: "no-fall",
+    counter: "independentMatchCount",
+  }),
+  "release-dynamics-layer-loss": Object.freeze({ kind: "layer-loss" }),
+  "consistency-sequence-speed-recognition": Object.freeze({
+    kind: "no-fall",
+    counter: "independentMatchCount",
+  }),
+  "consistency-sequence-ordered-progress": Object.freeze({ kind: "ordered-progress" }),
+  "consistency-sequence-family-breadth": Object.freeze({ kind: "family-breadth" }),
+  "consistency-sequence-latency": Object.freeze({ kind: "latency-regression" }),
+  "consistency-dynamics-piano-recognition": Object.freeze({
+    kind: "no-fall",
+    counter: "independentMatchCount",
+  }),
+  "consistency-dynamics-layer-loss": Object.freeze({ kind: "layer-loss" }),
+});
+
+/**
+ * The per-domain measures every archived summary row must carry.
+ *
+ * `incompleteCarriedBassAdvances` is one of them because the dedicated sequence
+ * families gate treats it as an absolute failure at every speed, exactly like a
+ * false, skipped, or duplicate advance. Omitting it from the archive would make
+ * that quarter of the rule unrecomputable.
+ */
+export const ROUND_TWO_DOMAIN_SUMMARY_COUNTERS = Object.freeze([
+  "correctAdvanceCount",
+  "courseClearCorrectAdvanceCount",
+  "independentMatchCount",
+  "orderedAdvanceCount",
+  "completePassageCount",
+  "falseAdvanceCount",
+  "skippedAdvanceCount",
+  "duplicateAdvanceCount",
+  "incompleteCarriedBassAdvances",
+]);
+
+/**
+ * Which captured rows each gate reads, and how it groups them into domains.
+ *
+ * `suites` and `role` narrow the gate's partitions to the rows it actually
+ * judges — a speed-recognition gate reads scored sequence rows, not every
+ * discovery row — and `groupBy` names the manifest fields whose distinct
+ * combinations are that gate's domains. Membership is therefore derived from the
+ * frozen corpus rather than from whatever grouping an archive chose to report,
+ * and it is compared as a partition of trace identifiers rather than by label,
+ * so an archive is free to name its domains however it likes and still has to
+ * have measured the same groups.
+ *
+ * This recipe is a reading of the benchmark's own domain construction rather than
+ * something the benchmark exports. It is the part of this validator most worth
+ * re-checking against `listenProfileValidationBenchmark.ts` before a later round
+ * relies on it; emitting the mapping from that module as a digest-bound artifact
+ * would remove the judgement entirely.
+ */
+const SEQUENCE_SUITES = Object.freeze(["sequence"]);
+const DYNAMICS_SUITES = Object.freeze(["dynamics-constant", "dynamics-mixed", "articulation"]);
+/** The piano groupings exclude articulation, which has no piano leaf of its own. */
+const PIANO_SUITES = Object.freeze(["dynamics-constant", "dynamics-mixed"]);
+/**
+ * One leaf per constant layer, per mixed run, and per articulation.
+ *
+ * Grouping by renderer, piano, and layer alone merges every articulation sharing
+ * the default piano and layer with each other and with a constant-layer row, so
+ * one leaf's loss could be offset inside the combined domain. Adding the suite
+ * and the articulation separates them exactly as the benchmark's own leaf
+ * definitions do.
+ */
+const LAYER_LEAF_GROUP = Object.freeze([
+  "rendererKey",
+  "suite",
+  "piano",
+  "layer",
+  "articulation",
+]);
+const ISOLATED_SUITES = Object.freeze(["isolated"]);
+
+export const ROUND_TWO_GATE_DOMAINS = Object.freeze({
+  "safety-isolated-false-advance": Object.freeze({
+    suites: ISOLATED_SUITES,
+    role: "safety",
+    groupBy: Object.freeze(["rendererKey"]),
+  }),
+  "safety-sequence-dedicated-families": Object.freeze({
+    suites: SEQUENCE_SUITES,
+    role: "safety",
+    groupBy: Object.freeze(["rendererKey", "intervalMs"]),
+  }),
+  "safety-sequence-introduced-advance": Object.freeze({
+    suites: SEQUENCE_SUITES,
+    role: null,
+    groupBy: Object.freeze(["rendererKey"]),
+  }),
+  "safety-dynamics-introduced-advance": Object.freeze({
+    suites: DYNAMICS_SUITES,
+    role: null,
+    groupBy: Object.freeze(["rendererKey", "piano"]),
+  }),
+  "release-isolated-recognition": Object.freeze({
+    suites: ISOLATED_SUITES,
+    role: "scoring",
+    groupBy: Object.freeze(["rendererKey"]),
+  }),
+  "release-isolated-course-clear": Object.freeze({
+    suites: ISOLATED_SUITES,
+    role: "scoring",
+    sequenceFamily: "course-clear",
+    groupBy: Object.freeze(["rendererKey"]),
+  }),
+  "release-isolated-latency": Object.freeze({
+    suites: ISOLATED_SUITES,
+    role: "scoring",
+    groupBy: Object.freeze(["rendererKey"]),
+  }),
+  "release-dynamics-piano-recognition": Object.freeze({
+    suites: PIANO_SUITES,
+    role: "scoring",
+    groupBy: Object.freeze(["rendererKey", "piano"]),
+  }),
+  "release-dynamics-layer-loss": Object.freeze({
+    suites: DYNAMICS_SUITES,
+    role: "scoring",
+    groupBy: LAYER_LEAF_GROUP,
+  }),
+  "consistency-sequence-speed-recognition": Object.freeze({
+    suites: SEQUENCE_SUITES,
+    role: "scoring",
+    groupBy: Object.freeze(["rendererKey", "intervalMs"]),
+  }),
+  "consistency-sequence-ordered-progress": Object.freeze({
+    suites: SEQUENCE_SUITES,
+    role: "scoring",
+    groupBy: Object.freeze(["rendererKey"]),
+  }),
+  // Netted across renderers, so the family alone is the domain.
+  "consistency-sequence-family-breadth": Object.freeze({
+    suites: SEQUENCE_SUITES,
+    role: "scoring",
+    groupBy: Object.freeze(["sequenceFamily"]),
+  }),
+  "consistency-sequence-latency": Object.freeze({
+    suites: SEQUENCE_SUITES,
+    role: "scoring",
+    groupBy: Object.freeze(["rendererKey"]),
+  }),
+  "consistency-dynamics-piano-recognition": Object.freeze({
+    suites: PIANO_SUITES,
+    role: "scoring",
+    groupBy: Object.freeze(["rendererKey", "piano"]),
+  }),
+  "consistency-dynamics-layer-loss": Object.freeze({
+    suites: DYNAMICS_SUITES,
+    role: "scoring",
+    groupBy: LAYER_LEAF_GROUP,
+  }),
+});
+
+/**
+ * The one problem a completed archive cannot fix.
+ *
+ * Task 13 froze the gate partitions against manifest version 1; version 2
+ * re-partitioned the corpus and left the release gates with no rows to read.
+ * That is an unfrozen round-two policy rather than a defect in any archive, so
+ * it is reported but does not stop the rest of the archive from being held to
+ * its own evidence.
+ */
+export const ROUND_TWO_UNFROZEN_SCOPE = "its round-two scope is not frozen";
+
+/**
+ * The committed regressions the gate reads, frozen by identity and expectation.
+ *
+ * Requiring only a well-shaped row would let one invented safe fixture stand in
+ * for both diagnosed cases, which is the whole evidence that gate exists to
+ * carry. The identifiers and expectations are the fixtures' own.
+ */
+export const ROUND_TWO_COMMITTED_REGRESSIONS = Object.freeze([
+  Object.freeze({
+    fixtureId: "tone-salamander-v05-repeated-chord-late-advance",
+    expectation: "late-advance",
+  }),
+  Object.freeze({
+    fixtureId: "tone-course-clear-333-shared-pitch-false-advance",
+    expectation: "reported-unsafe-advance",
+  }),
+]);
+
+/** The exact domains one gate reads, as a partition of trace identifiers. */
+export function roundTwoGateDomainMembership(gate, captures = roundTwoCaptureIdentityRows()) {
+  const recipe = ROUND_TWO_GATE_DOMAINS[gate.code];
+  if (recipe === undefined) return null;
+  const scoped = captures.filter((capture) => (
+    gate.partitions.includes(capture.partition) &&
+    recipe.suites.includes(capture.suite) &&
+    (recipe.role === null || capture.evidenceRole === recipe.role) &&
+    (recipe.sequenceFamily === undefined || capture.sequenceFamily === recipe.sequenceFamily)
+  ));
+  const domains = new Map();
+  for (const capture of scoped) {
+    const key = recipe.groupBy.map((field) => capture[field]).join("|");
+    domains.set(key, [...(domains.get(key) ?? []), capture.traceId]);
+  }
+  return [...domains.values()].map((traceIds) => traceIds.slice().sort());
+}
+
+/**
+ * The gates that read no manifest-version-2 row, and so cannot be re-derived.
+ *
+ * Empty is the only value that lets a completed run clear a candidate; while it
+ * is non-empty, a round-two gate scope has to be frozen as policy first.
+ */
+export function roundTwoUnfrozenGateScopes(captures = roundTwoCaptureIdentityRows()) {
+  return CONFIRMATION_EVIDENCE.gates
+    .filter((gate) => roundTwoGateDomainMembership(gate, captures)?.length === 0)
+    .map(({ code }) => code);
+}
+
+/** Two partitions of trace identifiers, compared as sets of groups. */
+function samePartition(left, right) {
+  if (left.length !== right.length) return false;
+  const encode = (groups) => groups.map((group) => group.join("\u0001")).sort();
+  return sameList(encode(left), encode(right));
+}
+
+/** The four counts the dedicated-family gate holds at zero, every speed. */
+const ABSOLUTE_UNSAFE_COUNTERS = Object.freeze([
+  "falseAdvanceCount",
+  "skippedAdvanceCount",
+  "duplicateAdvanceCount",
+  "incompleteCarriedBassAdvances",
+]);
+
+/** The three a candidate may not worsen relative to its incumbent. */
+const INTRODUCED_UNSAFE_COUNTERS = Object.freeze([
+  "falseAdvanceCount",
+  "skippedAdvanceCount",
+  "duplicateAdvanceCount",
+]);
+
+function domainSummaryIndex(summaries) {
+  const index = new Map();
+  for (const row of summaries) {
+    index.set(`${row?.profileId}\u0000${row?.gateCode}\u0000${row?.domainId}`, row);
+  }
+  return index;
+}
+
+/**
+ * Rederives one gate's verdict for one candidate from the archived summaries.
+ *
+ * Each branch restates the benchmark's own rule for that gate rather than a
+ * convenient approximation of it: a re-derivation that is merely rule-shaped
+ * would clear candidates the real evaluator rejects, which is worse than not
+ * re-deriving at all. Returns the failures the measurements produce; the
+ * archive's own `passed` is never consulted here.
+ */
+function rederiveGateVerdict(options) {
+  const { gate, profileId, summaries, index, outcomes, captures, baselineProfileId } = options;
+  const measure = ROUND_TWO_GATE_MEASURES[gate.code];
+  const rows = summaries.filter((row) => (
+    row?.gateCode === gate.code && row?.profileId === profileId
+  ));
+  const baselineOf = (row) => index.get(
+    `${baselineProfileId}\u0000${gate.code}\u0000${row.domainId}`,
+  );
+  const failures = [];
+  if (measure.kind === "replay-reuse") {
+    const captureById = new Map(captures.map((capture) => [capture.traceId, capture]));
+    for (const row of outcomes) {
+      const capture = captureById.get(row?.traceId);
+      if (capture === undefined) continue;
+      if (row.capturePcmHash !== capture.processLocalPcmHash ||
+          row.captureTraceHash !== capture.processLocalTraceHash) {
+        failures.push(row.traceId);
+      }
+    }
+    return failures;
+  }
+  if (measure.kind === "replay-parity") {
+    for (const capture of captures) {
+      const baselineRow = outcomes.find((row) => (
+        row?.traceId === capture.traceId && row?.profileId === baselineProfileId
+      ));
+      if (baselineRow?.outcomeDigest !== capture.baselineOutcomeDigest) {
+        failures.push(capture.traceId);
+      }
+    }
+    return failures;
+  }
+  if (measure.kind === "committed-regression") {
+    // A diagnosed case is not held to absolute zero: it is held to not
+    // worsening. The known Tone 333 ms false advance may stay exactly as
+    // diagnosed, and an absolute rule would reject the incumbent's own evidence.
+    // A pinned late advance is a recovery rather than a safety event — it may
+    // move earlier — but it may never become unsafe.
+    for (const outcome of options.committedRegressions) {
+      if (outcome?.worseThanBaseline === true) {
+        failures.push(`${outcome.fixtureId}:worse-than-baseline`);
+        continue;
+      }
+      if (outcome?.expectation !== "late-advance") continue;
+      if (outcome.falseAdvance === true || (outcome.skippedAdvanceCount ?? 0) > 0 ||
+          (outcome.duplicateAdvanceCount ?? 0) > 0) {
+        failures.push(`${outcome.fixtureId}:late-advance-became-unsafe`);
+      }
+    }
+    return failures;
+  }
+  if (measure.kind === "absolute-unsafe") {
+    // Zero at every domain, not on average: a profile that is safe on average is
+    // not safe.
+    for (const row of rows) {
+      for (const counter of ABSOLUTE_UNSAFE_COUNTERS) {
+        if ((row[counter] ?? 0) > 0) failures.push(`${row.domainId}:${counter}`);
+      }
+    }
+    return failures;
+  }
+  if (measure.kind === "introduced-unsafe") {
+    for (const row of rows) {
+      const baseline = baselineOf(row);
+      for (const counter of INTRODUCED_UNSAFE_COUNTERS) {
+        if ((row[counter] ?? 0) > (baseline?.[counter] ?? 0)) {
+          failures.push(`${row.domainId}:${counter}`);
+        }
+      }
+    }
+    return failures;
+  }
+  if (measure.kind === "latency-absolute") {
+    // The isolated gate rejects an absent percentile, applies the absolute
+    // limit, and then the regression tolerance.
+    for (const row of rows) {
+      const baseline = baselineOf(row);
+      const candidateP95 = row.p95OnsetToAdvanceMs;
+      const baselineP95 = baseline?.p95OnsetToAdvanceMs ?? null;
+      if (candidateP95 === null || candidateP95 === undefined) {
+        failures.push(`${row.domainId}:absent`);
+      } else if (candidateP95 >= ROUND_TWO_LATENCY_LIMIT_MS) {
+        failures.push(`${row.domainId}:limit`);
+      } else if (baselineP95 !== null &&
+          candidateP95 > baselineP95 + ROUND_TWO_LATENCY_REGRESSION_TOLERANCE_MS) {
+        failures.push(`${row.domainId}:regression`);
+      }
+    }
+    return failures;
+  }
+  if (measure.kind === "latency-regression") {
+    // The sequence gate checks only the regression, and only where both
+    // percentiles exist: an absent p95 is not a failure there, and no absolute
+    // limit applies. Sharing the isolated rule here would reject candidates the
+    // real evaluator clears.
+    for (const row of rows) {
+      const baseline = baselineOf(row);
+      const candidateP95 = row.p95OnsetToAdvanceMs ?? null;
+      const baselineP95 = baseline?.p95OnsetToAdvanceMs ?? null;
+      if (candidateP95 !== null && baselineP95 !== null &&
+          candidateP95 > baselineP95 + ROUND_TWO_LATENCY_REGRESSION_TOLERANCE_MS) {
+        failures.push(`${row.domainId}:regression`);
+      }
+    }
+    return failures;
+  }
+  if (measure.kind === "layer-loss") {
+    // A single row may lose one independent event; the gate fails beyond that.
+    for (const row of rows) {
+      const baseline = baselineOf(row);
+      const delta = (row.independentMatchCount ?? 0) - (baseline?.independentMatchCount ?? 0);
+      if (delta < -ROUND_TWO_LAYER_INDEPENDENT_LOSS_ALLOWANCE) {
+        failures.push(`${row.domainId}:independentMatchCount`);
+      }
+    }
+    return failures;
+  }
+  if (measure.kind === "ordered-progress") {
+    // Both halves: ordered advances and completed passages, each per renderer,
+    // so a gain in one cannot offset a loss in the other.
+    for (const row of rows) {
+      const baseline = baselineOf(row);
+      for (const counter of ["orderedAdvanceCount", "completePassageCount"]) {
+        if ((row[counter] ?? 0) < (baseline?.[counter] ?? 0)) {
+          failures.push(`${row.domainId}:${counter}`);
+        }
+      }
+    }
+    return failures;
+  }
+  if (measure.kind === "no-fall") {
+    for (const row of rows) {
+      const baseline = baselineOf(row);
+      if ((row[measure.counter] ?? 0) < (baseline?.[measure.counter] ?? 0)) {
+        failures.push(`${row.domainId}:${measure.counter}`);
+      }
+    }
+    return failures;
+  }
+  // Family breadth: netted per family across renderers, and only asked when the
+  // candidate actually claims a gain.
+  const orderedNetByFamily = new Map();
+  const independentNetByFamily = new Map();
+  for (const row of rows) {
+    const baseline = baselineOf(row);
+    orderedNetByFamily.set(
+      row.domainId,
+      (row.orderedAdvanceCount ?? 0) - (baseline?.orderedAdvanceCount ?? 0),
+    );
+    independentNetByFamily.set(
+      row.domainId,
+      (row.independentMatchCount ?? 0) - (baseline?.independentMatchCount ?? 0),
+    );
+  }
+  const sum = (values) => [...values].reduce((total, value) => total + value, 0);
+  const orderedNetTotal = sum(orderedNetByFamily.values());
+  const independentNetTotal = sum(independentNetByFamily.values());
+  const orderedImproved = [...orderedNetByFamily]
+    .filter(([, net]) => net > 0).map(([family]) => family).sort();
+  const independentImproved = new Set([...independentNetByFamily]
+    .filter(([, net]) => net > 0).map(([family]) => family));
+  const improved = [...new Set([...orderedImproved, ...independentImproved])];
+  if (orderedNetTotal > 0 || independentNetTotal > 0) {
+    if (improved.length < ROUND_TWO_FAMILY_BREADTH_MINIMUM) {
+      failures.push(`breadth:${improved.length}`);
+    }
+    // Cascade amplification is disproved in the same family the claim is made
+    // in, so the two sets are intersected rather than both merely non-empty.
+    const corroborated = orderedImproved.filter((family) => independentImproved.has(family));
+    if (orderedNetTotal > 0 && corroborated.length === 0) {
+      failures.push("corroboration:none");
+    }
+  }
+  return failures;
+}
+
+/**
+ * Every frozen gate's verdict for one candidate, rederived from the archive's
+ * own measurements.
+ *
+ * This is the whole point of archiving domain summaries: a `passed` boolean is a
+ * claim, and a claim beside a consistent failure list is still a claim. Each
+ * verdict here is recomputed from the counters the gate actually compares and
+ * returned beside its code, so the caller can hold the report to its own
+ * evidence.
+ */
+export function rederiveRoundTwoGateVerdicts(run, profileId) {
+  const summaries = Array.isArray(run?.domainSummaries) ? run.domainSummaries : [];
+  const outcomes = Array.isArray(run?.outcomes) ? run.outcomes : [];
+  const captures = Array.isArray(run?.captures) ? run.captures : [];
+  const index = domainSummaryIndex(summaries);
+  return CONFIRMATION_EVIDENCE.gates.map((gate) => ({
+    code: gate.code,
+    role: gate.role,
+    failures: rederiveGateVerdict({
+      gate,
+      profileId,
+      summaries,
+      index,
+      outcomes,
+      captures,
+      committedRegressions: (run?.committedRegressions ?? [])
+        .filter((outcome) => outcome?.profileId === profileId),
+      baselineProfileId: ROUND_TWO_CONFIRMATION_MATRIX.baselineProfileId,
+    }),
+  }));
+}
+
+/**
+ * Unsafe advances a candidate introduced that its baseline did not, recomputed
+ * per trace from the archived outcome rows.
+ *
+ * A gate verdict is a claim about these rows. `passed: true` beside an empty
+ * failure list is internally consistent and can still be false, so the claim is
+ * checked against the measurements it is about: a candidate that advanced falsely
+ * where the incumbent did not has introduced an unsafe event, whatever its gate
+ * report says. The comparison is per trace and per counter rather than over a
+ * corpus total, because a corpus aggregate hides a regression on one trace behind
+ * an improvement on another.
+ */
+export function introducedUnsafeEvents(outcomes, baselineProfileId, profileId) {
+  const baselineByTrace = new Map();
+  for (const row of outcomes) {
+    if (row?.profileId === baselineProfileId) baselineByTrace.set(row.traceId, row);
+  }
+  const introduced = [];
+  for (const row of outcomes) {
+    if (row?.profileId !== profileId) continue;
+    const baseline = baselineByTrace.get(row.traceId);
+    for (const counter of ["falseAdvanceCount", "skippedAdvanceCount", "duplicateAdvanceCount"]) {
+      const candidateValue = row[counter] ?? 0;
+      const baselineValue = baseline?.[counter] ?? 0;
+      if (candidateValue > baselineValue) {
+        introduced.push({
+          traceId: row.traceId,
+          counter,
+          baseline: baselineValue,
+          candidate: candidateValue,
+        });
+      }
+    }
+  }
+  return introduced;
+}
+
+/**
+ * Everything a decoded repeated-chord observation must actually record.
+ *
+ * The comparison treats an absent flag as false and an absent count as zero, so
+ * a row of `{}` reads as a clean, unregressed measurement. It is not a
+ * measurement at all, and a completed run may not derive eligibility from one.
+ */
+function observationProblems(row, where) {
+  const matrix = ROUND_TWO_CONFIRMATION_MATRIX;
+  const observation = row?.observation;
+  if (typeof observation !== "object" || observation === null) {
+    return [`${where} archives no observation for ${row?.groupId}`];
+  }
+  const problems = [];
+  const at = `${where} ${row.groupId}`;
+  for (const flag of matrix.observationFlags) {
+    if (typeof observation[flag] !== "boolean") {
+      problems.push(`${at} records no ${flag}`);
+    }
+  }
+  if (observation.evaluated !== true) problems.push(`${at} was never evaluated`);
+  if (observation.structurallyValid !== true) problems.push(`${at} is not structurally valid`);
+  for (const counter of ["falseAdvanceCount", "skippedAdvanceCount", "duplicateAdvanceCount"]) {
+    if (!Number.isInteger(observation[counter]) || observation[counter] < 0) {
+      problems.push(`${at} records ${counter} ${printable(observation[counter])}`);
+    }
+  }
+  const { sourceDistance, attributionDelayMs } = observation;
+  if (sourceDistance !== null && (!Number.isInteger(sourceDistance) || sourceDistance < 0)) {
+    problems.push(`${at} records source distance ${printable(sourceDistance)}`);
+  }
+  if (attributionDelayMs !== null &&
+      (!Number.isFinite(attributionDelayMs) || attributionDelayMs < 0)) {
+    problems.push(`${at} records attribution delay ${printable(attributionDelayMs)}`);
+  }
+  // The policy requires the pair together: one without the other would make a
+  // regression or a gain incomparable.
+  if ((sourceDistance === null) !== (attributionDelayMs === null)) {
+    problems.push(`${at} records a source distance and delay that do not travel together`);
+  }
+  return problems;
+}
+
+function censusKey(partition, suite) {
+  return `${partition}/${suite}`;
+}
+
+/** The per-partition, per-suite coverage the archived captures actually show. */
+function recomputedCaptureCensus(captures) {
+  const counts = new Map();
+  for (const capture of captures) {
+    const key = censusKey(capture?.partition, capture?.suite);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return counts;
+}
+
+/**
+ * Everything that must be true of one archived Task 28 repetition.
+ *
+ * The checks are independent and all of them run, so a wrong file reports every
+ * way it is wrong at once. They are stated against the frozen matrix rather than
+ * against the other archive, because two archives can agree perfectly and still
+ * both be the wrong evidence — which is exactly what comparing hashes alone
+ * cannot see. Nothing the file says about its own coverage is taken as coverage:
+ * the census, the trace count, the confirmation reads, and the per-profile
+ * outcome rows are all recomputed from the archived captures and outcomes.
+ */
+export function roundTwoConfirmationMatrixProblems(record, label, candidateProfileIds, expected) {
+  const problems = [];
+  const report = (message) => problems.push(`${label}: ${message}`);
+  const results = Array.isArray(record) ? record : [record];
+  if (results.length !== 1 || typeof results[0] !== "object" || results[0] === null) {
+    return [`${label}: holds ${results.length} benchmark results, and the matrix is one`];
+  }
+  const [run] = results;
+  const matrix = ROUND_TWO_CONFIRMATION_MATRIX;
+  const check = (what, actual, wanted) => {
+    if (actual !== wanted) report(`${what} ${printable(actual)}, expected ${printable(wanted)}`);
+  };
+  check("command", run.name, matrix.name);
+  check("format version", run.formatVersion, matrix.formatVersion);
+  check("manifest version", run.manifest?.version, matrix.manifestVersion);
+  check("manifest hash", run.manifest?.hash, matrix.manifestHash);
+  check("corpus hash", run.manifest?.corpusHash, matrix.manifestCorpusHash);
+  check("registry version", run.registryVersion, matrix.registryVersion);
+  check("policy version", run.selectionPolicy?.version, matrix.policyVersion);
+  check("policy hash", run.selectionPolicy?.hash, matrix.policyHash);
+  check("baseline column", run.baselineProfileId, matrix.baselineProfileId);
+  // The archive names the frozen candidate set it measured, so a run of some
+  // other round's columns cannot be quoted as this round's confirmation.
+  check("candidate manifest digest", run.candidateManifestDigest,
+    expected.candidateManifestDigest);
+  if (!sameList([...(run.rendererKeys ?? [])].sort(), [...matrix.rendererKeys].sort())) {
+    problems.push(`${label}: renderer columns ${printable(run.rendererKeys)}`);
+  }
+  if (!sameList([...(run.candidateProfileIds ?? [])].sort(), [...candidateProfileIds].sort())) {
+    problems.push(
+      `${label}: measured columns ${printable(run.candidateProfileIds)}, and the candidate ` +
+        `manifest froze ${printable(candidateProfileIds)}`,
+    );
+  }
+  // An identifier is a label. A run measured under altered thresholds keeps every
+  // expected name, so the values are bound to an identity chained from Task 27:
+  // the archive records the whole registry generation it replayed from, that
+  // generation must hash to the digest the candidate manifest froze, and each
+  // column's replayed thresholds must be that generation's entry for its
+  // identifier, field for field.
+  check("registry digest", run.registryDigest, expected.completeness?.registryDigest);
+  check("generator version", run.generatorVersion, expected.completeness?.generatorVersion);
+  const registry = run.registry;
+  const registryEntries = new Map();
+  if (typeof registry !== "object" || registry === null || !Array.isArray(registry.profiles)) {
+    report("records no registry generation, so its columns are identifiers without values");
+  } else {
+    for (const entry of registry.profiles) {
+      if (typeof entry?.id === "string") {
+        const { id: _id, ...thresholds } = entry;
+        registryEntries.set(entry.id, thresholds);
+      }
+    }
+    // The recipe is Task 27's own registry digest: version, default, shared fixed
+    // policy, and every profile's complete threshold set in registry order.
+    const recomputed = canonicalJsonDigest({
+      version: registry.version,
+      defaultProfileId: registry.defaultProfileId,
+      fixedPolicy: registry.fixedPolicy,
+      profiles: registry.profiles,
+    });
+    check("recomputed registry digest", recomputed, expected.completeness?.registryDigest);
+    check("registry version", registry.version, expected.completeness?.registryVersion);
+  }
+  const replayed = run.profiles ?? {};
+  for (const profileId of [matrix.baselineProfileId, ...candidateProfileIds]) {
+    const thresholds = replayed[profileId];
+    if (typeof thresholds !== "object" || thresholds === null) {
+      report(`${profileId} was replayed without recording the thresholds it used`);
+      continue;
+    }
+    const registered = registryEntries.get(profileId);
+    if (registered === undefined) {
+      report(`${profileId} was replayed from outside the registry generation it names`);
+      continue;
+    }
+    // Shape as well as values: an extra or missing field is a different profile
+    // than the one the registry froze under that identifier.
+    if (!sameList(Object.keys(thresholds).sort(), Object.keys(registered).sort())) {
+      report(
+        `${profileId} was replayed with fields ${printable(Object.keys(thresholds).sort())}, and ` +
+          `the registry froze ${printable(Object.keys(registered).sort())}`,
+      );
+      continue;
+    }
+    const moved = Object.keys(registered).filter((key) => thresholds[key] !== registered[key]);
+    if (moved.length > 0) {
+      report(
+        `replayed ${profileId} at ${moved
+          .map((key) => `${key}=${printable(thresholds[key])}`)
+          .join(", ")}, not the values its registry entry froze`,
+      );
+    }
+  }
+  const baselineRegistered = registryEntries.get(matrix.baselineProfileId);
+  if (baselineRegistered !== undefined) {
+    const moved = Object.entries(matrix.baselineThresholds)
+      .filter(([key, value]) => baselineRegistered[key] !== value)
+      .map(([key]) => key);
+    if (moved.length > 0) {
+      report(
+        `registers ${matrix.baselineProfileId} at ${moved
+          .map((key) => `${key}=${printable(baselineRegistered[key])}`)
+          .join(", ")}, not the frozen incumbent values`,
+      );
+    }
+  }
+
+  // --- Coverage, recomputed from the captures rather than read as a total.
+  const captures = Array.isArray(run.captures) ? run.captures : [];
+  if (captures.length === 0) {
+    report("archives no captured traces, so its coverage is a self-report");
+  } else {
+    const incomplete = captures.find((capture) => matrix.captureFields.some((field) => (
+      typeof capture?.[field] !== "string" || capture[field].length === 0
+    )));
+    if (incomplete !== undefined) {
+      report(`capture ${printable(incomplete.traceId)} does not record what it rendered`);
+    }
+    const badHash = captures.find((capture) => [
+      "recognitionStructureHash",
+      "processLocalPcmHash",
+      "processLocalTraceHash",
+    ].some((field) => !DIGEST_PATTERN.test(capture?.[field] ?? "")));
+    if (badHash !== undefined) {
+      report(`capture ${printable(badHash.traceId)} records a placeholder in place of a hash`);
+    }
+    const traceIds = captures.map(({ traceId }) => traceId);
+    if (new Set(traceIds).size !== traceIds.length) {
+      report("captured the same trace twice, so its census counts duplicates as coverage");
+    }
+    // Counts say how many of each kind were captured; they do not say that these
+    // were the manifest's traces. The identity does, and the frozen list names
+    // what is missing rather than only reporting that a digest moved.
+    check("captured corpus identity", capturedCorpusIdentity(captures),
+      matrix.captureIdentityDigest);
+    const captured = new Set(traceIds);
+    const absent = roundTwoCaptureIdentityRows()
+      .filter(({ traceId }) => !captured.has(traceId))
+      .map(({ traceId }) => traceId);
+    if (absent.length > 0) {
+      report(
+        `never captured ${absent.length} of the frozen corpus (first ${absent[0]})`,
+      );
+    }
+    const counts = recomputedCaptureCensus(captures);
+    for (const { partition, suite, traceCount } of matrix.census) {
+      const measured = counts.get(censusKey(partition, suite)) ?? 0;
+      if (measured !== traceCount) {
+        report(
+          `captured ${measured} ${partition}/${suite} traces, expected ${traceCount}`,
+        );
+      }
+      counts.delete(censusKey(partition, suite));
+    }
+    for (const [key, measured] of counts) {
+      report(`captured ${measured} traces in ${key}, which the version-2 census does not contain`);
+    }
+    check("captured traces", captures.length, matrix.capturedTraceCount);
+    // The scalars the archive states must agree with what it archived, so a run
+    // cannot claim coverage its own captures contradict.
+    check("declared captured traces", run.capturedTraceCount, captures.length);
+    const confirmationRead = captures
+      .filter(({ partition }) => partition === "confirmation").length;
+    check("declared confirmation traces read", run.confirmationTraceCountRead, confirmationRead);
+
+    // --- Every column must have judged every trace.
+    const columnProfileIds = [matrix.baselineProfileId, ...candidateProfileIds];
+    const outcomes = Array.isArray(run.outcomes) ? run.outcomes : [];
+    const seen = new Set(outcomes.map((row) => `${row?.traceId}\u0000${row?.profileId}`));
+    const missing = [];
+    for (const traceId of traceIds) {
+      for (const profileId of columnProfileIds) {
+        if (!seen.has(`${traceId}\u0000${profileId}`)) missing.push(`${profileId}@${traceId}`);
+      }
+    }
+    if (missing.length > 0) {
+      report(
+        `is missing ${missing.length} of ${traceIds.length * columnProfileIds.length} per-profile ` +
+          `outcome rows (first ${missing[0]})`,
+      );
+    }
+    if (outcomes.length !== traceIds.length * columnProfileIds.length) {
+      report(
+        `archives ${outcomes.length} outcome rows for ${traceIds.length} traces across ` +
+          `${columnProfileIds.length} columns`,
+      );
+    }
+    // A row of `{traceId, profileId}` records that a column existed, not what it
+    // decided, so each must carry its own outcome digest and the counters the
+    // gates read. The archive's stated outcome identity is then recomputed from
+    // them under the Task 13 recipe.
+    const emptyOutcome = outcomes.find((row) => (
+      !DIGEST_PATTERN.test(row?.outcomeDigest ?? "") ||
+      ROUND_TWO_DOMAIN_SUMMARY_COUNTERS.some((counter) => (
+        !Number.isInteger(row?.[counter]) || row[counter] < 0
+      ))
+    ));
+    if (emptyOutcome !== undefined) {
+      report(
+        `outcome row ${printable(emptyOutcome.profileId)}@${printable(emptyOutcome.traceId)} ` +
+          "records that a column ran, not what it decided",
+      );
+    } else {
+      check("outcome identity", fnv1a32(outcomes.map((row) => (
+        `${row.traceId}:${row.profileId}:${row.outcomeDigest}`
+      ))), run.outcomeIdentityDigest);
+    }
+  }
+
+  // --- The repeated-chord census, both halves, with roles and strata.
+  const census = Array.isArray(run.repeatedChordCensus) ? run.repeatedChordCensus : [];
+  const declared = census.map(({ groupId }) => groupId).sort();
+  const frozen = matrix.repeatedChordCensus.map(({ groupId }) => groupId).sort();
+  if (!sameList(declared, frozen)) {
+    problems.push(
+      `${label}: declares repeated-chord groups ${printable(declared)}, and the frozen census is ` +
+        `${printable(frozen)}`,
+    );
+  } else {
+    for (const group of census) {
+      const expectedGroup = ROUND_TWO_REPEATED_CENSUS_BY_ID.get(group.groupId);
+      if (group.evidenceRole !== expectedGroup.evidenceRole ||
+          group.stratum !== expectedGroup.stratum) {
+        problems.push(
+          `${label}: ${group.groupId} is declared ${printable(group.evidenceRole)}/` +
+            `${printable(group.stratum)}, not ${expectedGroup.evidenceRole}/` +
+            `${expectedGroup.stratum}`,
+        );
+      }
+    }
+  }
+  const groupIds = frozen;
+  const complete = (rows, what) => {
+    const measured = (rows ?? []).map(({ groupId }) => groupId);
+    if (!sameList([...measured].sort(), groupIds)) {
+      problems.push(
+        `${label}: ${what} measures ${measured.length} of ${groupIds.length} frozen groups`,
+      );
+      return;
+    }
+    // The stratum travels with the measurement, because the aggregation groups
+    // by it: a row filed under another stratum moves a completeness verdict.
+    const misfiled = (rows ?? []).find((row) => (
+      row.stratum !== ROUND_TWO_REPEATED_CENSUS_BY_ID.get(row.groupId)?.stratum
+    ));
+    if (misfiled !== undefined) {
+      problems.push(`${label}: ${what} files ${misfiled.groupId} under ${misfiled.stratum}`);
+    }
+    for (const row of rows ?? []) {
+      problems.push(...observationProblems(row, `${label}: ${what}`));
+    }
+  };
+  complete(run.baselineRepeatedMeasurements, "the baseline column");
+  for (const profileId of candidateProfileIds) {
+    const column = (run.repeatedRecovery ?? []).find((row) => row.profileId === profileId);
+    if (column === undefined) {
+      report(`${profileId} has no archived repeated-recovery column`);
+      continue;
+    }
+    if (column.comparedAgainstProfileId !== matrix.baselineProfileId) {
+      report(`${profileId} is compared against ${printable(column.comparedAgainstProfileId)}`);
+    }
+    complete(column.measurements, `${profileId}`);
+  }
+
+  // --- Complete per-domain summaries, so every gate verdict can be rederived.
+  const summaries = Array.isArray(run.domainSummaries) ? run.domainSummaries : [];
+  if (summaries.length === 0) {
+    report("archives no per-domain summaries, so its gate verdicts cannot be rederived");
+  } else {
+    const columnProfileIds = [matrix.baselineProfileId, ...candidateProfileIds];
+    const malformed = summaries.find((row) => (
+      typeof row?.domainId !== "string" || row.domainId.length === 0 ||
+      typeof row?.gateCode !== "string" ||
+      !columnProfileIds.includes(row?.profileId) ||
+      !Array.isArray(row?.traceIds) || row.traceIds.length === 0 ||
+      // A percentile is a duration: null, or a finite non-negative number. Any
+      // JavaScript number would admit a negative latency and an Infinity parsed
+      // from an extreme JSON exponent.
+      !(row.p95OnsetToAdvanceMs === null || (
+        typeof row.p95OnsetToAdvanceMs === "number" &&
+        Number.isFinite(row.p95OnsetToAdvanceMs) &&
+        row.p95OnsetToAdvanceMs >= 0
+      )) ||
+      ROUND_TWO_DOMAIN_SUMMARY_COUNTERS.some((counter) => (
+        !Number.isInteger(row[counter]) || row[counter] < 0
+      ))
+    ));
+    if (malformed !== undefined) {
+      report(
+        `domain summary ${printable(malformed.gateCode)}/${printable(malformed.domainId)} is not ` +
+          "a complete measurement",
+      );
+    }
+    const index = domainSummaryIndex(summaries);
+    if (index.size !== summaries.length) {
+      report("summarises one domain twice for one gate and column");
+    }
+    // Each gate's domains are derived from the frozen corpus, so a losing speed,
+    // layer, or family cannot be dropped, re-cut, or replaced by a clean paired
+    // row. The comparison is over trace membership rather than domain labels: an
+    // archive may name its groups however it likes and must still have measured
+    // these groups.
+    for (const gate of CONFIRMATION_EVIDENCE.gates) {
+      const expectedDomains = roundTwoGateDomainMembership(gate, captures);
+      if (expectedDomains === null) continue;
+      // A gate that reads no row cannot be re-derived, and a gate that cannot be
+      // re-derived cannot clear a candidate. This is not a defect in the archive:
+      // Task 13 froze these partitions against manifest version 1, where
+      // `confirmation` still held the isolated and dynamics corpora. Manifest
+      // version 2 re-partitioned those into discovery and regression-only and
+      // left `confirmation` holding only the twelve authored paired rows, so the
+      // release gates have no held-back evidence to read. Choosing new partitions
+      // here would be freezing round-two policy inside a verifier, which is the
+      // one thing this chain exists to prevent.
+      if (expectedDomains.length === 0) {
+        report(
+          `gate ${gate.code} reads no manifest-version-2 row in ` +
+            `${printable(gate.partitions)}: ${ROUND_TWO_UNFROZEN_SCOPE}, so no completed ` +
+            "run can clear a candidate on it",
+        );
+        continue;
+      }
+      for (const profileId of columnProfileIds) {
+        const gateRows = summaries.filter((row) => (
+          row?.gateCode === gate.code && row?.profileId === profileId
+        ));
+        if (gateRows.length === 0) {
+          report(`gate ${gate.code} summarises no domain for ${profileId}`);
+          break;
+        }
+        const measured = gateRows.map(({ traceIds }) => (
+          Array.isArray(traceIds) ? traceIds.slice().sort() : []
+        ));
+        if (!samePartition(measured, expectedDomains)) {
+          report(
+            `gate ${gate.code} summarises ${measured.length} domains over ` +
+              `${measured.reduce((total, group) => total + group.length, 0)} traces for ` +
+              `${profileId}, and the frozen corpus groups it into ${expectedDomains.length} ` +
+              `domains over ${expectedDomains.reduce((total, g) => total + g.length, 0)}`,
+          );
+          break;
+        }
+      }
+    }
+    // Every counter a summary states is the sum of the outcome rows it names, so
+    // a per-trace regression cannot be smoothed away by a clean summary — or a
+    // clean per-trace record contradicted by an invented summary.
+    const outcomeByKey = new Map(
+      (Array.isArray(run.outcomes) ? run.outcomes : [])
+        .map((row) => [`${row?.profileId}\u0000${row?.traceId}`, row]),
+    );
+    for (const row of summaries) {
+      const mismatched = ROUND_TWO_DOMAIN_SUMMARY_COUNTERS.find((counter) => {
+        const total = (row.traceIds ?? []).reduce((sum, traceId) => (
+          sum + (outcomeByKey.get(`${row.profileId}\u0000${traceId}`)?.[counter] ?? 0)
+        ), 0);
+        return total !== row[counter];
+      });
+      if (mismatched !== undefined) {
+        report(
+          `domain summary ${row.gateCode}/${row.domainId} for ${row.profileId} states ` +
+            `${mismatched} ${printable(row[mismatched])}, and its own outcome rows sum to ` +
+            `${(row.traceIds ?? []).reduce((sum, traceId) => (
+              sum + (outcomeByKey.get(`${row.profileId}\u0000${traceId}`)?.[mismatched] ?? 0)
+            ), 0)}`,
+        );
+        break;
+      }
+    }
+  }
+
+  // --- The diagnosed cases, which the committed-regression gate reads directly.
+  const regressions = Array.isArray(run.committedRegressions) ? run.committedRegressions : [];
+  for (const profileId of candidateProfileIds) {
+    const rows = regressions.filter((outcome) => outcome?.profileId === profileId);
+    if (rows.length === 0) {
+      report(`${profileId} archives no committed-regression outcomes`);
+      continue;
+    }
+    // Exactly the frozen census, once each, under its own expectation.
+    const declared = rows.map(({ fixtureId }) => fixtureId).sort();
+    const frozenIds = ROUND_TWO_COMMITTED_REGRESSIONS.map(({ fixtureId }) => fixtureId).sort();
+    if (!sameList(declared, frozenIds)) {
+      report(
+        `${profileId} reports committed regressions ${printable(declared)}, and the frozen ` +
+          `census is ${printable(frozenIds)}`,
+      );
+      continue;
+    }
+    for (const frozen of ROUND_TWO_COMMITTED_REGRESSIONS) {
+      const outcome = rows.find(({ fixtureId }) => fixtureId === frozen.fixtureId);
+      if (outcome.expectation !== frozen.expectation) {
+        report(
+          `${profileId} reports ${frozen.fixtureId} as ${printable(outcome.expectation)}, and it ` +
+            `is diagnosed ${frozen.expectation}`,
+        );
+      }
+    }
+    const malformedOutcome = rows.find((outcome) => (
+      typeof outcome.fixtureId !== "string" || outcome.fixtureId.length === 0 ||
+      typeof outcome.expectation !== "string" ||
+      typeof outcome.worseThanBaseline !== "boolean" ||
+      typeof outcome.falseAdvance !== "boolean" ||
+      !Number.isInteger(outcome.skippedAdvanceCount) || outcome.skippedAdvanceCount < 0 ||
+      !Number.isInteger(outcome.duplicateAdvanceCount) || outcome.duplicateAdvanceCount < 0
+    ));
+    if (malformedOutcome !== undefined) {
+      report(
+        `${profileId} records an incomplete committed-regression outcome for ` +
+          `${printable(malformedOutcome.fixtureId)}`,
+      );
+    }
+  }
+
+  // --- The gate set, frozen whole, and applied by every candidate.
+  problems.push(...roundTwoGateProblems(run.gates, label, candidateProfileIds, run));
+  return problems;
+}
+
+/**
+ * The complete frozen gate set, and every candidate's judgement under it.
+ *
+ * The definitions are Task 13's, restated by identity rather than by count: a
+ * run that declared one invented gate and applied it would otherwise clear a
+ * candidate while omitting every real Task 23 gate. Each candidate must then
+ * report an outcome for every gate, under the gate's own role and domain, and
+ * every gate must have been applied — the Task 23 rule that a complete run with
+ * a required gate unapplied fails rather than yielding an eligible candidate.
+ */
+export function roundTwoGateProblems(gates, label, candidateProfileIds, run = {}) {
+  const definitions = CONFIRMATION_EVIDENCE.gates;
+  if (typeof gates !== "object" || gates === null) {
+    return [`${label}: archives no gate evidence`];
+  }
+  const problems = gateDefinitionProblems(gates, label);
+  if (gates.evidenceComplete !== true) {
+    problems.push(`${label}: gate evidence is not marked complete`);
+  } else if (!Array.isArray(gates.incompleteEvidenceReasons) ||
+      gates.incompleteEvidenceReasons.length > 0) {
+    // Complete evidence has no reason to be incomplete; a run that names one
+    // while claiming completeness is describing two different runs.
+    problems.push(
+      `${label}: marks its evidence complete while naming ` +
+        `${printable(gates.incompleteEvidenceReasons ?? null)} as incomplete`,
+    );
+  }
+  // A waiver is a decision taken after seeing a measured loss, which by
+  // definition cannot precede the run the confirmation partition is spent on.
+  if (!Array.isArray(gates.reviewedLayerLosses) || gates.reviewedLayerLosses.length > 0) {
+    problems.push(
+      `${label}: declares ${printable(gates.reviewedLayerLosses ?? null)} as reviewed layer ` +
+        "loss waivers, and a frozen confirmation declares none",
+    );
+  }
+  const candidates = Array.isArray(gates.candidates) ? gates.candidates : [];
+  if (!sameList(
+    candidates.map((candidate) => candidate?.profileId),
+    [...candidateProfileIds],
+  )) {
+    problems.push(
+      `${label}: gates judged ${printable(candidates.map((candidate) => candidate?.profileId))}, ` +
+        `not the frozen candidates ${printable([...candidateProfileIds])}`,
+    );
+    return problems;
+  }
+  for (const candidate of candidates) {
+    const where = `${label}: ${candidate.profileId}`;
+    const outcomes = Array.isArray(candidate.gates) ? candidate.gates : [];
+    if (!sameList(outcomes.map((gate) => gate?.code), definitions.map(({ code }) => code))) {
+      problems.push(
+        `${where} reports ${outcomes.length} gate outcomes, not all ${definitions.length} frozen ` +
+          "gates; a narrowed report cannot show which gates were never applied",
+      );
+      continue;
+    }
+    const malformed = outcomes.find((gate) => (
+      typeof gate.applied !== "boolean" ||
+      typeof gate.passed !== "boolean" ||
+      !Array.isArray(gate.failures)
+    ));
+    if (malformed !== undefined) {
+      problems.push(`${where} gate ${malformed.code} records no applied/passed verdict`);
+      continue;
+    }
+    const mismatched = definitions.find(({ role, domain }, index) => (
+      outcomes[index].role !== role || outcomes[index].domain !== domain
+    ));
+    if (mismatched !== undefined) {
+      problems.push(`${where} judged gate ${mismatched.code} under another role or domain`);
+    }
+    const unapplied = outcomes.filter((gate) => !gate.applied).map(({ code }) => code);
+    if (unapplied.length > 0) {
+      problems.push(
+        `${where} never applied ${unapplied.length} of ${definitions.length} gates ` +
+          `(${unapplied.join(", ")}), and a complete matrix applies all of them`,
+      );
+    }
+    // `passed` is a claim about the failures beside it, so the two must agree:
+    // a gate that recorded failures did not pass, and one that recorded none did
+    // not fail. Task 13's scope and failure-identity checks apply unchanged,
+    // because a verdict is only as good as the rows it read and the failures it
+    // can name.
+    const inconsistent = outcomes.find((gate) => gate.passed !== (gate.failures.length === 0));
+    if (inconsistent !== undefined) {
+      problems.push(
+        `${where} gate ${inconsistent.code} records passed ${inconsistent.passed} beside ` +
+          `${inconsistent.failures.length} failures`,
+      );
+    }
+    problems.push(...gateScopeProblems(outcomes, where, true));
+    problems.push(...gateFailureProblems(outcomes, where));
+    // The per-role counters are what a report quotes; they are recomputed from
+    // the outcomes rather than read.
+    for (const [counter, role] of ROLE_FAILURE_COUNTERS) {
+      const measured = outcomes
+        .filter((gate) => gate.role === role)
+        .reduce((total, gate) => total + gate.failures.length, 0);
+      if (candidate[counter] !== measured) {
+        problems.push(
+          `${where} records ${counter} ${printable(candidate[counter])}, recomputed ${measured}`,
+        );
+      }
+    }
+    if (candidate.eligible !== undefined &&
+        candidate.eligible !== outcomes.every((gate) => gate.passed)) {
+      problems.push(`${where} names an eligibility its own gate outcomes contradict`);
+    }
+    // Every verdict is checked against the rows it is a verdict about. A `passed`
+    // boolean is a claim, and a claim beside a consistent failure list is still a
+    // claim, so all eighteen are rederived from the archived measurements.
+    const rederived = rederiveRoundTwoGateVerdicts(run, candidate.profileId);
+    for (const [index, verdict] of rederived.entries()) {
+      const reported = outcomes[index];
+      const shouldPass = verdict.failures.length === 0;
+      if (reported.passed !== shouldPass) {
+        problems.push(
+          `${where} reports gate ${verdict.code} as ${reported.passed ? "passed" : "failed"}, and ` +
+            `its own measurements rederive ${shouldPass ? "a pass" : "a failure"}` +
+            `${shouldPass ? "" : ` (${verdict.failures.slice(0, 3).join(", ")})`}`,
+        );
+      }
+    }
+    // The per-trace safety comparison is kept beside the per-domain one: a
+    // corpus or domain total can absorb a regression on one trace behind an
+    // improvement on another, and this chain requires it per trace.
+    const introduced = introducedUnsafeEvents(
+      Array.isArray(run?.outcomes) ? run.outcomes : [],
+      ROUND_TWO_CONFIRMATION_MATRIX.baselineProfileId,
+      candidate.profileId,
+    );
+    const safetyCleared = outcomes
+      .filter((gate) => gate.role === "safety")
+      .every((gate) => gate.passed);
+    if (introduced.length > 0 && safetyCleared) {
+      const [first] = introduced;
+      problems.push(
+        `${where} cleared every safety gate while introducing ${introduced.length} unsafe ` +
+          `advances its baseline did not make (${first.counter} ${first.baseline}\u2192` +
+          `${first.candidate} on ${first.traceId})`,
+      );
+    }
+  }
+  return problems;
+}
+
+/**
+ * Re-derives the manifest's candidate entries from the archived measurements.
+ *
+ * The entries are the whole point of the completed branch, and a manifest that
+ * merely states them is a self-report. Each candidate's Task 24 labels are
+ * recomputed from both sides of its archived comparison under the frozen
+ * boundaries, with the confirmation groups labelled by the frozen census rather
+ * than by the archive's copy of it, and eligibility is recomputed from every
+ * gate's own pass verdict rather than read from a list of failures the archive
+ * supplies.
+ */
+export function rederiveRoundTwoEligibilityEntries(record, candidateProfileIds, expected) {
+  const [run] = Array.isArray(record) ? record : [record];
+  const roles = new Map(ROUND_TWO_CONFIRMATION_MATRIX.repeatedChordCensus.map((group) => (
+    [group.groupId, group.evidenceRole]
+  )));
+  const gateCandidates = new Map(
+    (run?.gates?.candidates ?? []).map((candidate) => [candidate.profileId, candidate]),
+  );
+  return candidateProfileIds.map((profileId) => {
+    const column = (run?.repeatedRecovery ?? []).find((row) => row.profileId === profileId);
+    const groups = recomputeRepeatedRecoveryGroups(
+      run?.baselineRepeatedMeasurements,
+      column?.measurements,
+      expected.repeatedRecoveryBoundaries,
+    );
+    const evaluation = aggregateRepeatedRecovery(
+      groups,
+      expected.knownDiscoveryGroupIds,
+      roles,
+    );
+    // Every frozen gate must have been applied and passed. An absent outcome is
+    // not a pass, so a candidate with no gate record is ineligible rather than
+    // unjudged.
+    const outcomes = gateCandidates.get(profileId)?.gates ?? [];
+    // Every gate must have been applied, and must rederive to a pass from the
+    // archive's own measurements. The reported `passed` is not consulted here at
+    // all: it is checked against this elsewhere, and trusting it would make the
+    // whole re-derivation decorative.
+    //
+    // A gate whose round-two scope is not frozen reads no row, so it produces no
+    // failure and would otherwise read as a pass. That is the one case where an
+    // absent failure is not evidence of safety, so eligibility fails closed on
+    // it: this function must not contradict the rule that no completed run can
+    // clear a candidate on an unscoped gate.
+    const gatesCleared = outcomes.length === CONFIRMATION_EVIDENCE.gates.length &&
+      outcomes.every((gate) => gate?.applied === true) &&
+      roundTwoUnfrozenGateScopes().length === 0 &&
+      rederiveRoundTwoGateVerdicts(run, profileId)
+        .every(({ failures }) => failures.length === 0);
+    // Eligibility is derived from the measurements as well as from the verdicts,
+    // so a gate report that cleared a candidate the outcome rows condemn cannot
+    // carry it through.
+    const introduced = introducedUnsafeEvents(
+      Array.isArray(run?.outcomes) ? run.outcomes : [],
+      ROUND_TWO_CONFIRMATION_MATRIX.baselineProfileId,
+      profileId,
+    );
+    return {
+      profileId,
+      // Failing confirmation no-regression makes a candidate ineligible, and so
+      // does any frozen gate it did not clear or any unsafe advance it introduced.
+      automatedEligible: evaluation.noRegression && gatesCleared && introduced.length === 0,
+      repeatedRecoveryOutcome: evaluation.repeatedRecoveryOutcome,
+      confirmationReproductionStatus: evaluation.confirmationReproductionStatus,
+    };
+  });
+}
+
+/**
+ * Everything that makes the Task 28 file the frozen eligibility manifest.
+ *
+ * `candidateManifest` is the parsed Task 27 record and `evidenceRuns` the parsed
+ * Task 26 repetitions. The whole chain is rerun here rather than compared: the
+ * stop rule is recomputed from each archive's own measurements, the candidate
+ * manifest's digest from its own fields, and the eligibility manifest's from
+ * its own. A chain whose three artifacts each verify in isolation while
+ * disagreeing with one another fails, which is the failure a stated result is
+ * most exposed to.
+ */
+export function roundTwoEligibilityManifestProblems(
+  artifact,
+  result,
+  candidateManifest,
+  evidenceRuns,
+  archives = null,
+) {
+  const expected = artifact.roundTwoEligibilityManifest;
+  if (expected === undefined) return [];
+  const problems = [];
+  if (Array.isArray(result) || typeof result !== "object" || result === null) {
+    return [`${artifact.name}: the eligibility manifest is one record, not a list`];
+  }
+  const check = (label, actual, wanted) => {
+    if (actual !== wanted) {
+      problems.push(
+        `${artifact.name}: ${label} ${printable(actual)}, expected ${printable(wanted)}`,
+      );
+    }
+  };
+  check("command", result.name, expected.name);
+  check("format version", result.formatVersion, expected.formatVersion);
+  check("round", result.roundId, expected.roundId);
+  check("run status", result.runStatus, expected.runStatus);
+  check("candidate manifest digest", result.candidateManifestDigest,
+    expected.candidateManifestDigest);
+  check("terminal outcome", result.task26TerminalOutcome, expected.task26TerminalOutcome);
+  check("Task 26 evidence digest", result.task26EvidenceDigest, expected.task26EvidenceDigest);
+  check("digest algorithm", result.digest?.algorithm, "fnv1a-32-canonical-json");
+  check("digest", result.digest?.value, expected.digest);
+
+  // The branch is taken from `runStatus` alone. Reading an empty entry list as
+  // "not run" would erase the difference between a round that spent its
+  // single-use confirmation fixtures and one that did not.
+  const branchKeys = ELIGIBILITY_MANIFEST_KEYS[result.runStatus];
+  if (branchKeys === undefined) {
+    problems.push(`${artifact.name}: unknown run status ${printable(result.runStatus)}`);
+    return problems;
+  }
+  for (const key of branchKeys) {
+    if (!Object.hasOwn(result, key)) problems.push(`${artifact.name}: missing ${key}`);
+  }
+  for (const key of Object.keys(result)) {
+    if (!branchKeys.includes(key)) {
+      problems.push(`${artifact.name}: ${result.runStatus} carries forbidden field ${key}`);
+    }
+  }
+
+  const entries = Array.isArray(result.entries) ? result.entries : null;
+  if (entries === null) {
+    problems.push(`${artifact.name}: the entry list is missing`);
+  } else {
+    if (entries.length !== expected.entryCount) {
+      problems.push(
+        `${artifact.name}: ${entries.length} candidate entries, expected ${expected.entryCount}`,
+      );
+    }
+    entries.forEach((entry, index) => {
+      const where = `${artifact.name}: entry ${index}`;
+      for (const key of ELIGIBILITY_ENTRY_KEYS) {
+        if (!Object.hasOwn(entry ?? {}, key)) problems.push(`${where} is missing ${key}`);
+      }
+      if (entry?.profileId === "baseline-v1") {
+        problems.push(`${where} names baseline-v1, which the live harness supplies itself`);
+      }
+      if (!REPEATED_RECOVERY_OUTCOMES.includes(entry?.repeatedRecoveryOutcome)) {
+        problems.push(`${where} records outcome ${printable(entry?.repeatedRecoveryOutcome)}`);
+      }
+      if (!CONFIRMATION_REPRODUCTION_STATUSES.includes(entry?.confirmationReproductionStatus)) {
+        problems.push(
+          `${where} records reproduction status ` +
+            `${printable(entry?.confirmationReproductionStatus)}`,
+        );
+      }
+      if (entry?.repeatedRecoveryOutcome === "confirmed-full-resolution" &&
+          entry?.confirmationReproductionStatus !== "reproduced") {
+        problems.push(`${where} claims confirmed full resolution with no reproducing group`);
+      }
+      // Task 23's confirmation no-regression condition is a gate, not a label.
+      if (entry?.repeatedRecoveryOutcome === "regressed" && entry?.automatedEligible === true) {
+        problems.push(`${where} regressed a repeated-chord group and is marked eligible`);
+      }
+      if (entry?.confirmationReproductionStatus === "not-run") {
+        problems.push(`${where} was confirmed against fixtures it records as never run`);
+      }
+    });
+  }
+
+  // The not-run branch's central claim, measured against the corpus census it
+  // carries rather than read as a sentence: the whole partition is present, none
+  // of it is decoded, its fixtures are the ones version 2 authored, and the
+  // first-observed ledger that separates unseen evidence from prior rounds has
+  // not moved.
+  const partition = result.confirmationPartition ?? {};
+  for (const [key, wanted] of Object.entries(expected.confirmationPartition)) {
+    check(`confirmation partition ${key}`, partition[key], wanted);
+  }
+  // The pin loop above fixes the census and both identities in either branch, so
+  // a completed record cannot satisfy `decodedTraceCount === traceCount` with an
+  // empty partition, nor pass with twelve rows that are no longer these twelve.
+  if (result.runStatus === "not-run-no-confirmable-candidate") {
+    check("not-run reason", result.reason, expected.reason);
+    if ((entries?.length ?? 0) > 0) {
+      problems.push(`${artifact.name}: the not-run branch confirmed nothing and may hold no entry`);
+    }
+    if (partition.decodedTraceCount !== 0) {
+      problems.push(
+        `${artifact.name}: the not-run branch decoded ${printable(partition.decodedTraceCount)} ` +
+          "confirmation traces",
+      );
+    }
+  } else {
+    const evidence = result.confirmationEvidence ?? {};
+    for (const field of ["runOneSha256", "runTwoSha256"]) {
+      if (!SHA256_PATTERN.test(evidence[field] ?? "")) {
+        problems.push(`${artifact.name}: confirmation evidence ${field} is not a SHA-256`);
+      }
+    }
+    for (const field of ["runOneArchive", "runTwoArchive"]) {
+      if (typeof evidence[field] !== "string" || evidence[field].length === 0) {
+        problems.push(`${artifact.name}: confirmation evidence names no ${field}`);
+      }
+    }
+    if (!SHA256_PATTERN.test(evidence.comparisonDigest ?? "")) {
+      problems.push(`${artifact.name}: confirmation evidence comparisonDigest is not a SHA-256`);
+    }
+    problems.push(...confirmationArchiveEvidenceProblems(artifact.name, evidence, archives));
+    problems.push(...completedEntryProblems(
+      artifact.name,
+      result,
+      candidateManifest,
+      evidence,
+      archives,
+      expected,
+    ));
+    if (partition.decodedTraceCount !== partition.traceCount) {
+      problems.push(
+        `${artifact.name}: a completed run decodes the whole confirmation partition, and this ` +
+          `record decoded ${printable(partition.decodedTraceCount)} of ` +
+          `${printable(partition.traceCount)}`,
+      );
+    }
+  }
+
+  const { digest: _digest, ...digestInput } = result;
+  check("recomputed digest", canonicalJsonDigest(digestInput), expected.digest);
+
+  // The link to Task 27, recomputed from that record rather than read off it.
+  if (typeof candidateManifest !== "object" || candidateManifest === null ||
+      Array.isArray(candidateManifest)) {
+    problems.push(`${artifact.name}: the candidate manifest it chains to is not a record`);
+    return problems;
+  }
+  const { digest: _candidateDigest, ...candidateInput } = candidateManifest;
+  const candidateDigest = canonicalJsonDigest(candidateInput);
+  if (candidateManifest.digest?.value !== candidateDigest) {
+    problems.push(
+      `${artifact.name}: the candidate manifest records digest ` +
+        `${printable(candidateManifest.digest?.value)}, recomputed ${candidateDigest}`,
+    );
+  }
+  if (result.candidateManifestDigest !== candidateDigest) {
+    problems.push(
+      `${artifact.name}: chains to candidate manifest ` +
+        `${printable(result.candidateManifestDigest)}, and that record hashes to ` +
+        `${candidateDigest}`,
+    );
+  }
+  for (const [label, key] of [
+    ["Task 26 terminal outcome", "task26TerminalOutcome"],
+    ["Task 26 evidence digest", "task26EvidenceDigest"],
+  ]) {
+    if (result[key] !== candidateManifest[key]) {
+      problems.push(
+        `${artifact.name}: the chain disagrees about the ${label}: ${printable(result[key])} ` +
+          `against ${printable(candidateManifest[key])}`,
+      );
+    }
+  }
+  // Round-two completeness. A round-one archive or a narrowed smoke fails these
+  // regardless of how well formed its own record is.
+  for (const [key, wanted] of Object.entries(expected.completeness)) {
+    check(`candidate manifest ${key}`, candidateManifest[key], wanted);
+  }
+  if (result.runStatus === "not-run-no-confirmable-candidate") {
+    if (result.reason !== candidateManifest.notRunReason) {
+      problems.push(
+        `${artifact.name}: carries reason ${printable(result.reason)}, and the candidate ` +
+          `manifest records ${printable(candidateManifest.notRunReason)}`,
+      );
+    }
+    if ((candidateManifest.candidateProfileIds ?? []).length > 0) {
+      problems.push(
+        `${artifact.name}: the not-run branch is taken only over a candidate manifest that ` +
+          "registered nothing",
+      );
+    }
+  } else {
+    if (candidateManifest.notRunReason !== null) {
+      problems.push(
+        `${artifact.name}: a completed confirmation ran against a candidate manifest whose ` +
+          `notRunReason is ${printable(candidateManifest.notRunReason)}`,
+      );
+    }
+    const confirmed = (entries ?? []).map(({ profileId }) => profileId).sort();
+    const frozen = [...(candidateManifest.candidateProfileIds ?? [])].sort();
+    if (!sameList(confirmed, frozen)) {
+      problems.push(
+        `${artifact.name}: reports on ${confirmed.join(", ") || "nothing"}, and the candidate ` +
+          `manifest froze ${frozen.join(", ") || "nothing"}`,
+      );
+    }
+  }
+
+  // The Task 26 root is mandatory in this branch too, not only in the completed
+  // one: a chain whose archives do not rerun to what it records is broken.
+  if (!Array.isArray(evidenceRuns) || evidenceRuns.length !== expected.evidencePaths.length) {
+    problems.push(`${artifact.name}: expected ${expected.evidencePaths.length} Task 26 repetitions`);
+    return problems;
+  }
+  evidenceRuns.forEach((run, index) => {
+    const label = `${artifact.name}: ${expected.evidencePaths[index]}`;
+    const [record] = Array.isArray(run) ? run : [];
+    if (record === undefined) {
+      problems.push(`${label} is not one Task 26 record`);
+      return;
+    }
+    const rerun = rerunRoundTwoSelection(record, expected);
+    if (rerun.evidenceDigest !== result.task26EvidenceDigest) {
+      problems.push(
+        `${label} recomputes to digest ${rerun.evidenceDigest}, and the chain references ` +
+          `${printable(result.task26EvidenceDigest)}`,
+      );
+    }
+    if (rerun.terminalOutcome !== result.task26TerminalOutcome) {
+      problems.push(
+        `${label} reruns to terminal outcome ${rerun.terminalOutcome}, and the chain records ` +
+          `${printable(result.task26TerminalOutcome)}`,
+      );
+    }
+    const rerunReason = result.runStatus === "not-run-no-confirmable-candidate"
+      ? result.reason
+      : null;
+    if (rerun.notRunReason !== rerunReason) {
+      problems.push(
+        `${label} reruns to reason ${printable(rerun.notRunReason)}, and the chain records ` +
+          `${printable(rerunReason)}`,
+      );
+    }
+    if (rerun.ablationId !== candidateManifest.ablationId) {
+      problems.push(
+        `${label} reruns to ablation ${printable(rerun.ablationId)}, and the chain names ` +
+          `${printable(candidateManifest.ablationId)}`,
+      );
+    }
+  });
+  return problems;
+}
+
+/**
+ * Holds the completed branch's archives to the frozen matrix, and its entries to
+ * those archives.
+ *
+ * Equal hashes prove the two files agree; they say nothing about what either
+ * file is. Both are therefore validated against the round-two matrix, and each
+ * candidate's Task 24 labels and eligibility are recomputed from the archived
+ * measurements and compared to what the manifest recorded, so a label the
+ * evidence does not produce fails here rather than being carried into Task 29.
+ */
+function completedEntryProblems(label, result, candidateManifest, evidence, archives, expected) {
+  const problems = [];
+  if (archives === null) return problems;
+  const candidateProfileIds = [...(candidateManifest?.candidateProfileIds ?? [])];
+  const names = [evidence.runOneArchive, evidence.runTwoArchive];
+  const validated = [];
+  for (const [index, name] of names.entries()) {
+    const archive = archives.get(name);
+    if (archive?.record === undefined) continue;
+    const where = `${label}: ${index === 0 ? "runOneArchive" : "runTwoArchive"}`;
+    const matrixProblems = roundTwoConfirmationMatrixProblems(
+      archive.record,
+      where,
+      candidateProfileIds,
+      { ...expected, candidateManifestDigest: result.candidateManifestDigest },
+    );
+    problems.push(...matrixProblems);
+    // The unfrozen release-gate scope is a policy gap, not a defect this archive
+    // could have avoided, so it does not stop the entries from being held to the
+    // measurements the archive does carry.
+    const blocking = matrixProblems
+      .filter((problem) => !problem.includes(ROUND_TWO_UNFROZEN_SCOPE));
+    if (blocking.length === 0) validated.push({ where, archive });
+  }
+  if (validated.length === 0) return problems;
+  const recorded = (result.entries ?? []).map((entry) => ({
+    profileId: entry.profileId,
+    automatedEligible: entry.automatedEligible,
+    repeatedRecoveryOutcome: entry.repeatedRecoveryOutcome,
+    confirmationReproductionStatus: entry.confirmationReproductionStatus,
+  }));
+  for (const { where, archive } of validated) {
+    const rederived = rederiveRoundTwoEligibilityEntries(
+      archive.record,
+      candidateProfileIds,
+      expected,
+    );
+    const byProfileId = new Map(recorded.map((entry) => [entry.profileId, entry]));
+    for (const entry of rederived) {
+      const stated = byProfileId.get(entry.profileId);
+      if (stated === undefined) {
+        problems.push(`${where}: ${entry.profileId} was measured and is not in the manifest`);
+        continue;
+      }
+      for (const field of [
+        "automatedEligible",
+        "repeatedRecoveryOutcome",
+        "confirmationReproductionStatus",
+      ]) {
+        if (stated[field] !== entry[field]) {
+          problems.push(
+            `${where}: ${entry.profileId} re-derives ${field} ${printable(entry[field])}, and ` +
+              `the manifest records ${printable(stated[field])}`,
+          );
+        }
+      }
+    }
+  }
+  return problems;
+}
+
+/**
+ * The not-run branch writes no confirmation archive.
+ *
+ * The version-2 confirmation fixtures are the round's only genuinely unseen
+ * evidence and can be spent exactly once. A placeholder matrix archive here would
+ * later read as a confirmation run that rejected everything rather than one that
+ * never happened, so the only Task 28 file the repository may hold is the
+ * eligibility manifest itself.
+ *
+ * This prohibition belongs to the not-run branch alone. A completed round's two
+ * archived repetitions are Task 28 files it is required to produce, so applying
+ * the rule unconditionally would reject the very evidence the completed branch
+ * exists to record.
+ */
+export function roundTwoConfirmationArchiveProblems(fileNames, manifestPath, runStatus) {
+  if (runStatus !== "not-run-no-confirmable-candidate") return [];
+  const manifestFile = manifestPath.split("/").at(-1);
+  const strays = fileNames
+    .filter((name) => /task28/i.test(name) && name !== manifestFile)
+    .sort();
+  return strays.length === 0
+    ? []
+    : [`The not-run branch wrote no confirmation archive, but found ${strays.join(", ")}`];
+}
+
 /**
  * The zero branch writes no search archive.
  *
@@ -2047,7 +4701,7 @@ export function roundTwoSearchArchiveProblems(fileNames, manifestPath) {
     : [`The zero branch wrote no search archive, but found ${strays.join(", ")}`];
 }
 
-/** Verifies the committed Task 08, 10, 11, 22, 24, 26, and 27 evidence against frozen pins. */
+/** Verifies the committed Task 08, 10, 11, 22, 24, 26, 27, and 28 evidence against frozen pins. */
 export async function verifyFrozenEvidence() {
   const problems = [];
   for (const artifact of EVIDENCE_ARTIFACTS) {
@@ -2121,6 +4775,34 @@ export async function verifyFrozenEvidence() {
         artifact.path,
       ));
     }
+    if (artifact.roundTwoEligibilityManifest !== undefined) {
+      const expected = artifact.roundTwoEligibilityManifest;
+      const [candidateManifest, ...evidenceRuns] = await Promise.all(
+        [expected.candidateManifestPath, ...expected.evidencePaths].map(async (path) => JSON.parse(
+          (await readFile(join(REPOSITORY_ROOT, path))).toString("utf8"),
+        )),
+      );
+      // A completed run's evidence is two files, so they are read and hashed
+      // here rather than taken on the strength of the names it recorded.
+      const archives = result.runStatus === "completed"
+        ? await readRoundTwoConfirmationArchives([
+          result.confirmationEvidence?.runOneArchive,
+          result.confirmationEvidence?.runTwoArchive,
+        ])
+        : null;
+      problems.push(...roundTwoEligibilityManifestProblems(
+        artifact,
+        result,
+        candidateManifest,
+        evidenceRuns,
+        archives,
+      ));
+      problems.push(...roundTwoConfirmationArchiveProblems(
+        await readdir(join(REPOSITORY_ROOT, "benchmark-results")),
+        artifact.path,
+        result.runStatus,
+      ));
+    }
 
     let lateAdvances;
     let profileLateAdvances;
@@ -2148,6 +4830,17 @@ export async function verifyFrozenEvidence() {
     }
 
     const details = [`file=${fileDigest}`];
+    if (artifact.roundTwoEligibilityManifest !== undefined) {
+      details.push(
+        `status=${result.runStatus}`,
+        `entries=${(result.entries ?? []).length}`,
+        `reason=${result.reason ?? "none"}`,
+        `confirmationDecoded=${result.confirmationPartition?.decodedTraceCount}/` +
+          `${result.confirmationPartition?.traceCount}`,
+        `candidateManifest=${result.candidateManifestDigest}`,
+        `manifest=${result.digest?.value}`,
+      );
+    }
     if (artifact.roundTwoCandidateManifest !== undefined) {
       details.push(
         `candidates=${(result.candidateProfileIds ?? []).length}`,
@@ -2419,7 +5112,7 @@ function gateDefinitionProblems(gates, label) {
 }
 
 /** The four per-role failure counters a candidate report sums for itself. */
-const ROLE_FAILURE_COUNTERS = [
+export const ROLE_FAILURE_COUNTERS = [
   ["replayIntegrityFailureCount", "replay-integrity"],
   ["safetyFailureCount", "safety"],
   ["releaseFailureCount", "release"],
@@ -2461,7 +5154,7 @@ function isGateValue(value) {
 }
 
 /** The evidence role a set of partitions carries, as the report computes it. */
-function partitionEvidenceRole(partitions) {
+export function partitionEvidenceRole(partitions) {
   if (partitions.length === 0 || partitions.includes("regression-only")) return null;
   const distinct = [...new Set(partitions)];
   if (distinct.length === 1) return distinct[0] === "discovery" ? "discovery" : "confirmation";

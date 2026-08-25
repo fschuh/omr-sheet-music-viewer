@@ -1,12 +1,19 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
 import {
   CONFIRMATION_EVIDENCE,
+  ROLE_FAILURE_COUNTERS,
+  ROUND_TWO_COMMITTED_REGRESSIONS,
+  ROUND_TWO_CONFIRMATION_MATRIX,
+  ROUND_TWO_DOMAIN_SUMMARY_COUNTERS,
+  roundTwoGateDomainMembership,
+  roundTwoUnfrozenGateScopes,
   bassQualificationProblems,
+  canonicalJsonDigest,
   compareEvidenceRuns,
   confirmationEvidenceProblems,
   firstEvidenceDifference,
@@ -14,6 +21,17 @@ import {
   rescoreTask13ArchiveUnderRoundTwoPolicy,
   roundTwoAblationProblems,
   roundTwoCandidateManifestProblems,
+  capturedCorpusIdentity,
+  fnv1a32,
+  partitionEvidenceRole,
+  readRoundTwoConfirmationArchives,
+  roundTwoCaptureIdentityRows,
+  rederiveRoundTwoEligibilityEntries,
+  rederiveRoundTwoGateVerdicts,
+  confirmationArchiveEvidenceProblems,
+  roundTwoConfirmationArchiveProblems,
+  roundTwoConfirmationMatrixProblems,
+  roundTwoEligibilityManifestProblems,
   roundTwoSearchArchiveProblems,
   rerunRoundTwoSelection,
   task24DomainArchiveProblems,
@@ -739,6 +757,2028 @@ test("relabelling the zero-branch reason is detected against the rerun", async (
   assert.equal(acceptedRerun.ablationId, "ablation-3-bass-axis");
   assert.ok(roundTwoCandidateManifestProblems(TASK27_ARTIFACT, manifest, [accepted, evidence[1]])
     .some((problem) => problem.includes("has an ablation the rerun stop rule accepted")));
+});
+
+const TASK28_ARTIFACT = {
+  name: "Task 28 round-two eligibility manifest",
+  path: "benchmark-results/listen-round-two-eligibility-manifest-task28.json",
+  roundTwoEligibilityManifest: {
+    name: "listen-round-two-eligibility-manifest",
+    formatVersion: 1,
+    roundId: "round-two",
+    runStatus: "not-run-no-confirmable-candidate",
+    reason: "no-ablation-accepted",
+    entryCount: 0,
+    candidateManifestDigest: "21655efa",
+    task26TerminalOutcome: "bass-axis-unsupported",
+    task26EvidenceDigest: "8dfe2f1b",
+    digest: "20be9d6d",
+    confirmationPartition: {
+      traceCount: 12,
+      decodedTraceCount: 0,
+      priorLedgerHash: "1f9613bd",
+      traceGenerationHash: "d1971fa3",
+      traceIdentityHash: "a5695acc",
+    },
+    completeness: {
+      registryVersion: 2,
+      registryDigest: "d1b3f6a3",
+      policyVersion: 1,
+      policyHash: "840b07ec",
+      traceManifestVersion: 2,
+      traceManifestHash: "d1971fa3",
+      traceManifestCorpusHash: "1213016e",
+      generatorVersion: 1,
+    },
+    candidateManifestPath: TASK27_ARTIFACT.path,
+    evidencePaths: TASK27_ARTIFACT.roundTwoCandidateManifest.evidencePaths,
+    repeatedRecoveryBoundaries:
+      TASK27_ARTIFACT.roundTwoCandidateManifest.repeatedRecoveryBoundaries,
+    domainRegretMaterialBoundary: 0.01,
+    knownDiscoveryGroupIds: TASK27_ARTIFACT.roundTwoCandidateManifest.knownDiscoveryGroupIds,
+    processLocalDigestFields: TASK27_ARTIFACT.roundTwoCandidateManifest.processLocalDigestFields,
+  },
+};
+
+async function task28Manifest() {
+  return JSON.parse(await readFile(
+    join(import.meta.dirname, "../..", TASK28_ARTIFACT.path),
+    "utf8",
+  ));
+}
+
+/**
+ * Recomputes the digest of a mutated record.
+ *
+ * Without this every mutation below would fail on the digest alone, and the rule
+ * the mutation is meant to exercise would never be reached.
+ */
+function withRecomputedDigest(record) {
+  const { digest: _digest, ...rest } = record;
+  return {
+    ...record,
+    digest: { algorithm: "fnv1a-32-canonical-json", value: canonicalJsonDigest(rest) },
+  };
+}
+
+test("the committed not-run manifest is chained to Task 27 and rerun from Task 26", async () => {
+  const [eligibility, candidate, evidence] = await Promise.all([
+    task28Manifest(),
+    task27Manifest(),
+    task27Evidence(),
+  ]);
+  assert.deepEqual(
+    roundTwoEligibilityManifestProblems(TASK28_ARTIFACT, eligibility, candidate, evidence),
+    [],
+  );
+  // The chain is re-derived rather than read: both repetitions rerun to the
+  // terminal outcome, the evidence digest, and the reason this record carries.
+  for (const run of evidence) {
+    const rerun = rerunRoundTwoSelection(run[0], TASK28_ARTIFACT.roundTwoEligibilityManifest);
+    assert.equal(rerun.terminalOutcome, eligibility.task26TerminalOutcome);
+    assert.equal(rerun.evidenceDigest, eligibility.task26EvidenceDigest);
+    assert.equal(rerun.notRunReason, eligibility.reason);
+  }
+});
+
+test("the two eligibility branches may not borrow each other's evidence fields", async () => {
+  const [eligibility, candidate, evidence] = await Promise.all([
+    task28Manifest(),
+    task27Manifest(),
+    task27Evidence(),
+  ]);
+  const problemsFor = (record) =>
+    roundTwoEligibilityManifestProblems(TASK28_ARTIFACT, record, candidate, evidence);
+
+  // Archive hashes for a run that never happened are exactly the fabricated
+  // evidence the discriminated schema exists to prevent.
+  assert.ok(problemsFor(withRecomputedDigest({
+    ...eligibility,
+    confirmationEvidence: {
+      runOneArchive: "run1.json",
+      runOneSha256: "a".repeat(64),
+      runTwoArchive: "run2.json",
+      runTwoSha256: "b".repeat(64),
+      comparisonDigest: "0123abcd",
+    },
+  })).some((problem) => problem.includes("forbidden field confirmationEvidence")));
+
+  // A candidate entry under a branch that confirmed nothing.
+  assert.ok(problemsFor(withRecomputedDigest({
+    ...eligibility,
+    entries: [{
+      profileId: "early-open-v2",
+      automatedEligible: true,
+      rejectionReasons: [],
+      repeatedRecoveryOutcome: "material-partial-recovery",
+      confirmationReproductionStatus: "reproduced",
+    }],
+  })).some((problem) => problem.includes("may hold no entry")));
+
+  // And a decode claimed for fixtures the round never spent.
+  assert.ok(problemsFor(withRecomputedDigest({
+    ...eligibility,
+    confirmationPartition: { ...eligibility.confirmationPartition, decodedTraceCount: 12 },
+  })).some((problem) => problem.includes("decoded 12 confirmation traces")));
+
+  // The census and both identities are pinned in either branch, so a partition
+  // that lost rows, was re-pointed at other content, or names another manifest
+  // generation fails even when its counts agree with themselves.
+  for (const [field, value] of [
+    ["traceCount", 0],
+    ["traceIdentityHash", "00000000"],
+    ["traceGenerationHash", "00000000"],
+    ["priorLedgerHash", "00000000"],
+  ]) {
+    assert.ok(
+      problemsFor(withRecomputedDigest({
+        ...eligibility,
+        confirmationPartition: { ...eligibility.confirmationPartition, [field]: value },
+      })).some((problem) => problem.includes(`confirmation partition ${field}`)),
+      `${field} is not pinned`,
+    );
+  }
+});
+
+/**
+ * The completed branch, staged against its own pins.
+ *
+ * The round took the not-run branch, so no completed artifact exists. Its rules
+ * still have to hold for every later round, and testing them one at a time needs
+ * a record that satisfies the others.
+ */
+const TASK28_COMPLETED_ARTIFACT = {
+  ...TASK28_ARTIFACT,
+  roundTwoEligibilityManifest: {
+    ...TASK28_ARTIFACT.roundTwoEligibilityManifest,
+    runStatus: "completed",
+    reason: undefined,
+    entryCount: 1,
+    digest: undefined,
+    confirmationPartition: {
+      ...TASK28_ARTIFACT.roundTwoEligibilityManifest.confirmationPartition,
+      decodedTraceCount: 12,
+    },
+  },
+};
+
+function completedRecord(overrides = {}) {
+  const record = {
+    name: "listen-round-two-eligibility-manifest",
+    formatVersion: 1,
+    roundId: "round-two",
+    runStatus: "completed",
+    candidateManifestDigest: "21655efa",
+    task26TerminalOutcome: "bass-axis-unsupported",
+    task26EvidenceDigest: "8dfe2f1b",
+    entries: [{
+      profileId: "early-open-v2",
+      automatedEligible: true,
+      rejectionReasons: [],
+      repeatedRecoveryOutcome: "material-partial-recovery",
+      confirmationReproductionStatus: "reproduced",
+    }],
+    confirmationPartition: {
+      traceCount: 12,
+      decodedTraceCount: 12,
+      priorLedgerHash: "1f9613bd",
+      traceGenerationHash: "d1971fa3",
+      traceIdentityHash: "a5695acc",
+    },
+    confirmationEvidence: {
+      runOneArchive: "run1.json",
+      runOneSha256: "a".repeat(64),
+      runTwoArchive: "run2.json",
+      runTwoSha256: "b".repeat(64),
+      comparisonDigest: "c".repeat(64),
+    },
+    ...overrides,
+  };
+  return withRecomputedDigest(record);
+}
+
+/* ------------------------------------------------------------------------- *
+ * The completed branch, staged as real archives on disk
+ *
+ * The round took the not-run branch, so no completed archive exists. Its rules
+ * still have to hold for every later round, and they are rules about files: a
+ * name is not evidence, and neither is agreement between two files that are both
+ * the wrong evidence. So the fixtures below are written to disk and are complete
+ * matrices rather than plausible-looking records.
+ * ------------------------------------------------------------------------- */
+
+const KNOWN_DISCOVERY_GROUP_IDS = [
+  "dynamics-constant/tone/salamander/v05",
+  "dynamics-constant/tone/salamander/v13",
+  "dynamics-mixed/tone/salamander",
+];
+
+function stagedObservation(sourceDistance, attributionDelayMs) {
+  return {
+    evaluated: true,
+    structurallyValid: true,
+    firstCorrectFullChordAttackIncomplete: true,
+    carriedRequiredPitchWithoutFreshReOnset: true,
+    laterIdenticalAttackRecoveredCorrectTarget: sourceDistance > 0,
+    sourceDistance,
+    attributionDelayMs,
+    falseAdvanceCount: 0,
+    skippedAdvanceCount: 0,
+    duplicateAdvanceCount: 0,
+  };
+}
+
+/** The frozen census, measured. Both halves, with the roles and strata it fixes. */
+const STAGED_CENSUS = ROUND_TWO_CONFIRMATION_MATRIX.repeatedChordCensus
+  .map(({ groupId, stratum, evidenceRole }) => ({ groupId, stratum, evidenceRole }));
+
+function stagedMeasurements(observe) {
+  return STAGED_CENSUS.map(({ groupId, stratum }) => ({
+    groupId,
+    stratum,
+    observation: observe(groupId),
+  }));
+}
+
+const HEX = (seed) => (seed >>> 0).toString(16).padStart(8, "0");
+
+/**
+ * The registry generation `d1b3f6a3` describes, restated here.
+ *
+ * The archive is required to carry the generation it replayed from and to hash
+ * to the digest Task 27 froze, so the fixture has to be able to produce a real
+ * one; an invented one is what several probes below are.
+ */
+const FROZEN_REGISTRY_V2 = {
+  version: 2,
+  defaultProfileId: "baseline-v1",
+  fixedPolicy: {
+    preTargetExtraLookbackMs: 30,
+    collectionWindowMs: 400,
+    settleMs: 32,
+    duplicateOnsetMs: 120,
+    wrongAttemptResetMs: 180,
+    refractoryMs: 180,
+    refractoryMode: "noteEvents",
+  },
+  profiles: [
+    {
+      id: "baseline-v1",
+      onsetThreshold: 0.6,
+      targetNoteThreshold: 0.5,
+      activeTargetThreshold: 0.35,
+      extraNoteThreshold: 0.97,
+      requireFreshBassOnset: true,
+    },
+    {
+      id: "balanced-v1",
+      onsetThreshold: 0.5,
+      targetNoteThreshold: 0.5,
+      activeTargetThreshold: 0.35,
+      extraNoteThreshold: 0.99,
+      requireFreshBassOnset: true,
+    },
+    {
+      id: "sensitive-v1",
+      onsetThreshold: 0.45,
+      targetNoteThreshold: 0.5,
+      activeTargetThreshold: 0.2,
+      extraNoteThreshold: 0.99,
+      requireFreshBassOnset: true,
+    },
+    {
+      id: "early-open-v2",
+      onsetThreshold: 0.45,
+      targetNoteThreshold: 0.5,
+      activeTargetThreshold: 0.2,
+      extraNoteThreshold: 0.99,
+      requireFreshBassOnset: true,
+    },
+    {
+      id: "steady-open-v2",
+      onsetThreshold: 0.5,
+      targetNoteThreshold: 0.5,
+      activeTargetThreshold: 0.2,
+      extraNoteThreshold: 0.99,
+      requireFreshBassOnset: true,
+    },
+    {
+      id: "early-held-v2",
+      onsetThreshold: 0.45,
+      targetNoteThreshold: 0.5,
+      activeTargetThreshold: 0.275,
+      extraNoteThreshold: 0.99,
+      requireFreshBassOnset: true,
+    },
+    {
+      id: "steady-held-v2",
+      onsetThreshold: 0.5,
+      targetNoteThreshold: 0.5,
+      activeTargetThreshold: 0.275,
+      extraNoteThreshold: 0.99,
+      requireFreshBassOnset: true,
+    },
+  ],
+};
+
+/**
+ * The manifest's own captures, in manifest order.
+ *
+ * The identity digest is over the real trace identifiers, renderers, partitions,
+ * and suites, so this fixture reads them from the committed trace manifest rather
+ * than inventing 504 plausible names.
+ */
+function stagedCaptures() {
+  return roundTwoCaptureIdentityRows().map((trace, index) => ({
+    ...trace,
+    recognitionStructureHash: HEX(0x51000000 + index),
+    processLocalPcmHash: HEX(0x9c000000 + index),
+    processLocalTraceHash: HEX(0x7a000000 + index),
+    baselineOutcomeDigest: HEX(0x0d000000 + index * 8),
+  }));
+}
+
+/**
+ * One outcome row per trace per profile column, baseline included.
+ *
+ * Each row names the capture's own process-local hashes, because every column
+ * replayed one capture; the baseline row reproduces the capture's recorded
+ * capture-time replay.
+ */
+function stagedOutcomes(captures, candidateProfileIds) {
+  const columns = [ROUND_TWO_CONFIRMATION_MATRIX.baselineProfileId, ...candidateProfileIds];
+  return captures.flatMap((capture, traceIndex) => columns.map((profileId, column) => ({
+    traceId: capture.traceId,
+    profileId,
+    outcomeDigest: column === 0
+      ? capture.baselineOutcomeDigest
+      : HEX(0x0d000000 + traceIndex * 8 + column),
+    capturePcmHash: capture.processLocalPcmHash,
+    captureTraceHash: capture.processLocalTraceHash,
+    ...stagedTraceCounters(capture, column > 0),
+  })));
+}
+
+function stagedOutcomeIdentity(outcomes) {
+  return fnv1a32(outcomes.map((row) => `${row.traceId}:${row.profileId}:${row.outcomeDigest}`));
+}
+
+/**
+ * Per-trace outcomes, one row per trace per column, carrying every counter a
+ * domain summary is reconciled against.
+ */
+function stagedTraceCounters(capture, candidate) {
+  const isCourseClear = capture.sequenceFamily === "course-clear";
+  return {
+    correctAdvanceCount: capture.caseKind === "correct" ? 1 : 0,
+    courseClearCorrectAdvanceCount: isCourseClear && capture.caseKind === "correct" ? 1 : 0,
+    // The candidate recognises one more event and advances one more target on
+    // every scored row, which is what a clean corroborated gain looks like.
+    independentMatchCount: capture.scoreEligible ? (candidate ? 4 : 3) : 0,
+    orderedAdvanceCount: capture.scoreEligible ? (candidate ? 2 : 1) : 0,
+    completePassageCount: capture.scoreEligible ? 1 : 0,
+    falseAdvanceCount: 0,
+    skippedAdvanceCount: 0,
+    duplicateAdvanceCount: 0,
+    incompleteCarriedBassAdvances: 0,
+  };
+}
+
+/**
+ * One per-domain summary per gate per column, over the domains the frozen corpus
+ * defines for that gate.
+ *
+ * Membership comes from `roundTwoGateDomainMembership`, so the fixture cannot
+ * invent a convenient grouping, and every counter is the sum of the outcome rows
+ * the domain names, so it cannot state a total its own rows contradict.
+ */
+function stagedDomainSummaries(captures, candidateProfileIds, outcomes) {
+  const columns = [ROUND_TWO_CONFIRMATION_MATRIX.baselineProfileId, ...candidateProfileIds];
+  const outcomeByKey = new Map(outcomes.map((row) => [`${row.profileId}|${row.traceId}`, row]));
+  return CONFIRMATION_EVIDENCE.gates.flatMap((gate) => {
+    const domains = roundTwoGateDomainMembership(gate, captures);
+    if (domains === null) return [];
+    return domains.flatMap((traceIds, index) => columns.map((profileId) => {
+      const summed = Object.fromEntries(ROUND_TWO_DOMAIN_SUMMARY_COUNTERS.map((counter) => [
+        counter,
+        traceIds.reduce((total, traceId) => (
+          total + (outcomeByKey.get(`${profileId}|${traceId}`)?.[counter] ?? 0)
+        ), 0),
+      ]));
+      return {
+        profileId,
+        gateCode: gate.code,
+        domainId: `${gate.code}#${index}`,
+        traceIds,
+        ...summed,
+        p95OnsetToAdvanceMs: 180,
+      };
+    }));
+  });
+}
+
+/**
+ * Moves a counter on one column's per-trace outcomes and re-sums every summary
+ * that names those traces.
+ *
+ * Summaries are reconciled against the outcome rows they name, so a probe that
+ * edited a summary alone would trip the reconciliation check rather than the
+ * gate rule it means to exercise. Editing the measurement and re-summing is what
+ * a real archive of a worse candidate looks like.
+ */
+function regressTraces(archive, { profileId, gateCode, counter, value, limit = Infinity }) {
+  const run = archive[0];
+  const targeted = run.domainSummaries
+    .filter((row) => row.gateCode === gateCode && row.profileId === profileId)
+    .slice(0, limit);
+  const traceIds = new Set(targeted.flatMap(({ traceIds: ids }) => ids));
+  for (const row of run.outcomes) {
+    if (row.profileId === profileId && traceIds.has(row.traceId)) row[counter] = value;
+  }
+  const outcomeByKey = new Map(run.outcomes.map((row) => [`${row.profileId}|${row.traceId}`, row]));
+  for (const row of run.domainSummaries) {
+    if (row.profileId !== profileId) continue;
+    row[counter] = row.traceIds.reduce((total, traceId) => (
+      total + (outcomeByKey.get(`${profileId}|${traceId}`)?.[counter] ?? 0)
+    ), 0);
+  }
+  run.outcomeIdentityDigest = stagedOutcomeIdentity(run.outcomes);
+  return archive;
+}
+
+/** The diagnosed cases, neither worsened nor turned unsafe. */
+function stagedCommittedRegressions(candidateProfileIds) {
+  return candidateProfileIds.flatMap((profileId) => (
+    ROUND_TWO_COMMITTED_REGRESSIONS.map(({ fixtureId, expectation }) => ({
+      profileId,
+      fixtureId,
+      expectation,
+      worseThanBaseline: false,
+      // The diagnosed false advance stays exactly as diagnosed, which the gate
+      // permits and an absolute-zero rule would not.
+      falseAdvance: expectation === "reported-unsafe-advance",
+      skippedAdvanceCount: 0,
+      duplicateAdvanceCount: 0,
+    }))
+  ));
+}
+
+/**
+ * Every frozen gate, applied and judged, for every candidate column.
+ *
+ * A gate that did not pass carries the failure that says so, because `passed` is
+ * a claim about the failures beside it and the two must agree.
+ */
+function stagedGates(candidateProfileIds, judge = () => true) {
+  return {
+    evidenceComplete: true,
+    incompleteEvidenceReasons: [],
+    reviewedLayerLosses: [],
+    gates: CONFIRMATION_EVIDENCE.gates.map((definition) => ({ ...definition })),
+    candidates: candidateProfileIds.map((profileId) => {
+      const gates = CONFIRMATION_EVIDENCE.gates.map(({ code, role, domain, partitions }) => {
+        const passed = judge(profileId, code);
+        return {
+          code,
+          role,
+          domain,
+          partitions: [...partitions],
+          evidenceRole: partitionEvidenceRole([...partitions]),
+          applied: true,
+          passed,
+          failures: passed ? [] : [{
+            code,
+            domainIds: ["tone/splendid/mf"],
+            baselineValue: 0,
+            candidateValue: 1,
+            explanation: `${code} failed for ${profileId}`,
+          }],
+        };
+      });
+      const counters = Object.fromEntries(ROLE_FAILURE_COUNTERS.map(([counter, role]) => [
+        counter,
+        gates.filter((gate) => gate.role === role)
+          .reduce((total, gate) => total + gate.failures.length, 0),
+      ]));
+      return {
+        profileId,
+        gates,
+        ...counters,
+        eligible: gates.every((gate) => gate.passed),
+      };
+    }),
+  };
+}
+
+/** A complete round-two confirmation matrix, as an archived repetition shows it. */
+function stagedMatrixArchive(candidateManifestDigest, candidateProfileIds, overrides = {}) {
+  const matrix = ROUND_TWO_CONFIRMATION_MATRIX;
+  const captures = stagedCaptures();
+  const outcomes = stagedOutcomes(captures, candidateProfileIds);
+  return [{
+    name: matrix.name,
+    formatVersion: matrix.formatVersion,
+    manifest: {
+      version: matrix.manifestVersion,
+      hash: matrix.manifestHash,
+      corpusHash: matrix.manifestCorpusHash,
+    },
+    registryVersion: matrix.registryVersion,
+    selectionPolicy: { version: matrix.policyVersion, hash: matrix.policyHash },
+    baselineProfileId: matrix.baselineProfileId,
+    candidateProfileIds,
+    candidateManifestDigest,
+    rendererKeys: [...matrix.rendererKeys],
+    registryDigest: TASK28_ARTIFACT.roundTwoEligibilityManifest.completeness.registryDigest,
+    generatorVersion: TASK28_ARTIFACT.roundTwoEligibilityManifest.completeness.generatorVersion,
+    registry: FROZEN_REGISTRY_V2,
+    // Every column replays its registry entry, field for field. A completed
+    // round would register its candidates as new identifiers in a new
+    // generation; the staged one reuses this generation's, which is what the
+    // frozen digest describes.
+    profiles: Object.fromEntries(
+      [matrix.baselineProfileId, ...candidateProfileIds].map((profileId, index) => {
+        const entry = FROZEN_REGISTRY_V2.profiles[index === 0 ? 0 : index + 2];
+        const { id: _id, ...thresholds } = entry;
+        return [profileId, { ...thresholds }];
+      }),
+    ),
+    capturedTraceCount: captures.length,
+    confirmationTraceCountRead: captures
+      .filter(({ partition }) => partition === "confirmation").length,
+    captures,
+    outcomes,
+    outcomeIdentityDigest: stagedOutcomeIdentity(outcomes),
+    domainSummaries: stagedDomainSummaries(captures, candidateProfileIds, outcomes),
+    committedRegressions: stagedCommittedRegressions(candidateProfileIds),
+    repeatedChordCensus: STAGED_CENSUS,
+    // The incumbent recovers late in every group; the candidate recovers on the
+    // real attack, which is a material gain and a full resolution everywhere.
+    baselineRepeatedMeasurements: stagedMeasurements(() => stagedObservation(2, 2_220)),
+    repeatedRecovery: candidateProfileIds.map((profileId) => ({
+      profileId,
+      comparedAgainstProfileId: matrix.baselineProfileId,
+      measurements: stagedMeasurements(() => stagedObservation(0, 228)),
+    })),
+    gates: stagedGates(candidateProfileIds),
+    ...overrides,
+  }];
+}
+
+/**
+ * Writes two archived repetitions and returns everything the rules need.
+ *
+ * The two files are byte-identical on purpose: two repetitions of a
+ * deterministic matrix may legitimately produce the same bytes, and that must be
+ * acceptable evidence.
+ */
+async function withStagedArchives(run, buildArchive = stagedMatrixArchive) {
+  const directory = await mkdtemp(join(tmpdir(), "listen-task28-"));
+  const candidateProfileIds = ["early-open-v2"];
+  const candidate = withRecomputedDigest({
+    ...(await task27Manifest()),
+    candidateProfileIds,
+    notRunReason: null,
+    ablationId: "ablation-2-refined-family",
+  });
+  const names = [
+    "listen-profile-validation-task28-run1.json",
+    "listen-profile-validation-task28-run2.json",
+  ];
+  const body = `${JSON.stringify(
+    buildArchive(candidate.digest.value, candidateProfileIds),
+    null,
+    2,
+  )}\n`;
+  for (const name of names) await writeFile(join(directory, name), body);
+  try {
+    const archives = await readRoundTwoConfirmationArchives(names, directory);
+    const [one, two] = names.map((name) => archives.get(name));
+    return await run({
+      directory,
+      names,
+      archives,
+      candidate,
+      candidateProfileIds,
+      confirmationEvidence: {
+        runOneArchive: names[0],
+        runOneSha256: one.fileSha256,
+        runTwoArchive: names[1],
+        runTwoSha256: two.fileSha256,
+        comparisonDigest: one.comparisonDigest,
+      },
+    });
+  } finally {
+    await rm(directory, { recursive: true });
+  }
+}
+
+test("a completed run's archives are read, hashed, and compared, not just named", async () => {
+  await withStagedArchives(async ({ directory, names, archives, confirmationEvidence }) => {
+    const [one, two] = names.map((name) => archives.get(name));
+    // The two runs are deterministic and hash alike; that is acceptable evidence.
+    assert.equal(one.fileSha256, two.fileSha256);
+    assert.notEqual(one.fileIdentity, undefined);
+    assert.deepEqual(
+      confirmationArchiveEvidenceProblems("label", confirmationEvidence, archives),
+      [],
+    );
+
+    // A recorded hash that is not the file's own.
+    assert.ok(confirmationArchiveEvidenceProblems(
+      "label",
+      { ...confirmationEvidence, runOneSha256: "a".repeat(64) },
+      archives,
+    ).some((problem) => problem.includes("runOneArchive hashes to")));
+
+    // A comparison digest neither archive recomputes to.
+    assert.ok(confirmationArchiveEvidenceProblems(
+      "label",
+      { ...confirmationEvidence, comparisonDigest: "b".repeat(64) },
+      archives,
+    ).some((problem) => problem.includes("recomputes to comparison digest")));
+
+    // Two spellings of one file are one run, even though the strings differ.
+    const aliased = [`./${names[0]}`, names[0]];
+    const aliasArchives = await readRoundTwoConfirmationArchives(aliased, directory);
+    assert.ok(confirmationArchiveEvidenceProblems(
+      "label",
+      {
+        runOneArchive: aliased[0],
+        runOneSha256: one.fileSha256,
+        runTwoArchive: aliased[1],
+        runTwoSha256: one.fileSha256,
+        comparisonDigest: one.comparisonDigest,
+      },
+      aliasArchives,
+    ).some((problem) => problem.includes("the same file")));
+
+    // And so is a link beside its target, which no amount of path normalization
+    // would collapse: distinctness is filesystem identity, not string identity.
+    const linkName = "listen-profile-validation-task28-link.json";
+    await symlink(join(directory, names[0]), join(directory, linkName));
+    const linkArchives = await readRoundTwoConfirmationArchives([names[0], linkName], directory);
+    assert.notEqual(
+      linkArchives.get(names[0]).canonicalPath,
+      linkArchives.get(linkName).canonicalPath,
+    );
+    assert.ok(confirmationArchiveEvidenceProblems(
+      "label",
+      {
+        runOneArchive: names[0],
+        runOneSha256: one.fileSha256,
+        runTwoArchive: linkName,
+        runTwoSha256: one.fileSha256,
+        comparisonDigest: one.comparisonDigest,
+      },
+      linkArchives,
+    ).some((problem) => problem.includes("the same file")));
+
+    // Two names that are not files at all.
+    const missing = await readRoundTwoConfirmationArchives(["a.json", "b.json"], directory);
+    const missingProblems = confirmationArchiveEvidenceProblems(
+      "label",
+      {
+        runOneArchive: "a.json",
+        runOneSha256: "a".repeat(64),
+        runTwoArchive: "b.json",
+        runTwoSha256: "b".repeat(64),
+        comparisonDigest: "c".repeat(64),
+      },
+      missing,
+    );
+    assert.equal(missingProblems.length, 2);
+    assert.ok(missingProblems.every((problem) => problem.includes("could not be read")));
+
+    // And a completed record whose archives were never resolved is not evidence.
+    assert.deepEqual(
+      confirmationArchiveEvidenceProblems("label", confirmationEvidence, null),
+      ["label: the named confirmation archives were not read"],
+    );
+  });
+});
+
+test("two agreeing archives are refused unless each is the frozen matrix", async () => {
+  const pins = TASK28_ARTIFACT.roundTwoEligibilityManifest;
+
+  // The counterexample: two identical files that are not a confirmation matrix.
+  const stub = [{ name: "listen-profile-validation" }];
+  const stubProblems = roundTwoConfirmationMatrixProblems(stub, "label", ["early-open-v2"], {
+    ...pins,
+    candidateManifestDigest: "21655efa",
+  });
+  assert.ok(stubProblems.length > 5);
+  for (const expected of [
+    "manifest version",
+    "archives no captured traces",
+    "candidate manifest digest",
+    "declares repeated-chord groups",
+    "archives no gate evidence",
+  ]) {
+    assert.ok(
+      stubProblems.some((problem) => problem.includes(expected)),
+      `the stub archive passed ${expected}`,
+    );
+  }
+
+  await withStagedArchives(async ({ archives, names, candidate, candidateProfileIds }) => {
+    const expected = { ...pins, candidateManifestDigest: candidate.digest.value };
+    const record = archives.get(names[0]).record;
+    // Task 13's gate partitions predate manifest version 2, so the release gates
+    // read no row and the verifier says so. That is asserted on its own below;
+    // every other rule is exercised against a matrix that is otherwise complete.
+    const UNFROZEN_SCOPE = "its round-two scope is not frozen";
+    const problemsOf = (archive) => roundTwoConfirmationMatrixProblems(
+      archive,
+      "label",
+      candidateProfileIds,
+      expected,
+    ).filter((problem) => !problem.includes(UNFROZEN_SCOPE));
+    assert.deepEqual(problemsOf(record), []);
+
+    // A narrowed run can reject a candidate but never clear one, and the total
+    // is recomputed from the captures rather than read.
+    const narrowed = structuredClone(record);
+    narrowed[0].captures = narrowed[0].captures.slice(0, 48);
+    narrowed[0].capturedTraceCount = 48;
+    const narrowedProblems =
+      problemsOf(narrowed);
+    assert.ok(narrowedProblems.some((problem) => problem.includes("captured traces 48")));
+    assert.ok(narrowedProblems.some((problem) => problem.includes("expected 212")));
+
+    // A stated total that its own captures contradict.
+    const overstated = structuredClone(record);
+    overstated[0].capturedTraceCount = 9_999;
+    assert.ok(problemsOf(overstated)
+      .some((problem) => problem.includes("declared captured traces")));
+
+    // A run that padded the census with duplicates of a cheap stratum.
+    const padded = structuredClone(record);
+    const isolated = padded[0].captures.find(({ suite }) => suite === "isolated");
+    padded[0].captures = padded[0].captures
+      .filter(({ partition }) => partition !== "confirmation")
+      .concat(Array.from({ length: 12 }, (_unused, index) => ({
+        ...isolated,
+        traceId: `padding/${index}`,
+      })));
+    const paddedProblems =
+      problemsOf(padded);
+    assert.equal(padded[0].captures.length, 504);
+    assert.ok(paddedProblems.some((problem) => (
+      problem.includes("captured 0 confirmation/round-two-paired traces")
+    )));
+
+    // A capture that does not record what it rendered and decoded.
+    const unrecorded = structuredClone(record);
+    delete unrecorded[0].captures[0].processLocalTraceHash;
+    assert.ok(problemsOf(unrecorded)
+      .some((problem) => problem.includes("does not record what it rendered")));
+
+    // One trace captured twice is one trace, not two rows of coverage.
+    const duplicated = structuredClone(record);
+    duplicated[0].captures[1] = { ...duplicated[0].captures[0] };
+    assert.ok(problemsOf(duplicated)
+      .some((problem) => problem.includes("captured the same trace twice")));
+
+    // A stratum the version-2 census does not contain, at the right total.
+    const foreignSuite = structuredClone(record);
+    foreignSuite[0].captures[0].suite = "invented-suite";
+    assert.ok(
+      problemsOf(foreignSuite)
+        .some((problem) => problem.includes("which the version-2 census does not contain")),
+    );
+
+    // A stated confirmation-read count its own captures contradict.
+    const overclaimed = structuredClone(record);
+    overclaimed[0].confirmationTraceCountRead = 12_000;
+    assert.ok(problemsOf(overclaimed)
+      .some((problem) => problem.includes("declared confirmation traces read")));
+
+    // A confirmation group relabelled as discovery escapes the confirmation
+    // rules while keeping the census complete, so roles are frozen too.
+    const relabelledRole = structuredClone(record);
+    const confirmationEntry = relabelledRole[0].repeatedChordCensus
+      .find(({ evidenceRole }) => evidenceRole === "confirmation");
+    confirmationEntry.evidenceRole = "discovery";
+    assert.ok(
+      problemsOf(relabelledRole)
+        .some((problem) => problem.includes("is declared")),
+    );
+
+    // And a group's stratum in the census itself.
+    const relabelledStratum = structuredClone(record);
+    relabelledStratum[0].repeatedChordCensus[0].stratum = "known-round-one-repeated-chord-other";
+    assert.ok(
+      problemsOf(relabelledStratum)
+        .some((problem) => problem.includes("is declared")),
+    );
+
+    // 504 fabricated identifiers in the right buckets are not the corpus.
+    const fabricated = structuredClone(record);
+    fabricated[0].captures = fabricated[0].captures.map((capture, index) => ({
+      ...capture,
+      traceId: `fabricated/${index}`,
+    }));
+    fabricated[0].outcomes = stagedOutcomes(fabricated[0].captures, candidateProfileIds);
+    fabricated[0].outcomeIdentityDigest = stagedOutcomeIdentity(fabricated[0].outcomes);
+    const fabricatedProblems =
+      problemsOf(fabricated);
+    assert.ok(fabricatedProblems.some((problem) => (
+      problem.includes("captured corpus identity")
+    )));
+    assert.ok(fabricatedProblems.some((problem) => problem.includes("never captured 504")));
+
+    // The renderer is part of that identity, so a corpus replayed under the
+    // wrong renderer fails at the same identifiers.
+    const wrongRenderer = structuredClone(record);
+    wrongRenderer[0].captures[0].rendererKey = "tone";
+    wrongRenderer[0].captures[1].rendererKey = "direct";
+    assert.ok(
+      problemsOf(wrongRenderer)
+        .some((problem) => problem.includes("captured corpus identity")),
+    );
+
+    // A placeholder in place of a decoded-structure or process-local hash.
+    const placeholder = structuredClone(record);
+    placeholder[0].captures[0].processLocalPcmHash = "x";
+    assert.ok(problemsOf(placeholder)
+      .some((problem) => problem.includes("records a placeholder in place of a hash")));
+
+    // A column that never judged every captured trace.
+    const partialColumns = structuredClone(record);
+    partialColumns[0].outcomes = partialColumns[0].outcomes.slice(0, 100);
+    assert.ok(
+      problemsOf(partialColumns)
+        .some((problem) => problem.includes("per-profile outcome rows")),
+    );
+
+    // The discovery half of the repeated-chord census is frozen too, so a run
+    // that declared only the historical known groups is refused.
+    const historicalOnly = structuredClone(record);
+    const keep = new Set(KNOWN_DISCOVERY_GROUP_IDS);
+    historicalOnly[0].repeatedChordCensus = historicalOnly[0].repeatedChordCensus
+      .filter(({ groupId }) => keep.has(groupId));
+    assert.ok(
+      problemsOf(historicalOnly)
+        .some((problem) => problem.includes("declares repeated-chord groups")),
+    );
+
+    // And a group filed under another stratum moves a completeness verdict.
+    const misfiled = structuredClone(record);
+    misfiled[0].baselineRepeatedMeasurements[0].stratum = "known-round-one-repeated-chord-other";
+    assert.ok(problemsOf(misfiled)
+      .some((problem) => problem.includes("files")));
+
+    // A column measured against some other round's candidate set.
+    const otherRound = structuredClone(record);
+    otherRound[0].candidateManifestDigest = "00000000";
+    assert.ok(problemsOf(otherRound)
+      .some((problem) => problem.includes("candidate manifest digest")));
+
+    // One side of a comparison missing is not a comparison.
+    const halfArchived = structuredClone(record);
+    halfArchived[0].baselineRepeatedMeasurements =
+      halfArchived[0].baselineRepeatedMeasurements.slice(0, 2);
+    assert.ok(
+      problemsOf(halfArchived)
+        .some((problem) => problem.includes("the baseline column measures")),
+    );
+
+    // An outcome row that records a column ran, not what it decided.
+    const hollow = structuredClone(record);
+    hollow[0].outcomes = hollow[0].outcomes.map(({ traceId, profileId }) => ({
+      traceId,
+      profileId,
+    }));
+    assert.ok(problemsOf(hollow)
+      .some((problem) => problem.includes("not what it decided")));
+
+    // A moved outcome that the stated identity does not cover.
+    const movedOutcome = structuredClone(record);
+    movedOutcome[0].outcomes[0].outcomeDigest = "00000000";
+    assert.ok(problemsOf(movedOutcome)
+      .some((problem) => problem.includes("outcome identity")));
+
+    // An unevaluated repeated-chord row reads as clean and unregressed, and is
+    // not a measurement at all.
+    const unevaluated = structuredClone(record);
+    unevaluated[0].baselineRepeatedMeasurements[0].observation = {};
+    const unevaluatedProblems =
+      problemsOf(unevaluated);
+    assert.ok(unevaluatedProblems.some((problem) => problem.includes("records no evaluated")));
+    assert.ok(unevaluatedProblems.some((problem) => problem.includes("was never evaluated")));
+
+    // The same on a candidate column, and a structurally invalid row.
+    const invalidCandidate = structuredClone(record);
+    invalidCandidate[0].repeatedRecovery[0].measurements[0].observation.structurallyValid = false;
+    assert.ok(
+      problemsOf(invalidCandidate)
+        .some((problem) => problem.includes("is not structurally valid")),
+    );
+
+    // A source distance without the delay it must be compared with.
+    const halfMeasured = structuredClone(record);
+    halfMeasured[0].repeatedRecovery[0].measurements[0].observation.attributionDelayMs = null;
+    assert.ok(
+      problemsOf(halfMeasured)
+        .some((problem) => problem.includes("do not travel together")),
+    );
+
+    // An identifier is a label: a run measured under altered thresholds keeps
+    // every expected name, so each column's values are bound to the registry
+    // entry its identifier names.
+    const altered = structuredClone(record);
+    altered[0].profiles["baseline-v1"].onsetThreshold = 0.42;
+    assert.ok(problemsOf(altered)
+      .some((problem) => problem.includes("not the values its registry entry froze")));
+
+    // The reported counterexample: every candidate threshold replaced with 999
+    // while the expected registry digest is retained.
+    const nonsense = structuredClone(record);
+    for (const key of Object.keys(nonsense[0].profiles[candidateProfileIds[0]])) {
+      nonsense[0].profiles[candidateProfileIds[0]][key] = 999;
+    }
+    assert.ok(problemsOf(nonsense)
+      .some((problem) => problem.includes("not the values its registry entry froze")));
+
+    // A registry generation the frozen digest does not describe.
+    const movedRegistry = structuredClone(record);
+    movedRegistry[0].registry.profiles[3].onsetThreshold = 0.42;
+    assert.ok(
+      problemsOf(movedRegistry)
+        .some((problem) => problem.includes("recomputed registry digest")),
+    );
+
+    // No generation at all is columns without values.
+    const noRegistry = structuredClone(record);
+    delete noRegistry[0].registry;
+    assert.ok(problemsOf(noRegistry)
+      .some((problem) => problem.includes("identifiers without values")));
+
+    // A column replayed from outside the generation it names.
+    const foreignColumn = structuredClone(record);
+    foreignColumn[0].registry.profiles =
+      foreignColumn[0].registry.profiles.filter(({ id }) => id !== candidateProfileIds[0]);
+    assert.ok(
+      problemsOf(foreignColumn)
+        .some((problem) => problem.includes("outside the registry generation it names")),
+    );
+
+    // A threshold shape that is not the one the registry froze.
+    const reshaped = structuredClone(record);
+    reshaped[0].profiles[candidateProfileIds[0]].invented = 1;
+    assert.ok(problemsOf(reshaped)
+      .some((problem) => problem.includes("was replayed with fields")));
+
+    const unrecordedProfile = structuredClone(record);
+    delete unrecordedProfile[0].profiles[candidateProfileIds[0]];
+    assert.ok(
+      problemsOf(unrecordedProfile)
+        .some((problem) => problem.includes("without recording the thresholds it used")),
+    );
+
+    const otherRegistry = structuredClone(record);
+    otherRegistry[0].registryDigest = "00000000";
+    assert.ok(
+      problemsOf(otherRegistry)
+        .some((problem) => problem.includes("registry digest")),
+    );
+
+    // A summary that states a total its own outcome rows contradict. Both
+    // directions: a clean summary over a regressed trace, and an invented
+    // summary over clean traces.
+    const smoothedOver = structuredClone(record);
+    const regressedRow = smoothedOver[0].outcomes.find((row) => (
+      row.profileId === candidateProfileIds[0] && row.orderedAdvanceCount > 0
+    ));
+    regressedRow.orderedAdvanceCount = 0;
+    smoothedOver[0].outcomeIdentityDigest = stagedOutcomeIdentity(smoothedOver[0].outcomes);
+    assert.ok(
+      problemsOf(smoothedOver).some((problem) => (
+        problem.includes("its own outcome rows sum to")
+      )),
+      "a per-trace regression was smoothed away by a clean summary",
+    );
+    const inventedTotal = structuredClone(record);
+    inventedTotal[0].domainSummaries.find((row) => (
+      row.profileId === candidateProfileIds[0]
+    )).orderedAdvanceCount += 5;
+    assert.ok(
+      problemsOf(inventedTotal).some((problem) => (
+        problem.includes("its own outcome rows sum to")
+      )),
+      "a summary stated a total its own rows do not support",
+    );
+
+    // The committed-regression gate holds diagnosed cases to not worsening, not
+    // to absolute zero. The known Tone 333 ms false advance may stay exactly as
+    // diagnosed, which an absolute rule would reject.
+    const committedVerdict = (outcomes) => rederiveRoundTwoGateVerdicts(
+      { ...record[0], committedRegressions: outcomes },
+      candidateProfileIds[0],
+    ).find(({ code }) => code === "safety-committed-regression").failures;
+    assert.deepEqual(
+      committedVerdict(record[0].committedRegressions),
+      [],
+      "a diagnosed false advance that did not worsen was rejected",
+    );
+    assert.deepEqual(
+      committedVerdict(record[0].committedRegressions.map((outcome) => (
+        outcome.expectation === "reported-unsafe-advance"
+          ? { ...outcome, worseThanBaseline: true }
+          : outcome
+      ))),
+      ["tone-course-clear-333-shared-pitch-false-advance:worse-than-baseline"],
+    );
+    // A pinned late advance is a recovery and may move earlier, but it may never
+    // become unsafe.
+    assert.deepEqual(
+      committedVerdict(record[0].committedRegressions.map((outcome) => (
+        outcome.expectation === "late-advance"
+          ? { ...outcome, falseAdvance: true }
+          : outcome
+      ))),
+      ["tone-salamander-v05-repeated-chord-late-advance:late-advance-became-unsafe"],
+    );
+    assert.deepEqual(
+      committedVerdict(record[0].committedRegressions.map((outcome) => (
+        outcome.expectation === "late-advance"
+          ? { ...outcome, duplicateAdvanceCount: 1 }
+          : outcome
+      ))),
+      ["tone-salamander-v05-repeated-chord-late-advance:late-advance-became-unsafe"],
+    );
+
+    // The diagnosed cases must be archived at all, and completely.
+    const noRegressions = structuredClone(record);
+    noRegressions[0].committedRegressions = [];
+    assert.ok(problemsOf(noRegressions).some((problem) => (
+      problem.includes("archives no committed-regression outcomes")
+    )));
+    // One invented safe row cannot stand in for both diagnosed fixtures.
+    const inventedFixture = structuredClone(record);
+    inventedFixture[0].committedRegressions = candidateProfileIds.map((profileId) => ({
+      profileId,
+      fixtureId: "some-other-fixture",
+      expectation: "late-advance",
+      worseThanBaseline: false,
+      falseAdvance: false,
+      skippedAdvanceCount: 0,
+      duplicateAdvanceCount: 0,
+    }));
+    assert.ok(problemsOf(inventedFixture).some((problem) => (
+      problem.includes("and the frozen census is")
+    )));
+
+    // Nor may one of the two be reported under the other's expectation, which
+    // would move a diagnosed false advance under the late-advance rule.
+    const swapped = structuredClone(record);
+    for (const outcome of swapped[0].committedRegressions) {
+      outcome.expectation = outcome.expectation === "late-advance"
+        ? "reported-unsafe-advance"
+        : "late-advance";
+    }
+    assert.ok(problemsOf(swapped).some((problem) => problem.includes("and it is diagnosed")));
+
+    // And the same fixture twice is not the census either.
+    const duplicatedFixture = structuredClone(record);
+    duplicatedFixture[0].committedRegressions = candidateProfileIds.flatMap((profileId) => ([
+      { ...duplicatedFixture[0].committedRegressions[0], profileId },
+      { ...duplicatedFixture[0].committedRegressions[0], profileId },
+    ]));
+    assert.ok(problemsOf(duplicatedFixture).some((problem) => (
+      problem.includes("and the frozen census is")
+    )));
+
+    const malformedRegression = structuredClone(record);
+    delete malformedRegression[0].committedRegressions[0].worseThanBaseline;
+    assert.ok(problemsOf(malformedRegression).some((problem) => (
+      problem.includes("incomplete committed-regression outcome")
+    )));
+
+    // A gate verdict is a claim about the archived rows, and both halves of the
+    // report can agree and still be false: a candidate that advanced falsely
+    // where the incumbent did not has introduced an unsafe event, whatever its
+    // gate report says.
+    const unsafeIntroduced = structuredClone(record);
+    const candidateRow = unsafeIntroduced[0].outcomes
+      .find((row) => row.profileId === candidateProfileIds[0]);
+    candidateRow.falseAdvanceCount = 1;
+    unsafeIntroduced[0].outcomeIdentityDigest =
+      stagedOutcomeIdentity(unsafeIntroduced[0].outcomes);
+    assert.ok(
+      problemsOf(unsafeIntroduced)
+        .some((problem) => problem.includes("cleared every safety gate while introducing")),
+    );
+    // And the eligibility derived from that archive is false regardless of what
+    // its gate report claims.
+    const [derivedUnsafe] = rederiveRoundTwoEligibilityEntries(
+      unsafeIntroduced,
+      candidateProfileIds,
+      TASK28_ARTIFACT.roundTwoEligibilityManifest,
+    );
+    assert.equal(derivedUnsafe.automatedEligible, false);
+
+    // The reported exploit: a discovery-sequence ordered-advance count below the
+    // incumbent's, with every gate still reported as passed.
+    const orderedRegression = regressTraces(structuredClone(record), {
+      profileId: candidateProfileIds[0],
+      gateCode: "consistency-sequence-ordered-progress",
+      counter: "orderedAdvanceCount",
+      value: 0,
+    });
+    assert.ok(
+      problemsOf(orderedRegression).some((problem) => (
+        problem.includes("consistency-sequence-ordered-progress") &&
+          problem.includes("rederive a failure")
+      )),
+    );
+    const [derivedOrdered] = rederiveRoundTwoEligibilityEntries(
+      orderedRegression,
+      candidateProfileIds,
+      TASK28_ARTIFACT.roundTwoEligibilityManifest,
+    );
+    assert.equal(derivedOrdered.automatedEligible, false);
+
+    // Each of the remaining gate classes is rederived from its own counter, so
+    // a regression in any of them is caught with every gate still reported clean.
+    // Only the gates that read a manifest-version-2 row can be probed; the
+    // release gates read none, which is asserted on its own below.
+    for (const [gateCode, counter] of [
+      ["consistency-sequence-speed-recognition", "independentMatchCount"],
+      ["consistency-dynamics-piano-recognition", "independentMatchCount"],
+      ["safety-sequence-introduced-advance", "falseAdvanceCount"],
+    ]) {
+      const regressed = regressTraces(structuredClone(record), {
+        profileId: candidateProfileIds[0],
+        gateCode,
+        counter,
+        value: counter === "falseAdvanceCount" ? 1 : 0,
+        limit: 1,
+      });
+      const verdicts = rederiveRoundTwoGateVerdicts(regressed[0], candidateProfileIds[0]);
+      assert.ok(
+        verdicts.find(({ code }) => code === gateCode).failures.length > 0,
+        `${gateCode} did not rederive a failure from a fall in ${counter}`,
+      );
+      assert.ok(
+        problemsOf(regressed)
+          .some((problem) => problem.includes(gateCode) && problem.includes("rederive a failure")),
+        `${gateCode} was accepted as passed`,
+      );
+    }
+
+    // Ordered progress is both halves. A candidate can hold its ordered advances
+    // and still complete fewer passages, which the real gate fails.
+    const lostPassages = regressTraces(structuredClone(record), {
+      profileId: candidateProfileIds[0],
+      gateCode: "consistency-sequence-ordered-progress",
+      counter: "completePassageCount",
+      value: 0,
+      limit: 1,
+    });
+    assert.ok(
+      problemsOf(lostPassages)
+        .some((problem) => (
+          problem.includes("consistency-sequence-ordered-progress") &&
+            problem.includes("rederive a failure")
+        )),
+      "a lost complete passage was accepted because ordered advances held",
+    );
+
+    // Family breadth is netted per family and asked only of a candidate that
+    // claims a gain. A gain confined to one family fails the breadth minimum.
+    const oneFamily = structuredClone(record);
+    const breadthRows = oneFamily[0].domainSummaries.filter((row) => (
+      row.gateCode === "consistency-sequence-family-breadth" &&
+      row.profileId === candidateProfileIds[0]
+    ));
+    assert.ok(breadthRows.length >= 2);
+    for (const row of breadthRows.slice(1)) {
+      const baseline = oneFamily[0].domainSummaries.find((entry) => (
+        entry.gateCode === row.gateCode && entry.domainId === row.domainId &&
+        entry.profileId === "baseline-v1"
+      ));
+      row.orderedAdvanceCount = baseline.orderedAdvanceCount;
+      row.independentMatchCount = baseline.independentMatchCount;
+    }
+    assert.ok(
+      problemsOf(oneFamily)
+        .some((problem) => (
+          problem.includes("consistency-sequence-family-breadth") &&
+            problem.includes("rederive a failure")
+        )),
+      "a gain confined to one family cleared the breadth minimum",
+    );
+
+    // And an ordered gain with no same-family independent corroboration is
+    // cascade amplification, which the gate refuses even at full breadth.
+    const uncorroborated = structuredClone(record);
+    for (const row of uncorroborated[0].domainSummaries) {
+      if (row.gateCode !== "consistency-sequence-family-breadth") continue;
+      if (row.profileId === candidateProfileIds[0]) {
+        const baseline = uncorroborated[0].domainSummaries.find((entry) => (
+          entry.gateCode === row.gateCode && entry.domainId === row.domainId &&
+          entry.profileId === "baseline-v1"
+        ));
+        row.independentMatchCount = baseline.independentMatchCount;
+      }
+    }
+    const uncorroboratedVerdict = rederiveRoundTwoGateVerdicts(
+      uncorroborated[0],
+      candidateProfileIds[0],
+    ).find(({ code }) => code === "consistency-sequence-family-breadth");
+    assert.ok(
+      uncorroboratedVerdict.failures.includes("corroboration:none"),
+      "an ordered gain with no same-family independent gain was corroborated",
+    );
+
+    // A candidate claiming no gain at all is not asked the breadth question.
+    const flat = structuredClone(record);
+    for (const row of flat[0].domainSummaries) {
+      if (row.gateCode !== "consistency-sequence-family-breadth") continue;
+      if (row.profileId === candidateProfileIds[0]) {
+        const baseline = flat[0].domainSummaries.find((entry) => (
+          entry.gateCode === row.gateCode && entry.domainId === row.domainId &&
+          entry.profileId === "baseline-v1"
+        ));
+        row.orderedAdvanceCount = baseline.orderedAdvanceCount;
+        row.independentMatchCount = baseline.independentMatchCount;
+      }
+    }
+    assert.deepEqual(
+      rederiveRoundTwoGateVerdicts(flat[0], candidateProfileIds[0])
+        .find(({ code }) => code === "consistency-sequence-family-breadth").failures,
+      [],
+    );
+
+    // The dedicated sequence families hold four counts at zero, and the
+    // carried-bass one is as absolute as the other three.
+    for (const counter of [
+      "falseAdvanceCount",
+      "skippedAdvanceCount",
+      "duplicateAdvanceCount",
+      "incompleteCarriedBassAdvances",
+    ]) {
+      const unsafe = regressTraces(structuredClone(record), {
+        profileId: candidateProfileIds[0],
+        gateCode: "safety-sequence-dedicated-families",
+        counter,
+        value: 1,
+        limit: 1,
+      });
+      assert.ok(
+        problemsOf(unsafe)
+          .some((problem) => (
+            problem.includes("safety-sequence-dedicated-families") &&
+              problem.includes("rederive a failure")
+          )),
+        `${counter} was not an absolute failure in the dedicated families`,
+      );
+    }
+
+    // Layer loss allows one independent event and fails beyond it.
+    // A layer of one trace losing its single independent event is exactly the
+    // one-event allowance.
+    const oneLayerEvent = regressTraces(structuredClone(record), {
+      profileId: candidateProfileIds[0],
+      gateCode: "consistency-dynamics-layer-loss",
+      counter: "independentMatchCount",
+      value: 2,
+      limit: 1,
+    });
+    assert.deepEqual(
+      problemsOf(oneLayerEvent),
+      [],
+      "a single independent-event loss was refused, and the policy allows one",
+    );
+    const twoLayerEvents = regressTraces(structuredClone(record), {
+      profileId: candidateProfileIds[0],
+      gateCode: "consistency-dynamics-layer-loss",
+      counter: "independentMatchCount",
+      value: 1,
+      limit: 1,
+    });
+    assert.ok(
+      problemsOf(twoLayerEvents)
+        .some((problem) => (
+          problem.includes("consistency-dynamics-layer-loss") &&
+            problem.includes("rederive a failure")
+        )),
+      "a two-event layer loss cleared the allowance",
+    );
+
+    // The isolated latency gate carries the absolute limit and the null rule,
+    // and reads no manifest-version-2 row, so its rules are exercised on the
+    // re-derivation directly rather than through an archive that cannot supply
+    // it evidence.
+    const latencyGate = CONFIRMATION_EVIDENCE.gates
+      .find(({ code }) => code === "release-isolated-latency");
+    const latencyRun = (candidateP95, baselineP95) => ({
+      domainSummaries: [
+        {
+          profileId: "baseline-v1",
+          gateCode: latencyGate.code,
+          domainId: "d",
+          traceIds: ["t"],
+          p95OnsetToAdvanceMs: baselineP95,
+        },
+        {
+          profileId: candidateProfileIds[0],
+          gateCode: latencyGate.code,
+          domainId: "d",
+          traceIds: ["t"],
+          p95OnsetToAdvanceMs: candidateP95,
+        },
+      ],
+      outcomes: [],
+      captures: [],
+    });
+    const latencyFailures = (candidateP95, baselineP95) => rederiveRoundTwoGateVerdicts(
+      latencyRun(candidateP95, baselineP95),
+      candidateProfileIds[0],
+    ).find(({ code }) => code === latencyGate.code).failures;
+    assert.deepEqual(latencyFailures(180, 180), []);
+    assert.deepEqual(latencyFailures(212, 180), [], "the 32 ms tolerance was not applied");
+    assert.deepEqual(latencyFailures(null, 180), ["d:absent"]);
+    assert.deepEqual(latencyFailures(213, 180), ["d:regression"]);
+    // The absolute limit binds even when the incumbent is just as slow, so it is
+    // not the regression check under another name.
+    assert.deepEqual(latencyFailures(400, 400), ["d:limit"]);
+
+    // The sequence latency gate applies only the tolerance, and only where both
+    // percentiles exist: no absolute limit, and an absent percentile is not a
+    // failure there.
+    const slowSequence = structuredClone(record);
+    for (const row of slowSequence[0].domainSummaries) {
+      if (row.gateCode === "consistency-sequence-latency") row.p95OnsetToAdvanceMs = 900;
+    }
+    assert.deepEqual(
+      problemsOf(slowSequence),
+      [],
+      "the isolated 400 ms limit was applied to the sequence latency gate",
+    );
+    const absentSequence = structuredClone(record);
+    for (const row of absentSequence[0].domainSummaries) {
+      if (row.gateCode === "consistency-sequence-latency" &&
+          row.profileId === candidateProfileIds[0]) {
+        row.p95OnsetToAdvanceMs = null;
+      }
+    }
+    assert.deepEqual(
+      problemsOf(absentSequence),
+      [],
+      "an absent sequence p95 was rejected, and only the isolated gate rejects one",
+    );
+    const slowerSequence = structuredClone(record);
+    for (const row of slowerSequence[0].domainSummaries) {
+      if (row.gateCode === "consistency-sequence-latency" &&
+          row.profileId === candidateProfileIds[0]) {
+        row.p95OnsetToAdvanceMs = 180 + 33;
+      }
+    }
+    assert.ok(
+      problemsOf(slowerSequence).some((problem) => (
+        problem.includes("consistency-sequence-latency") && problem.includes("rederive a failure")
+      )),
+    );
+
+    // A percentile that is not null and not a finite, non-negative number is not
+    // a measurement: a negative duration, an Infinity from an extreme JSON
+    // exponent, and a string are all refused.
+    for (const value of ["fast", -1, 1e400]) {
+      const badP95 = structuredClone(record);
+      badP95[0].domainSummaries[0].p95OnsetToAdvanceMs = value;
+      assert.ok(
+        problemsOf(badP95).some((problem) => problem.includes("not a complete measurement")),
+        `a p95 of ${JSON.stringify(value)} was accepted`,
+      );
+    }
+
+    // Replay integrity is rederived too: a column that replayed its own capture
+    // rather than the shared one, and a baseline that did not reproduce its
+    // capture-time replay.
+    const reReplayed = structuredClone(record);
+    reReplayed[0].outcomes[1].capturePcmHash = "00000000";
+    assert.ok(
+      problemsOf(reReplayed)
+        .some((problem) => (
+          problem.includes("replay-trace-reuse") && problem.includes("rederive a failure")
+        )),
+    );
+    const brokenParity = structuredClone(record);
+    brokenParity[0].outcomes[0].outcomeDigest = "00000000";
+    brokenParity[0].outcomeIdentityDigest = stagedOutcomeIdentity(brokenParity[0].outcomes);
+    assert.ok(
+      problemsOf(brokenParity)
+        .some((problem) => (
+          problem.includes("replay-baseline-parity") && problem.includes("rederive a failure")
+        )),
+    );
+
+    // A report that claims a failure its measurements do not produce is refused
+    // in the same direction, so the check cannot be satisfied by pessimism.
+    const overCautious = structuredClone(record);
+    overCautious[0].gates.candidates[0].gates[9].passed = false;
+    assert.ok(
+      problemsOf(overCautious)
+        .some((problem) => problem.includes("rederive a pass")),
+    );
+
+    // And the summaries themselves must be complete on both sides.
+    const noSummaries = structuredClone(record);
+    delete noSummaries[0].domainSummaries;
+    assert.ok(problemsOf(noSummaries)
+      .some((problem) => problem.includes("cannot be rederived")));
+
+    const unpairedSummary = structuredClone(record);
+    unpairedSummary[0].domainSummaries = unpairedSummary[0].domainSummaries
+      .filter((row) => row.profileId !== "baseline-v1");
+    assert.ok(
+      problemsOf(unpairedSummary)
+        .some((problem) => problem.includes("summarises no domain for baseline-v1")),
+    );
+
+    // A losing domain dropped for one column only: the domain sets must match
+    // across columns, so a clean paired row cannot stand in for it.
+    const droppedForCandidate = structuredClone(record);
+    const victim = droppedForCandidate[0].domainSummaries.find((row) => (
+      row.gateCode === "consistency-sequence-speed-recognition" &&
+      row.profileId === candidateProfileIds[0]
+    ));
+    droppedForCandidate[0].domainSummaries = droppedForCandidate[0].domainSummaries
+      .filter((row) => row !== victim);
+    assert.ok(problemsOf(droppedForCandidate).some((problem) => (
+      problem.includes("consistency-sequence-speed-recognition") &&
+        problem.includes("the frozen corpus groups it into")
+    )));
+
+    // A losing domain dropped for every column: its traces go uncovered, which
+    // is what binds the summaries to the captured corpus rather than to a count.
+    const droppedEverywhere = structuredClone(record);
+    droppedEverywhere[0].domainSummaries = droppedEverywhere[0].domainSummaries
+      .filter((row) => !(
+        row.gateCode === "consistency-sequence-speed-recognition" && row.domainId === victim.domainId
+      ));
+    assert.ok(problemsOf(droppedEverywhere).some((problem) => (
+      problem.includes("consistency-sequence-speed-recognition") &&
+        problem.includes("the frozen corpus groups it into")
+    )));
+
+    // The same traces, re-partitioned for one column only: coverage still adds
+    // up, but a losing domain has been split into two rows that each look clean.
+    const reCut = structuredClone(record);
+    const target = reCut[0].domainSummaries.find((row) => (
+      row.gateCode === "consistency-sequence-speed-recognition" &&
+      row.profileId === candidateProfileIds[0] && row.traceIds.length > 1
+    ));
+    const half = Math.floor(target.traceIds.length / 2);
+    const tail = target.traceIds.slice(half);
+    target.traceIds = target.traceIds.slice(0, half);
+    reCut[0].domainSummaries.push({
+      ...target,
+      domainId: `${target.domainId}-split`,
+      traceIds: tail,
+    });
+    assert.ok(
+      problemsOf(reCut).some((problem) => (
+        problem.includes("consistency-sequence-speed-recognition") &&
+          problem.includes("the frozen corpus groups it into")
+      )),
+      "a column re-partitioned its domains while keeping the same trace coverage",
+    );
+
+    // One domain summarised twice, so a clean row can be added beside a losing
+    // one without the totals moving.
+    const duplicated2 = structuredClone(record);
+    duplicated2[0].domainSummaries.push({ ...duplicated2[0].domainSummaries[0] });
+    assert.ok(problemsOf(duplicated2)
+      .some((problem) => problem.includes("summarises one domain twice")));
+
+    const narrowedSummaries = structuredClone(record);
+    narrowedSummaries[0].domainSummaries = narrowedSummaries[0].domainSummaries
+      .filter((row) => row.gateCode !== "consistency-sequence-family-breadth");
+    assert.ok(
+      problemsOf(narrowedSummaries)
+        .some((problem) => problem.includes("summarises no domain")),
+    );
+
+    const malformedSummary = structuredClone(record);
+    delete malformedSummary[0].domainSummaries[0].orderedAdvanceCount;
+    assert.ok(
+      problemsOf(malformedSummary)
+        .some((problem) => problem.includes("not a complete measurement")),
+    );
+
+    // Complete evidence has no reason to be incomplete.
+    const contradictoryCompleteness = structuredClone(record);
+    contradictoryCompleteness[0].gates.incompleteEvidenceReasons = ["layer loss unreviewed"];
+    assert.ok(
+      problemsOf(contradictoryCompleteness).some((problem) => problem.includes("while naming")),
+    );
+
+    // A gate that claims to have passed beside the failures it recorded.
+    const contradictory = structuredClone(record);
+    contradictory[0].gates.candidates[0].gates[2].failures = [{
+      code: contradictory[0].gates.candidates[0].gates[2].code,
+      domainIds: ["tone/splendid/mf"],
+      baselineValue: 0,
+      candidateValue: 1,
+      explanation: "a measured loss",
+    }];
+    const contradictoryProblems =
+      problemsOf(contradictory);
+    assert.ok(contradictoryProblems.some((problem) => problem.includes("beside 1 failures")));
+    assert.ok(contradictoryProblems.some((problem) => problem.includes("safetyFailureCount")));
+
+    // A gate judged on rows it may not read, and one that read fewer than a
+    // complete matrix reads.
+    const foreignRows = structuredClone(record);
+    foreignRows[0].gates.candidates[0].gates[7].partitions = ["discovery"];
+    assert.ok(problemsOf(foreignRows)
+      .some((problem) => problem.includes("may not read")));
+
+    const narrowedGate = structuredClone(record);
+    narrowedGate[0].gates.candidates[0].gates[0].partitions = ["confirmation"];
+    assert.ok(
+      problemsOf(narrowedGate)
+        .some((problem) => problem.includes("a complete matrix reads")),
+    );
+
+    // A failure that names nothing it measured.
+    const emptyFailure = structuredClone(record);
+    const judged = emptyFailure[0].gates.candidates[0].gates[2];
+    judged.passed = false;
+    judged.failures = [{ code: judged.code, domainIds: [], explanation: "" }];
+    emptyFailure[0].gates.candidates[0].safetyFailureCount = 1;
+    emptyFailure[0].gates.candidates[0].eligible = false;
+    const emptyFailureProblems =
+      problemsOf(emptyFailure);
+    assert.ok(emptyFailureProblems.some((problem) => problem.includes("names no renderer")));
+    assert.ok(emptyFailureProblems.some((problem) => problem.includes("explains nothing")));
+
+    // A candidate that names an eligibility its own gate outcomes contradict.
+    const selfNamed = structuredClone(record);
+    const contradicted = selfNamed[0].gates.candidates[0];
+    contradicted.gates[2].passed = false;
+    contradicted.gates[2].failures = [{
+      code: contradicted.gates[2].code,
+      domainIds: ["tone/splendid/mf"],
+      baselineValue: 0,
+      candidateValue: 1,
+      explanation: "a measured loss",
+    }];
+    contradicted.safetyFailureCount = 1;
+    assert.ok(problemsOf(selfNamed)
+      .some((problem) => problem.includes("names an eligibility its own gate outcomes contradict")));
+
+    // Incomplete evidence, and a waiver taken after seeing a measured loss.
+    const incomplete = structuredClone(record);
+    incomplete[0].gates.evidenceComplete = false;
+    assert.ok(problemsOf(incomplete)
+      .some((problem) => problem.includes("not marked complete")));
+
+    const waived = structuredClone(record);
+    waived[0].gates.reviewedLayerLosses = [{ profileId: "early-open-v2" }];
+    assert.ok(problemsOf(waived)
+      .some((problem) => problem.includes("reviewed layer loss waivers")));
+
+    // The gate set is frozen whole: one invented gate, applied and passed, is
+    // not a gate set, and would otherwise clear a candidate while omitting every
+    // real Task 23 gate.
+    const invented = structuredClone(record);
+    invented[0].gates = {
+      gates: [{ code: "safety", role: "safety", domain: "isolated", label: "s", requirement: "r" }],
+      candidates: candidateProfileIds.map((profileId) => ({
+        profileId,
+        gates: [{ code: "safety", role: "safety", domain: "isolated", applied: true, passed: true }],
+      })),
+    };
+    assert.ok(problemsOf(invented)
+      .some((problem) => problem.includes("defines gates")));
+
+    // A complete run with a required gate unapplied fails rather than clearing.
+    const unapplied = structuredClone(record);
+    unapplied[0].gates.candidates[0].gates[3].applied = false;
+    assert.ok(problemsOf(unapplied)
+      .some((problem) => problem.includes("never applied 1 of")));
+  });
+});
+
+test("the frozen corpus identity covers every field a domain is grouped on", () => {
+  const rows = roundTwoCaptureIdentityRows();
+  assert.equal(rows.length, 504);
+  // The digest is what makes the copied metadata evidence rather than a comment.
+  // Every field a gate groups on is inside it, so a corpus whose speeds, layers,
+  // articulations, or evidence roles had drifted cannot keep the pin while
+  // silently re-grouping every domain.
+  for (const field of [
+    "rendererKey",
+    "partition",
+    "suite",
+    "evidenceRole",
+    "scoreEligible",
+    "sequenceFamily",
+    "intervalMs",
+    "piano",
+    "layer",
+    "caseKind",
+    "articulation",
+  ]) {
+    const drifted = rows.map((row, index) => (
+      index === 0 ? { ...row, [field]: `${row[field]}-drift` } : row
+    ));
+    assert.notEqual(
+      capturedCorpusIdentity(drifted),
+      ROUND_TWO_CONFIRMATION_MATRIX.captureIdentityDigest,
+      `${field} is copied but not covered by the corpus identity`,
+    );
+  }
+  // The fields carry real values rather than empty placeholders.
+  assert.ok(rows.some(({ articulation }) => articulation.length > 0));
+  assert.ok(rows.some(({ intervalMs }) => intervalMs.length > 0));
+  assert.ok(rows.some(({ layer }) => layer.length > 0));
+  assert.ok(rows.some(({ scoreEligible }) => scoreEligible));
+  assert.ok(rows.some(({ scoreEligible }) => !scoreEligible));
+});
+
+test("dynamics layer leaves are one per constant layer, mixed run, and articulation", () => {
+  const captures = roundTwoCaptureIdentityRows();
+  const gate = CONFIRMATION_EVIDENCE.gates
+    .find(({ code }) => code === "consistency-dynamics-layer-loss");
+  const domains = roundTwoGateDomainMembership(gate, captures);
+  // Every leaf is a single row, so one leaf's loss cannot be offset inside a
+  // combined domain. Grouping by renderer, piano, and layer alone merged every
+  // articulation sharing the default piano and layer with a constant-layer row.
+  assert.ok(domains.length > 0);
+  assert.deepEqual([...new Set(domains.map((group) => group.length))], [1]);
+  const scoped = captures.filter((capture) => (
+    gate.partitions.includes(capture.partition) &&
+    ["dynamics-constant", "dynamics-mixed", "articulation"].includes(capture.suite) &&
+    capture.evidenceRole === "scoring"
+  ));
+  assert.equal(domains.length, scoped.length);
+  assert.ok(scoped.some(({ suite }) => suite === "articulation"));
+
+  // The piano groupings exclude articulation, which has no piano leaf.
+  const pianoGate = CONFIRMATION_EVIDENCE.gates
+    .find(({ code }) => code === "consistency-dynamics-piano-recognition");
+  const pianoTraces = new Set(
+    roundTwoGateDomainMembership(pianoGate, captures).flat(),
+  );
+  assert.ok(scoped
+    .filter(({ suite }) => suite === "articulation")
+    .every(({ traceId }) => !pianoTraces.has(traceId)));
+});
+
+test("the release gates read no manifest-version-2 row, and that is enforced", async () => {
+  // Task 13 froze the gate partitions against manifest version 1, where
+  // `confirmation` still held the isolated and dynamics corpora. Version 2
+  // re-partitioned those into discovery and regression-only and left
+  // `confirmation` holding only the twelve authored paired rows, so every
+  // release gate — the ones that decide whether a candidate is releasable — has
+  // no held-back evidence to read. Choosing new partitions in the verifier would
+  // be freezing round-two policy here, so the gap is reported instead, and no
+  // completed archive can clear a candidate on those gates.
+  const captures = roundTwoCaptureIdentityRows();
+  const unscoped = CONFIRMATION_EVIDENCE.gates
+    .filter((gate) => roundTwoGateDomainMembership(gate, captures)?.length === 0)
+    .map(({ code }) => code);
+  assert.deepEqual(unscoped, [
+    "safety-isolated-false-advance",
+    "release-isolated-recognition",
+    "release-isolated-course-clear",
+    "release-isolated-latency",
+    "release-dynamics-piano-recognition",
+    "release-dynamics-layer-loss",
+  ]);
+
+  await withStagedArchives(async ({ archives, names, candidate, candidateProfileIds }) => {
+    const problems = roundTwoConfirmationMatrixProblems(
+      archives.get(names[0]).record,
+      "label",
+      candidateProfileIds,
+      {
+        ...TASK28_ARTIFACT.roundTwoEligibilityManifest,
+        candidateManifestDigest: candidate.digest.value,
+      },
+    );
+    // Every one of them is named, and nothing else is wrong with this archive.
+    for (const code of unscoped) {
+      assert.ok(
+        problems.some((problem) => (
+          problem.includes(code) && problem.includes("its round-two scope is not frozen")
+        )),
+        `${code} was accepted as scoped`,
+      );
+    }
+    assert.equal(problems.length, unscoped.length);
+  });
+});
+
+test("completed entries are re-derived from the archives, not read from the manifest", async () => {
+  await withStagedArchives(async ({
+    archives,
+    names,
+    candidate,
+    candidateProfileIds,
+    confirmationEvidence,
+  }) => {
+    const pins = TASK28_ARTIFACT.roundTwoEligibilityManifest;
+    const record = archives.get(names[0]).record;
+    const [derived] = rederiveRoundTwoEligibilityEntries(record, candidateProfileIds, pins);
+    // The staged matrix resolves every group on the real attack, and its
+    // confirmation groups reproduce, so the labels follow from the measurements.
+    // Eligibility is nonetheless false: six gates have no frozen round-two
+    // scope, and an absent failure from a gate that read no row is not evidence
+    // of safety. The derivation must not contradict the rule that no completed
+    // run can clear a candidate on an unscoped gate.
+    assert.ok(roundTwoUnfrozenGateScopes().length > 0);
+    assert.deepEqual(derived, {
+      profileId: "early-open-v2",
+      automatedEligible: false,
+      repeatedRecoveryOutcome: "confirmed-full-resolution",
+      confirmationReproductionStatus: "reproduced",
+    });
+
+    const artifact = {
+      ...TASK28_COMPLETED_ARTIFACT,
+      roundTwoEligibilityManifest: {
+        ...TASK28_COMPLETED_ARTIFACT.roundTwoEligibilityManifest,
+        candidateManifestDigest: candidate.digest.value,
+      },
+    };
+    // The round's real Task 26 archives rerun to the zero branch, so a staged
+    // completed chain necessarily disagrees with them and with this artifact's
+    // not-run digest pin. Those are the verifier working, not the rules under
+    // test, so they are filtered and the completed rules asserted on their own.
+    const STAGING_ARTEFACTS = [
+      "recomputed digest",
+      "digest ",
+      "reruns to reason",
+      "reruns to ablation",
+      // Task 13 froze the gate partitions against manifest version 1. Under
+      // version 2 the release gates read no row, which the verifier reports and
+      // which no archive can fix; it is asserted directly by its own test.
+      "its round-two scope is not frozen",
+    ];
+    const task26 = await task27Evidence();
+    const problemsFor = (entries) => roundTwoEligibilityManifestProblems(
+      artifact,
+      completedRecord({
+        candidateManifestDigest: candidate.digest.value,
+        confirmationEvidence,
+        entries,
+      }),
+      candidate,
+      task26,
+      archives,
+    ).filter((problem) => !STAGING_ARTEFACTS.some((noise) => problem.includes(noise)));
+
+    const truthful = {
+      ...derived,
+      rejectionReasons: derived.automatedEligible ? [] : ["unfrozen-round-two-gate-scope"],
+    };
+    assert.deepEqual(problemsFor([truthful]), []);
+
+    // A self-reported label the measurements do not produce, whichever label the
+    // staged measurements happen to produce.
+    const otherOutcome = derived.repeatedRecoveryOutcome === "confirmed-full-resolution"
+      ? "material-partial-recovery"
+      : "confirmed-full-resolution";
+    assert.ok(problemsFor([{
+      ...truthful,
+      repeatedRecoveryOutcome: otherOutcome,
+    }]).some((problem) => problem.includes("re-derives repeatedRecoveryOutcome")));
+
+    // Self-reported eligibility over a candidate the evidence rejects.
+    assert.ok(problemsFor([{
+      ...truthful,
+      confirmationReproductionStatus: "inconclusive-no-reproduction",
+    }]).some((problem) => problem.includes("re-derives confirmationReproductionStatus")));
+
+    // And a manifest that claims eligibility the derivation withholds.
+    assert.ok(problemsFor([{ ...truthful, automatedEligible: true, rejectionReasons: [] }])
+      .some((problem) => problem.includes("re-derives automatedEligible")));
+  });
+});
+
+test("an incomplete archive is refused through the manifest, not only in isolation", async () => {
+  // The counterexample end to end: two identical files that are not a matrix,
+  // named by an otherwise well-formed completed manifest. The manifest path must
+  // refuse them, or the archive contract would only exist in its own unit test.
+  await withStagedArchives(
+    async ({ archives, candidate, confirmationEvidence }) => {
+      const artifact = {
+        ...TASK28_COMPLETED_ARTIFACT,
+        roundTwoEligibilityManifest: {
+          ...TASK28_COMPLETED_ARTIFACT.roundTwoEligibilityManifest,
+          candidateManifestDigest: candidate.digest.value,
+        },
+      };
+      const problems = roundTwoEligibilityManifestProblems(
+        artifact,
+        completedRecord({
+          candidateManifestDigest: candidate.digest.value,
+          confirmationEvidence,
+          entries: [{
+            profileId: "early-open-v2",
+            automatedEligible: true,
+            rejectionReasons: [],
+            repeatedRecoveryOutcome: "confirmed-full-resolution",
+            confirmationReproductionStatus: "reproduced",
+          }],
+        }),
+        candidate,
+        await task27Evidence(),
+        archives,
+      );
+      // Both archives are reported, and the labels are never re-derived from a
+      // record that is not the matrix.
+      for (const field of ["runOneArchive", "runTwoArchive"]) {
+        assert.ok(
+          problems.some((problem) => (
+            problem.includes(field) && problem.includes("captured traces")
+          )),
+          `${field} was accepted as a confirmation matrix`,
+        );
+      }
+    },
+    () => [{ name: "listen-profile-validation" }],
+  );
+});
+
+test("a confirmation run in which nothing reproduced withholds full resolution", async () => {
+  await withStagedArchives(
+    async ({ archives, names, candidateProfileIds }) => {
+      const [derived] = rederiveRoundTwoEligibilityEntries(
+        archives.get(names[0]).record,
+        candidateProfileIds,
+        TASK28_ARTIFACT.roundTwoEligibilityManifest,
+      );
+      // The confirmation groups were decoded and are structurally valid, but no
+      // baseline reproduced the phenomenon, so the round learned nothing from
+      // them about resolution and may not claim it did.
+      assert.equal(derived.confirmationReproductionStatus, "inconclusive-no-reproduction");
+      assert.equal(derived.repeatedRecoveryOutcome, "discovery-full-resolution");
+      // False for the unfrozen-scope reason above, not for anything this
+      // archive did.
+      assert.equal(derived.automatedEligible, false);
+    },
+    (digest, candidateProfileIds) => {
+      const archive = stagedMatrixArchive(digest, candidateProfileIds);
+      const confirmationGroupIds = new Set(
+        ROUND_TWO_CONFIRMATION_MATRIX.repeatedChordCensus
+          .filter(({ evidenceRole }) => evidenceRole === "confirmation")
+          .map(({ groupId }) => groupId),
+      );
+      archive[0].baselineRepeatedMeasurements = archive[0].baselineRepeatedMeasurements
+        .map((row) => (confirmationGroupIds.has(row.groupId)
+          ? {
+            ...row,
+            observation: {
+              ...row.observation,
+              laterIdenticalAttackRecoveredCorrectTarget: false,
+              sourceDistance: null,
+              attributionDelayMs: null,
+            },
+          }
+          : row));
+      return archive;
+    },
+  );
+});
+
+test("a candidate the gates failed cannot be re-derived as eligible", async () => {
+  await withStagedArchives(
+    async ({ archives, names, candidateProfileIds }) => {
+      const record = archives.get(names[0]).record;
+      const [derived] = rederiveRoundTwoEligibilityEntries(
+        record,
+        candidateProfileIds,
+        TASK28_ARTIFACT.roundTwoEligibilityManifest,
+      );
+      // The repeated-chord evidence is unchanged and clean, so the labels still
+      // say full resolution; eligibility is not those labels, and one failed
+      // gate withdraws it.
+      assert.equal(derived.repeatedRecoveryOutcome, "confirmed-full-resolution");
+      assert.equal(derived.automatedEligible, false);
+    },
+    (digest, candidateProfileIds) => {
+      // The failure is measured, not merely reported: the candidate's ordered
+      // advances fall below the incumbent's on one domain, which is what
+      // consistency-sequence-ordered-progress compares.
+      const archive = stagedMatrixArchive(digest, candidateProfileIds);
+      const regressed = archive[0].domainSummaries.find((row) => (
+        row.gateCode === "consistency-sequence-ordered-progress" &&
+        row.profileId === candidateProfileIds[0]
+      ));
+      regressed.orderedAdvanceCount = 0;
+      archive[0].gates = stagedGates(
+        candidateProfileIds,
+        (_profileId, code) => code !== "consistency-sequence-ordered-progress",
+      );
+      return archive;
+    },
+  );
+});
+
+test("a candidate with no gate record is ineligible rather than unjudged", async () => {
+  await withStagedArchives(
+    async ({ archives, names, candidateProfileIds }) => {
+      const [derived] = rederiveRoundTwoEligibilityEntries(
+        archives.get(names[0]).record,
+        candidateProfileIds,
+        TASK28_ARTIFACT.roundTwoEligibilityManifest,
+      );
+      // An absent outcome is not a pass.
+      assert.equal(derived.automatedEligible, false);
+    },
+    (digest, candidateProfileIds) => stagedMatrixArchive(digest, candidateProfileIds, {
+      gates: { gates: CONFIRMATION_EVIDENCE.gates.map((gate) => ({ ...gate })), candidates: [] },
+    }),
+  );
+});
+
+test("a relabelled or unchained eligibility manifest is refused", async () => {
+  const [eligibility, candidate, evidence] = await Promise.all([
+    task28Manifest(),
+    task27Manifest(),
+    task27Evidence(),
+  ]);
+  const problemsFor = (record, chainTo = candidate) =>
+    roundTwoEligibilityManifestProblems(TASK28_ARTIFACT, record, chainTo, evidence);
+
+  // Relabelling one zero-branch form as the other disagrees with Task 27 and
+  // with the rerun, even though the record's own digest still verifies.
+  const relabelled = withRecomputedDigest({
+    ...eligibility,
+    reason: "no-supported-parameterization",
+  });
+  const relabelledProblems = problemsFor(relabelled);
+  assert.ok(relabelledProblems.some((problem) => problem.includes("not-run reason")));
+  assert.ok(relabelledProblems.some((problem) => (
+    problem.includes("the candidate manifest records")
+  )));
+  assert.ok(relabelledProblems.some((problem) => problem.includes("reruns to reason")));
+
+  // A dangling link: the digest it chains to is not what that record hashes to.
+  assert.ok(problemsFor(withRecomputedDigest({
+    ...eligibility,
+    candidateManifestDigest: "00000000",
+  })).some((problem) => problem.includes("chains to candidate manifest")));
+
+  // A field moved under a digest that was not recomputed.
+  assert.ok(problemsFor({ ...eligibility, task26EvidenceDigest: "00000000" })
+    .some((problem) => problem.includes("recomputed digest")));
+
+  // A candidate manifest that registered profiles does not take this branch.
+  const registered = { ...candidate, candidateProfileIds: ["early-open-v2"] };
+  assert.ok(problemsFor(eligibility, withRecomputedDigest(registered))
+    .some((problem) => problem.includes("registered nothing")));
+
+  // Round-two completeness: a round-one manifest version cannot be quoted here.
+  const roundOne = withRecomputedDigest({
+    ...candidate,
+    traceManifestVersion: 1,
+    traceManifestHash: "0ed1e71d",
+  });
+  const roundOneProblems = problemsFor(eligibility, roundOne);
+  assert.ok(roundOneProblems.some((problem) => problem.includes("traceManifestVersion")));
+  assert.ok(roundOneProblems.some((problem) => problem.includes("chains to candidate manifest")));
+});
+
+test("the stray-archive prohibition belongs to the not-run branch alone", () => {
+  const manifestFile = "listen-round-two-eligibility-manifest-task28.json";
+  const notRun = "not-run-no-confirmable-candidate";
+  assert.deepEqual(
+    roundTwoConfirmationArchiveProblems(
+      ["README.md", manifestFile, "listen-round-two-candidate-manifest-task27.json"],
+      TASK28_ARTIFACT.path,
+      notRun,
+    ),
+    [],
+  );
+  assert.ok(roundTwoConfirmationArchiveProblems(
+    [manifestFile, "listen-profile-validation-task28-run1.json"],
+    TASK28_ARTIFACT.path,
+    notRun,
+  )[0].includes("listen-profile-validation-task28-run1.json"));
+
+  // A completed round is required to produce exactly those archives, so applying
+  // the prohibition to it would reject the evidence the branch exists to record.
+  assert.deepEqual(
+    roundTwoConfirmationArchiveProblems(
+      [
+        manifestFile,
+        "listen-profile-validation-task28-run1.json",
+        "listen-profile-validation-task28-run2.json",
+      ],
+      TASK28_ARTIFACT.path,
+      "completed",
+    ),
+    [],
+  );
 });
 
 test("the zero branch may not leave a search archive behind", () => {

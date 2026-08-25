@@ -67,6 +67,23 @@ export const LISTEN_ROUND_TWO_ROUND_ID = "round-two";
 export const LISTEN_ROUND_TWO_CANDIDATE_MANIFEST_NAME = "listen-round-two-candidate-manifest";
 
 /**
+ * The committed round-two artifact paths, declared beside the code that derives
+ * them rather than inside a command entry point.
+ *
+ * Task 28's emitter needs the same three files, and importing them from the
+ * Task 27 command would bundle that command's `main` into a second entry point,
+ * where its self-invocation guard fires on the bundle's own module URL and runs
+ * the Task 27 emission as a side effect of the Task 28 one.
+ */
+export const LISTEN_ROUND_TWO_ABLATION_EVIDENCE_PATHS: readonly string[] = Object.freeze([
+  "benchmark-results/listen-round-two-ablation-task26-run1.json",
+  "benchmark-results/listen-round-two-ablation-task26-run2.json",
+]);
+
+export const LISTEN_ROUND_TWO_CANDIDATE_MANIFEST_FILE =
+  "benchmark-results/listen-round-two-candidate-manifest-task27.json";
+
+/**
  * The registry version the round-two search measured against.
  *
  * The zero branch registers nothing, so the registry may not have moved past
