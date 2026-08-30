@@ -316,10 +316,10 @@ async function runConfiguration(configuration) {
         const startedAt = performance.now();
         const [{ captureIsolatedOnlineAmtBenchmark }, { OnlineAmtSession }, audio, parity] =
           await Promise.all([
-            import("/src/listenBenchmark.ts"),
+            import("/src/listen/benchmarks/listenBenchmark.ts"),
             import("/src/onlineAmtSession.ts"),
-            import("/src/listenBenchmarkAudio.ts"),
-            import("/src/listenBaselineParity.ts"),
+            import("/src/listen/benchmarks/listenBenchmarkAudio.ts"),
+            import("/src/listen/benchmarks/listenBaselineParity.ts"),
           ]);
         const renderer = new URLSearchParams(location.search).get("benchmark-renderer") === "tone"
           ? audio.LISTEN_BENCHMARK_TONE_RENDERER
@@ -517,21 +517,21 @@ async function runConfiguration(configuration) {
         ? `(async () => {
             const result = window.listenSequenceCaseResult;
             const { conciseListenSequenceCaseResult } =
-              await import("/src/listenSequenceCaseBenchmark.ts");
+              await import("/src/listen/benchmarks/listenSequenceCaseBenchmark.ts");
             return conciseListenSequenceCaseResult(result);
           })()`
         : LISTEN_BASS_QUALIFICATION_MODE
         ? `(async () => {
             const result = window.listenBassQualificationResult;
             const { conciseListenBassQualificationResult } =
-              await import("/src/listenBassQualificationBenchmark.ts");
+              await import("/src/listen/benchmarks/listenBassQualificationBenchmark.ts");
             return conciseListenBassQualificationResult(result);
           })()`
         : LISTEN_DYNAMICS_CASE_MODE
         ? `(async () => {
             const result = window.listenDynamicsCaseResult;
             const { conciseCourseClearDynamicsCaseResult } =
-              await import("/src/listenDynamicsBenchmark.ts");
+              await import("/src/listen/benchmarks/listenDynamicsBenchmark.ts");
             return conciseCourseClearDynamicsCaseResult(result);
           })()`
         : (LISTEN_DYNAMICS_CONSTANT_MODE || LISTEN_DYNAMICS_MIXED_MODE)
@@ -739,28 +739,28 @@ async function runConfiguration(configuration) {
         ? `(async () => {
             const result = window.listenProfileValidationResult;
             const { conciseListenProfileValidationResult } =
-              await import("/src/listenProfileValidationBenchmark.ts");
+              await import("/src/listen/benchmarks/listenProfileValidationBenchmark.ts");
             return conciseListenProfileValidationResult(result);
           })()`
         : LISTEN_ISOLATED_VALIDATION_MODE
         ? `(async () => {
             const result = window.listenIsolatedProfileValidationResult;
             const { conciseListenIsolatedProfileValidationResult } =
-              await import("/src/listenProfileValidationBenchmark.ts");
+              await import("/src/listen/benchmarks/listenProfileValidationBenchmark.ts");
             return conciseListenIsolatedProfileValidationResult(result);
           })()`
         : LISTEN_SEQUENCE_VALIDATION_MODE
         ? `(async () => {
             const result = window.listenSequenceProfileValidationResult;
             const { conciseListenSequenceProfileValidationResult } =
-              await import("/src/listenProfileValidationBenchmark.ts");
+              await import("/src/listen/benchmarks/listenProfileValidationBenchmark.ts");
             return conciseListenSequenceProfileValidationResult(result);
           })()`
         : LISTEN_DYNAMICS_VALIDATION_MODE
         ? `(async () => {
             const result = window.listenDynamicsProfileValidationResult;
             const { conciseListenDynamicsProfileValidationResult } =
-              await import("/src/listenProfileValidationBenchmark.ts");
+              await import("/src/listen/benchmarks/listenProfileValidationBenchmark.ts");
             return conciseListenDynamicsProfileValidationResult(result);
           })()`
         : LISTEN_ROUND_TWO_ABLATION_MODE
@@ -772,14 +772,14 @@ async function runConfiguration(configuration) {
             const result = window.listenMatcherMultiDomainSweepResult;
             if (${LISTEN_TASK24_DOMAIN_ARCHIVE_MODE}) {
               const { fullListenTask24DomainArchiveResult } =
-                await import("/src/listenMatcherSelectionPolicy.ts");
+                await import("/src/listen/listenMatcherSelectionPolicy.ts");
               return fullListenTask24DomainArchiveResult(result);
             }
             const {
               conciseListenMatcherMultiDomainSweepResult,
               fullListenMatcherMultiDomainSweepResult,
             } =
-              await import("/src/listenMatcherSweepBenchmark.ts");
+              await import("/src/listen/benchmarks/listenMatcherSweepBenchmark.ts");
             return ${LISTEN_MULTIDOMAIN_SWEEP_SUMMARY_MODE}
               ? conciseListenMatcherMultiDomainSweepResult(result)
               : fullListenMatcherMultiDomainSweepResult(result);

@@ -30,7 +30,7 @@ import {
   listenMatcherOverrideAfterDebugPanelChange,
   resolveEffectiveListenMatcherProfile,
   type ListenMatcherProfileId,
-} from "./listenMatcherProfiles";
+} from "./listen/listenMatcherProfiles";
 import { ExactChordMatcher } from "./chordMatcher";
 import { KeyboardRecognitionTracker } from "./keyboardRecognition";
 import {

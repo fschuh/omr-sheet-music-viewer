@@ -25,7 +25,7 @@ if (
   query.has("listen-dynamics-case") ||
   query.has("listen-bass-qualification")
 ) {
-  void import("./ListenBenchmarkPage").then(({ ListenBenchmarkPage }) => {
+  void import("./listen/benchmarks/ListenBenchmarkPage").then(({ ListenBenchmarkPage }) => {
     root.render(<StrictMode><ListenBenchmarkPage /></StrictMode>);
   });
 } else {

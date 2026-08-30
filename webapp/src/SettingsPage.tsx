@@ -7,7 +7,7 @@ import {
   LISTEN_MATCHER_PROFILE_IDS,
   LISTEN_MATCHER_PROFILES,
   type ListenMatcherProfileId,
-} from "./listenMatcherProfiles";
+} from "./listen/listenMatcherProfiles";
 import {
   defaultPlaybackShortcuts,
   formatKeyboardShortcut,

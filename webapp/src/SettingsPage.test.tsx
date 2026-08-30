@@ -3,7 +3,7 @@ import test from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { SettingsPage } from "./SettingsPage";
 import { defaultPlaybackShortcuts } from "./shortcuts";
-import { LISTEN_MATCHER_PROFILE_IDS } from "./listenMatcherProfiles";
+import { LISTEN_MATCHER_PROFILE_IDS } from "./listen/listenMatcherProfiles";
 import {
   LISTEN_INPUT_SOURCE_STORAGE_KEY,
   loadListenInputSource,

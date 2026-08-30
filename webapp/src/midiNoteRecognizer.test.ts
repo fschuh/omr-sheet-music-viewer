@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { ExactChordMatcher } from "./chordMatcher";
-import { matcherOptionsForListenMatcherProfile } from "./listenMatcherProfiles";
+import { matcherOptionsForListenMatcherProfile } from "./listen/listenMatcherProfiles";
 import {
   isMidiNoteMessage,
   isMidiNoteOnMessage,

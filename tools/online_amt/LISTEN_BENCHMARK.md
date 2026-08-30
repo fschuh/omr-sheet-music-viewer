@@ -2,6 +2,23 @@
 
 [Back to the benchmark index](BENCHMARK.md).
 
+## Listen source layout — August 30, 2026
+
+Listen-mode source left the flat `webapp/src/` directory on this date. Production
+and frozen-policy modules now live in `webapp/src/listen/`; every benchmark
+harness, fixture, manifest, evidence, and regression module lives in
+`webapp/src/listen/benchmarks/`. No file was renamed, no exported symbol changed,
+and no measurement was rerun.
+
+Dated entries below keep the paths they were written with, because each one
+records where its evidence stood on its own date. To open a file an entry names,
+keep the filename and insert the directory it now sits in — `listen/` for
+`listenMatcherProfiles.ts`, `listenExperimentalBassOnset.ts`,
+`listenBassQualification.ts`, `listenMatcherSelectionPolicy.ts`,
+`listenProfileValidationPolicy.ts`, `listenRoundTwoDefaultSelection.ts`, and
+`listenRoundTwoProductionDecision.ts` with its CLI; `listen/benchmarks/` for every
+other `listen*` module.
+
 ## Benchmark history
 
 Entries are kept newest first so renderer and recognition changes remain

@@ -8,7 +8,7 @@ import type { ChordMatcherOptions } from "./chordMatcher";
 import {
   DEFAULT_LISTEN_MATCHER_PROFILE_ID,
   matcherOptionsForListenMatcherProfile,
-} from "./listenMatcherProfiles";
+} from "./listen/listenMatcherProfiles";
 
 const STATE_COUNT = 5;
 const FIRST_PIANO_MIDI = 21;

@@ -68,7 +68,7 @@ speaker preference. The audition button or default `P` shortcut explicitly plays
 the current chord, including while muted; matching pauses through the sample decay.
 
 Advancement thresholds come from one named matcher profile in the versioned
-registry in `webapp/src/listenMatcherProfiles.ts`. Timing, target ordering, and
+registry in `webapp/src/listen/listenMatcherProfiles.ts`. Timing, target ordering, and
 advancement semantics are identical for every profile, so a profile only
 reinterprets model confidence. The shipped default is `baseline-v1`. The frozen
 automated confirmation of August 21, 2026 replayed four candidate profiles over

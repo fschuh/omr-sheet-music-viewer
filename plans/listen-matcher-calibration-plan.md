@@ -1,5 +1,13 @@
 # Listen matcher profiles and instrument calibration plan
 
+> **Layout note, August 30, 2026.** Listen-mode source moved out of the flat
+> `webapp/src/` directory after this plan was written: production and
+> frozen-policy modules now live in `webapp/src/listen/`, and benchmark
+> harnesses, fixtures, manifests, and regression modules live in
+> `webapp/src/listen/benchmarks/`. Filenames and exported symbols are unchanged.
+> The numbered task records below keep the paths in force when each task ran; the
+> prose above them names current locations.
+
 ## Decision summary
 
 The next production improvement should come from a validated matcher profile, not
@@ -82,7 +90,7 @@ without weakening any safety gate.
 
 ## Existing evidence and constraints
 
-The registry now lives in `webapp/src/listenMatcherProfiles.ts`, and production
+The registry now lives in `webapp/src/listen/listenMatcherProfiles.ts`, and production
 and benchmark consumers share its conversion to `ExactChordMatcher` options.
 The first-generation profiles are:
 
@@ -134,7 +142,7 @@ The later Tone and dynamics work adds the following constraints:
 
 ## Matcher profile ownership
 
-`webapp/src/listenMatcherProfiles.ts` is the production-neutral owner of the
+`webapp/src/listen/listenMatcherProfiles.ts` is the production-neutral owner of the
 `ListenMatcherProfile` type, immutable named profiles, registry version, default
 pointer, validation, and conversion. Benchmark code must not own or duplicate
 that contract.
@@ -224,7 +232,7 @@ only in matcher replay.
 
 Before adding the production-candidate matrix, extract the exhaustive parameter
 search from `listenSequenceBenchmark.ts` into
-`webapp/src/listenMatcherSweepBenchmark.ts`. The sequence module should own
+`webapp/src/listen/benchmarks/listenMatcherSweepBenchmark.ts`. The sequence module should own
 sequence definitions, materialization, trace capture, profile-aware replay, event
 diagnostics, aggregate summaries, and reusable sequence-safety evaluation. The
 new sweep module should own the five parameter grids, generation of all 1,000

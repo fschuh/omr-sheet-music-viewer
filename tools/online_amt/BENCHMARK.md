@@ -30,7 +30,7 @@ matcher changes.
 ## Production matcher profile
 
 Listen mode advances on the thresholds of one named profile from the versioned
-registry in `webapp/src/listenMatcherProfiles.ts`. The production default is
+registry in `webapp/src/listen/listenMatcherProfiles.ts`. The production default is
 `DEFAULT_LISTEN_MATCHER_PROFILE_ID`, currently `baseline-v1`, and the
 [August 22 production profile decision](LISTEN_BENCHMARK.md#production-profile-decision--august-22-2026)
 is the entry that records why. Changing or rolling back the default is one edit
