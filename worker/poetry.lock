@@ -385,6 +385,112 @@ files = [
 ]
 
 [[package]]
+name = "nvidia-cublas"
+version = "13.6.1.10"
+description = "CUBLAS native runtime libraries"
+optional = true
+python-versions = ">=3"
+groups = ["main"]
+markers = "extra == \"gpu\""
+files = [
+    {file = "nvidia_cublas-13.6.1.10-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:e05a431062a17cb9b02e2f37e67817b637051ce8fad57b388482c594396ddbb4"},
+    {file = "nvidia_cublas-13.6.1.10-py3-none-manylinux_2_27_x86_64.whl", hash = "sha256:feb2ed8a1e211bc5774413efc0f1a08c4d5269b56f68b4ac6fe5408e57f7dc1c"},
+]
+
+[package.dependencies]
+nvidia-cuda-nvrtc = "*"
+
+[[package]]
+name = "nvidia-cuda-nvrtc"
+version = "13.3.33"
+description = "NVRTC native runtime libraries"
+optional = true
+python-versions = ">=3"
+groups = ["main"]
+markers = "extra == \"gpu\""
+files = [
+    {file = "nvidia_cuda_nvrtc-13.3.33-py3-none-manylinux2010_x86_64.manylinux_2_12_x86_64.whl", hash = "sha256:82530788b8c6164a54d3fd9ae8bcca8893d397c4aeb998861982a03bbe41e204"},
+    {file = "nvidia_cuda_nvrtc-13.3.33-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:7b05ecda494c6dabc44231a608b060a71008a730d9dfda932cc508e6d29159e0"},
+    {file = "nvidia_cuda_nvrtc-13.3.33-py3-none-win_amd64.whl", hash = "sha256:7d2af818851c0c224d5f92221e9226e51ee23c236df4b51f9194563979c888be"},
+]
+
+[[package]]
+name = "nvidia-cuda-runtime"
+version = "13.3.29"
+description = "CUDA Runtime native Libraries"
+optional = true
+python-versions = ">=3"
+groups = ["main"]
+markers = "extra == \"gpu\""
+files = [
+    {file = "nvidia_cuda_runtime-13.3.29-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:73291e19c9dd919c140c91bda2f80b0eca487da5ee30a086ef7bc4918ecb90ea"},
+    {file = "nvidia_cuda_runtime-13.3.29-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:e04420616e72f563167a7733272992d7e6df6dc5cb54b2f94f9f1520ea9e30c1"},
+    {file = "nvidia_cuda_runtime-13.3.29-py3-none-win_amd64.whl", hash = "sha256:0667ec61c3d897388efa305ed4f7609ace88849a753ba9c6311d06dca55fff4f"},
+]
+
+[[package]]
+name = "nvidia-cudnn-cu13"
+version = "9.25.1.1"
+description = "cuDNN runtime libraries"
+optional = true
+python-versions = ">=3"
+groups = ["main"]
+markers = "extra == \"gpu\""
+files = [
+    {file = "nvidia_cudnn_cu13-9.25.1.1-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:6ed974d46b1b5fd123c0d9ff031c857142aa94257c6df41c40f6b5fd11a01d50"},
+    {file = "nvidia_cudnn_cu13-9.25.1.1-py3-none-manylinux_2_27_x86_64.whl", hash = "sha256:195199e8c7f8bca0c366ea675dd2441a406646cf95a98bcda66c999d57dd1f26"},
+    {file = "nvidia_cudnn_cu13-9.25.1.1-py3-none-win_amd64.whl", hash = "sha256:e1de75bf1ad9040414f9b13cc87135d660d13dd3c859180dd6b63353e571f860"},
+]
+
+[package.dependencies]
+nvidia-cublas = "*"
+
+[[package]]
+name = "nvidia-cufft"
+version = "12.3.0.29"
+description = "CUFFT native runtime libraries"
+optional = true
+python-versions = ">=3"
+groups = ["main"]
+markers = "extra == \"gpu\""
+files = [
+    {file = "nvidia_cufft-12.3.0.29-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:3c268ec73fdbfd22e42913dcef6e49e0c305ab09cd9848268a841cbe9f33f748"},
+    {file = "nvidia_cufft-12.3.0.29-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:edb25c0626bd202ee5acc035b5dd361a3b89ed3b75a81a52df72c89150cb57c2"},
+    {file = "nvidia_cufft-12.3.0.29-py3-none-win_amd64.whl", hash = "sha256:510036a2bbab5c83ae93dc5c907c3a49d3518e3066ac3a2052ff0f7f9b27dfc4"},
+]
+
+[package.dependencies]
+nvidia-nvjitlink = "*"
+
+[[package]]
+name = "nvidia-curand"
+version = "10.4.3.29"
+description = "CURAND native runtime libraries"
+optional = true
+python-versions = ">=3"
+groups = ["main"]
+markers = "extra == \"gpu\""
+files = [
+    {file = "nvidia_curand-10.4.3.29-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:63899de834d1b84b32ad60d34cb4d246bea998ddadbc85f8e1dd937dd3718d61"},
+    {file = "nvidia_curand-10.4.3.29-py3-none-manylinux_2_27_x86_64.whl", hash = "sha256:1859bf37a62754d2c65001393096ca79de399f995971fa7826d0adfd88c3cf7b"},
+    {file = "nvidia_curand-10.4.3.29-py3-none-win_amd64.whl", hash = "sha256:34b18d5a2a8e5db4c3846475ae4eef0cacdf3ac5e9c501f3a4efb422f137a74e"},
+]
+
+[[package]]
+name = "nvidia-nvjitlink"
+version = "13.3.33"
+description = "Nvidia JIT LTO Library"
+optional = true
+python-versions = ">=3"
+groups = ["main"]
+markers = "extra == \"gpu\""
+files = [
+    {file = "nvidia_nvjitlink-13.3.33-py3-none-manylinux2010_x86_64.manylinux_2_12_x86_64.whl", hash = "sha256:26a6de7fb4c8fdaa7703d3dad720d6d427ddfea5c48a528fd97c11733ad830e5"},
+    {file = "nvidia_nvjitlink-13.3.33-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:ce48b37dfeb3cb1eae4cf85adacb47d7a6539ea2272870c9a3628ce275c2037e"},
+    {file = "nvidia_nvjitlink-13.3.33-py3-none-win_amd64.whl", hash = "sha256:4297ee49639b4f2e07255a1d69b3acc7ab2d011bb892b403e91ac98368962e3b"},
+]
+
+[[package]]
 name = "omegaconf"
 version = "2.3.1"
 description = "A flexible configuration library"
@@ -441,6 +547,50 @@ packaging = "*"
 protobuf = ">=4.25.8"
 
 [package.extras]
+quantization = ["ml_dtypes"]
+symbolic = ["sympy"]
+
+[[package]]
+name = "onnxruntime-gpu"
+version = "1.29.0"
+description = "ONNX Runtime is a runtime accelerator for Machine Learning models"
+optional = true
+python-versions = ">=3.11"
+groups = ["main"]
+markers = "extra == \"gpu\""
+files = [
+    {file = "onnxruntime_gpu-1.29.0-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:de3caf93887ba4ad51c7d3cab04c7b464f9dd93c51047be5bfb413fd4a191e6a"},
+    {file = "onnxruntime_gpu-1.29.0-cp311-cp311-manylinux_2_34_aarch64.whl", hash = "sha256:6f5344dce3d6d41248d5135e159f5addb49114198ea4630c258855cb532a6688"},
+    {file = "onnxruntime_gpu-1.29.0-cp311-cp311-win_amd64.whl", hash = "sha256:fb6045d8623a5b9f949449bb4b93bab92e7f77578a2dc34420babacd16e2908c"},
+    {file = "onnxruntime_gpu-1.29.0-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:8ccd052ca4de21b2a335f3503a283126163b6fab9dba29d1d9cbf3fa55c51d28"},
+    {file = "onnxruntime_gpu-1.29.0-cp312-cp312-manylinux_2_34_aarch64.whl", hash = "sha256:545d2966dd11208bbc98e67be4d92e54ecd793acc45c0532cc7bfd36f50692fa"},
+    {file = "onnxruntime_gpu-1.29.0-cp312-cp312-win_amd64.whl", hash = "sha256:a64aa7c3dd7fa6b29fa7bcb0439ebd204607a590d3ce02bb276672257da4a454"},
+    {file = "onnxruntime_gpu-1.29.0-cp313-cp313-manylinux_2_28_x86_64.whl", hash = "sha256:264f14cac514238bd548b5960b487383768c05967dc1291ccf46e7a9e7699af5"},
+    {file = "onnxruntime_gpu-1.29.0-cp313-cp313-manylinux_2_34_aarch64.whl", hash = "sha256:38f5ed87714af536f38d6ee81329d4a3899bf40d2fce9cf39dd6be74855b4832"},
+    {file = "onnxruntime_gpu-1.29.0-cp313-cp313-win_amd64.whl", hash = "sha256:c37187aaa39802283f47094ccdfa5a0667b7f9723feed67facf2cef6e0e6a6dc"},
+    {file = "onnxruntime_gpu-1.29.0-cp313-cp313t-manylinux_2_28_x86_64.whl", hash = "sha256:dca01986a5feb7c494d02333d43aa4deb2b482a9d341c6888b7837b72c9a9a07"},
+    {file = "onnxruntime_gpu-1.29.0-cp313-cp313t-manylinux_2_34_aarch64.whl", hash = "sha256:3eace12b5065ca64bfe17ebd88427e833a8b4ed288f40e5e045db050c08d76b8"},
+    {file = "onnxruntime_gpu-1.29.0-cp314-cp314-manylinux_2_28_x86_64.whl", hash = "sha256:5c50d24541bf61e668dfe0a7a3a62de98def81959c832cc2d376814b661cb006"},
+    {file = "onnxruntime_gpu-1.29.0-cp314-cp314-manylinux_2_34_aarch64.whl", hash = "sha256:17d6ec021b06e9b3f622c69083ad48d725f95c319d2625280eacf092490e21f6"},
+    {file = "onnxruntime_gpu-1.29.0-cp314-cp314-win_amd64.whl", hash = "sha256:4247025e674a666f839c02b90c829277cb2e1be11576d3646cad5c86b7fc26c5"},
+    {file = "onnxruntime_gpu-1.29.0-cp314-cp314t-manylinux_2_28_x86_64.whl", hash = "sha256:f1330dcda8cb6f7ad46d87cbf2330fc52f007206a1d22f3830d680d36c8de80f"},
+    {file = "onnxruntime_gpu-1.29.0-cp314-cp314t-manylinux_2_34_aarch64.whl", hash = "sha256:70a3cab61b800bff1c1cce1d56ecd31f894075b2eb92577bc6189eb660e3e8b2"},
+]
+
+[package.dependencies]
+flatbuffers = "*"
+numpy = ">=1.21.6"
+nvidia-cuda-nvrtc = {version = ">=13.0,<14.0", optional = true, markers = "extra == \"cuda\""}
+nvidia-cuda-runtime = {version = ">=13.0,<14.0", optional = true, markers = "extra == \"cuda\""}
+nvidia-cudnn-cu13 = {version = ">=9.0,<10.0", optional = true, markers = "extra == \"cudnn\""}
+nvidia-cufft = {version = ">=12.0,<13.0", optional = true, markers = "extra == \"cuda\""}
+nvidia-curand = {version = ">=10.0,<11.0", optional = true, markers = "extra == \"cuda\""}
+packaging = "*"
+protobuf = ">=4.25.8"
+
+[package.extras]
+cuda = ["nvidia-cuda-nvrtc (>=13.0,<14.0)", "nvidia-cuda-runtime (>=13.0,<14.0)", "nvidia-cufft (>=12.0,<13.0)", "nvidia-curand (>=10.0,<11.0)"]
+cudnn = ["nvidia-cudnn-cu13 (>=9.0,<10.0)"]
 quantization = ["ml_dtypes"]
 symbolic = ["sympy"]
 
@@ -979,7 +1129,10 @@ h2 = ["h2 (>=4,<5)"]
 socks = ["pysocks (>=1.5.6,!=1.5.7,<2.0)"]
 zstd = ["backports-zstd (>=1.0.0) ; python_version < \"3.14\""]
 
+[extras]
+gpu = ["onnxruntime-gpu"]
+
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<3.16"
-content-hash = "bdc3ebd344cadff95b37e29f16b84d2f58d503f28536e3cd6f2bb585d79d0ee1"
+content-hash = "dbe487d6d0960e523ffdc292be9d0c500f662b66f7290241dad26de3616b65cd"

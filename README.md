@@ -124,6 +124,8 @@ Only the development workflow is described here. The packaged build
 - Node and npm, developed against Node 24
 - A Rust toolchain, for the Tauri shell
 - Python 3.11 or newer, below 3.16
+- Poetry 2.x, installed outside the project environment — `pipx install poetry` or
+  `uv tool install poetry`
 
 The Python environment must live at the repository root as `.venv`. The Tauri
 shell spawns `<repo root>/.venv/bin/python` (`Scripts\python.exe` on Windows) and
@@ -133,30 +135,80 @@ environment surfaces in the app as *"Viewer Python environment not found"*.
 
 ### Python environment
 
-Create the environment at the repository root and install the worker, which
-brings in HOMR from the fork pinned in `worker/pyproject.toml`:
+Create the environment at the repository root, then install the worker into it with
+Poetry. Poetry resolves from `worker/poetry.lock`, so this pins the exact HOMR commit
+rather than whatever `main` currently points at:
 
 ```bash
 python3 -m venv .venv
+cd worker
+VIRTUAL_ENV=../.venv POETRY_VIRTUALENVS_CREATE=false poetry install
+```
+
+Poetry normally provisions its own environment; the two variables point it at the
+repository-root `.venv` that the Tauri shell requires instead. On Windows use
+`py -m venv .venv` and set `VIRTUAL_ENV` to `..\.venv`.
+
+pip can install the worker without Poetry, but it ignores the lock and resolves fresh,
+and it cannot enable the GPU — see below:
+
+```bash
 .venv/bin/pip install ./worker
 ```
 
-On Windows, use `py -m venv .venv` and `.venv\Scripts\pip.exe`.
-
-`worker/poetry.lock` pins the exact fork commit and is what makes a clean checkout
-reproducible, but `poetry install` provisions its own environment rather than the
-repository-root `.venv` the Tauri shell requires. Use it to verify resolution, not
-to set up the app.
-
 ### Recognition models
 
-HOMR downloads roughly 293 MB of ONNX checkpoints on first use, into the installed
+HOMR downloads roughly 151 MB of ONNX checkpoints on first use, into the installed
 `homr` package inside `.venv`. They are downloaded again whenever that package is
 reinstalled. Fetch them up front so the first recognition does not stall:
 
 ```bash
 .venv/bin/homr --init --gpu no
 ```
+
+### GPU acceleration
+
+Inference runs on the CPU by default. HOMR picks an execution provider from what ONNX
+Runtime reports at startup, so enabling a GPU means installing the GPU runtime — there
+is no flag or setting in the viewer.
+
+**NVIDIA / CUDA.** Install the `gpu` extra, which adds `onnxruntime-gpu` together with
+the CUDA and cuDNN wheels it needs:
+
+```bash
+cd worker
+VIRTUAL_ENV=../.venv POETRY_VIRTUALENVS_CREATE=false poetry install --extras gpu
+```
+
+No system CUDA or cuDNN installation is required — the extra brings them as wheels, and
+HOMR calls `onnxruntime.preload_dlls()` before building a session so they are found.
+Verified on an RTX 3090 with driver 580, where a freshly provisioned environment runs a
+convolution on `CUDAExecutionProvider` with no other setup.
+
+Use Poetry rather than pip for this. HOMR always requires `onnxruntime`, so the extra
+installs it alongside `onnxruntime-gpu`; both ship the same native libraries and
+whichever is written last wins. Poetry writes the GPU build last. pip writes the CPU
+build last, which silently leaves the CUDA provider unavailable even though its 229 MB
+library is sitting in the same directory. With pip, add the GPU runtime as a separate,
+later step instead:
+
+```bash
+.venv/bin/pip install "onnxruntime-gpu[cuda,cudnn]"
+```
+
+**Apple Silicon.** The stock `onnxruntime` wheel already ships the CoreML provider, so
+nothing extra is needed — and nothing else is possible, since `onnxruntime-gpu`
+publishes no macOS wheels. Only the segmentation stage moves to the GPU and Neural
+Engine; the transformer decoder stays on the CPU, because the CoreML provider cannot
+run its dynamic KV-cache dimension. `HOMR_COREML_*` environment variables tune the
+provider — see `homr/onnx_providers.py`.
+
+The **Worker logs** panel reports the choice on every start, as
+`Inference providers: transformer=..., segmentation=...`.
+
+GPU inference uses fp16 model variants rather than the fp32 ones, so switching
+downloads a second set of checkpoints, roughly 143 MB alongside the 151 MB CPU set.
+Both are kept, so switching back does not download again.
 
 ### Running
 
