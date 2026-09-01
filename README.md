@@ -142,18 +142,23 @@ rather than whatever `main` currently points at:
 ```bash
 python3 -m venv .venv
 cd worker
-VIRTUAL_ENV=../.venv POETRY_VIRTUALENVS_CREATE=false poetry install
+VIRTUAL_ENV=../.venv POETRY_VIRTUALENVS_CREATE=false poetry install --extras cpu
 ```
 
 Poetry normally provisions its own environment; the two variables point it at the
 repository-root `.venv` that the Tauri shell requires instead. On Windows use
 `py -m venv .venv` and set `VIRTUAL_ENV` to `..\.venv`.
 
-pip can install the worker without Poetry, but it ignores the lock and resolves fresh,
-and it cannot enable the GPU — see below:
+`--extras cpu` chooses the inference engine. HOMR exposes `cpu` and `cuda` as mutually
+exclusive extras and installs neither by default, because both engines ship the same native
+libraries under the same names and an environment holding both runs whichever wheel was
+written last. Naming no extra leaves a worker with no ONNX Runtime at all, so one of the two
+is always required — see GPU acceleration below for the CUDA path.
+
+pip can install the worker without Poetry, but it ignores the lock and resolves fresh:
 
 ```bash
-.venv/bin/pip install ./worker
+.venv/bin/pip install "./worker[cpu]"
 ```
 
 ### Recognition models
@@ -172,12 +177,23 @@ Inference runs on the CPU by default. HOMR picks an execution provider from what
 Runtime reports at startup, so enabling a GPU means installing the GPU runtime — there
 is no flag or setting in the viewer.
 
-**NVIDIA / CUDA.** Install the `gpu` extra, which adds `onnxruntime-gpu` together with
-the CUDA and cuDNN wheels it needs:
+**NVIDIA / CUDA.** Choose the `cuda` extra in place of `cpu`. It brings `onnxruntime-gpu`
+together with the CUDA and cuDNN wheels it needs:
 
 ```bash
 cd worker
-VIRTUAL_ENV=../.venv POETRY_VIRTUALENVS_CREATE=false poetry install --extras gpu
+VIRTUAL_ENV=../.venv POETRY_VIRTUALENVS_CREATE=false poetry sync --extras cuda
+```
+
+`sync` rather than `install`, because `poetry install` only adds: run against an environment
+that already has the `cpu` extra, it would leave `onnxruntime` in place beside
+`onnxruntime-gpu`, and the provider you get back is then decided by whichever of the two
+wrote the shared libraries last rather than by the extra you asked for. `poetry sync`
+removes the engine you did not ask for. Installing into a fresh environment, either command
+works, as does pip:
+
+```bash
+.venv/bin/pip install "./worker[cuda]"
 ```
 
 No system CUDA or cuDNN installation is required — the extra brings them as wheels, and
@@ -185,19 +201,8 @@ HOMR calls `onnxruntime.preload_dlls()` before building a session so they are fo
 Verified on an RTX 3090 with driver 580, where a freshly provisioned environment runs a
 convolution on `CUDAExecutionProvider` with no other setup.
 
-Use Poetry rather than pip for this. HOMR always requires `onnxruntime`, so the extra
-installs it alongside `onnxruntime-gpu`; both ship the same native libraries and
-whichever is written last wins. Poetry writes the GPU build last. pip writes the CPU
-build last, which silently leaves the CUDA provider unavailable even though its 229 MB
-library is sitting in the same directory. With pip, add the GPU runtime as a separate,
-later step instead:
-
-```bash
-.venv/bin/pip install "onnxruntime-gpu[cuda,cudnn]"
-```
-
-**Apple Silicon.** The stock `onnxruntime` wheel already ships the CoreML provider, so
-nothing extra is needed — and nothing else is possible, since `onnxruntime-gpu`
+**Apple Silicon.** The `cpu` extra's `onnxruntime` wheel already ships the CoreML provider,
+so nothing beyond it is needed — and nothing else is possible, since `onnxruntime-gpu`
 publishes no macOS wheels. Only the segmentation stage moves to the GPU and Neural
 Engine; the transformer decoder stays on the CPU, because the CoreML provider cannot
 run its dynamic KV-cache dimension. `HOMR_COREML_*` environment variables tune the
