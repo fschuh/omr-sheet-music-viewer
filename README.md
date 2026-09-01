@@ -149,6 +149,10 @@ Poetry normally provisions its own environment; the two variables point it at th
 repository-root `.venv` that the Tauri shell requires instead. On Windows use
 `py -m venv .venv` and set `VIRTUAL_ENV` to `..\.venv`.
 
+The commands below use the POSIX layout, `.venv/bin/<command>`. On Windows the
+equivalent is `.venv\Scripts\<command>.exe` — `.venv/bin/homr` is
+`.venv\Scripts\homr.exe`, and likewise for `pip` and `python`.
+
 `--extras cpu` chooses the inference engine. HOMR exposes `cpu` and `cuda` as mutually
 exclusive extras and installs neither by default, because both engines ship the same native
 libraries under the same names and an environment holding both runs whichever wheel was
