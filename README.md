@@ -250,7 +250,7 @@ rasterization, model initialization, segmentation, OCR, and staff parsing in
 real time. The same output is appended to:
 
 ```text
-%LOCALAPPDATA%\com.homr.sheetmusicviewer\logs\worker.log
+%LOCALAPPDATA%\com.omr.sheetmusicviewer\logs\worker.log
 ```
 
 If the Python process exits unexpectedly, the active job is marked failed and

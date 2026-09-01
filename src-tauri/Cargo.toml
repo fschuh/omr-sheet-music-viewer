@@ -1,12 +1,12 @@
 [package]
-name = "homr-sheet-music-viewer"
+name = "omr-sheet-music-viewer"
 version = "0.1.0"
 description = "Local PDF sheet-music viewer powered by HOMR"
 authors = ["HOMR contributors"]
 edition = "2021"
 
 [lib]
-name = "homr_sheet_music_viewer_lib"
+name = "omr_sheet_music_viewer_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

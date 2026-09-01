@@ -1541,22 +1541,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
-name = "homr-sheet-music-viewer"
-version = "0.1.0"
-dependencies = [
- "gtk",
- "midir",
- "rfd",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "uuid",
- "webkit2gtk",
- "windows",
-]
-
-[[package]]
 name = "html5ever"
 version = "0.38.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2431,6 +2415,22 @@ dependencies = [
  "objc2-app-kit",
  "objc2-core-foundation",
  "objc2-foundation",
+]
+
+[[package]]
+name = "omr-sheet-music-viewer"
+version = "0.1.0"
+dependencies = [
+ "gtk",
+ "midir",
+ "rfd",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "uuid",
+ "webkit2gtk",
+ "windows",
 ]
 
 [[package]]
