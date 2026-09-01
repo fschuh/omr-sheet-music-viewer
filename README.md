@@ -30,10 +30,11 @@ cell and send the desired message. Press `Esc` to cancel either capture.
 Recognized notes and chords play with polyphonic piano audio while note sounds
 are enabled. Use the speaker button or the default `M` shortcut to mute or
 unmute them. Tone.js provides sample scheduling, release envelopes, compression,
-and peak limiting. The bundled medium-dynamics samples come from AKAI's public-domain
-[Splendid Grand Piano](https://github.com/sfzinstruments/SplendidGrandPiano)
-library; provenance is recorded beside the assets in
-`webapp/public/audio/piano/SOURCE.md`.
+and peak limiting. **Settings** chooses between two sampled pianos: Splendid Grand
+Piano, the default, whose four velocity layers are committed to the repository, and
+Salamander Grand Piano, whose sixteen layers are generated into `webapp/public/audio/`
+before `npm run dev` or `npm run build` and are not tracked. Provenance, licensing and
+the layer mapping for both are recorded in `webapp/public/audio/SOURCES.md`.
 
 The app listens to every standard MIDI input exposed by the operating system.
 MIDI assignments are device- and channel-independent, and
