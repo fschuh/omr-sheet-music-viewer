@@ -35,7 +35,7 @@
     "@audio-samples/piano-velocity7": "^1.0.5",
     "@audio-samples/piano-velocity8": "^1.0.5",
     "@audio-samples/piano-velocity9": "^1.0.5",
-    "@fschuh/piano-transcription-engine": "git+https://github.com/fschuh/piano-transcription-engine.git#da3d8015c7b1eefe5cd621ae20cd0a0c3e489d10",
+    "@fschuh/piano-transcription-engine": "git+https://github.com/fschuh/piano-transcription-engine.git#1e49803b6a36c0d29f0283e94f2c7fa0d672b4d9",
     "@lumikey/piano-fingering-model": "0.3.0",
     "@tauri-apps/api": "^2.11.1",
     "onnxruntime-web": "1.27.0",

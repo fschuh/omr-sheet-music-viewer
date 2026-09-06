@@ -710,8 +710,8 @@ Acceptance:
 ### Task 10 — Establish and pin the Git dependency
 
 **Status:** Completed September 6, 2026. Both consumers depend on
-`git+https://github.com/fschuh/piano-transcription-engine.git#da3d8015c7b1eefe5cd621ae20cd0a0c3e489d10`,
-the commit that requires an explicit WASM source, with their lockfiles
+`git+https://github.com/fschuh/piano-transcription-engine.git#1e49803b6a36c0d29f0283e94f2c7fa0d672b4d9`,
+the commit that requires a usable WASM source, with their lockfiles
 regenerated and committed. No manifest or lockfile in either
 repository names a branch or tag; every reference is that one full SHA. The
 specification is `git+https` rather than the plan's `git+ssh` example because the
@@ -724,7 +724,7 @@ model; `npm run build` and 151/151 viewer tests then passed there, and the
 prepared model was byte-identical to the engine's. A clean private eval clone
 likewise passed `npm ci` and `npm run eval:inventory` with 5 gold pairs in 1
 setup and 17 silver pairs in 17 setups, no errors. The Diagnostics panel now
-reports `0.1.0 · da3d801` with the full revision in its tooltip, injected by
+reports `0.1.0 · 1e49803` with the full revision in its tooltip, injected by
 `vite.config.ts` from the pinned specification and the installed manifest. The
 canonical browser smoke reproduced the frozen baseline against the pinned install
 for both renderers: `matched-recorded-baseline`, advanced at 196 ms, 17,920 PCM
@@ -734,15 +734,22 @@ readability tag was created.
 Review of the first pin found that the engine's default WASM URL resolved inside
 its own `node_modules`, which npm hoisting leaves empty after a Git install, so
 any consumer relying on that documented default would fail and the viewer build
-warned that the URL did not exist. Engine commit
-`da3d8015c7b1eefe5cd621ae20cd0a0c3e489d10` deletes the default and makes
-`wasmUrl` or `wasmBinary` a required pair in `OnlineAmtSessionOptions`, mirroring
-the existing model source, with `OnlineAmtSession.create` refusing a missing WASM
-source before it touches any global ONNX Runtime state. Both consumers are
-re-pinned to that commit. The required type immediately caught the viewer's
-worker, whose initialize-message contract now names the model URL and runtime
-tuning it actually receives and supplies the WASM source itself. The Vite warning
-is gone, and every check above was repeated against the new pin.
+warned that the URL did not exist. Engine commit `da3d801` deletes the default
+and makes `wasmUrl` or `wasmBinary` a required pair in `OnlineAmtSessionOptions`,
+mirroring the existing model source. Review of that commit then found its guard
+accepted an empty string, which reached ONNX Runtime as an empty `wasmPaths`
+entry and failed there instead, and that its test for the case passed `undefined`
+rather than `""`. Engine commit
+`1e49803b6a36c0d29f0283e94f2c7fa0d672b4d9` refuses every WASM source an untyped
+caller can supply that is not usable — absent, blank, or non-string URL, and
+absent, empty, or non-buffer binary — and its test asserts, for each one, that
+global ONNX Runtime state is left untouched. Removing the URL check, the binary
+check, or the ordering that validates before mutating each fails a distinct
+assertion. Both consumers are pinned to that commit. The required type
+immediately caught the viewer's worker, whose initialize-message contract now
+names the model URL and runtime tuning it actually receives and supplies the WASM
+source itself. The Vite warning is gone, and every check above was repeated
+against the final pin.
 
 - Push a tested extraction commit to the existing
   `https://github.com/fschuh/piano-transcription-engine` remote.
