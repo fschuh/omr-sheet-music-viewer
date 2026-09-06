@@ -811,11 +811,26 @@ application and the prepared model.
 
 Removing the benchmark page removed the viewer's only dynamic import, so the
 application now builds as one 715 kB chunk and Vite reports its default
-chunk-size advisory. Nothing was restructured to silence it. The real-browser
-smoke that this driver ran has no engine-side replacement yet; the engine's
-functional suite replays synthetic traces offline and does not render audio or
-run inference, so Task 12's browser/offline parity step still needs that
-capability ported into engine tooling.
+chunk-size advisory. Nothing was restructured to silence it.
+
+Review found that this removed the only runnable browser/offline parity check
+before an engine-owned one existed, which the baseline inventory requires and
+Task 12 depends on. Engine commit `08341f8d4eb99f7ab1c6235896ba0ee308bba909`
+supplies the replacement as `npm run eval:browser-parity`. One module,
+`evals/browser/runtimeFixture.js`, replays the deterministic 180-frame runtime
+fixture through the production session and output decoder, and
+`tools/run-browser-parity.mjs` runs that same module offline in Node against
+bytes from disk and in headless Chrome against the same files over HTTP. Decoded
+states, signal-active results, onset and note-event counts, the frames carrying
+active-pitch and target evidence, and a confidence-free structural hash must be
+identical; each side must independently hold the fixture's `2e-4` score bound and
+must decode something. A raw score hash is reported but not asserted, so a
+last-bit inference difference is visible without failing the run. Inference is
+currently bit-identical in both environments. The check was verified to fail on a
+decoded divergence and on a violated score bound, and to pass while reporting the
+difference when only the last bits differ. None of the historical benchmark UI,
+audio renderers, or search matrices returned, and no score-derived material
+entered the engine.
 
 - Remove extracted core/runtime files from the viewer.
 - Remove the benchmark page, benchmark-only route, benchmark HTML entry, old
@@ -844,7 +859,7 @@ Run, in order:
 2. Clean private `piano-transcription-evals` install and recording inventory
    check.
 3. Canonical offline session and decoder/matcher parity fixture.
-4. Browser/offline parity smoke.
+4. Browser/offline parity smoke (`npm run eval:browser-parity` in the engine).
 5. Clean sheet-music-viewer install from the pinned Git dependency.
 6. Viewer unit tests and production build.
 7. Manual listen-mode smoke covering start, target changes, advancement, pause,

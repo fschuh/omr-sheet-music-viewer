@@ -109,9 +109,12 @@ driver, and the Round 1/2 emitters and evidence verifier were removed once the
 engine took ownership of evaluation; the model export and validation tools moved
 with them. The active functional suite now runs from the engine's `eval` entry
 point, and evaluation against real recordings runs from the private
-`piano-transcription-evals` repository. Manual acoustic- and digital-piano trials
-are still required before changing the `online_amt` matcher profile, and no
-candidate has yet earned them.
+`piano-transcription-evals` repository. The engine also owns the browser/offline
+parity smoke that used to run from here: its `npm run eval:browser-parity`
+replays the runtime fixture through the production session and decoder in both
+headless Chrome and Node and compares the two. Manual acoustic- and
+digital-piano trials are still required before changing the `online_amt` matcher
+profile, and no candidate has yet earned them.
 
 `tools/online_amt/` and `benchmark-results/` keep the Round 1/2 reports and
 result files as frozen history. Their commands describe the repository as it
