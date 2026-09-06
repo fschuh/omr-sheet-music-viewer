@@ -1,5 +1,10 @@
 import { LISTEN_BENCHMARK_RELEASE_MS } from "./listenBenchmarkAudio";
-import { OnlineAmtOutputDecoder } from "../../onlineAmtOutput";
+import {
+  LISTEN_MATCHER_PROFILES,
+  listenMatcherThresholds,
+  OnlineAmtOutputDecoder,
+} from "@fschuh/piano-transcription-engine";
+import type { ListenMatcherThresholds } from "@fschuh/piano-transcription-engine";
 import {
   disabledOnlineAmtRetriggerOptions,
   OnlineAmtScoreRiseRetriggerDetector,
@@ -30,11 +35,6 @@ import {
 } from "./listenSequenceBenchmark";
 import { summarizeListenSafety } from "./listenSafetyRegression";
 import type { ListenThresholdSweepResult } from "./listenMatcherSweepBenchmark";
-import {
-  LISTEN_MATCHER_PROFILES,
-  listenMatcherThresholds,
-  type ListenMatcherThresholds,
-} from "../listenMatcherProfiles";
 
 const FIRST_PIANO_MIDI = 21;
 const STATE_COUNT = 5;

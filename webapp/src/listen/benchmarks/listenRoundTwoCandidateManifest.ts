@@ -22,13 +22,15 @@
 import {
   DEFAULT_LISTEN_MATCHER_PROFILE_ID,
   FIXED_LISTEN_MATCHER_POLICY,
-  LISTEN_MATCHER_PROFILES,
   LISTEN_MATCHER_PROFILE_IDS,
+  LISTEN_MATCHER_PROFILES,
   LISTEN_MATCHER_REGISTRY_VERSION,
   listenMatcherThresholds,
-  type FixedListenMatcherPolicy,
-  type ListenMatcherThresholds,
-} from "../listenMatcherProfiles";
+} from "@fschuh/piano-transcription-engine";
+import type {
+  FixedListenMatcherPolicy,
+  ListenMatcherThresholds,
+} from "@fschuh/piano-transcription-engine";
 import {
   LISTEN_MATCHER_SELECTION_POLICY,
   LISTEN_MATCHER_SELECTION_POLICY_HASH,

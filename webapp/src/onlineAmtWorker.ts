@@ -1,11 +1,15 @@
 /// <reference lib="webworker" />
 
-import { OnlineAmtSession, type OnlineAmtSessionOptions } from "./onlineAmtSession";
-import { OnlineAmtOutputDecoder } from "./onlineAmtOutput";
+import {
+  OnlineAmtOutputDecoder,
+  OnlineAmtSession,
+} from "@fschuh/piano-transcription-engine";
+import type { OnlineAmtSessionOptions } from "@fschuh/piano-transcription-engine";
+import { ONLINE_AMT_WASM_URL } from "./onlineAmtWasm";
 
-interface InitializeMessage extends OnlineAmtSessionOptions {
-  type: "initialize";
-}
+// OnlineAmtSessionOptions is a union over the model source, so this stays an
+// intersection rather than an interface extension.
+type InitializeMessage = OnlineAmtSessionOptions & { type: "initialize" };
 
 interface AudioMessage {
   type: "audio";
@@ -56,7 +60,10 @@ self.onmessage = ({ data }: MessageEvent<WorkerRequest>) => {
   if (data.type === "initialize") {
     operation = operation.then(async () => {
       const startedAt = performance.now();
-      session = await OnlineAmtSession.create(data);
+      session = await OnlineAmtSession.create({
+        ...data,
+        wasmUrl: data.wasmUrl ?? ONLINE_AMT_WASM_URL,
+      });
       decoder.reset();
       self.postMessage({
         type: "initialized",

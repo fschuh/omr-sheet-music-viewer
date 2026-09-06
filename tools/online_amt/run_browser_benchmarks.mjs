@@ -314,10 +314,13 @@ async function runConfiguration(configuration) {
     if (LISTEN_SMOKE_MODE || LISTEN_DYNAMICS_SMOKE_MODE) {
       return await evaluate(client, `(async () => {
         const startedAt = performance.now();
-        const [{ captureIsolatedOnlineAmtBenchmark }, { OnlineAmtSession }, audio, parity] =
+        const [
+          { captureIsolatedOnlineAmtBenchmark, OnlineAmtSession, ONLINE_AMT_WASM_URL },
+          audio,
+          parity,
+        ] =
           await Promise.all([
             import("/src/listen/benchmarks/listenBenchmark.ts"),
-            import("/src/onlineAmtSession.ts"),
             import("/src/listen/benchmarks/listenBenchmarkAudio.ts"),
             import("/src/listen/benchmarks/listenBaselineParity.ts"),
           ]);
@@ -328,7 +331,8 @@ async function runConfiguration(configuration) {
         const piano = query.get("benchmark-piano") ?? "splendid";
         const layer = query.get("benchmark-layer") ?? "mp";
         const session = await OnlineAmtSession.create({
-          modelUrl: new URL("/models/online_amt_streaming.onnx", location.href).href,
+          modelUrl: new URL("/generated-listen-assets/online_amt_streaming.onnx", location.href).href,
+          wasmUrl: ONLINE_AMT_WASM_URL,
           numThreads: 1,
           graphOptimizationLevel: "all",
           enableCpuMemArena: true,

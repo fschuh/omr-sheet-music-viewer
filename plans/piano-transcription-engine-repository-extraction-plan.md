@@ -665,6 +665,30 @@ Acceptance:
 
 ### Task 09 — Integrate the package into the viewer using a local dependency
 
+**Status:** Completed September 6, 2026. `webapp` depends on
+`@fschuh/piano-transcription-engine` through the `file:../../piano-transcription-engine`
+development override, and every viewer import of the recognition types, session,
+decoder, matcher, profile registry, and browser recognizer now resolves to the
+package's `.` and `/browser` entry points; nothing imports `/eval`. The viewer
+keeps `MidiNoteRecognizer`, `ListenModeFeedback`, `stoppedRecognizerLifecycle`,
+the worker message entry, settings, and score navigation, and it now owns the two
+pieces the package deliberately does not: `listenRecognizer.ts` supplies the
+asset URLs, the Vite worker factory, and the microphone permission and device
+wording, while `onlineAmtWasm.ts` resolves ONNX Runtime's WASM binary from the
+viewer's own dependency copy rather than from the engine's node_modules layout.
+Wording is delivered through a new optional `describeError` hook on the engine's
+browser recognizer. `prepare:listen-assets` copies the canonical model, its MIT
+notice, and the worklet out of the installed package into the ignored
+`webapp/public/generated-listen-assets/`, and `predev`, `predev:wasm-benchmark`,
+and `prebuild` run it; the three tracked viewer copies are gone. The engine-owned
+`chordMatcher`, `onlineAmtOutput`, `onlineAmtProtocol`, `onlineAmtSession`,
+`onlineAmtRecognizer`, and `listenMatcherProfiles` modules, their tests, and the
+Task 01 core fixture were deleted from the viewer. Viewer tests pass 151/151,
+`tsc -b` and the production build succeed, and the canonical browser smoke
+reproduced the frozen baseline for both renderers: advanced at 196 ms, 17,920 PCM
+frames, 35 trace frames, structure hashes `83fbd243` and `5c164339`, and
+`matched-recorded-baseline`.
+
 - Temporarily install the sibling package through `npm link` or an uncommitted
   `file:` override.
 - Change viewer imports for engine types, session, decoder, matcher, recognizer,

@@ -18,7 +18,10 @@ import {
   type ListenLiveTrialOutcome,
   type ListenRoundTwoLiveArchive,
 } from "./listenRoundTwoLiveEvidence";
-import { LISTEN_MATCHER_PROFILES, listenMatcherThresholds } from "../listenMatcherProfiles";
+import {
+  LISTEN_MATCHER_PROFILES,
+  listenMatcherThresholds,
+} from "@fschuh/piano-transcription-engine";
 import type { ListenRoundTwoEligibilityManifest } from "./listenRoundTwoEligibilityManifest";
 
 const ELIGIBILITY_DIGEST = "1a2b3c4d";

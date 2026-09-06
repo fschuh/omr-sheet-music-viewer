@@ -24,11 +24,11 @@
  */
 
 import {
-  LISTEN_MATCHER_PROFILES,
   isListenMatcherProfileId,
+  LISTEN_MATCHER_PROFILES,
   listenMatcherThresholds,
-  type ListenMatcherProfileId,
-} from "./listenMatcherProfiles";
+} from "@fschuh/piano-transcription-engine";
+import type { ListenMatcherProfileId } from "@fschuh/piano-transcription-engine";
 import type { ListenMaterialImprovementAssessment } from "./listenProfileValidationPolicy";
 import {
   listenPromotionMaterialImprovements,

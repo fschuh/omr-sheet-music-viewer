@@ -20,9 +20,11 @@
 import {
   LISTEN_MATCHER_PROFILES,
   listenMatcherThresholds,
-  type ListenMatcherProfileId,
-  type ListenMatcherThresholds,
-} from "../listenMatcherProfiles";
+} from "@fschuh/piano-transcription-engine";
+import type {
+  ListenMatcherProfileId,
+  ListenMatcherThresholds,
+} from "@fschuh/piano-transcription-engine";
 import type { ListenBenchmarkAudioSignature } from "./listenBenchmarkAudio";
 import type {
   ListenRecognitionTrace,

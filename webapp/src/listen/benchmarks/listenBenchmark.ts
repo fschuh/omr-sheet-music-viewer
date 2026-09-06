@@ -1,19 +1,22 @@
 import {
-  ExactChordMatcher,
   defaultChordMatcherOptions,
-  type ChordMatcherObserver,
-} from "../../chordMatcher";
-import { ONLINE_AMT_CHUNK_SIZE } from "../../onlineAmtProtocol";
-import { OnlineAmtSession } from "../../onlineAmtSession";
-import {
+  ExactChordMatcher,
   findListenMatcherProfile,
   isListenMatcherProfileId,
   isListenMatcherThresholds,
   listenMatcherThresholds,
   matcherOptionsForListenMatcherProfile,
-  type ListenMatcherProfileId,
-  type ListenMatcherThresholds,
-} from "../listenMatcherProfiles";
+  ONLINE_AMT_CHUNK_SIZE,
+  OnlineAmtSession,
+} from "@fschuh/piano-transcription-engine";
+import type {
+  ChordMatcherObserver,
+  ListenMatcherProfileId,
+  ListenMatcherThresholds,
+  RecognizedOnset,
+  RecognizerResult,
+} from "@fschuh/piano-transcription-engine";
+import { ONLINE_AMT_WASM_URL } from "../../onlineAmtWasm";
 import {
   LISTEN_BASELINE_PROFILE_ID,
   assertIsolatedListenTrialParity,
@@ -23,7 +26,6 @@ import {
   type IsolatedListenTrialSignature,
 } from "./listenBaselineParity";
 import { SpectralPitchDetector } from "../../spectralPitchDetector";
-import type { RecognizedOnset, RecognizerResult } from "../../noteRecognizer";
 import {
   LISTEN_BENCHMARK_DEFAULT_HOLD_MS,
   LISTEN_BENCHMARK_RELEASE_MS,
@@ -47,6 +49,9 @@ import {
 import type { PianoId, PianoLayerId } from "../../pianoRegistry";
 
 export { COURSE_CLEAR_BENCHMARK_MOMENTS, type ScoreBenchmarkMoment };
+// The engine is a package now, so the browser benchmark driver reaches
+// OnlineAmtSession through this module rather than a viewer source path.
+export { OnlineAmtSession, ONLINE_AMT_WASM_URL };
 
 const FFT_SIZE = 16_384;
 const MAX_AFTER_ONSET_MS = 900;
@@ -409,7 +414,11 @@ class SpectralBenchmarkClient {
 
 class OnlineAmtBenchmarkClient {
   private readonly session = OnlineAmtSession.create({
-    modelUrl: new URL("models/online_amt_streaming.onnx", document.baseURI).href,
+    modelUrl: new URL(
+      "generated-listen-assets/online_amt_streaming.onnx",
+      document.baseURI,
+    ).href,
+    wasmUrl: ONLINE_AMT_WASM_URL,
     numThreads: 1,
     graphOptimizationLevel: "all",
     enableCpuMemArena: true,

@@ -1,4 +1,4 @@
-import type { RecognizedOnset } from "./noteRecognizer";
+import type { RecognizedOnset } from "@fschuh/piano-transcription-engine";
 
 const C0_HZ = 8.1757989156;
 const LOG2 = Math.log(2);

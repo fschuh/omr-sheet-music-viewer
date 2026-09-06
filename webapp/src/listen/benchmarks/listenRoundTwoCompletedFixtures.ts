@@ -23,8 +23,8 @@
 import {
   LISTEN_MATCHER_PROFILES,
   listenMatcherThresholds,
-  type ListenMatcherProfileId,
-} from "../listenMatcherProfiles";
+} from "@fschuh/piano-transcription-engine";
+import type { ListenMatcherProfileId } from "@fschuh/piano-transcription-engine";
 import {
   LISTEN_LIVE_BASELINE_PROFILE_ID,
   LISTEN_LIVE_NEGATIVE_TRIAL_CLASSES,

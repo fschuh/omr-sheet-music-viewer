@@ -1,7 +1,6 @@
-import {
-  OnlineAmtSession,
-  type WasmGraphOptimizationLevel,
-} from "./onlineAmtSession";
+import { OnlineAmtSession } from "@fschuh/piano-transcription-engine";
+import type { WasmGraphOptimizationLevel } from "@fschuh/piano-transcription-engine";
+import { ONLINE_AMT_WASM_URL } from "./onlineAmtWasm";
 
 interface FixtureMetadata {
   frames: number;
@@ -98,7 +97,8 @@ async function run(): Promise<void> {
 
   const loadStartedAt = performance.now();
   const session = await OnlineAmtSession.create({
-    modelUrl: "/models/online_amt_streaming.onnx",
+    modelUrl: "/generated-listen-assets/online_amt_streaming.onnx",
+    wasmUrl: ONLINE_AMT_WASM_URL,
     numThreads: threads,
     graphOptimizationLevel,
     enableCpuMemArena,

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { OnlineAmtOutputDecoder } from "./onlineAmtOutput";
+import { OnlineAmtOutputDecoder } from "@fschuh/piano-transcription-engine";
 import {
   disabledOnlineAmtRetriggerOptions,
   OnlineAmtScoreRiseRetriggerDetector,

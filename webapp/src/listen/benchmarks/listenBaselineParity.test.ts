@@ -4,7 +4,10 @@ import {
   LISTEN_BENCHMARK_RENDERER,
   signatureForBenchmarkPcm,
 } from "./listenBenchmarkAudio";
-import { LISTEN_MATCHER_PROFILES, listenMatcherThresholds } from "../listenMatcherProfiles";
+import {
+  LISTEN_MATCHER_PROFILES,
+  listenMatcherThresholds,
+} from "@fschuh/piano-transcription-engine";
 import {
   bundledListenSequences,
   materializeListenSequence,

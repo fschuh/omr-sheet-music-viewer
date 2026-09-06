@@ -10,8 +10,10 @@ import {
   shouldScrollPlaybackHorizontally,
   validTempoPercentage,
 } from "./DocumentViewer";
-import { stoppedRecognizerLifecycle } from "./noteRecognizer";
-import type { ListenModeFeedback } from "./noteRecognizer";
+import {
+  stoppedRecognizerLifecycle,
+  type ListenModeFeedback,
+} from "./noteRecognizer";
 import type { PlaybackMoment } from "./playback";
 import type { DocumentPage, VisualGroup, VisualSidecar } from "./types";
 

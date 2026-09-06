@@ -56,10 +56,15 @@ import {
 } from "./benchmarks/listenSafetyRegression";
 import { TONE_SALAMANDER_V05_LATE_ADVANCE } from "./benchmarks/listenSafetyRegressionFixtures";
 import {
+  ExactChordMatcher,
   LISTEN_MATCHER_PROFILES,
   listenMatcherThresholds,
-  type ListenMatcherProfileId,
-} from "./listenMatcherProfiles";
+  matcherOptionsForListenMatcherProfile,
+} from "@fschuh/piano-transcription-engine";
+import type {
+  ChordMatcherDecision,
+  ListenMatcherProfileId,
+} from "@fschuh/piano-transcription-engine";
 import {
   materializeListenSequence,
   replayListenSequenceTrace,
@@ -69,8 +74,6 @@ import {
 } from "./benchmarks/listenSequenceBenchmark";
 import { LISTEN_BENCHMARK_RENDERER } from "./benchmarks/listenBenchmarkAudio";
 import { LISTEN_ATTACK_BOUNDARY_EPSILON_MS } from "./benchmarks/listenSequenceBenchmark";
-import { ExactChordMatcher, type ChordMatcherDecision } from "../chordMatcher";
-import { matcherOptionsForListenMatcherProfile } from "./listenMatcherProfiles";
 import { LISTEN_TRACE_MANIFEST } from "./benchmarks/listenTraceManifest";
 
 const V05 = TONE_SALAMANDER_V05_LATE_ADVANCE;

@@ -16,9 +16,11 @@ import {
   LISTEN_MATCHER_PROFILES,
   LISTEN_MULTIDOMAIN_CANDIDATE_PROFILE_IDS,
   listenMatcherThresholds,
-  type ListenMatcherProfileId,
-  type ListenMatcherThresholds,
-} from "../listenMatcherProfiles";
+} from "@fschuh/piano-transcription-engine";
+import type {
+  ListenMatcherProfileId,
+  ListenMatcherThresholds,
+} from "@fschuh/piano-transcription-engine";
 import {
   LISTEN_ACTIVE_TARGET_GATES,
   LISTEN_BASS_ONSET_GATES,

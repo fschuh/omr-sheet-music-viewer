@@ -19,11 +19,11 @@ import {
   TONE_SALAMANDER_V05_LATE_ADVANCE,
 } from "./listenSafetyRegressionFixtures";
 import {
-  LISTEN_MATCHER_PROFILES,
   LISTEN_MATCHER_PROFILE_IDS,
+  LISTEN_MATCHER_PROFILES,
   listenMatcherThresholds,
-  type ListenMatcherProfileId,
-} from "../listenMatcherProfiles";
+} from "@fschuh/piano-transcription-engine";
+import type { ListenMatcherProfileId } from "@fschuh/piano-transcription-engine";
 import {
   materializeListenSequence,
   replayListenSequenceTrace,

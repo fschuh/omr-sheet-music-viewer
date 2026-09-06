@@ -1,13 +1,15 @@
 import { useEffect, useState } from "react";
 import { playbackCommandNames, type PlaybackCommand } from "./playback";
 import { PIANO_IDS, PIANO_REGISTRY, type PianoId } from "./pianoRegistry";
-import type { ListenInputSource } from "./noteRecognizer";
 import {
   DEFAULT_LISTEN_MATCHER_PROFILE_ID,
   LISTEN_MATCHER_PROFILE_IDS,
   LISTEN_MATCHER_PROFILES,
-  type ListenMatcherProfileId,
-} from "./listen/listenMatcherProfiles";
+} from "@fschuh/piano-transcription-engine";
+import type {
+  ListenInputSource,
+  ListenMatcherProfileId,
+} from "@fschuh/piano-transcription-engine";
 import {
   defaultPlaybackShortcuts,
   formatKeyboardShortcut,

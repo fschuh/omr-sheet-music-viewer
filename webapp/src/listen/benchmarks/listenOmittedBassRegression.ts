@@ -23,8 +23,8 @@ import {
   LISTEN_MATCHER_PROFILES,
   LISTEN_MULTIDOMAIN_CANDIDATE_PROFILE_IDS,
   listenMatcherThresholds,
-  type ListenMatcherProfileId,
-} from "../listenMatcherProfiles";
+} from "@fschuh/piano-transcription-engine";
+import type { ListenMatcherProfileId } from "@fschuh/piano-transcription-engine";
 import {
   extractListenSafetyRegressionFrames,
   type ListenSafetyRegressionFrame,

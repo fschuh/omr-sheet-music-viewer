@@ -36,9 +36,11 @@ import {
 import {
   findListenMatcherProfile,
   listenMatcherThresholds,
-  type ListenMatcherProfileId,
-  type ListenMatcherThresholds,
-} from "../listenMatcherProfiles";
+} from "@fschuh/piano-transcription-engine";
+import type {
+  ListenMatcherProfileId,
+  ListenMatcherThresholds,
+} from "@fschuh/piano-transcription-engine";
 import {
   assertFocusedCaseMatchesRegressions,
   buildListenSafetyRegressionFixture,

@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { ExactChordMatcher } from "../../chordMatcher";
+import {
+  ExactChordMatcher,
+  LISTEN_MATCHER_PROFILE_IDS,
+  LISTEN_MATCHER_PROFILES,
+  listenMatcherThresholds,
+  matcherOptionsForListenMatcherProfile,
+} from "@fschuh/piano-transcription-engine";
+import type { ListenMatcherThresholds } from "@fschuh/piano-transcription-engine";
 import {
   LISTEN_BENCHMARK_RENDERER,
   LISTEN_BENCHMARK_TONE_RENDERER,
@@ -34,13 +41,6 @@ import {
   matcherOptionsForListenExperimentalProfile,
   type ListenExperimentalBassOnsetThresholds,
 } from "../listenExperimentalBassOnset";
-import {
-  LISTEN_MATCHER_PROFILES,
-  LISTEN_MATCHER_PROFILE_IDS,
-  listenMatcherThresholds,
-  matcherOptionsForListenMatcherProfile,
-  type ListenMatcherThresholds,
-} from "../listenMatcherProfiles";
 import {
   LISTEN_DOMAIN_REGRET_MATERIAL_BOUNDARY,
   LISTEN_REPEATED_DELAY_MATERIAL_GAIN_MS,

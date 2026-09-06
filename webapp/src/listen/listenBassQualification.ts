@@ -19,24 +19,22 @@
  */
 
 import {
-  type ChordMatcherDecision,
-  type ChordMatcherEvidenceVerdict,
-  type ChordMatcherOnsetVerdict,
-} from "../chordMatcher";
-import {
   FIXED_LISTEN_MATCHER_POLICY,
   LISTEN_MATCHER_PROFILES,
-  type ListenMatcherThresholds,
-} from "./listenMatcherProfiles";
+  ONLINE_AMT_CHUNK_SIZE,
+  ONLINE_AMT_SAMPLE_RATE,
+} from "@fschuh/piano-transcription-engine";
+import type {
+  ChordMatcherDecision,
+  ChordMatcherEvidenceVerdict,
+  ChordMatcherOnsetVerdict,
+  ListenMatcherThresholds,
+} from "@fschuh/piano-transcription-engine";
 import {
   LISTEN_MATCHER_SWEEP_ACTIVE_THRESHOLDS,
   generateListenMatcherSweepProfiles,
   type ListenMatcherSweepProfile,
 } from "./benchmarks/listenMatcherSweepBenchmark";
-import {
-  ONLINE_AMT_CHUNK_SIZE,
-  ONLINE_AMT_SAMPLE_RATE,
-} from "../onlineAmtProtocol";
 import { replayIsolatedListenTrace } from "./benchmarks/listenBenchmark";
 import {
   LISTEN_ATTACK_BOUNDARY_EPSILON_MS,

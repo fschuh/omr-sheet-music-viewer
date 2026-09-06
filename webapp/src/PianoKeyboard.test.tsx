@@ -5,7 +5,7 @@ import {
   KeyboardRecognitionTracker,
   KEYBOARD_STALE_SUSTAIN_MS,
 } from "./keyboardRecognition";
-import type { RecognizerResult } from "./noteRecognizer";
+import type { RecognizerResult } from "@fschuh/piano-transcription-engine";
 import { formatKeyboardPitch, PIANO_KEYS, PianoKeyboard } from "./PianoKeyboard";
 
 function recognizerResult(

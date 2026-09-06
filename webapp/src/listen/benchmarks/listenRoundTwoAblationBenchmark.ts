@@ -31,12 +31,12 @@ import {
   LISTEN_BASELINE_PROFILE_ID,
 } from "./listenBaselineParity";
 import {
-  LISTEN_MATCHER_PROFILES,
   LISTEN_MATCHER_PROFILE_IDS,
+  LISTEN_MATCHER_PROFILES,
   listenMatcherThresholds,
   matcherOptionsForListenMatcherProfile,
-  type ListenMatcherThresholds,
-} from "../listenMatcherProfiles";
+} from "@fschuh/piano-transcription-engine";
+import type { ListenMatcherThresholds } from "@fschuh/piano-transcription-engine";
 import type { ListenExperimentalBassOnsetThresholds } from "../listenExperimentalBassOnset";
 import {
   LISTEN_MATCHER_SELECTION_POLICY,

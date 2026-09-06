@@ -19,6 +19,7 @@ _build/
 /webapp/.test-dist
 /webapp/*.tsbuildinfo
 /webapp/public/audio/salamander-grand-piano/
+/webapp/public/generated-listen-assets/
 /src-tauri/target
 /src-tauri/gen
 
@@ -36,7 +37,6 @@ _build/
 *.onnx
 *.pt
 *.onnx.data
-!webapp/public/models/online_amt_streaming.onnx
 
 # Byprodcuts of a training run
 /seg_unet.keras

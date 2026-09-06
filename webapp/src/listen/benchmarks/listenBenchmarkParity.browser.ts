@@ -18,7 +18,8 @@ import {
   type ListenRecognitionFrame,
   type ListenSequenceDefinition,
 } from "./listenSequenceBenchmark";
-import { OnlineAmtSession } from "../../onlineAmtSession";
+import { OnlineAmtSession } from "@fschuh/piano-transcription-engine";
+import { ONLINE_AMT_WASM_URL } from "../../onlineAmtWasm";
 
 export interface ListenBenchmarkParityCheck {
   name: string;
@@ -342,7 +343,11 @@ export async function runListenBenchmarkParityTests(
 
   onProgress("Loading online-AMT model…");
   const session = await OnlineAmtSession.create({
-    modelUrl: new URL("models/online_amt_streaming.onnx", document.baseURI).href,
+    modelUrl: new URL(
+      "generated-listen-assets/online_amt_streaming.onnx",
+      document.baseURI,
+    ).href,
+    wasmUrl: ONLINE_AMT_WASM_URL,
     numThreads: 1,
     graphOptimizationLevel: "all",
     enableCpuMemArena: true,

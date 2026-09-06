@@ -1,4 +1,4 @@
-import type { DecodedOnlineAmtOutput } from "./onlineAmtOutput";
+import type { DecodedOnlineAmtOutput } from "@fschuh/piano-transcription-engine";
 
 const STATE_COUNT = 5;
 const FIRST_PIANO_MIDI = 21;

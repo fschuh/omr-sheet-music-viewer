@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { LISTEN_MATCHER_PROFILES } from "./listenMatcherProfiles";
+import { LISTEN_MATCHER_PROFILES } from "@fschuh/piano-transcription-engine";
 import {
   listenConfirmationArchiveFixture,
   listenLiveArchiveFixture,

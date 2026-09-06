@@ -21,7 +21,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { DEFAULT_LISTEN_MATCHER_PROFILE_ID } from "./listenMatcherProfiles";
+import { DEFAULT_LISTEN_MATCHER_PROFILE_ID } from "@fschuh/piano-transcription-engine";
 import {
   LISTEN_ROUND_TWO_ABLATION_EVIDENCE_PATHS,
   LISTEN_ROUND_TWO_CANDIDATE_MANIFEST_FILE,

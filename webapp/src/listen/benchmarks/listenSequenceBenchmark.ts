@@ -1,14 +1,25 @@
 import {
-  ExactChordMatcher,
-  type ChordMatchUpdate,
-  type ChordMatcherDecision,
-} from "../../chordMatcher";
-import {
   DEFAULT_LISTEN_MATCHER_PROFILE_ID,
+  ExactChordMatcher,
   LISTEN_MATCHER_PROFILES,
   listenMatcherThresholds,
-  type ListenMatcherThresholds,
-} from "../listenMatcherProfiles";
+  ONLINE_AMT_CHUNK_SIZE,
+  ONLINE_AMT_SAMPLE_RATE,
+  OnlineAmtOutputDecoder,
+  OnlineAmtSession,
+} from "@fschuh/piano-transcription-engine";
+import type {
+  ChordMatcherDecision,
+  ChordMatchUpdate,
+  DecodedOnlineAmtOutput,
+  ListenMatcherThresholds,
+  OnlineAmtStepResult,
+  RecognizedNoteEvent,
+  RecognizedOnset,
+  RecognizedPitchEvidence,
+  RecognizerResult,
+} from "@fschuh/piano-transcription-engine";
+import { ONLINE_AMT_WASM_URL } from "../../onlineAmtWasm";
 import {
   matcherOptionsForListenExperimentalProfile,
 } from "../listenExperimentalBassOnset";
@@ -25,18 +36,6 @@ import {
 } from "./listenBaselineParity";
 import { COURSE_CLEAR_BENCHMARK_MOMENTS } from "./listenBenchmarkFixtures";
 import {
-  ONLINE_AMT_CHUNK_SIZE,
-  ONLINE_AMT_SAMPLE_RATE,
-} from "../../onlineAmtProtocol";
-import {
-  OnlineAmtOutputDecoder,
-  type DecodedOnlineAmtOutput,
-} from "../../onlineAmtOutput";
-import {
-  OnlineAmtSession,
-  type OnlineAmtStepResult,
-} from "../../onlineAmtSession";
-import {
   LISTEN_BENCHMARK_DEFAULT_HOLD_MS,
   LISTEN_BENCHMARK_RELEASE_MS,
   LISTEN_BENCHMARK_RENDERER,
@@ -49,12 +48,6 @@ import {
   type ListenBenchmarkAudioSignature,
   renderBenchmarkAudio,
 } from "./listenBenchmarkAudio";
-import type {
-  RecognizedNoteEvent,
-  RecognizedOnset,
-  RecognizedPitchEvidence,
-  RecognizerResult,
-} from "../../noteRecognizer";
 import type { PianoId, PianoLayerId } from "../../pianoRegistry";
 
 export const LISTEN_SEQUENCE_INTERVALS_MS = [
@@ -2891,7 +2884,11 @@ export async function withOnlineAmtBenchmarkSession<T>(
   run: (session: OnlineAmtSession) => Promise<T>,
 ): Promise<T> {
   const pendingSession = OnlineAmtSession.create({
-    modelUrl: new URL("models/online_amt_streaming.onnx", document.baseURI).href,
+    modelUrl: new URL(
+      "generated-listen-assets/online_amt_streaming.onnx",
+      document.baseURI,
+    ).href,
+    wasmUrl: ONLINE_AMT_WASM_URL,
     numThreads: 1,
     graphOptimizationLevel: "all",
     enableCpuMemArena: true,

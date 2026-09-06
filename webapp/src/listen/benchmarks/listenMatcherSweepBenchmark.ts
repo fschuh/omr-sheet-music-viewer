@@ -20,7 +20,7 @@ import {
   type ListenBenchmarkRendererConfiguration,
 } from "./listenBenchmarkAudio";
 import { bundledListenBenchmarkCases } from "./listenBenchmark";
-import type { ListenMatcherThresholds } from "../listenMatcherProfiles";
+import type { ListenMatcherThresholds } from "@fschuh/piano-transcription-engine";
 import {
   LISTEN_BASELINE_PROFILE,
   assertListenSequenceRunParity,

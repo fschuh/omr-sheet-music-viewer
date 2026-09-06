@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { DecodedOnlineAmtOutput } from "../../onlineAmtOutput";
-import type { OnlineAmtStepResult } from "../../onlineAmtSession";
+import type {
+  DecodedOnlineAmtOutput,
+  OnlineAmtStepResult,
+} from "@fschuh/piano-transcription-engine";
 import {
   LISTEN_BENCHMARK_RELEASE_MS,
   LISTEN_BENCHMARK_RENDERER,

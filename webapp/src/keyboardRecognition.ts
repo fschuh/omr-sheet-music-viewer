@@ -1,7 +1,7 @@
 import type {
   RecognizedPitchEvidence,
   RecognizerResult,
-} from "./noteRecognizer";
+} from "@fschuh/piano-transcription-engine";
 
 /**
  * online_amt can occasionally leave a pitch in its autoregressive sustain

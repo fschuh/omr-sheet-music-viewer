@@ -13,18 +13,16 @@
 
 import {
   FIXED_LISTEN_MATCHER_POLICY,
-  LISTEN_MATCHER_PROFILES,
   LISTEN_MATCHER_PROFILE_IDS,
-  type ListenMatcherThresholds,
-} from "../listenMatcherProfiles";
+  LISTEN_MATCHER_PROFILES,
+  ONLINE_AMT_CHUNK_SIZE,
+  ONLINE_AMT_SAMPLE_RATE,
+} from "@fschuh/piano-transcription-engine";
+import type { ListenMatcherThresholds } from "@fschuh/piano-transcription-engine";
 import {
   listenExperimentalThresholds,
   type ListenExperimentalBassOnsetThresholds,
 } from "../listenExperimentalBassOnset";
-import {
-  ONLINE_AMT_CHUNK_SIZE,
-  ONLINE_AMT_SAMPLE_RATE,
-} from "../../onlineAmtProtocol";
 import {
   LISTEN_SEQUENCE_PRE_ROLL_MS,
   materializeListenSequence,

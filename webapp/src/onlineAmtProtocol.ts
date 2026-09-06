@@ -1,2 +1,0 @@
-export const ONLINE_AMT_SAMPLE_RATE = 16_000;
-export const ONLINE_AMT_CHUNK_SIZE = 512;

@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { ExactChordMatcher } from "../../chordMatcher";
+import {
+  ExactChordMatcher,
+  LISTEN_MATCHER_PROFILES,
+  LISTEN_MATCHER_REGISTRY_VERSION,
+  LISTEN_MULTIDOMAIN_CANDIDATE_PROFILE_IDS,
+  listenMatcherThresholds,
+  matcherOptionsForListenMatcherProfile,
+} from "@fschuh/piano-transcription-engine";
+import type { ListenMatcherProfileId } from "@fschuh/piano-transcription-engine";
 import {
   LISTEN_BENCHMARK_RENDERER,
   LISTEN_BENCHMARK_TONE_RENDERER,
@@ -17,14 +25,6 @@ import {
   listenRecognitionStructureHash,
   listenRecognitionTraceHash,
 } from "./listenBaselineParity";
-import {
-  LISTEN_MATCHER_PROFILES,
-  LISTEN_MATCHER_REGISTRY_VERSION,
-  LISTEN_MULTIDOMAIN_CANDIDATE_PROFILE_IDS,
-  listenMatcherThresholds,
-  matcherOptionsForListenMatcherProfile,
-  type ListenMatcherProfileId,
-} from "../listenMatcherProfiles";
 import {
   LISTEN_PROFILE_VALIDATION_POLICY,
   LISTEN_PROFILE_VALIDATION_POLICY_VERSION,

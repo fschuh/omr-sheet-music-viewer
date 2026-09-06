@@ -10,7 +10,7 @@ import { LISTEN_BENCHMARK_RENDERER } from "./listenBenchmarkAudio";
 import {
   LISTEN_MATCHER_PROFILES,
   listenMatcherThresholds,
-} from "../listenMatcherProfiles";
+} from "@fschuh/piano-transcription-engine";
 import type { ListenSequenceRunResult, ListenSequenceRunSummary } from "./listenSequenceBenchmark";
 
 function summary(update: Partial<ListenSequenceRunSummary>): ListenSequenceRunSummary {

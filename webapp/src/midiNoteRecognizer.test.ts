@@ -1,14 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { ExactChordMatcher } from "./chordMatcher";
-import { matcherOptionsForListenMatcherProfile } from "./listen/listenMatcherProfiles";
+import {
+  ExactChordMatcher,
+  matcherOptionsForListenMatcherProfile,
+} from "@fschuh/piano-transcription-engine";
+import type { RecognizerResult } from "@fschuh/piano-transcription-engine";
 import {
   isMidiNoteMessage,
   isMidiNoteOnMessage,
   MidiNoteRecognizer,
   type MidiNoteRecognizerEnvironment,
 } from "./midiNoteRecognizer";
-import type { RecognizerResult } from "./noteRecognizer";
 
 class FakeEnvironment implements MidiNoteRecognizerEnvironment {
   nowMs = 0;

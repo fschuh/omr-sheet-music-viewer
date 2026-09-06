@@ -34,11 +34,11 @@ import {
   LISTEN_REPEATED_SOURCE_DISTANCE_NO_REGRESSION,
 } from "../listenMatcherSelectionPolicy";
 import {
-  LISTEN_MATCHER_PROFILES,
   isListenMatcherProfileId,
+  LISTEN_MATCHER_PROFILES,
   listenMatcherThresholds,
-  type ListenMatcherThresholds,
-} from "../listenMatcherProfiles";
+} from "@fschuh/piano-transcription-engine";
+import type { ListenMatcherThresholds } from "@fschuh/piano-transcription-engine";
 import { listenRepeatedChordRecoveries, observeListenSequenceQualification }
   from "../listenBassQualification";
 import { listenRoundTwoAttributedRecoverySpan } from "./listenRoundTwoAblationBenchmark";

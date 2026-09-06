@@ -4,7 +4,10 @@ import {
   BrowserSpectralRecognizer,
   type SpectralRecognizerEnvironment,
 } from "./spectralRecognizer";
-import type { RecognizerLifecycle, RecognizerResult } from "./noteRecognizer";
+import type {
+  RecognizerLifecycle,
+  RecognizerResult,
+} from "@fschuh/piano-transcription-engine";
 
 class MockNode {
   disconnected = false;

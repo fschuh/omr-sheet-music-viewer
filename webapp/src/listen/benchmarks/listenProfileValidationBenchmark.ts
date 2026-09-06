@@ -65,13 +65,15 @@ import {
   type PianoLayerId,
 } from "../../pianoRegistry";
 import {
+  findListenMatcherProfile,
   LISTEN_MATCHER_REGISTRY_VERSION,
   LISTEN_MULTIDOMAIN_CANDIDATE_PROFILE_IDS,
-  findListenMatcherProfile,
   listenMatcherThresholds,
-  type ListenMatcherProfileId,
-  type ListenMatcherThresholds,
-} from "../listenMatcherProfiles";
+} from "@fschuh/piano-transcription-engine";
+import type {
+  ListenMatcherProfileId,
+  ListenMatcherThresholds,
+} from "@fschuh/piano-transcription-engine";
 import {
   LISTEN_PROFILE_VALIDATION_POLICY,
   assertValidListenProfileValidationPolicy,

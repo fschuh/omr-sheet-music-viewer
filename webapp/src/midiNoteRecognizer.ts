@@ -4,7 +4,7 @@ import type {
   RecognizedNoteEvent,
   RecognizedOnset,
   RecognizerLifecycle,
-} from "./noteRecognizer";
+} from "@fschuh/piano-transcription-engine";
 
 const MIDI_SETTLE_EMIT_MS = 40;
 

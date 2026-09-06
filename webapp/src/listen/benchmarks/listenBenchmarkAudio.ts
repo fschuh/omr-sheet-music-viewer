@@ -1,5 +1,8 @@
 import * as Tone from "tone";
-import { ONLINE_AMT_CHUNK_SIZE, ONLINE_AMT_SAMPLE_RATE } from "../../onlineAmtProtocol";
+import {
+  ONLINE_AMT_CHUNK_SIZE,
+  ONLINE_AMT_SAMPLE_RATE,
+} from "@fschuh/piano-transcription-engine";
 import {
   createTonePianoLayeredGraph,
   midiToPitchName,

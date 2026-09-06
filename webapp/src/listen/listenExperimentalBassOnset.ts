@@ -14,13 +14,15 @@
  * then emits no matcher option at all.
  */
 
-import type { ChordMatcherOptions } from "../chordMatcher";
 import {
   isListenMatcherThresholds,
   matcherOptionsForListenMatcherProfile,
-  type ListenMatcherProfileId,
-  type ListenMatcherThresholds,
-} from "./listenMatcherProfiles";
+} from "@fschuh/piano-transcription-engine";
+import type {
+  ChordMatcherOptions,
+  ListenMatcherProfileId,
+  ListenMatcherThresholds,
+} from "@fschuh/piano-transcription-engine";
 
 /** A benchmark threshold set that may carry the experimental bass-onset gate. */
 export interface ListenExperimentalBassOnsetThresholds extends ListenMatcherThresholds {

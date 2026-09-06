@@ -19,27 +19,29 @@ import {
   type PlaybackState,
 } from "./playback";
 import { pianoSampler, pitchToMidi } from "./piano";
-import { BrowserOnlineAmtRecognizer } from "./onlineAmtRecognizer";
+import { createBrowserOnlineAmtRecognizer } from "./listenRecognizer";
 import {
   isMidiNoteMessage,
   isMidiNoteOnMessage,
   MidiNoteRecognizer,
 } from "./midiNoteRecognizer";
 import {
-  matcherOptionsForListenMatcherProfile,
+  ExactChordMatcher,
   listenMatcherOverrideAfterDebugPanelChange,
+  matcherOptionsForListenMatcherProfile,
   resolveEffectiveListenMatcherProfile,
-  type ListenMatcherProfileId,
-} from "./listen/listenMatcherProfiles";
-import { ExactChordMatcher } from "./chordMatcher";
-import { KeyboardRecognitionTracker } from "./keyboardRecognition";
+} from "@fschuh/piano-transcription-engine";
+import type {
+  ListenInputSource,
+  ListenMatcherProfileId,
+  NoteRecognizer,
+  RecognizerResult,
+} from "@fschuh/piano-transcription-engine";
 import {
   stoppedRecognizerLifecycle,
   type ListenModeFeedback,
-  type ListenInputSource,
-  type NoteRecognizer,
-  type RecognizerResult,
 } from "./noteRecognizer";
+import { KeyboardRecognitionTracker } from "./keyboardRecognition";
 import {
   buildRealtimeVisualMap,
   expandPerformanceRoute,
@@ -857,7 +859,7 @@ export function App() {
     }
     const recognizer = inputSource === "midi"
       ? new MidiNoteRecognizer()
-      : new BrowserOnlineAmtRecognizer();
+      : createBrowserOnlineAmtRecognizer();
     recognizer.setTarget(target);
     listenTargetKeyRef.current = listenTargetKey(
       currentPlaybackMoment(playbackTimeline, playbackStateRef.current)?.id,

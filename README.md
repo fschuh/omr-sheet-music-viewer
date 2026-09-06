@@ -69,7 +69,7 @@ speaker preference. The audition button or default `P` shortcut explicitly plays
 the current chord, including while muted; matching pauses through the sample decay.
 
 Advancement thresholds come from one named matcher profile in the versioned
-registry in `webapp/src/listen/listenMatcherProfiles.ts`. Timing, target ordering, and
+registry the engine package owns. Timing, target ordering, and
 advancement semantics are identical for every profile, so a profile only
 reinterprets model confidence. The shipped default is `baseline-v1`. The frozen
 automated confirmation of August 21, 2026 replayed four candidate profiles over
@@ -219,6 +219,28 @@ The **Worker logs** panel reports the choice on every start, as
 GPU inference uses fp16 model variants rather than the fp32 ones, so switching
 downloads a second set of checkpoints, roughly 143 MB alongside the 151 MB CPU set.
 Both are kept, so switching back does not download again.
+
+### Listen engine
+
+The recognizer, matcher, matcher-profile registry, capture worklet, and
+`online_amt` model live in
+[`piano-transcription-engine`](https://github.com/fschuh/piano-transcription-engine).
+The viewer consumes them as one installable package and keeps only its own
+listen-mode orchestration, input adapters, feedback rendering, and worker entry.
+
+That dependency is currently a `file:` path to a sibling checkout, so clone the
+two repositories next to each other before installing:
+
+```text
+music/
+├── sheet-music-viewer/
+└── piano-transcription-engine/
+```
+
+The model and worklet are no longer committed here. `npm run prepare:listen-assets`
+copies them out of the installed package into `webapp/public/generated-listen-assets/`,
+which this repository ignores; `predev` and `prebuild` run it automatically, so the
+commands below need no extra step.
 
 ### Running
 

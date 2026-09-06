@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { LISTEN_BENCHMARK_RENDERER } from "./listenBenchmarkAudio";
-import { OnlineAmtOutputDecoder } from "../../onlineAmtOutput";
+import { OnlineAmtOutputDecoder } from "@fschuh/piano-transcription-engine";
 import {
   applyListenRetriggerAcceptanceGates,
   auditListenRetriggerOpportunities,

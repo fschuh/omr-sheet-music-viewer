@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { OnlineAmtStepResult } from "../../onlineAmtSession";
+import type { OnlineAmtStepResult } from "@fschuh/piano-transcription-engine";
 import {
   LISTEN_BENCHMARK_RENDERER,
   LISTEN_BENCHMARK_PIANO,

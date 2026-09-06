@@ -2,7 +2,7 @@ import type {
   NoteRecognizer,
   NoteRecognizerCallbacks,
   RecognizerLifecycle,
-} from "./noteRecognizer";
+} from "@fschuh/piano-transcription-engine";
 import { SpectralPitchDetector } from "./spectralPitchDetector";
 
 const FFT_SIZE = 16_384;

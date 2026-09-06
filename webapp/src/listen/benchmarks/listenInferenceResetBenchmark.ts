@@ -18,7 +18,12 @@ import {
   type SequenceOutputDecoder,
   type ListenInferenceMode,
 } from "./listenSequenceBenchmark";
-import { OnlineAmtSession } from "../../onlineAmtSession";
+import {
+  ONLINE_AMT_CHUNK_SIZE,
+  ONLINE_AMT_SAMPLE_RATE,
+  OnlineAmtSession,
+} from "@fschuh/piano-transcription-engine";
+import { ONLINE_AMT_WASM_URL } from "../../onlineAmtWasm";
 import {
   LISTEN_BENCHMARK_DEFAULT_HOLD_MS,
   LISTEN_BENCHMARK_RELEASE_MS,
@@ -28,7 +33,6 @@ import {
   type ListenBenchmarkAudioSignature,
   type ListenBenchmarkRendererConfiguration,
 } from "./listenBenchmarkAudio";
-import { ONLINE_AMT_CHUNK_SIZE, ONLINE_AMT_SAMPLE_RATE } from "../../onlineAmtProtocol";
 
 export const LISTEN_INFERENCE_RESET_WARMUP_MS = 220;
 export const LISTEN_INFERENCE_RESET_SUBSTANTIAL_EVENT_COUNT = 3;
@@ -871,7 +875,11 @@ export async function runListenInferenceResetBenchmark(
   renderer: ListenBenchmarkRendererConfiguration = LISTEN_BENCHMARK_RENDERER,
 ): Promise<ListenInferenceResetBenchmarkResult> {
   const pendingSession = OnlineAmtSession.create({
-    modelUrl: new URL("models/online_amt_streaming.onnx", document.baseURI).href,
+    modelUrl: new URL(
+      "generated-listen-assets/online_amt_streaming.onnx",
+      document.baseURI,
+    ).href,
+    wasmUrl: ONLINE_AMT_WASM_URL,
     numThreads: 1,
     graphOptimizationLevel: "all",
     enableCpuMemArena: true,

@@ -1,5 +1,5 @@
 import { DEFAULT_PIANO_ID, isPianoId, type PianoId } from "./pianoRegistry";
-import type { ListenInputSource } from "./noteRecognizer";
+import type { ListenInputSource } from "@fschuh/piano-transcription-engine";
 
 export const DEBUG_PANEL_STORAGE_KEY = "homr.debug-panel-enabled.v1";
 export const PLAYBACK_PIANO_STORAGE_KEY = "homr.playback-piano.v1";

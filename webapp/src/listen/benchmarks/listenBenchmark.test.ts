@@ -13,8 +13,8 @@ import { LISTEN_BENCHMARK_TONE_RENDERER } from "./listenBenchmarkAudio";
 import {
   LISTEN_MATCHER_PROFILES,
   listenMatcherThresholds,
-  type ListenMatcherProfileId,
-} from "../listenMatcherProfiles";
+} from "@fschuh/piano-transcription-engine";
+import type { ListenMatcherProfileId } from "@fschuh/piano-transcription-engine";
 
 function trial(update: Partial<ListenBenchmarkTrial> = {}): ListenBenchmarkTrial {
   return {

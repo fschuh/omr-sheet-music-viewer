@@ -35,10 +35,10 @@
 
 import {
   DEFAULT_LISTEN_MATCHER_PROFILE_ID,
-  LISTEN_MATCHER_PROFILE_IDS,
   isListenMatcherProfileId,
-  type ListenMatcherProfileId,
-} from "./listenMatcherProfiles";
+  LISTEN_MATCHER_PROFILE_IDS,
+} from "@fschuh/piano-transcription-engine";
+import type { ListenMatcherProfileId } from "@fschuh/piano-transcription-engine";
 import {
   LISTEN_ROUND_TWO_ROUND_ID,
   listenRoundTwoCandidateManifestFromRepetitions,

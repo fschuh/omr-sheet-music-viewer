@@ -9,7 +9,7 @@ import {
   DEFAULT_LISTEN_MATCHER_PROFILE_ID,
   LISTEN_MATCHER_PROFILE_IDS,
   resolveEffectiveListenMatcherProfile,
-} from "./listenMatcherProfiles";
+} from "@fschuh/piano-transcription-engine";
 import {
   LISTEN_ROUND_TWO_ABLATION_EVIDENCE_PATHS,
   LISTEN_ROUND_TWO_CANDIDATE_MANIFEST_FILE,
