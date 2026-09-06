@@ -865,6 +865,50 @@ Acceptance:
 
 ### Task 12 — Verify the cutover and declare Round 3 ready
 
+**Status:** Completed September 6, 2026, except the manual listen-mode smoke,
+which needs a person and a real microphone and is recorded below as outstanding.
+Every other step ran from fresh clones of all three repositories against engine
+`d226f690d4be7842e54fa6b22a5e2f59bcb5a698`, the revision both consumers pin.
+
+| Step | Result |
+| --- | --- |
+| 1. Engine clean install, typecheck, unit tests, build | 19 packages, typecheck clean, 96/96, package verification of 34 files |
+| 2. Private eval clean install and inventory | 5 gold pairs in 1 setup and 17 silver pairs in 17 setups, every take matching the annotation's 69 attacks in 27 moments, no unpaired files, no duplicates, no errors |
+| 3. Canonical offline session and decoder/matcher fixtures | The 180-frame runtime fixture holds score parity at 3.43e-5 with zero state and signal-active mismatches, faster than its audio cadence; the Task 01 engine-core fixture reproduces its decoder frames and `baseline-v1` matcher updates, and its bytes still match the baseline |
+| 4. Browser/offline parity smoke | Passed; every environment-independent field identical and inference bit-identical in headless Chrome and Node |
+| 5. Viewer clean install from the pinned Git dependency | 118 packages, the engine fetched, prepared, and installed at the pinned SHA |
+| 6. Viewer unit tests and production build | 143/143 and a clean production build carrying `d226f69` in its diagnostics |
+| 7. Manual listen-mode smoke | **Outstanding.** Not runnable here |
+| 8. Dependency-boundary search | The viewer imports only `.` (17) and `/browser` (2); no viewer module imports `/eval`; no engine core, runtime, or browser module imports eval, in source or in `dist`; no eval export is reachable from the production entry point |
+
+Production values were checked against the frozen Task 01 record rather than
+assumed. The model, its MIT notice, and the worklet match their frozen sizes and
+SHA-256 digests both in the engine and in the viewer's generated build output.
+The registry is version 2, the default is `baseline-v1`, all seven profiles carry
+their frozen onset, target-note, active-target, unexpected-note, and fresh-bass
+values, the fixed policy is unchanged in all seven fields, `baseline-v1`'s
+converted matcher options still map the unexpected-note threshold to
+`noteThreshold`, and `onnxruntime-web` is exactly 1.27.0 in both manifests.
+
+The last end-to-end browser check against the pre-extraction baseline ran at
+engine `1e49803`, reproducing the frozen smoke for both renderers: advanced at
+196 ms, 17,920 PCM frames, 35 trace frames, structure hashes `83fbd243` and
+`5c164339`. `src/` and `assets/` are untouched between that revision and
+`d226f69`, and both revisions compile to a byte-identical `dist`, so the
+installed artifact carrying that result is the one now pinned.
+
+Step 7 remains the only unmet acceptance condition. Start, target changes,
+advancement, pause, resume, stop, and microphone denial each have automated
+coverage in a fake environment — the engine's browser recognizer lifecycle tests,
+the viewer's permission-wording tests, the MIDI chord fed through the shared
+matcher, and the functional suite's synthetic traces — but none of that observes
+a real microphone, a real instrument, or the playhead moving. It must be run
+before Round 3 planning begins and before the production matcher profile changes.
+
+Extraction reports were written in all three repositories: `EXTRACTION.md` in the
+engine, `plans/piano-transcription-engine-extraction-report.md` here, and an
+engine dependency entry in the private corpus README.
+
 Run, in order:
 
 1. Clean `piano-transcription-engine` install, typecheck, unit tests, and build.

@@ -117,6 +117,10 @@ engine revision this build was made against. Manual acoustic- and
 digital-piano trials are still required before changing the `online_amt` matcher
 profile, and no candidate has yet earned them.
 
+[`plans/piano-transcription-engine-extraction-report.md`](plans/piano-transcription-engine-extraction-report.md)
+records what moved, what this repository still supplies, and what must pass
+before a later engine revision is adopted.
+
 `tools/online_amt/` and `benchmark-results/` keep the Round 1/2 reports and
 result files as frozen history. Their commands describe the repository as it
 stood at viewer commit `89afafcdd7fd06db0626feba6a0665ab1c3bf798` and are not
