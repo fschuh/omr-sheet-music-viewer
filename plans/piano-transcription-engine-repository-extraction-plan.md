@@ -709,10 +709,11 @@ Acceptance:
 
 ### Task 10 — Establish and pin the Git dependency
 
-**Status:** Completed September 6, 2026. Both consumers depend on
+**Status:** Completed September 6, 2026. Both consumers were pinned to
 `git+https://github.com/fschuh/piano-transcription-engine.git#1e49803b6a36c0d29f0283e94f2c7fa0d672b4d9`,
-the commit that requires a usable WASM source, with their lockfiles
-regenerated and committed. No manifest or lockfile in either
+the commit that requires a usable WASM source, with their lockfiles regenerated
+and committed; Task 11 later moved that pin forward, and every measurement
+recorded here was taken against `1e49803`. No manifest or lockfile in either
 repository names a branch or tag; every reference is that one full SHA. The
 specification is `git+https` rather than the plan's `git+ssh` example because the
 engine repository is public, its own remote is HTTPS, and an anonymous clean
@@ -815,8 +816,9 @@ chunk-size advisory. Nothing was restructured to silence it.
 
 Review found that this removed the only runnable browser/offline parity check
 before an engine-owned one existed, which the baseline inventory requires and
-Task 12 depends on. Engine commit `08341f8d4eb99f7ab1c6235896ba0ee308bba909`
-supplies the replacement as `npm run eval:browser-parity`. One module,
+Task 12 depends on. Engine commits `08341f8` and
+`d226f690d4be7842e54fa6b22a5e2f59bcb5a698` supply the replacement as
+`npm run eval:browser-parity`. One module,
 `evals/browser/runtimeFixture.js`, replays the deterministic 180-frame runtime
 fixture through the production session and output decoder, and
 `tools/run-browser-parity.mjs` runs that same module offline in Node against
@@ -828,9 +830,19 @@ must decode something. A raw score hash is reported but not asserted, so a
 last-bit inference difference is visible without failing the run. Inference is
 currently bit-identical in both environments. The check was verified to fail on a
 decoded divergence and on a violated score bound, and to pass while reporting the
-difference when only the last bits differ. None of the historical benchmark UI,
-audio renderers, or search matrices returned, and no score-derived material
-entered the engine.
+difference when only the last bits differ. Its first version could wait forever
+on a browser that died: it subscribed to the process only after signalling it, so
+a binary exiting at once left it waiting on an event already gone, and a socket
+closing mid-run left an evaluation unanswered. It now observes the process from
+the moment it is spawned, rejects in-flight DevTools requests when the connection
+closes, and races startup, navigation, and polling against the process ending; a
+browser that cannot start and one killed mid-run both end the command in seconds
+with the reason. None of the historical benchmark UI, audio renderers, or search
+matrices returned, and no score-derived material entered the engine.
+
+Both consumers are pinned to `d226f690d4be7842e54fa6b22a5e2f59bcb5a698`, so one
+revision identifies the verified engine, the installed dependency, the
+diagnostics output, and Task 12's report.
 
 - Remove extracted core/runtime files from the viewer.
 - Remove the benchmark page, benchmark-only route, benchmark HTML entry, old

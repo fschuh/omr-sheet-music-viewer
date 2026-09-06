@@ -112,7 +112,8 @@ point, and evaluation against real recordings runs from the private
 `piano-transcription-evals` repository. The engine also owns the browser/offline
 parity smoke that used to run from here: its `npm run eval:browser-parity`
 replays the runtime fixture through the production session and decoder in both
-headless Chrome and Node and compares the two. Manual acoustic- and
+headless Chrome and Node and compares the two; the Diagnostics panel names the
+engine revision this build was made against. Manual acoustic- and
 digital-piano trials are still required before changing the `online_amt` matcher
 profile, and no candidate has yet earned them.
 
