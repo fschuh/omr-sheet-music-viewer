@@ -1,5 +1,13 @@
 # Listen matcher profiles and instrument calibration plan
 
+> Historical reference — September 6, 2026. Round 1/2 emitters, verifiers, and
+> artifact-chain tests are non-active. Commands recorded below, including the
+> removed emit:round-two-* scripts, apply to viewer commit
+> 89afafcdd7fd06db0626feba6a0665ab1c3bf798. Final outcomes and source links are in
+> [fschuh/piano-transcription-engine](https://github.com/fschuh/piano-transcription-engine)
+> at `legacy/rounds-1-2/README.md`. Dated entries below are
+> preserved unchanged.
+
 > **Layout note, August 30, 2026.** Listen-mode source moved out of the flat
 > `webapp/src/` directory after this plan was written: production and
 > frozen-policy modules now live in `webapp/src/listen/`, and benchmark

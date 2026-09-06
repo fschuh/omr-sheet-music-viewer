@@ -6,6 +6,59 @@ import {
   OnlineAmtOutputDecoder,
   onlineAmtChordMatcherOptions,
 } from "./onlineAmtOutput";
+import engineCoreBaseline from "./listen/fixtures/engineCoreBaseline.fixture.json";
+import { matcherOptionsForListenMatcherProfile } from "./listen/listenMatcherProfiles";
+
+test("reproduces the public engine-core extraction baseline fixture", () => {
+  assert.equal(engineCoreBaseline.schemaVersion, 1);
+  assert.equal(engineCoreBaseline.profileId, "baseline-v1");
+  const decoder = new OnlineAmtOutputDecoder();
+  const matcher = new ExactChordMatcher(
+    matcherOptionsForListenMatcherProfile(engineCoreBaseline.profileId),
+  );
+  matcher.setTarget(
+    engineCoreBaseline.targetPitches,
+    engineCoreBaseline.generation,
+    0,
+  );
+  const relevantPitches = new Set(engineCoreBaseline.targetPitches);
+
+  for (const frame of engineCoreBaseline.frames) {
+    const scores = new Float32Array(88 * 5);
+    const states = new Uint8Array(88);
+    for (let pitch = 0; pitch < 88; pitch += 1) scores[pitch * 5] = 1;
+    for (const pitch of frame.pitches) {
+      const pianoIndex = pitch.midi - 21;
+      states[pianoIndex] = pitch.state;
+      scores.set(pitch.scores, pianoIndex * 5);
+    }
+
+    const decoded = decoder.decode(
+      scores,
+      states,
+      frame.signalActive,
+      frame.capturedAtMs,
+      engineCoreBaseline.targetPitches,
+    );
+    assert.deepEqual(decoded.onsets, frame.expected.onsets);
+    assert.deepEqual(
+      decoded.recognizedActivePitches,
+      frame.expected.recognizedActivePitches,
+    );
+    assert.deepEqual(decoded.targetPitchEvidence, frame.expected.targetPitchEvidence);
+    assert.deepEqual(
+      decoded.noteStates.filter(({ midi }) => relevantPitches.has(midi)),
+      frame.expected.relevantNoteStates,
+    );
+    assert.deepEqual(decoded.noteEvents, frame.expected.noteEvents);
+    assert.deepEqual(matcher.consume({
+      generation: engineCoreBaseline.generation,
+      ...decoded,
+      processingTimeMs: 0,
+      capturedAtMs: frame.capturedAtMs,
+    }), frame.expected.matcherUpdate);
+  }
+});
 
 test("decodes weighted onset and active-state confidence without changing argmax states", () => {
   const scores = new Float32Array(88 * 5);

@@ -1,5 +1,12 @@
 # Frozen listen-matcher benchmark results
 
+> Historical reference only as of September 6, 2026. Emitters, verifiers, and
+> artifact-chain tests below are non-active and are not run by `npm test`.
+> Final decisions and source provenance are archived in
+> [fschuh/piano-transcription-engine](https://github.com/fschuh/piano-transcription-engine)
+> under `legacy/rounds-1-2/README.md`. Reproduction commands below apply to viewer
+> commit `89afafcdd7fd06db0626feba6a0665ab1c3bf798`, before deactivation.
+
 Start the cross-origin-isolated benchmark server before running any reproduction
 command:
 
