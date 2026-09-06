@@ -7,9 +7,19 @@ import {
 import type { OnlineAmtSessionOptions } from "@fschuh/piano-transcription-engine";
 import { ONLINE_AMT_WASM_URL } from "./onlineAmtWasm";
 
-// OnlineAmtSessionOptions is a union over the model source, so this stays an
-// intersection rather than an interface extension.
-type InitializeMessage = OnlineAmtSessionOptions & { type: "initialize" };
+// The recognizer posts a model URL and runtime tuning. It never posts a WASM
+// source, because resolving ONNX Runtime's binary is this application's job.
+type InitializeMessage = {
+  type: "initialize";
+  modelUrl: string;
+} & Pick<
+  OnlineAmtSessionOptions,
+  | "numThreads"
+  | "graphOptimizationLevel"
+  | "enableCpuMemArena"
+  | "enableMemPattern"
+  | "executionMode"
+>;
 
 interface AudioMessage {
   type: "audio";
@@ -62,7 +72,7 @@ self.onmessage = ({ data }: MessageEvent<WorkerRequest>) => {
       const startedAt = performance.now();
       session = await OnlineAmtSession.create({
         ...data,
-        wasmUrl: data.wasmUrl ?? ONLINE_AMT_WASM_URL,
+        wasmUrl: ONLINE_AMT_WASM_URL,
       });
       decoder.reset();
       self.postMessage({
