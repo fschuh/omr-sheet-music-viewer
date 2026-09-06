@@ -7,6 +7,13 @@
 > [fschuh/piano-transcription-engine](https://github.com/fschuh/piano-transcription-engine)
 > at `legacy/rounds-1-2/README.md`. Dated entries below are
 > preserved unchanged.
+>
+> Superseded September 6, 2026: the benchmark page, browser driver, emitters,
+> evidence verifier, and every module named below were removed from this
+> repository when the engine took ownership of listen evaluation. Nothing here
+> is reproducible against the current tree; check out viewer commit
+> `89afafcdd7fd06db0626feba6a0665ab1c3bf798` to run any of it. Dated entries
+> below are preserved unchanged.
 
 > **Layout note, August 30, 2026.** Listen-mode source moved out of the flat
 > `webapp/src/` directory after this plan was written: production and

@@ -774,6 +774,49 @@ Acceptance:
 
 ### Task 11 — Remove viewer-owned benchmark and engine duplicates
 
+**Status:** Completed September 6, 2026. Eighty files left the viewer: the whole
+`webapp/src/listen` tree, including the benchmark page and every Round 1/2
+benchmark, policy, decision, emitter, and fixture module; the two benchmark HTML
+entries and the query-string route that selected the page; the browser benchmark
+driver and the evidence verifier with its mutation tests; the model export,
+validation, and runtime-benchmark tools and documentation the engine now owns;
+`onlineAmtBenchmark.ts` and the rejected retrigger-detector experiment; and
+`webapp/public/models`, whose synthetic runtime fixture the engine carries as
+`evals/fixtures/online_amt_runtime`. The extracted core and runtime modules had
+already gone in Task 09. `vite.config.ts` is down to the single application
+entry with no cross-origin-isolation mode, and the `dev:wasm-benchmark`,
+`predev:wasm-benchmark`, and retrigger test scripts are gone.
+
+The three Course Clear fixtures — the exact 27-moment pitch extraction and the
+two sets of decoded traces — were moved to `piano-transcription-evals` under
+`fixtures/rounds-1-2/` before deletion, as the fixture audit requires, so the
+only repository holding recording-derived material is the private one. Nothing
+imports them there.
+
+The frozen reports and result files stay: `tools/online_amt/` keeps the three
+Round 1/2 benchmark reports and `benchmark-results/` keeps its result JSON, as
+the historical evidence policy requires. Each now carries a dated note saying
+the code it describes was removed and naming the viewer commit that still runs
+it; no recorded command, path, or measurement inside them was rewritten. The
+extraction plan, the matcher calibration plan, and the decoder evidence
+requirement are retained and point at the engine archive.
+
+Searching viewer source finds package imports and no engine implementation; no
+viewer module imports the engine's `eval` entry point; no model, recording, or
+score-derived fixture is tracked here; and no script builds evaluation code.
+Typecheck passes, `npm test` is 143 tests with the eight retrigger cases
+retired, the production build succeeds with the worker chunk, the WASM asset,
+and the generated model URLs intact, and the development server serves both the
+application and the prepared model.
+
+Removing the benchmark page removed the viewer's only dynamic import, so the
+application now builds as one 715 kB chunk and Vite reports its default
+chunk-size advisory. Nothing was restructured to silence it. The real-browser
+smoke that this driver ran has no engine-side replacement yet; the engine's
+functional suite replays synthetic traces offline and does not render audio or
+run inference, so Task 12's browser/offline parity step still needs that
+capability ported into engine tooling.
+
 - Remove extracted core/runtime files from the viewer.
 - Remove the benchmark page, benchmark-only route, benchmark HTML entry, old
   emitters, and evidence verifier from the viewer's active build and test scripts.

@@ -1,5 +1,19 @@
 # Piano dynamics benchmark
 
+> Historical reference — September 6, 2026. Round 1/2 emitters, verifiers, and
+> artifact-chain tests are non-active. Commands recorded below apply to viewer
+> commit `89afafcdd7fd06db0626feba6a0665ab1c3bf798`. Final outcomes and source
+> links are in
+> [fschuh/piano-transcription-engine](https://github.com/fschuh/piano-transcription-engine)
+> at `legacy/rounds-1-2/README.md`.
+>
+> Superseded September 6, 2026: the benchmark page, browser driver, emitters,
+> evidence verifier, and every module named below were removed from this
+> repository when the engine took ownership of listen evaluation. Nothing here
+> is reproducible against the current tree; check out viewer commit
+> `89afafcdd7fd06db0626feba6a0665ab1c3bf798` to run any of it. Dated entries
+> below are preserved unchanged.
+
 Measured on August 16, 2026 in headless Chrome on the development Windows
 machine. This benchmark compares the historical direct Web Audio renderer with
 the app's Tone.js path across every bundled acoustic velocity layer.

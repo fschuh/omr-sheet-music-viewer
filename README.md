@@ -99,21 +99,25 @@ debug panel enabled, Settings offers a session-only profile override for hearing
 profile on real input, and the Diagnostics panel names the profile listen mode is
 running.
 
-The adapted PitchPlease spectral implementation and its historical benchmark
-remain in `webapp/src/vendor/pitchplease/`. The `online_amt` export procedure,
-runtime parity checks, WASM configuration matrix, and latest listening benchmark
-are recorded in `tools/online_amt/`. To run the instrumented browser benchmark,
-start the web development server and open
-`http://localhost:5173/?listen-benchmark=1`. It defaults to `online_amt`, while
-the spectral implementation has its own comparison button. The benchmark renders
-isolated notes and one-to-six-note chords from the bundled piano samples, reports
-analysis and onset-to-advance latency, and keeps the acceptance gate fixed at p95
-below 400 ms, 95% correct advancement, and zero distinguishable wrong-note false
-advances. Automated listening runs keep the historical direct sample mixer and an
-app-equivalent Tone.js sampler/compressor/limiter renderer as separately labelled,
-side-by-side configurations. The same page records manual acoustic- and
-digital-piano trials; those real-input trials are still required before changing
-the `online_amt` matcher profile, and no candidate has yet earned them.
+The adapted PitchPlease spectral implementation remains in
+`webapp/src/vendor/pitchplease/` as a retained experiment; it is not the
+application default and nothing in listen mode calls it.
+
+Listen evaluation is no longer part of this repository. The in-app benchmark
+page, its query-string route, its extra HTML entries, the browser benchmark
+driver, and the Round 1/2 emitters and evidence verifier were removed once the
+engine took ownership of evaluation; the model export and validation tools moved
+with them. The active functional suite now runs from the engine's `eval` entry
+point, and evaluation against real recordings runs from the private
+`piano-transcription-evals` repository. Manual acoustic- and digital-piano trials
+are still required before changing the `online_amt` matcher profile, and no
+candidate has yet earned them.
+
+`tools/online_amt/` and `benchmark-results/` keep the Round 1/2 reports and
+result files as frozen history. Their commands describe the repository as it
+stood at viewer commit `89afafcdd7fd06db0626feba6a0665ab1c3bf798` and are not
+reproducible here any more; each file carries a dated note saying so. The
+decisions they led to are archived in the engine under `legacy/rounds-1-2/`.
 
 ## Development
 
