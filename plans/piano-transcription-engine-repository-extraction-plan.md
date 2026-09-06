@@ -709,6 +709,31 @@ Acceptance:
 
 ### Task 10 — Establish and pin the Git dependency
 
+**Status:** Completed September 6, 2026. Both consumers depend on
+`git+https://github.com/fschuh/piano-transcription-engine.git#a83a879abe5895e2c0148bf6f33a25044919d01d`,
+the commit that adds the browser recognizer's `describeError` hook, with their
+lockfiles regenerated and committed. No manifest or lockfile in either
+repository names a branch or tag; every reference is that one full SHA. The
+specification is `git+https` rather than the plan's `git+ssh` example because the
+engine repository is public, its own remote is HTTPS, and an anonymous clean
+clone must install without an SSH key — npm still normalizes the lockfile's
+`resolved` field to the `git+ssh` form, and installs over HTTPS regardless.
+`npm ci` with an empty npm cache, from a clean viewer clone with no sibling
+checkout, fetched the commit, ran its `prepare` build, and installed the 71,955,821-byte
+model; `npm run build` and 151/151 viewer tests then passed there, and the
+prepared model was byte-identical to the engine's. A clean private eval clone
+likewise passed `npm ci` and `npm run eval:inventory` with 5 gold pairs in 1
+setup and 17 silver pairs in 17 setups, no errors. The Diagnostics panel now
+reports `0.1.0 · a83a879` with the full revision in its tooltip, injected by
+`vite.config.ts` from the pinned specification and the installed manifest. The
+canonical browser smoke reproduced the frozen baseline against the pinned install
+for both renderers: `matched-recorded-baseline`, advanced at 196 ms, 17,920 PCM
+frames, 35 trace frames, structure hashes `83fbd243` and `5c164339`. No
+readability tag was created. Note that npm hoists `onnxruntime-web` above the
+installed engine, so the engine's own default WASM path does not resolve under a
+Git install; the viewer's `onlineAmtWasm.ts` supplies `wasmUrl` explicitly, which
+is what makes this dependency work.
+
 - Push a tested extraction commit to the existing
   `https://github.com/fschuh/piano-transcription-engine` remote.
 - Optionally tag that commit for readability.

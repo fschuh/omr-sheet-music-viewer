@@ -228,14 +228,15 @@ The recognizer, matcher, matcher-profile registry, capture worklet, and
 The viewer consumes them as one installable package and keeps only its own
 listen-mode orchestration, input adapters, feedback rendering, and worker entry.
 
-That dependency is currently a `file:` path to a sibling checkout, so clone the
-two repositories next to each other before installing:
-
-```text
-music/
-├── sheet-music-viewer/
-└── piano-transcription-engine/
-```
+That dependency is one Git revision pinned to an exact commit, so a clean clone
+installs and builds it without a sibling checkout and nothing follows a moving
+branch. The Diagnostics panel names the revision the running build was made
+against. To adopt a newer engine, change the one revision in
+`webapp/package.json`, run `npm --prefix webapp install`, confirm the viewer's
+tests and production build still pass, and commit the regenerated lockfile with
+any UI adaptation the change requires. For simultaneous local work on both
+repositories, use a temporary uncommitted `file:` override to a sibling checkout
+and restore the pinned revision before committing.
 
 The model and worklet are no longer committed here. `npm run prepare:listen-assets`
 copies them out of the installed package into `webapp/public/generated-listen-assets/`,

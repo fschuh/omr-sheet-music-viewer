@@ -19,6 +19,7 @@ import {
   type PlaybackState,
 } from "./playback";
 import { pianoSampler, pitchToMidi } from "./piano";
+import { LISTEN_ENGINE } from "./listenEngine";
 import { createBrowserOnlineAmtRecognizer } from "./listenRecognizer";
 import {
   isMidiNoteMessage,
@@ -1964,6 +1965,8 @@ export function App() {
                   {listenMatcherProfile.id}
                   {listenMatcherProfileOverride ? " (debug override)" : ""}
                 </dd>
+                <dt>Listen engine</dt>
+                <dd title={LISTEN_ENGINE.detail}>{LISTEN_ENGINE.label}</dd>
               </dl>
               <h2>Highlighting</h2>
               <button
