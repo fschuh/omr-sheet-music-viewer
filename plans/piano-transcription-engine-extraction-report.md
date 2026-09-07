@@ -36,8 +36,8 @@ made against.
 
 | | |
 | --- | --- |
-| Engine commit adopted | `1cb9baa8f3153388416d7d580bfcd9b8bac2a165` |
-| Viewer commit that adopted it | `5ced96c8919c8c4773da276b66459f0e7413235f` |
+| Engine commit adopted | `cd485c67b4f08c3e3cce5804a950367af73b866c` |
+| Viewer commit that adopted it | `4bfea5d`, amended by the commit carrying this line |
 | Pre-extraction baseline | `89afafcdd7fd06db0626feba6a0665ab1c3bf798` |
 | Production model | `online_amt_streaming.onnx`, 71,955,821 bytes, SHA-256 `a77be826…90ac4` |
 | Production default profile | `baseline-v1` in registry version 2 |
@@ -68,10 +68,17 @@ this repository's working tree and must not return to it or to the engine.
 The manual smoke ran on Windows and found the extraction's only platform defect:
 the engine's package verifier compared Windows path separators against a POSIX
 literal, so its canonical-model check failed inside `prepare` and `npm install`
-here could not complete. Engine commit `1cb9baa` fixed it. Neither repository
-runs automated checks on Windows, so a defect of that kind still reaches a person
-before it reaches a check; run an install and a build there when either
-repository's tooling changes how it handles paths.
+here could not complete. Engine commit `1cb9baa` fixed it, and a follow-up audit
+closed a second hazard of the same family: neither the engine nor the private
+eval repository declared checkout attributes, so a Windows install of the engine
+would have delivered a CRLF capture worklet and licence notice whose SHA-256
+digests no longer matched the frozen baseline, and this repository would have
+copied that worklet into the application. Both now declare them.
+
+Neither repository runs automated checks on Windows, so a defect of that kind
+still reaches a person before it reaches a check; run an install and a build
+there when either repository's tooling changes how it handles paths or how its
+files are stored.
 
 ## What must pass before a later engine revision is adopted
 

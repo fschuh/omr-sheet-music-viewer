@@ -870,8 +870,8 @@ from fresh clones of all three repositories against engine
 `d226f690d4be7842e54fa6b22a5e2f59bcb5a698`, the revision pinned at the time. The
 manual listen-mode smoke was then run on a real piano on September 7, on Windows,
 closing the last acceptance condition. Both consumers are now pinned to engine
-`1cb9baa8f3153388416d7d580bfcd9b8bac2a165`, which fixes the one defect that run
-found.
+`cd485c67b4f08c3e3cce5804a950367af73b866c`, which carries the fix for the defect
+that run found and the checkout attributes a follow-up audit added.
 
 | Step | Result |
 | --- | --- |
@@ -942,8 +942,25 @@ pinned to that commit, and the engine's typecheck, 96 tests, package
 verification, and browser/offline parity smoke pass there, as do the viewer's 143
 tests and production build and the private corpus inventory.
 
-Windows has no automated coverage in either repository, so a separator-dependent
-defect of this kind would still reach a person before it reached a check.
+A follow-up audit on September 7, 2026 found a second platform hazard of the same
+family and closed it. Neither the engine nor the private eval repository declared
+checkout attributes, so every text file was left to Git's guess and to
+`core.autocrlf`, which Git for Windows enables by default. npm installs the
+engine by cloning it, so a Windows consumer would have received a capture worklet
+of 1,584 bytes and a licence notice of 1,090 bytes instead of the frozen 1,534
+and 1,069, with SHA-256 digests that no longer matched the Task 01 baseline this
+record rests on — and the viewer would have copied that worklet into the
+application. It would still have run, which is why the manual smoke passed
+without exposing it. Both repositories now declare `* text=auto eol=lf` and mark
+the identity-bearing files as never converted; adding the declarations rewrote no
+tracked file, and the digests were re-checked in the engine, in the viewer's
+installed dependency, and in its generated assets. The parity driver also probes
+where Chrome is actually installed on Windows and macOS, including a per-user
+Windows install, rather than assuming one fixed path.
+
+Windows still has no automated coverage in either repository, so a
+platform-dependent defect of this kind reaches a person before it reaches a
+check.
 
 Run, in order:
 
