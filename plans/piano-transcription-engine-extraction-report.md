@@ -37,7 +37,7 @@ made against.
 | | |
 | --- | --- |
 | Engine commit adopted | `cd485c67b4f08c3e3cce5804a950367af73b866c` |
-| Viewer commit that adopted it | `4bfea5d`, amended by the commit carrying this line |
+| Viewer commit that adopted it | `3a5873db90a0ba98f76d540ba8a774ce80946422` |
 | Pre-extraction baseline | `89afafcdd7fd06db0626feba6a0665ab1c3bf798` |
 | Production model | `online_amt_streaming.onnx`, 71,955,821 bytes, SHA-256 `a77be826…90ac4` |
 | Production default profile | `baseline-v1` in registry version 2 |
