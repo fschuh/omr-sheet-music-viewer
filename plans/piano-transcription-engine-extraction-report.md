@@ -1,6 +1,9 @@
 # Piano transcription engine extraction report
 
-> **Completed:** September 6, 2026
+> **Status:** Pending the manual listen-mode smoke. Every automated check passed
+> on September 6, 2026; the manual smoke on real input has not been run, so the
+> extraction is not yet complete and Round 3 planning has not been unblocked.
+>
 > **Plan:** [piano-transcription-engine-repository-extraction-plan.md](piano-transcription-engine-repository-extraction-plan.md)
 > **Baseline:** [piano-transcription-engine-task-01-baseline.md](piano-transcription-engine-task-01-baseline.md)
 

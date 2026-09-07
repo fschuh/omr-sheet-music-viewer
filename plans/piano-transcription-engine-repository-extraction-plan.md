@@ -865,9 +865,10 @@ Acceptance:
 
 ### Task 12 — Verify the cutover and declare Round 3 ready
 
-**Status:** Completed September 6, 2026, except the manual listen-mode smoke,
-which needs a person and a real microphone and is recorded below as outstanding.
-Every other step ran from fresh clones of all three repositories against engine
+**Status:** Pending the manual listen-mode smoke. Step 7 needs a person and a
+real microphone and has not been run, so this task is not complete and Round 3
+planning is not yet unblocked. Every other step passed on September 6, 2026 from
+fresh clones of all three repositories against engine
 `d226f690d4be7842e54fa6b22a5e2f59bcb5a698`, the revision both consumers pin.
 
 | Step | Result |
@@ -878,7 +879,7 @@ Every other step ran from fresh clones of all three repositories against engine
 | 4. Browser/offline parity smoke | Passed; every environment-independent field identical and inference bit-identical in headless Chrome and Node |
 | 5. Viewer clean install from the pinned Git dependency | 118 packages, the engine fetched, prepared, and installed at the pinned SHA |
 | 6. Viewer unit tests and production build | 143/143 and a clean production build carrying `d226f69` in its diagnostics |
-| 7. Manual listen-mode smoke | **Outstanding.** Not runnable here |
+| 7. Manual listen-mode smoke | **Not run.** Needs real input and a person |
 | 8. Dependency-boundary search | The viewer imports only `.` (17) and `/browser` (2); no viewer module imports `/eval`; no engine core, runtime, or browser module imports eval, in source or in `dist`; no eval export is reachable from the production entry point |
 
 Production values were checked against the frozen Task 01 record rather than
@@ -897,7 +898,8 @@ engine `1e49803`, reproducing the frozen smoke for both renderers: advanced at
 `d226f69`, and both revisions compile to a byte-identical `dist`, so the
 installed artifact carrying that result is the one now pinned.
 
-Step 7 remains the only unmet acceptance condition. Start, target changes,
+Step 7 remains the only unmet acceptance condition, and this task stays pending
+until its result is recorded here. Start, target changes,
 advancement, pause, resume, stop, and microphone denial each have automated
 coverage in a fake environment — the engine's browser recognizer lifecycle tests,
 the viewer's permission-wording tests, the MIDI chord fed through the shared
@@ -907,7 +909,19 @@ before Round 3 planning begins and before the production matcher profile changes
 
 Extraction reports were written in all three repositories: `EXTRACTION.md` in the
 engine, `plans/piano-transcription-engine-extraction-report.md` here, and an
-engine dependency entry in the private corpus README.
+engine dependency entry in the private corpus README. Each records the same
+pending status.
+
+Review of September 7, 2026 corrected two things. The engine's packaged README
+linked to `EXTRACTION.md` and to the Round 1/2 archive with relative paths, and
+the package allowlist ships neither, so both links were dead for anyone reading
+the installed package; they are absolute repository URLs now, and the engine's
+package verification refuses a build whose packaged README points at a file the
+package does not include. The claim that this repository's engine head and the
+pinned revision produce an identical artifact was also too broad: documentation
+commits change the packaged README, so the tarballs differ. What is identical
+between them is the compiled code, the type declarations, and the assets, which
+is what makes a documentation commit no reason to move the pin.
 
 Run, in order:
 
