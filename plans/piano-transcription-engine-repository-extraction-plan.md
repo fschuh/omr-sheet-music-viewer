@@ -865,11 +865,13 @@ Acceptance:
 
 ### Task 12 — Verify the cutover and declare Round 3 ready
 
-**Status:** Pending the manual listen-mode smoke. Step 7 needs a person and a
-real microphone and has not been run, so this task is not complete and Round 3
-planning is not yet unblocked. Every other step passed on September 6, 2026 from
-fresh clones of all three repositories against engine
-`d226f690d4be7842e54fa6b22a5e2f59bcb5a698`, the revision both consumers pin.
+**Status:** Completed September 7, 2026. Steps 1-6 and 8 passed on September 6
+from fresh clones of all three repositories against engine
+`d226f690d4be7842e54fa6b22a5e2f59bcb5a698`, the revision pinned at the time. The
+manual listen-mode smoke was then run on a real piano on September 7, on Windows,
+closing the last acceptance condition. Both consumers are now pinned to engine
+`1cb9baa8f3153388416d7d580bfcd9b8bac2a165`, which fixes the one defect that run
+found.
 
 | Step | Result |
 | --- | --- |
@@ -879,7 +881,7 @@ fresh clones of all three repositories against engine
 | 4. Browser/offline parity smoke | Passed; every environment-independent field identical and inference bit-identical in headless Chrome and Node |
 | 5. Viewer clean install from the pinned Git dependency | 118 packages, the engine fetched, prepared, and installed at the pinned SHA |
 | 6. Viewer unit tests and production build | 143/143 and a clean production build carrying `d226f69` in its diagnostics |
-| 7. Manual listen-mode smoke | **Not run.** Needs real input and a person |
+| 7. Manual listen-mode smoke | Passed on a real piano on Windows, September 7, 2026 |
 | 8. Dependency-boundary search | The viewer imports only `.` (17) and `/browser` (2); no viewer module imports `/eval`; no engine core, runtime, or browser module imports eval, in source or in `dist`; no eval export is reachable from the production entry point |
 
 Production values were checked against the frozen Task 01 record rather than
@@ -898,14 +900,14 @@ engine `1e49803`, reproducing the frozen smoke for both renderers: advanced at
 `d226f69`, and both revisions compile to a byte-identical `dist`, so the
 installed artifact carrying that result is the one now pinned.
 
-Step 7 remains the only unmet acceptance condition, and this task stays pending
-until its result is recorded here. Start, target changes,
+Start, target changes,
 advancement, pause, resume, stop, and microphone denial each have automated
 coverage in a fake environment — the engine's browser recognizer lifecycle tests,
 the viewer's permission-wording tests, the MIDI chord fed through the shared
 matcher, and the functional suite's synthetic traces — but none of that observes
-a real microphone, a real instrument, or the playhead moving. It must be run
-before Round 3 planning begins and before the production matcher profile changes.
+a real microphone, a real instrument, or the playhead moving, which is why the
+manual run was required. It remains required before the production matcher
+profile changes.
 
 Extraction reports were written in all three repositories: `EXTRACTION.md` in the
 engine, `plans/piano-transcription-engine-extraction-report.md` here, and an
@@ -922,6 +924,26 @@ pinned revision produce an identical artifact was also too broad: documentation
 commits change the packaged README, so the tarballs differ. What is identical
 between them is the compiled code, the type declarations, and the assets, which
 is what makes a documentation commit no reason to move the pin.
+
+The manual smoke of September 7, 2026 found the extraction's only platform
+defect. The engine's package verifier listed the repository's ONNX files through
+`path.relative`, which yields `assets\models\online_amt_streaming.onnx` on
+Windows, and compared that against the POSIX literal it expected. The comparison
+could never match there, so the canonical-model check failed inside the engine's
+`prepare` script and took `npm install` in `webapp` down with it: on Windows the
+viewer could not install its own dependency, while every check on Linux passed.
+Engine commit `1cb9baa8f3153388416d7d580bfcd9b8bac2a165` normalises separators
+through one `repositoryPath` helper used at every `relative` call site, so the
+private-corpus and viewer-import messages read the same on either platform, and
+records the `piano-transcription-eval` bin that npm otherwise re-synced into the
+lockfile on every install. There was never more than one model, and it was always
+in the right place; only the string comparison was wrong. Both consumers are
+pinned to that commit, and the engine's typecheck, 96 tests, package
+verification, and browser/offline parity smoke pass there, as do the viewer's 143
+tests and production build and the private corpus inventory.
+
+Windows has no automated coverage in either repository, so a separator-dependent
+defect of this kind would still reach a person before it reached a check.
 
 Run, in order:
 

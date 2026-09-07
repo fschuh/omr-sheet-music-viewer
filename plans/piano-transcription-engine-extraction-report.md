@@ -1,8 +1,8 @@
 # Piano transcription engine extraction report
 
-> **Status:** Pending the manual listen-mode smoke. Every automated check passed
-> on September 6, 2026; the manual smoke on real input has not been run, so the
-> extraction is not yet complete and Round 3 planning has not been unblocked.
+> **Status:** Complete, September 7, 2026. Every automated check passed on
+> September 6, and the manual listen-mode smoke was run on a real piano on
+> Windows on September 7. Round 3 planning is unblocked.
 >
 > **Plan:** [piano-transcription-engine-repository-extraction-plan.md](piano-transcription-engine-repository-extraction-plan.md)
 > **Baseline:** [piano-transcription-engine-task-01-baseline.md](piano-transcription-engine-task-01-baseline.md)
@@ -36,8 +36,8 @@ made against.
 
 | | |
 | --- | --- |
-| Engine commit adopted | `d226f690d4be7842e54fa6b22a5e2f59bcb5a698` |
-| Viewer commit that adopted it | `cd8457f50be4abade7fe0563d882f2d065d940e9` |
+| Engine commit adopted | `1cb9baa8f3153388416d7d580bfcd9b8bac2a165` |
+| Viewer commit that adopted it | the commit carrying this report |
 | Pre-extraction baseline | `89afafcdd7fd06db0626feba6a0665ab1c3bf798` |
 | Production model | `online_amt_streaming.onnx`, 71,955,821 bytes, SHA-256 `a77be826…90ac4` |
 | Production default profile | `baseline-v1` in registry version 2 |
@@ -62,6 +62,16 @@ it. No recorded command or measurement inside them was rewritten.
 The three fixtures derived from the copyrighted Course Clear score moved to
 private `piano-transcription-evals` under `fixtures/rounds-1-2/`. They are not in
 this repository's working tree and must not return to it or to the engine.
+
+## Platform coverage
+
+The manual smoke ran on Windows and found the extraction's only platform defect:
+the engine's package verifier compared Windows path separators against a POSIX
+literal, so its canonical-model check failed inside `prepare` and `npm install`
+here could not complete. Engine commit `1cb9baa` fixed it. Neither repository
+runs automated checks on Windows, so a defect of that kind still reaches a person
+before it reaches a check; run an install and a build there when either
+repository's tooling changes how it handles paths.
 
 ## What must pass before a later engine revision is adopted
 
