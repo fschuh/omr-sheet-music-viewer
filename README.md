@@ -59,6 +59,9 @@ Placement failures do not prevent ordinary viewing, playback or keyboard use.
 See [the experiment report](plans/fingering-experiment-report.md) for coverage
 denominators and [integration verification](plans/fingering-integration.md) for
 runtime measurements, reproduction commands and remaining release checks.
+The separate [printed-fingering recognition pilot](plans/fingering-recognition-report.md)
+documents OCR/association errors and the proposed confirmation workflow; it does
+not enable automatic adoption. Broader scan/font recognition validation remains open.
 
 After the merged file is ready, **Open MusicXML** delegates it to the operating
 system. The configured default application opens it, or the system can prompt

@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "coordinate_width": 1300,
+  "scope": "Development-only pilot, three clean pages from one LilyPond edition (two with gold digits); not a scan or font-generalization benchmark.",
+  "pages": {
+    "chopin-25-9-1": {
+      "pdf": "Chopin - Etude 25 No 9 - Butterfly.pdf",
+      "pdf_sha256": "25a4474821f1b123a4bde2ad82f58be34aa18314958bcd36de39abed1cc821a6",
+      "packet_sha256": "1bab8b48824e33b53d0356f0a0fc6fe73e2641f6e16aba07709aeb99e477c888",
+      "image_sha256": "188633e45a57db9277c2c8a8c2cd9597eab701c7038542ff3352650f619bcfa9"
+    },
+    "chopin-25-2-1": {
+      "pdf": "Chopin - Etude 25 No 2.pdf",
+      "pdf_sha256": "904e58714b2fb99bfd13cc31c5a05b96ed44c9e32b260a684ce20a30736d9629",
+      "packet_sha256": "dbcfae112ea43e01a0bd49e8436629f141d63f3aef685d8a96b251595bdbf88e",
+      "image_sha256": "87dc550e4d9171f64fe4235623db21cfecc0b2368547ed18cb895bf7be3b05cd"
+    },
+    "chopin-25-6-negative": {
+      "pdf": "Chopin - Etude 25 No 6.pdf",
+      "pdf_sha256": "65595976f25921e674868dc216e636a19f508aa0ae977a3755fbb43ccc04229a",
+      "image": "testdata/fingering/65595976f25921e674868dc216e636a19f508aa0ae977a3755fbb43ccc04229a/0001.png",
+      "image_sha256": "dc1ebc715fe13fb35b0834ac86dc114a616eccd2a1d2149f79c8da571b8e59ec",
+      "negative_only": true
+    }
+  },
+  "windows": [
+    {
+      "id": "stacks-and-sparse", "page": "chopin-25-9-1", "bounds": [285, 113, 635, 230],
+      "gold": [
+        {"box": [320, 131, 331, 143], "digit": "4", "note": "homr-note-4"},
+        {"box": [320, 146, 331, 159], "digit": "2", "note": "homr-note-3"},
+        {"box": [347, 120, 358, 133], "digit": "5", "note": "homr-note-5"},
+        {"box": [348, 135, 358, 148], "digit": "1", "note": "homr-note-6"},
+        {"box": [435, 122, 446, 135], "digit": "4", "note": "homr-note-14"},
+        {"box": [435, 137, 446, 151], "digit": "2", "note": "homr-note-15"},
+        {"box": [463, 116, 473, 129], "digit": "5", "note": "homr-note-16"},
+        {"box": [463, 131, 473, 144], "digit": "1", "note": "homr-note-17"},
+        {"box": [557, 155, 567, 169], "digit": "3", "note": "homr-note-25"},
+        {"box": [585, 145, 595, 159], "digit": "4", "note": "homr-note-27"},
+        {"box": [616, 150, 626, 164], "digit": "5", "note": "homr-note-32"}
+      ]
+    },
+    {
+      "id": "single-notes", "page": "chopin-25-2-1", "bounds": [320, 120, 568, 183],
+      "gold": [
+        {"box": [329, 127, 339, 141], "digit": "1", "note": "homr-note-2"},
+        {"box": [402, 127, 412, 141], "digit": "1", "note": "homr-note-7"},
+        {"box": [477, 127, 487, 141], "digit": "1", "note": "homr-note-11"},
+        {"box": [550, 127, 560, 141], "digit": "1", "note": "homr-note-16"}
+      ]
+    },
+    {"id": "triplets-and-text", "page": "chopin-25-2-1", "bounds": [310, 183, 600, 285], "gold": [], "negative": "Six triplet 3s, italic text, slurs and noteheads"},
+    {"id": "time-signature", "page": "chopin-25-9-1", "bounds": [248, 176, 273, 224], "gold": [], "negative": "2/4 time signature, staff lines"},
+    {"id": "title-numbers", "page": "chopin-25-9-1", "bounds": [1095, 44, 1245, 75], "gold": [], "negative": "Opus 25, No 9"},
+    {"id": "page-number", "page": "chopin-25-9-1", "bounds": [55, 24, 89, 49], "gold": [], "negative": "Page number 42"},
+    {"id": "articulation", "page": "chopin-25-9-1", "bounds": [482, 141, 507, 215], "gold": [], "negative": "Staccato dot, chord, ledger line and beam"},
+    {"id": "octave-indication", "page": "chopin-25-6-negative", "bounds": [820, 668, 1020, 695], "gold": [], "negative": "Ottava 8, dashed line and slur; no usable authoritative note alignment for this page"}
+  ]
+}
