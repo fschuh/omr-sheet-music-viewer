@@ -133,6 +133,7 @@ export interface LoadedDocument {
   fingeringStatus?: FingeringStatus;
   fingeringError?: string;
   predictedFingerings?: Record<string, import("./fingering").PredictedFingering>;
+  sourceFingerings?: import("./fingeringAnnotations").SourceFingerings;
   predictedFingeringCount?: number;
   status: JobStatus;
   pages: DocumentPage[];

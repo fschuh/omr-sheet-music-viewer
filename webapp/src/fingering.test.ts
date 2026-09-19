@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { captureSourceFingerings, migrateSourceFingerings, recoverSourceFingerings, resolveFingering } from "./fingeringAnnotations";
 import { DOMParser as XmldomParser, XMLSerializer as XmldomSerializer } from "@xmldom/xmldom";
 import {
   addPredictedFingeringsToMusicXml,
@@ -10,6 +11,53 @@ import {
 Object.assign(globalThis, {
   DOMParser: XmldomParser,
   XMLSerializer: XmldomSerializer,
+});
+
+test("preserves raw source attributes through repeated prediction regeneration", async () => {
+  const xml = `<score-partwise><part-list/><part id="P1"><measure number="1">
+    <note id="n"><pitch><step>C</step><octave>4</octave></pitch><duration>1</duration>
+    <notations><technical><fingering substitution="yes" placement="above"> 1-2 </fingering>
+    <fingering alternate="yes">3</fingering></technical></notations></note></measure></part></score-partwise>`;
+  const first = await addPredictedFingeringsToMusicXml(xml, async notes => notes.map(n => ({ ...n, finger: 4 })));
+  const second = await addPredictedFingeringsToMusicXml(first.musicXml, async notes => notes.map(n => ({ ...n, finger: 5 })));
+  assert.deepEqual(first.sourceFingerings, second.sourceFingerings);
+  assert.deepEqual(first.sourceFingerings.notes[0].markings, [
+    { text: " 1-2 ", attributes: { substitution: "yes", placement: "above" } },
+    { text: "3", attributes: { alternate: "yes" } },
+  ]);
+  assert.equal(second.fingeringsByMusicXmlId.n.finger, 5);
+  assert.deepEqual(cachedFingeringsFromMusicXml(second.musicXml)?.sourceFingerings, first.sourceFingerings);
+});
+
+test("legacy generated caches stay unknown unless exact original provenance is available", () => {
+  const xml = `<score-partwise><identification><miscellaneous><miscellaneous-field name="homr-piano-fingering-cache">old-version</miscellaneous-field></miscellaneous></identification><part><measure><note id="page-2-n"><notations><technical><fingering>4</fingering></technical></notations></note></measure></part></score-partwise>`;
+  const snapshot = captureSourceFingerings(new DOMParser().parseFromString(xml, "application/xml"));
+  assert.equal(snapshot.notes[0].provenance, "unknown-generated-cache");
+  assert.deepEqual(recoverSourceFingerings(snapshot, new Map()), snapshot);
+  const original = { musicXmlId: "n", noteIndex: 0, provenance: "source" as const, markings: [] };
+  assert.deepEqual(recoverSourceFingerings(snapshot, new Map([["page-1-n", original]])), snapshot);
+  assert.equal(recoverSourceFingerings(snapshot, new Map([["page-2-n", original]])).notes[0].markings.length, 0);
+});
+
+test("resolver enforces confirmation, precedence and recognition revision", () => {
+  const prediction = { finger: 2, left: true };
+  const source = { finger: 3, left: true, confirmed: false, annotationRevision: "r1" };
+  assert.equal(resolveFingering(prediction, undefined, "r1", source)?.source, "prediction");
+  assert.equal(resolveFingering(prediction, undefined, "r1", { ...source, confirmed: true })?.finger, 3);
+  assert.equal(resolveFingering(prediction, { finger: 5, annotationRevision: "r1" }, "r1", { ...source, confirmed: true })?.finger, 5);
+  assert.equal(resolveFingering(prediction, { finger: 5, annotationRevision: "old" }, "r1")?.finger, 2);
+  assert.equal(resolveFingering(prediction, { finger: 9, annotationRevision: "r1" }, "r1")?.finger, 2);
+  assert.equal(resolveFingering(undefined, { finger: 1, annotationRevision: "r1" }, "r1"), undefined);
+});
+
+test("migration recovers exact page IDs including originals without markings", () => {
+  const page = `<score-partwise><part><measure><note id="n"/></measure></part></score-partwise>`;
+  const cached = `<score-partwise><identification><miscellaneous><miscellaneous-field name="homr-piano-fingering-cache">legacy</miscellaneous-field></miscellaneous></identification><part><measure><note id="page-2-n"><notations><technical><fingering>4</fingering></technical></notations></note></measure></part></score-partwise>`;
+  const migrated = migrateSourceFingerings(cached, [undefined, page]);
+  const captured = captureSourceFingerings(new DOMParser().parseFromString(migrated, "application/xml"));
+  assert.equal(captured.notes[0].provenance, "source");
+  assert.deepEqual(captured.notes[0].markings, []);
+  assert.equal(migrateSourceFingerings(migrated, []), migrated);
 });
 
 const SCORE = `<?xml version="1.0" encoding="UTF-8"?>

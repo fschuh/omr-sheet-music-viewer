@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DocumentViewer } from "./DocumentViewer";
+import { migrateSourceFingerings } from "./fingeringAnnotations";
 import {
   addPredictedFingeringsToMusicXml,
   cachedFingeringsFromMusicXml,
@@ -1490,17 +1491,22 @@ export function App() {
 
     void readMusicXml(path)
       .then(async (musicXml) => {
+        const originalPages = await Promise.all(document.pages
+          .filter((page) => page.artifacts && ["complete", "loading"].includes(page.status))
+          .sort((a, b) => a.index - b.index)
+          .map((page) => page.musicXml ?? readMusicXml(page.artifacts!.musicXmlPath).catch(() => undefined)));
+        const migrated = migrateSourceFingerings(musicXml, originalPages);
         setDocument((current) =>
           current?.jobId === jobId ? { ...current, documentMusicXml: musicXml } : current,
         );
-        const cached = cachedFingeringsFromMusicXml(musicXml);
-        if (cached) return { result: cached, needsWrite: false };
+        const cached = cachedFingeringsFromMusicXml(migrated);
+        if (cached) return { result: cached, needsWrite: migrated !== musicXml };
         setDocument((current) =>
           current?.jobId === jobId ? { ...current, fingeringStatus: "predicting" } : current,
         );
         const { predictPianoFingerings } = await import("./fingeringModel");
         const result = await addPredictedFingeringsToMusicXml(
-          musicXml,
+          migrated,
           predictPianoFingerings,
         );
         return { result, needsWrite: true };
@@ -1523,6 +1529,7 @@ export function App() {
                 fingeringStatus: "ready",
                 fingeringError: undefined,
                 predictedFingerings: result.fingeringsByMusicXmlId,
+                sourceFingerings: result.sourceFingerings,
                 predictedFingeringCount: result.noteCount,
               }
             : current,

@@ -1,4 +1,5 @@
 import type { Note as PianoFingeringNote } from "@lumikey/piano-fingering-model";
+import { captureSourceFingerings, preserveSourceFingerings, type SourceFingerings } from "./fingeringAnnotations";
 
 const DEFAULT_TEMPO_BPM = 120;
 const FINGERING_CACHE_FIELD_NAME = "homr-piano-fingering-cache";
@@ -37,6 +38,7 @@ export type FingeringPredictor = (
 ) => Promise<IndexedFingeringNote[]>;
 
 export interface MusicXmlFingeringResult {
+  sourceFingerings: SourceFingerings;
   musicXml: string;
   fingeringsByMusicXmlId: Record<string, PredictedFingering>;
   noteCount: number;
@@ -420,6 +422,7 @@ export function cachedFingeringsFromMusicXml(
   }
   return {
     musicXml,
+    sourceFingerings: captureSourceFingerings(document),
     fingeringsByMusicXmlId,
     noteCount: indexed.length,
   };
@@ -430,16 +433,18 @@ export async function addPredictedFingeringsToMusicXml(
   predict: FingeringPredictor,
 ): Promise<MusicXmlFingeringResult> {
   const document = musicXmlDocument(musicXml);
+  const sourceFingerings = captureSourceFingerings(document);
   const tempoOrder = { value: 0 };
   const parts = childrenNamed(document.documentElement, "part").map((part) =>
     parsePart(part, tempoOrder),
   );
   const { indexed, raw } = modelNotes(parts);
   if (indexed.length === 0) {
-    return { musicXml, fingeringsByMusicXmlId: {}, noteCount: 0 };
+    return { musicXml, sourceFingerings, fingeringsByMusicXmlId: {}, noteCount: 0 };
   }
 
   const predictions = await predict(indexed);
+  preserveSourceFingerings(document, sourceFingerings);
   const fingeringsByMusicXmlId: Record<string, PredictedFingering> = {};
   let annotatedCount = 0;
   for (const prediction of predictions) {
@@ -467,6 +472,7 @@ export async function addPredictedFingeringsToMusicXml(
 
   return {
     musicXml: serializeMusicXml(document),
+    sourceFingerings,
     fingeringsByMusicXmlId,
     noteCount: annotatedCount,
   };
