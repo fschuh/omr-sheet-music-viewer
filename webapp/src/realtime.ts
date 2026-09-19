@@ -836,9 +836,9 @@ export function parseRealtimeMusicXml(musicXml: string): RealtimeScore {
 
 export function buildRealtimeVisualMap(pages: DocumentPage[]): Map<string, VisualNoteTarget> {
   const result = new Map<string, VisualNoteTarget>();
-  let musicPageNumber = 0;
+  const pageNumbers = musicPageNumbers(pages);
   for (const page of [...pages].sort((left, right) => left.index - right.index)) {
-    if (page.musicXml || page.visualSidecar || page.artifacts?.musicXmlPath) musicPageNumber += 1;
+    const musicPageNumber = pageNumbers.get(page.index) ?? 0;
     const sidecar = page.visualSidecar;
     if (!sidecar) continue;
     const eligibleGroups = sidecar.visual_groups.filter(isLinkedVisualGroup);
@@ -867,7 +867,7 @@ export function buildRealtimeVisualMap(pages: DocumentPage[]): Map<string, Visua
       if (!group) continue;
       const system = systems.get(group.staff_group_index)!;
       const target: VisualNoteTarget = {
-        musicXmlId: `page-${musicPageNumber}-${note.musicxml_id}`,
+        musicXmlId: documentNoteId(musicPageNumber, note.musicxml_id),
         pageIndex: page.index,
         visualGroupId: group.visual_group_id,
         staffGroupIndex: group.staff_group_index,
@@ -1798,3 +1798,4 @@ export class RealtimeController {
     return this.currentOffset();
   }
 }
+import { documentNoteId, musicPageNumbers } from "./scoreIdentity";

@@ -303,12 +303,9 @@ export function buildPlaybackTimeline(
   documentScore?: RealtimeScore | null,
 ): PlaybackMoment[] {
   const result: PlaybackMoment[] = [];
-  let musicPageNumber = 0;
+  const pageNumbers = musicPageNumbers(pages);
   for (const page of [...pages].sort((first, second) => first.index - second.index)) {
-    const hasRecognizedScore = Boolean(
-      page.musicXml || page.visualSidecar || page.artifacts?.musicXmlPath,
-    );
-    if (hasRecognizedScore) musicPageNumber += 1;
+    const musicPageNumber = pageNumbers.get(page.index) ?? 0;
     const sidecar = page.visualSidecar;
     if (!sidecar) continue;
     const scoreData = noteByNoteScoreData(page.musicXml, musicPageNumber, documentScore);
@@ -354,7 +351,7 @@ export function buildPlaybackTimeline(
         const seenKeyboardNotes = new Set<string>();
         for (const note of momentNotes) {
           const predicted = predictedFingerings[
-            `page-${musicPageNumber}-${note.musicXmlId}`
+            documentNoteId(musicPageNumber, note.musicXmlId)
           ];
           const key = `${note.pitch}:${predicted?.left ?? ""}:${predicted?.finger ?? ""}`;
           if (seenKeyboardNotes.has(key)) continue;
@@ -495,3 +492,4 @@ export function runPlaybackCommand(
   const destination = commandDestination(timeline, currentIndex(timeline, state), command);
   return { ...state, active: true, currentMomentId: timeline[destination].id };
 }
+import { documentNoteId, musicPageNumbers } from "./scoreIdentity";

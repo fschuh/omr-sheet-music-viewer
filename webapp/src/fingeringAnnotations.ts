@@ -1,4 +1,5 @@
 import type { PredictedFingering } from "./fingering";
+import { documentNoteId } from "./scoreIdentity";
 
 export const SOURCE_FIELD = "homr-source-fingerings-v1";
 const GENERATED_FIELD = "homr-piano-fingering-cache";
@@ -143,7 +144,7 @@ export function migrateSourceFingerings(musicXml: string, originalPages: readonl
     if (!xml) return;
     const original = captureSourceFingerings(new DOMParser().parseFromString(xml, "application/xml"));
     for (const note of original.notes) {
-      if (note.musicXmlId && note.provenance === "source") originals.set(`page-${index + 1}-${note.musicXmlId}`, note);
+      if (note.musicXmlId && note.provenance === "source") originals.set(documentNoteId(index + 1, note.musicXmlId), note);
     }
   });
   preserveSourceFingerings(document, recoverSourceFingerings(snapshot, originals));
