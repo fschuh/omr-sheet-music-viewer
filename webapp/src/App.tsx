@@ -2,11 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DocumentViewer } from "./DocumentViewer";
 import { useScoreFingerings } from "./useScoreFingerings";
 import { ScoreFingeringStatus } from "./ScoreFingeringStatus";
+import { FingeringEditor } from "./FingeringEditor";
+import { useFingeringEdits } from "./useFingeringEdits";
+import { hideEditedFingerings } from "./fingeringEdits";
 import { useFingeringPolicy } from "./useFingeringPolicy";
 import { applyFingeringPolicy } from "./fingeringPolicy";
 import { FingeringPolicyControls } from "./FingeringPolicyControls";
 import { loadScoreFingeringsEnabled, saveScoreFingeringsEnabled } from "./preferences";
-import { documentNoteId, musicPageNumbers } from "./scoreIdentity";
+import { musicPageNumbers } from "./scoreIdentity";
 import { migrateSourceFingerings } from "./fingeringAnnotations";
 import {
   addPredictedFingeringsToMusicXml,
@@ -305,21 +308,24 @@ export function App() {
   }, [document?.documentMusicXml]);
   const [scoreFingeringsEnabled, setScoreFingeringsEnabled] = useState(loadScoreFingeringsEnabled);
   const [visibleFingeringPages, setVisibleFingeringPages] = useState<number[]>([]);
-  const scoreFingerings = useScoreFingerings(document, realtimeModel.score, scoreFingeringsEnabled, visibleFingeringPages);
+  const fingeringEdits = useFingeringEdits(document);
+  const effectiveDocument = useMemo(() => document ? { ...document, predictedFingerings: fingeringEdits.values } : null,
+    [document, fingeringEdits.values]);
+  const scoreFingerings = useScoreFingerings(effectiveDocument, realtimeModel.score, scoreFingeringsEnabled, visibleFingeringPages);
   const fingeringPolicy = useFingeringPolicy(document?.cachePath);
   const [regionEditor, setRegionEditor] = useState<{ jobId: string; pageIndex: number } | null>(null);
   const editingPage = regionEditor?.jobId === document?.jobId ? regionEditor?.pageIndex ?? null : null;
   const visibleScoreFingerings = useMemo(() => Object.fromEntries(Object.entries(scoreFingerings).map(([index, page]) =>
-    [index, { ...page, layout: applyFingeringPolicy(page.layout, fingeringPolicy.policy, Number(index),
-      document?.pages.find(p => p.index === Number(index))?.visualSidecar?.ink_obstacles?.raster_sha256) }])),
-    [scoreFingerings, fingeringPolicy.policy, document?.pages]);
+    [index, { ...page, layout: hideEditedFingerings(applyFingeringPolicy(page.layout, fingeringPolicy.policy, Number(index),
+      document?.pages.find(p => p.index === Number(index))?.visualSidecar?.ink_obstacles?.raster_sha256), fingeringEdits.edits, fingeringEdits.revisions) }])),
+    [scoreFingerings, fingeringPolicy.policy, document?.pages, fingeringEdits.edits, fingeringEdits.revisions]);
   const playbackTimeline = useMemo(
     () => buildPlaybackTimeline(
       document?.pages ?? [],
-      document?.predictedFingerings,
+      fingeringEdits.values,
       realtimeModel.score,
     ),
-    [document?.pages, document?.predictedFingerings, realtimeModel.score],
+    [document?.pages, fingeringEdits.values, realtimeModel.score],
   );
   const realtimeVisualMap = useMemo(
     () => buildRealtimeVisualMap(document?.pages ?? []),
@@ -374,10 +380,10 @@ export function App() {
       const fingeringId = note.fingeringMusicXmlId === undefined
         ? note.musicXmlId
         : note.fingeringMusicXmlId;
-      const predicted = fingeringId ? document?.predictedFingerings?.[fingeringId] : undefined;
+      const predicted = fingeringId ? fingeringEdits.values?.[fingeringId] : undefined;
       return { pitch: note.pitch, ...predicted };
     });
-  }, [document?.predictedFingerings, realtimeFrame]);
+  }, [fingeringEdits.values, realtimeFrame]);
   const realtimeGroupIdsByPage = useMemo(() => {
     const anchors = (realtimeFrame?.activeNotes ?? []).flatMap((note) =>
       note.visual
@@ -1930,13 +1936,9 @@ export function App() {
             <ScoreFingeringStatus pages={visibleScoreFingerings} canRegenerate={nativeAvailable && !busy}
               onRegenerate={handleRetryPage} />)}
       </div> : null}
-      {activePage === "viewer" && selectedNotes.length > 0 && document && selectedPage ? <div className="status-strip" aria-live="polite">
-        Selected fingerings: {selectedNotes.map(note => {
-          const ordinal = musicPageNumbers(document.pages).get(selectedPage.index);
-          const value = ordinal ? document.predictedFingerings?.[documentNoteId(ordinal, note.musicxml_id)] : undefined;
-          return value ? `${value.finger} (prediction)` : "unavailable";
-        }).join(", ")}
-      </div> : null}
+      {activePage === "viewer" && document && (selectedNotes.length > 0 || fingeringEdits.staleCount > 0 || fingeringEdits.canUndo || fingeringEdits.error) ?
+        <FingeringEditor store={fingeringEdits} notes={selectedNotes}
+          ordinal={selectedPage ? musicPageNumbers(document.pages).get(selectedPage.index) : undefined} /> : null}
       {activePage === "viewer" && scoreFingeringsEnabled && document ? <FingeringPolicyControls
         key={document.jobId} store={fingeringPolicy} pages={document.pages} editingPage={editingPage}
         onEdit={pageIndex => setRegionEditor(pageIndex === null ? null : { jobId: document.jobId, pageIndex })} /> : null}

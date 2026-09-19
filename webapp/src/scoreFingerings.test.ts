@@ -12,6 +12,8 @@ import type { AnnotationStaff, VisualSidecar } from "./types";
 import { applyFingeringPolicy, emptyFingeringPolicy, fingeringDocumentId, parseFingeringPolicy } from "./fingeringPolicy";
 import { fingeringSidecarPacket, FingeringScheduler, prioritizedFingeringPages, type FingeringTask, type FingeringWorkerPort, type FingeringPageResult } from "./fingeringScheduler";
 import type { FingeringWork } from "./fingeringWorker";
+import { annotationRevisions, effectiveFingerings, emptyFingeringEdits, hideEditedFingerings, parseFingeringEdits, preserveEditSources } from "./fingeringEdits";
+import { buildPlaybackTimeline } from "./playback";
 
 class FakeFingeringWorker implements FingeringWorkerPort {
   onmessage: FingeringWorkerPort["onmessage"] = null;
@@ -25,6 +27,48 @@ class FakeFingeringWorker implements FingeringWorkerPort {
 function schedulerTask(index: number, key = "v1"): FingeringTask {
   return { key, work: { pageIndex: index, musicPageNumber: index + 1, sidecar, values: {}, musicalNotes: {}, metrics: { family: "fixture", digits: {} } } };
 }
+test("persistent edits survive prediction refresh but never follow changed note identities", async () => {
+  const { score } = requestFixture();
+  const page = { index: 0, status: "complete" as const, width: 400, height: 600, musicXml: "original page XML", visualSidecar: score };
+  const revisions = await annotationRevisions([page]);
+  const id = "page-1-note-0", pdfId = "a".repeat(64);
+  assert.match(revisions[id], /^[a-f0-9]{64}$/);
+  const edits = emptyFingeringEdits(pdfId);
+  edits.values[id] = { finger: 2, annotationRevision: revisions[id] };
+  const saved = parseFingeringEdits(JSON.stringify(edits), pdfId);
+  assert.deepEqual(saved, edits);
+  assert.throws(() => parseFingeringEdits(JSON.stringify(edits), "b".repeat(64)), /invalid/);
+  const predictions = { [id]: { finger: 4, left: true } };
+  assert.deepEqual(effectiveFingerings(predictions, saved, revisions)?.[id], { finger: 2, left: true, source: "user" });
+  assert.equal(effectiveFingerings({ [id]: { finger: 1, left: true } }, saved, await annotationRevisions([page]))?.[id].finger, 2);
+  const timeline = buildPlaybackTimeline([page], effectiveFingerings(predictions, saved, revisions));
+  assert.ok(timeline.some(moment => moment.keyboardNotes.some(note => note.finger === 2 && note.left)));
+  const changed = structuredClone(page); changed.visualSidecar.visual_groups[0].center[0] += 1;
+  const changedRevisions = await annotationRevisions([changed]);
+  assert.notEqual(changedRevisions[id], revisions[id]);
+  assert.deepEqual(effectiveFingerings(predictions, saved, changedRevisions)?.[id], { finger: 4, left: true, source: "prediction" });
+  saved.values = {};
+  assert.equal(effectiveFingerings(predictions, saved, revisions)?.[id].finger, 4);
+  assert.deepEqual(await annotationRevisions([page], () => true), {});
+});
+
+test("durable source snapshots retain raw markings; hiding never removes a keyboard value", () => {
+  const { score, values, music } = requestFixture(true);
+  const request = buildFingeringRequests(5, 2, score, values, music).requests[0];
+  const id = request.digits[0].documentId, revision = "a".repeat(64), revisions = { [id]: revision };
+  const source = { version: 1 as const, notes: [{ musicXmlId: id, noteIndex: 0, provenance: "source" as const,
+    markings: [{ text: "1–2", attributes: { substitution: "yes" } }] }] };
+  const edits = preserveEditSources(emptyFingeringEdits("b".repeat(64)), source, revisions);
+  assert.deepEqual(parseFingeringEdits(JSON.stringify(edits), edits.documentId).sources[revision], source);
+  assert.equal(preserveEditSources(edits, { ...source, notes: [] }, revisions), edits);
+  edits.hidden[id] = { annotationRevision: revision };
+  const layout = { placed: [{ request, bounds: [0, 0, 1, 1] as VisualBBox, x: 0, fontSize: 12, baselines: [0], lane: 0 }], suppressed: [] };
+  assert.equal(hideEditedFingerings(layout, edits, revisions)?.placed.length, 0);
+  assert.equal(hideEditedFingerings(layout, edits, { [id]: "c".repeat(64) })?.placed.length, 1);
+  assert.equal(effectiveFingerings(values, edits, revisions)?.[id].finger, values[id].finger);
+  delete edits.hidden[id];
+  assert.deepEqual(hideEditedFingerings(layout, edits, revisions), layout);
+});
 test("compact worker packets preserve every placement request and omit debug-only layers", () => {
   const { score, values, music } = requestFixture(true);
   score.raw_stem_contours = [{ debug_id: 1, contour: [[0, 0]], bbox: [] }];

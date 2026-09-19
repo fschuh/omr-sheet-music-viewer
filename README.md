@@ -36,6 +36,15 @@ keyboard fingerings. They persist locally by PDF content identity, outside the
 recognition cache. Rectangles become inactive with a warning if the page raster
 changes. They are not backed up outside this app profile.
 
+Select a notehead to edit its finger to **1–5**, reset to its underlying prediction,
+or hide only that note's score annotation. The keyboard and score share the edited
+value. **Undo finger edit** reverses the last value/hiding change in this session.
+Edits survive reopen and prediction refresh. Changed recognition identities are
+flagged for review and never remapped by pitch or position. These are local value
+edits: they do not recompute neighboring predictions, modify the original PDF, or
+rewrite exported MusicXML. Position dragging and automatic source adoption are
+not implemented.
+
 Existing printed fingerings are **not automatically recognized or adopted**.
 Predicted values may disagree with them; use exclusions. Crowded passages and
 unsupported cross-staff, independent-voice, unison, partial-chord, grace or tie

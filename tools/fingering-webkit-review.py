@@ -67,7 +67,7 @@ def evaluated(webview, result, _data):
         value = json.loads(webview.evaluate_javascript_finish(result).to_string())
         if value.get("error"):
             fail(value["error"])
-        elif value.get("count", 0) > 100:
+        elif value.get("count", 0) > 100 and (args.fixture or value.get("revisions", 0) > 0):
             finished = True
             if args.fixture:
                 Path(f"/tmp/fingering-webkit-{args.fixture}-{args.view}.json").write_text(json.dumps(value))
@@ -90,6 +90,7 @@ def poll():
       count: Number(document.querySelector('#review-state')?.dataset.count) || 0,
       digits: document.querySelectorAll('[data-fingering-note]').length,
       workerPosts: window.fingeringLifecycle?.posted,
+      revisions: Number(document.querySelector('#review-state')?.dataset.revisions) || 0,
       viewport: [innerWidth, innerHeight, devicePixelRatio],
       page: document.querySelector('.document-page')?.getBoundingClientRect().toJSON(),
       stage: document.querySelector('.viewer-stage')?.getBoundingClientRect().toJSON(),

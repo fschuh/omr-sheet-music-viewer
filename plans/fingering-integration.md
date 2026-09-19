@@ -161,3 +161,29 @@ physical touchscreen, hardware GPU compositing, other OS webviews, and genuine
 noisy/skewed scans remain manual/platform acceptance gaps. No new HOMR dependency
 commit has been pushed; publish the pinned producer commit before distributing
 a GitHub-based worker installation. Printed-mark adoption/erasure remains absent.
+
+## Task 12 — durable local finger values
+
+Selecting a notehead exposes a 1–5 editor, explicit reset, separate score-only
+hiding and 20-change session undo. Both note-by-note and realtime keyboard paths
+and the score consume the same effective-value map. Source labels are exposed in
+the inspector. A value change may recompute collision-safe positions; zoom,
+selection, playback and visibility changes still cannot relocate unchanged values.
+
+The separate PDF-keyed edit store binds values and per-note hiding to a SHA256
+recognition revision. It includes original page XML and authoritative links and
+anchors, not model-generated document XML. Stale edits are retained but ignored,
+shown for review, and may be explicitly discarded with undo. No nearest-note
+reconciliation or silent source adoption occurs. Sparse raw source snapshots are
+preserved separately; see `fingering-storage.md`. Optional manual position dragging
+is not implemented. User edits do not rewrite exported XML or rerun predictions.
+
+Validation: web tests/build pass. Pure tests cover durable roundtrip, document
+isolation, prediction refresh, reset, geometry revision changes, shared playback
+values, raw source strings/attributes and independent note hiding. Production
+browser checks cover actual keyboard/score agreement, hide/reset/undo, reload and
+PDF isolation, simulated OMR revision changes, stale-edit discard and its undo.
+The selected-note editor/keyboard screenshot was visually inspected. The 20-page
+scroll regression still reports no ≥50 ms main-thread tasks and at most three
+layouts. WebKitGTK successfully computed all 346 note revisions and rendered the
+310-digit fixture; full packaged physical-device acceptance remains as above.
