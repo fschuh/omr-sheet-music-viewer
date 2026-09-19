@@ -430,6 +430,28 @@ def test_scale_visual_sidecar_moves_geometry_to_the_display_raster() -> None:
     assert group["repair_actions"] == ["unmatched_candidate"]
 
 
+def test_annotation_geometry_survives_non_square_display_scaling(tmp_path: Path) -> None:
+    staff = {
+        "staff_id": "staff-0-0", "staff_group_index": 0, "staff_index": 0, "system_index": 0,
+        "lines": [[[10, 20 + i * 5], [90, 22 + i * 5]] for i in range(5)],
+        "spacing": [[10, 5], [90, 5]], "extent": [10, 20, 90, 42],
+    }
+    sidecar = {"version": 3, "source_image_size": [100, 200], "notes": [], "visual_groups": [],
+               "annotation_geometry": {"version": 1, "staffs": [staff]}}
+    scale_visual_sidecar(sidecar, source_size=(100, 200), target_size=(200, 300))
+    assert staff["lines"][0] == [[20, 30], [180, 33]]
+    assert staff["spacing"] == [[20, 7.5], [180, 7.5]]
+    assert staff["extent"] == [20, 30, 180, 63]
+    path = tmp_path / "geometry.json"
+    path.write_text(json.dumps(sidecar))
+    assert read_visual_sidecar(path) == sidecar
+    staff["spacing"][0][1] = 99
+    path.write_text(json.dumps(sidecar))
+    import pytest
+    with pytest.raises(ValueError, match="spacing"):
+        read_visual_sidecar(path)
+
+
 def test_pdf_processing_rasterizes_then_reuses_cache(tmp_path: Path) -> None:
     pdf_path = tmp_path / "Super Mario Bros - Underwater Theme.pdf"
     first_page = Image.new("RGB", (120, 80), "white")

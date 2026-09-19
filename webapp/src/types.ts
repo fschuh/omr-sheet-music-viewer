@@ -62,10 +62,26 @@ export interface RawStemContour {
 
 export interface VisualSidecar {
   version: 3;
+  annotation_geometry?: {
+    version: 1;
+    staffs: AnnotationStaff[];
+  };
   source_image_size: [number, number];
   raw_stem_contours?: RawStemContour[];
   notes: VisualSidecarNote[];
   visual_groups: VisualGroup[];
+}
+
+export interface AnnotationStaff {
+  staff_id: string;
+  staff_group_index: number;
+  staff_index: number;
+  system_index: number;
+  /** Five lines, top to bottom, on one shared increasing-x sample grid. */
+  lines: VisualPoint[][];
+  /** x and local vertical staff spacing in original raster coordinates. */
+  spacing: VisualPoint[];
+  extent: VisualBBox;
 }
 
 export function isLinkedVisualGroup(group: VisualGroup): boolean {

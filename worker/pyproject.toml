@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Local PDF rasterization and HOMR orchestration for the sheet-music viewer"
 requires-python = ">=3.11,<3.16"
 dependencies = [
-  "homr @ git+https://github.com/fschuh/homr@main",
+  "homr @ git+https://github.com/fschuh/homr@6921e9bb03a15fcc771d6707abc9b05ccc06d752",
   "pypdfium2>=5,<6",
 ]
 
@@ -14,8 +14,8 @@ dependencies = [
 # written last. Exactly one of these must be installed, and installing neither leaves a
 # worker that cannot start — so every documented install names one.
 [project.optional-dependencies]
-cpu = ["homr[cpu] @ git+https://github.com/fschuh/homr@main"]
-cuda = ["homr[cuda] @ git+https://github.com/fschuh/homr@main"]
+cpu = ["homr[cpu] @ git+https://github.com/fschuh/homr@6921e9bb03a15fcc771d6707abc9b05ccc06d752"]
+cuda = ["homr[cuda] @ git+https://github.com/fschuh/homr@6921e9bb03a15fcc771d6707abc9b05ccc06d752"]
 
 [project.scripts]
 sheet-music-worker = "sheet_music_worker.__main__:main"
@@ -30,4 +30,3 @@ allow-direct-references = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-

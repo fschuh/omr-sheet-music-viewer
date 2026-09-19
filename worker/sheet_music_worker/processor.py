@@ -242,6 +242,10 @@ def read_visual_sidecar(path: Path) -> dict[str, Any]:
         note = notes_by_id.get(musicxml_id)
         if note is None or note.get("visual_group_id") != visual_group_id:
             raise ValueError("Visual sidecar inverse links disagree")
+    if "annotation_geometry" in sidecar:
+        from homr.visual_sidecar.annotation_geometry import validate_annotation_geometry
+
+        validate_annotation_geometry(sidecar)
     return sidecar
 
 
@@ -272,6 +276,14 @@ def scale_visual_sidecar(
     scale_x = target_width / source_width
     scale_y = target_height / source_height
     radius_scale = (scale_x + scale_y) / 2
+
+    for staff in sidecar.get("annotation_geometry", {}).get("staffs", []):
+        staff["lines"] = [[_scale_point(point, scale_x, scale_y) for point in line]
+                          for line in staff["lines"]]
+        staff["spacing"] = [_scale_point(point, scale_x, scale_y) for point in staff["spacing"]]
+        x0, y0, x1, y1 = staff["extent"]
+        staff["extent"] = [round(x0 * scale_x, 3), round(y0 * scale_y, 3),
+                           round(x1 * scale_x, 3), round(y1 * scale_y, 3)]
 
     preprocessing = sidecar.get("preprocessing")
     if isinstance(preprocessing, dict):
