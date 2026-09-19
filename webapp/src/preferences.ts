@@ -2,6 +2,17 @@ import { DEFAULT_PIANO_ID, isPianoId, type PianoId } from "./pianoRegistry";
 import type { ListenInputSource } from "@fschuh/piano-transcription-engine";
 
 export const DEBUG_PANEL_STORAGE_KEY = "homr.debug-panel-enabled.v1";
+export const SCORE_FINGERINGS_STORAGE_KEY = "homr.score-fingerings-enabled.v1";
+
+export function loadScoreFingeringsEnabled(): boolean {
+  try { return typeof window !== "undefined" && window.localStorage.getItem(SCORE_FINGERINGS_STORAGE_KEY) === "true"; }
+  catch { return false; }
+}
+
+export function saveScoreFingeringsEnabled(enabled: boolean): void {
+  try { window.localStorage.setItem(SCORE_FINGERINGS_STORAGE_KEY, String(enabled)); }
+  catch { /* Keep the session setting usable when persistence is unavailable. */ }
+}
 export const PLAYBACK_PIANO_STORAGE_KEY = "homr.playback-piano.v1";
 export const LISTEN_INPUT_SOURCE_STORAGE_KEY = "homr.listen-input-source.v1";
 

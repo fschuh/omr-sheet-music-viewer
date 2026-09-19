@@ -5,6 +5,9 @@ import { addPredictedFingeringsToMusicXml } from "../src/fingering";
 import type { VisualSidecar } from "../src/types";
 import type { FingeringLayout } from "../src/fingeringLayout";
 import type { FingeringRequests } from "../src/scoreFingerings";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { ScoreFingeringLayer } from "../src/ScoreFingeringLayer";
 
 declare global { interface Window { fingeringFixture: { id: string; sidecar: VisualSidecar; musicXml: string } } }
 const ns = "http://www.w3.org/2000/svg";
@@ -63,12 +66,7 @@ async function review() {
     }
   }
   if (mode !== "original") {
-    for (const placed of result.placed) {
-      placed.request.digits.forEach((digit, i) => {
-        const text = element("text", { x: placed.x, y: placed.baselines[i], "font-family": metrics.family, "font-size": placed.fontSize, "text-anchor": "middle", fill: "#154cad" });
-        text.textContent = String(digit.value.finger); svg.append(text);
-      });
-    }
+    svg.insertAdjacentHTML("beforeend", renderToStaticMarkup(createElement(ScoreFingeringLayer, { layout: result })));
   }
   document.querySelector("#page")!.append(svg);
   const reasonCounts: Record<string, number> = {};

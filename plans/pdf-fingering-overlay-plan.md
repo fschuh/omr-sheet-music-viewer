@@ -1,7 +1,8 @@
 # PDF fingering overlay experiment and implementation plan
 
 Date: 2026-09-13  
-Status: Proposed; implementation has not started.
+Status: Tasks 01–08 implemented and committed; Tasks 09–13 remain. See companion
+experiment and integration reports for measured scope and outstanding release checks.
 
 ## 1. Objective and scope
 
@@ -101,7 +102,9 @@ Cross-staff, interleaved voices, unisons, and unusually dense chords must appear
 
 ## 5. Task breakdown
 
-All tasks below are pending. Sizes are relative engineering effort, not delivery commitments: S = small localized work, M = several connected changes, L = substantial algorithm or cross-layer work. OCR work is intentionally unestimated until evaluated separately.
+Tasks 01–08 are implemented within the narrowed clean-score experiment; noisy-scan
+coverage and target-webview acceptance are not claimed. Tasks 09–13 are pending.
+Sizes are relative engineering effort, not delivery commitments: S = small localized work, M = several connected changes, L = substantial algorithm or cross-layer work. OCR work is intentionally unestimated until evaluated separately.
 
 ### Task 01 — Establish fixtures and a baseline review procedure
 

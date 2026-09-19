@@ -74,7 +74,12 @@ export function committedTempoPercentage(value: string): number | null {
   );
 }
 
+import { ScoreFingeringLayer } from "./ScoreFingeringLayer";
+import type { FingeringLayout } from "./fingeringLayout";
+import type { ScoreFingeringPage } from "./useScoreFingerings";
+
 interface DocumentViewerProps {
+  scoreFingerings?: Readonly<Record<number, ScoreFingeringPage>>;
   documentKey: string;
   pages: DocumentPage[];
   selectedGroup: VisualGroupRef | null;
@@ -260,6 +265,7 @@ export function centeredPlaybackX(
 }
 
 interface PageOverlayProps {
+  fingeringLayout?: FingeringLayout;
   page: DocumentPage;
   selected: VisualGroupRef | null;
   highlightAll: boolean;
@@ -353,6 +359,7 @@ const VisualGroupLayer = memo(function VisualGroupLayer({
 });
 
 const PageOverlay = memo(function PageOverlay({
+  fingeringLayout,
   page,
   selected,
   highlightAll,
@@ -473,6 +480,8 @@ const PageOverlay = memo(function PageOverlay({
       viewBox={`0 0 ${page.width} ${page.height}`}
       aria-hidden="true"
     >
+      <ScoreFingeringLayer layout={fingeringLayout} reserved={noteLabels.map(label =>
+        [label.x, label.y, label.x + label.width, label.y + label.height])} />
       {realtimePlayheadEnabled || realtimePlayhead?.pageIndex === page.index ? (
         <line
           className="realtime-playhead"
@@ -541,6 +550,7 @@ const PageOverlay = memo(function PageOverlay({
 });
 
 export function DocumentViewer({
+  scoreFingerings,
   documentKey,
   pages: documentPages,
   selectedGroup,
@@ -1332,6 +1342,7 @@ export function DocumentViewer({
               <span className="page-number">{page.index + 1}</span>
               {page.imageUrl ? <img src={page.imageUrl} alt={`Sheet music page ${page.index + 1}`} draggable={false} /> : null}
               <PageOverlay
+                fingeringLayout={scoreFingerings?.[page.index]?.layout}
                 page={page}
                 selected={selectedGroup}
                 highlightAll={highlightAllNotes}

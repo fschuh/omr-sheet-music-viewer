@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DocumentViewer } from "./DocumentViewer";
+import { useScoreFingerings } from "./useScoreFingerings";
+import { loadScoreFingeringsEnabled, saveScoreFingeringsEnabled } from "./preferences";
+import { documentNoteId, musicPageNumbers } from "./scoreIdentity";
 import { migrateSourceFingerings } from "./fingeringAnnotations";
 import {
   addPredictedFingeringsToMusicXml,
@@ -296,6 +299,8 @@ export function App() {
       };
     }
   }, [document?.documentMusicXml]);
+  const [scoreFingeringsEnabled, setScoreFingeringsEnabled] = useState(loadScoreFingeringsEnabled);
+  const scoreFingerings = useScoreFingerings(document, realtimeModel.score, scoreFingeringsEnabled);
   const playbackTimeline = useMemo(
     () => buildPlaybackTimeline(
       document?.pages ?? [],
@@ -1775,6 +1780,12 @@ export function App() {
           </div>
         ) : null}
         <div className="actions">
+          {activePage === "viewer" && document ? <button type="button"
+            aria-pressed={scoreFingeringsEnabled}
+            title="Experimental score labels; independent of keyboard visibility. Printed fingerings are not recognized automatically."
+            onClick={() => { const enabled = !scoreFingeringsEnabled; setScoreFingeringsEnabled(enabled); saveScoreFingeringsEnabled(enabled); }}>
+            Score fingerings: {scoreFingeringsEnabled ? "on" : "off"}
+          </button> : null}
           {activePage === "viewer" ? (
             <>
           {document ? (
@@ -1901,11 +1912,24 @@ export function App() {
         </div>
       ) : null}
 
+      {activePage === "viewer" && scoreFingeringsEnabled && document ? <div className="status-strip" role="status">
+        Score fingerings (experimental): {document.fingeringError ??
+          (document.fingeringStatus !== "ready" ? `Predictions ${document.fingeringStatus ?? "unavailable"}` :
+            Object.entries(scoreFingerings).map(([index, page]) => `Page ${Number(index) + 1}: ${page.status}`).join(" · ") || "Preparing layout…")}
+      </div> : null}
+      {activePage === "viewer" && selectedNotes.length > 0 && document && selectedPage ? <div className="status-strip" aria-live="polite">
+        Selected fingerings: {selectedNotes.map(note => {
+          const ordinal = musicPageNumbers(document.pages).get(selectedPage.index);
+          const value = ordinal ? document.predictedFingerings?.[documentNoteId(ordinal, note.musicxml_id)] : undefined;
+          return value ? `${value.finger} (prediction)` : "unavailable";
+        }).join(", ")}
+      </div> : null}
       <section className={`workspace${debugPanelEnabled ? "" : " debug-panel-hidden"}`}>
         {document && document.pages.length > 0 ? (
           <>
             <DocumentViewer
               documentKey={document.jobId}
+              scoreFingerings={scoreFingeringsEnabled ? scoreFingerings : undefined}
               pages={document.pages}
               selectedGroup={selectedGroup}
               highlightAllNotes={highlightAllNotes}

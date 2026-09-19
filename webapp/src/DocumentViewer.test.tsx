@@ -16,6 +16,29 @@ import {
 } from "./noteRecognizer";
 import type { PlaybackMoment } from "./playback";
 import type { DocumentPage, VisualGroup, VisualSidecar } from "./types";
+import { ScoreFingeringLayer } from "./ScoreFingeringLayer";
+import type { FingeringLayout } from "./fingeringLayout";
+import { loadScoreFingeringsEnabled, saveScoreFingeringsEnabled } from "./preferences";
+
+test("score overlay is default-off and storage failures remain local", () => {
+  assert.equal(loadScoreFingeringsEnabled(), false);
+  assert.doesNotThrow(() => saveScoreFingeringsEnabled(true));
+});
+
+test("static score digits need no keyboard or playback and yield to inspection without relocating", () => {
+  const layout = { placed: [{ request: { id: "chord", digits: [
+    { documentId: "page-1-a", value: { finger: 4 } }, { documentId: "page-1-b", value: { finger: 1 } },
+  ] }, bounds: [45, 50, 55, 80], x: 50, fontSize: 12, baselines: [60, 75], lane: 0 }], suppressed: [] } as unknown as FingeringLayout;
+  const before = JSON.stringify(layout);
+  const markup = renderToStaticMarkup(<svg><ScoreFingeringLayer layout={layout} /></svg>);
+  assert.match(markup, /pointer-events="none"/);
+  assert.match(markup, /data-fingering-note="page-1-a" x="50" y="60" font-size="12">4/);
+  assert.match(markup, /data-fingering-note="page-1-b" x="50" y="75" font-size="12">1/);
+  const hidden = renderToStaticMarkup(<svg><ScoreFingeringLayer layout={layout} reserved={[[40, 55, 60, 65]]} /></svg>);
+  assert.doesNotMatch(hidden, /<text/);
+  assert.equal(JSON.stringify(layout), before);
+  assert.equal(renderToStaticMarkup(<svg><ScoreFingeringLayer layout={layout} /></svg>), markup);
+});
 
 test("tempo input accepts partial edits and validates only complete percentages", () => {
   assert.equal(validTempoPercentage(""), null);
