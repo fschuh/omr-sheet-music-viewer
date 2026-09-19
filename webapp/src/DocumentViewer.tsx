@@ -77,8 +77,11 @@ export function committedTempoPercentage(value: string): number | null {
 import { ScoreFingeringLayer } from "./ScoreFingeringLayer";
 import type { FingeringLayout } from "./fingeringLayout";
 import type { ScoreFingeringPage } from "./useScoreFingerings";
+import { FingeringExclusionLayer } from "./FingeringExclusionLayer";
+import type { FingeringRegion } from "./fingeringPolicy";
 
 interface DocumentViewerProps {
+  exclusionEditor?: { pageIndex: number; regions: FingeringRegion[]; onAdd: (bounds: [number, number, number, number]) => void };
   scoreFingerings?: Readonly<Record<number, ScoreFingeringPage>>;
   documentKey: string;
   pages: DocumentPage[];
@@ -265,6 +268,7 @@ export function centeredPlaybackX(
 }
 
 interface PageOverlayProps {
+  exclusionEditor?: DocumentViewerProps["exclusionEditor"];
   fingeringLayout?: FingeringLayout;
   page: DocumentPage;
   selected: VisualGroupRef | null;
@@ -359,6 +363,7 @@ const VisualGroupLayer = memo(function VisualGroupLayer({
 });
 
 const PageOverlay = memo(function PageOverlay({
+  exclusionEditor,
   fingeringLayout,
   page,
   selected,
@@ -545,11 +550,15 @@ const PageOverlay = memo(function PageOverlay({
           </g>
         ))}
       </g>
+      {exclusionEditor ? <FingeringExclusionLayer key={page.visualSidecar?.ink_obstacles?.raster_sha256}
+        anchors={fingeringLayout?.placed.flatMap(label => label.request.digits.map(digit => digit.anchor)) ?? []}
+        width={page.width} height={page.height} regions={exclusionEditor.regions} onAdd={exclusionEditor.onAdd} /> : null}
     </svg>
   );
 });
 
 export function DocumentViewer({
+  exclusionEditor,
   scoreFingerings,
   documentKey,
   pages: documentPages,
@@ -1342,6 +1351,7 @@ export function DocumentViewer({
               <span className="page-number">{page.index + 1}</span>
               {page.imageUrl ? <img src={page.imageUrl} alt={`Sheet music page ${page.index + 1}`} draggable={false} /> : null}
               <PageOverlay
+                exclusionEditor={exclusionEditor?.pageIndex === page.index ? exclusionEditor : undefined}
                 fingeringLayout={scoreFingerings?.[page.index]?.layout}
                 page={page}
                 selected={selectedGroup}

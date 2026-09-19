@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DocumentViewer } from "./DocumentViewer";
 import { useScoreFingerings } from "./useScoreFingerings";
+import { useFingeringPolicy } from "./useFingeringPolicy";
+import { applyFingeringPolicy } from "./fingeringPolicy";
+import { FingeringPolicyControls } from "./FingeringPolicyControls";
 import { loadScoreFingeringsEnabled, saveScoreFingeringsEnabled } from "./preferences";
 import { documentNoteId, musicPageNumbers } from "./scoreIdentity";
 import { migrateSourceFingerings } from "./fingeringAnnotations";
@@ -301,6 +304,13 @@ export function App() {
   }, [document?.documentMusicXml]);
   const [scoreFingeringsEnabled, setScoreFingeringsEnabled] = useState(loadScoreFingeringsEnabled);
   const scoreFingerings = useScoreFingerings(document, realtimeModel.score, scoreFingeringsEnabled);
+  const fingeringPolicy = useFingeringPolicy(document?.cachePath);
+  const [regionEditor, setRegionEditor] = useState<{ jobId: string; pageIndex: number } | null>(null);
+  const editingPage = regionEditor?.jobId === document?.jobId ? regionEditor?.pageIndex ?? null : null;
+  const visibleScoreFingerings = useMemo(() => Object.fromEntries(Object.entries(scoreFingerings).map(([index, page]) =>
+    [index, { ...page, layout: applyFingeringPolicy(page.layout, fingeringPolicy.policy, Number(index),
+      document?.pages.find(p => p.index === Number(index))?.visualSidecar?.ink_obstacles?.raster_sha256) }])),
+    [scoreFingerings, fingeringPolicy.policy, document?.pages]);
   const playbackTimeline = useMemo(
     () => buildPlaybackTimeline(
       document?.pages ?? [],
@@ -1915,7 +1925,9 @@ export function App() {
       {activePage === "viewer" && scoreFingeringsEnabled && document ? <div className="status-strip" role="status">
         Score fingerings (experimental): {document.fingeringError ??
           (document.fingeringStatus !== "ready" ? `Predictions ${document.fingeringStatus ?? "unavailable"}` :
-            Object.entries(scoreFingerings).map(([index, page]) => `Page ${Number(index) + 1}: ${page.status}`).join(" · ") || "Preparing layout…")}
+            Object.entries(visibleScoreFingerings).map(([index, page]) => `Page ${Number(index) + 1}: ${page.layout
+              ? `${page.layout.placed.reduce((sum, label) => sum + label.request.digits.length, 0)} digits shown after exclusions; unsupported/crowded notes omitted`
+              : page.status}`).join(" · ") || "Preparing layout…")}
       </div> : null}
       {activePage === "viewer" && selectedNotes.length > 0 && document && selectedPage ? <div className="status-strip" aria-live="polite">
         Selected fingerings: {selectedNotes.map(note => {
@@ -1924,12 +1936,27 @@ export function App() {
           return value ? `${value.finger} (prediction)` : "unavailable";
         }).join(", ")}
       </div> : null}
+      {activePage === "viewer" && scoreFingeringsEnabled && document ? <FingeringPolicyControls
+        key={document.jobId} store={fingeringPolicy} pages={document.pages} editingPage={editingPage}
+        onEdit={pageIndex => setRegionEditor(pageIndex === null ? null : { jobId: document.jobId, pageIndex })} /> : null}
       <section className={`workspace${debugPanelEnabled ? "" : " debug-panel-hidden"}`}>
         {document && document.pages.length > 0 ? (
           <>
             <DocumentViewer
               documentKey={document.jobId}
-              scoreFingerings={scoreFingeringsEnabled ? scoreFingerings : undefined}
+              scoreFingerings={scoreFingeringsEnabled ? visibleScoreFingerings : undefined}
+              exclusionEditor={scoreFingeringsEnabled && editingPage !== null && fingeringPolicy.available ? {
+                pageIndex: editingPage,
+                regions: (fingeringPolicy.policy.pages[editingPage]?.regions ?? []).filter(region => region.rasterId ===
+                  document.pages.find(page => page.index === editingPage)?.visualSidecar?.ink_obstacles?.raster_sha256),
+                onAdd: bounds => {
+                  const rasterId = document.pages.find(page => page.index === editingPage)?.visualSidecar?.ink_obstacles?.raster_sha256;
+                  if (!rasterId) return;
+                  const page = fingeringPolicy.policy.pages[editingPage] ?? { disabled: false, regions: [] };
+                  fingeringPolicy.change({ ...fingeringPolicy.policy, pages: { ...fingeringPolicy.policy.pages,
+                    [editingPage]: { ...page, regions: [...page.regions, { id: crypto.randomUUID(), rasterId, bounds }] } } });
+                },
+              } : undefined}
               pages={document.pages}
               selectedGroup={selectedGroup}
               highlightAllNotes={highlightAllNotes}

@@ -9,6 +9,7 @@ import { boxesOverlap, layoutFingerings, type FingeringFontMetrics } from "./fin
 import type { ObstacleMap } from "./fingeringObstacles";
 import type { VisualBBox } from "./types";
 import type { AnnotationStaff, VisualSidecar } from "./types";
+import { applyFingeringPolicy, emptyFingeringPolicy, fingeringDocumentId, parseFingeringPolicy } from "./fingeringPolicy";
 
 const staff: AnnotationStaff = {
   staff_id: "staff-0-0", staff_group_index: 0, staff_index: 0, system_index: 0,
@@ -16,6 +17,38 @@ const staff: AnnotationStaff = {
   spacing: [[10, 10], [300, 10]], extent: [10, 100, 300, 150],
 };
 const sidecar: VisualSidecar = { version: 3, source_image_size: [400, 600], notes: [], visual_groups: [], annotation_geometry: { version: 1, staffs: [staff] } };
+
+test("exclusions are content scoped, validated and survive serialization", () => {
+  const id = "a".repeat(64);
+  assert.equal(fingeringDocumentId(`/cache/${id}/`), id);
+  assert.equal(fingeringDocumentId("session-job-123"), undefined);
+  const policy = emptyFingeringPolicy(id);
+  policy.pages[2] = { disabled: true, regions: [{ id: "region", rasterId: "image", bounds: [10, 20, 30, 40] }] };
+  assert.deepEqual(parseFingeringPolicy(JSON.stringify(policy), id), policy);
+  assert.throws(() => parseFingeringPolicy(JSON.stringify(policy), "b".repeat(64)), /invalid/);
+  policy.pages[2].regions[0].bounds[0] = NaN;
+  assert.throws(() => parseFingeringPolicy(JSON.stringify(policy), id), /invalid/);
+});
+
+test("anchor exclusions hide whole chords without changing values or positions and reject changed rasters", () => {
+  const { score, values, music } = requestFixture(true);
+  const requests = buildFingeringRequests(5, 2, score, values, music);
+  const layout = { placed: [{ request: requests.requests[0], bounds: [90, 20, 110, 50] as VisualBBox,
+    fontSize: 12, x: 100, baselines: [25, 35, 45], lane: 0 }], suppressed: [] };
+  const original = JSON.stringify({ layout, values });
+  const policy = emptyFingeringPolicy("a".repeat(64));
+  policy.pages[5] = { disabled: false, regions: [{ id: "r", rasterId: "original", bounds: [95, 125, 105, 135] }] };
+  assert.equal(applyFingeringPolicy(layout, policy, 5, "original")?.placed.length, 0);
+  assert.equal(applyFingeringPolicy(layout, policy, 5, "changed")?.placed.length, 1);
+  assert.equal(applyFingeringPolicy(layout, policy, 4, "original")?.placed.length, 1);
+  policy.pages[5].regions = [];
+  assert.deepEqual(applyFingeringPolicy(layout, policy, 5, "original"), layout);
+  policy.pages[5].disabled = true;
+  assert.equal(applyFingeringPolicy(layout, policy, 5, "original")?.placed.length, 0);
+  policy.disabled = true;
+  assert.equal(applyFingeringPolicy(layout, policy, 4, "original")?.placed.length, 0);
+  assert.equal(JSON.stringify({ layout, values }), original);
+});
 
 test("geometry capability is additive and rejects malformed data", () => {
   assert.equal(annotationStaffs({ ...sidecar, annotation_geometry: undefined }), undefined);

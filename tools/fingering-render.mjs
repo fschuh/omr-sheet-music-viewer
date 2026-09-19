@@ -4,6 +4,7 @@ import { readFile, writeFile, readdir, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { checkControls } from "./fingering-controls-check.mjs";
 
 const root = fileURLToPath(new URL("../testdata/fingering-prototype/", import.meta.url));
 const option = (name, fallback) => process.argv.includes(name) ? process.argv[process.argv.indexOf(name) + 1] : fallback;
@@ -38,7 +39,8 @@ try {
     if (response.exceptionDetails) throw new Error(JSON.stringify(response.exceptionDetails));
     return response.result.value;
   };
-  for (const name of (await readdir(root)).sort()) {
+  if (process.argv.includes("--controls")) await checkControls(call, evaluate);
+  for (const name of (process.argv.includes("--controls") ? [] : (await readdir(root)).sort())) {
     if (id && name !== id) continue;
     let packet;
     try { packet = JSON.parse((await readFile(join(root, name, "packet.js"), "utf8")).replace(/^window.fingeringFixture=/, "").replace(/;$/, "")); } catch { continue; }
