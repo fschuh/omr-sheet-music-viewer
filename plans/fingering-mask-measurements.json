@@ -1,0 +1,62 @@
+{
+  "platform": "Linux-7.0.0-31-generic-x86_64-with-glibc2.43",
+  "cpu": "AMD Ryzen 9 5950X 16-Core Processor",
+  "peak_process_rss_kib": 128772,
+  "threshold": 220,
+  "results": [
+    {
+      "id": "bach-bwv846-prelude-in-c-major-1",
+      "milliseconds": 152.59,
+      "artifact_bytes": 362958,
+      "integral_bytes": 8716784
+    },
+    {
+      "id": "bach-bwv784-invention-no-13-in-a-minor-1",
+      "milliseconds": 187.48,
+      "artifact_bytes": 476258,
+      "integral_bytes": 11437620
+    },
+    {
+      "id": "mozart-k545-piano-sonata-16-I-allegro-1",
+      "milliseconds": 120.0,
+      "artifact_bytes": 362958,
+      "integral_bytes": 8716784
+    },
+    {
+      "id": "mozart-k545-piano-sonata-16-II-andante-1",
+      "milliseconds": 120.55,
+      "artifact_bytes": 362958,
+      "integral_bytes": 8716784
+    },
+    {
+      "id": "beethoven-fur-elise-1",
+      "milliseconds": 127.79,
+      "artifact_bytes": 363046,
+      "integral_bytes": 8718840
+    },
+    {
+      "id": "chrono-trigger-fanfare-1-luccas-theme-1",
+      "milliseconds": 119.46,
+      "artifact_bytes": 351098,
+      "integral_bytes": 8431808
+    },
+    {
+      "id": "super-mario-bros-ground-theme-1",
+      "milliseconds": 116.1,
+      "artifact_bytes": 351098,
+      "integral_bytes": 8431808
+    },
+    {
+      "id": "chopin-25-9-1",
+      "milliseconds": 119.44,
+      "artifact_bytes": 351098,
+      "integral_bytes": 8431808
+    },
+    {
+      "id": "chopin-25-2-1",
+      "milliseconds": 119.92,
+      "artifact_bytes": 351098,
+      "integral_bytes": 8431808
+    }
+  ]
+}

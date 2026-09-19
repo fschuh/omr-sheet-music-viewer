@@ -732,6 +732,15 @@ class PdfProcessor:
             source_size=(rendered["omr_width"], rendered["omr_height"]),
             target_size=(rendered["width"], rendered["height"]),
         )
+        if sidecar.get("annotation_geometry"):
+            from sheet_music_worker.fingering_obstacles import page_ink_artifact
+
+            try:
+                sidecar["ink_obstacles"] = page_ink_artifact(page_path)
+            except Exception as error:
+                # Optional annotations must never take down score recognition.
+                sidecar["annotation_analysis_error"] = str(error)
+                worker_log(f"Page fingering ink analysis unavailable: {error}")
         atomic_write_json(visual_sidecar, sidecar)
         if generated_xml != music_xml:
             os.replace(generated_xml, music_xml)

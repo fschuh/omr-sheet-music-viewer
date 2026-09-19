@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { annotationStaffs, staffAt } from "./staffGeometry";
+import { createObstacleMap } from "./fingeringObstacles";
 import type { AnnotationStaff, VisualSidecar } from "./types";
 
 const staff: AnnotationStaff = {
@@ -25,4 +26,17 @@ test("staff interpolation retains skew and never extrapolates", () => {
   assert.deepEqual(staffAt(staff, 155), { top: 105, bottom: 145, spacing: 10 });
   assert.equal(staffAt(staff, 301), undefined);
   assert.equal(staffAt(staff, 9), undefined);
+});
+
+test("ink queries use full rectangles, independent x/y scale and one clearance margin", () => {
+  const artifact = { version: 1 as const, encoding: "base64-bitset-msb" as const,
+    source_image_size: [8, 2] as [number, number], mask_size: [4, 2] as [number, number],
+    source_pixels_per_cell: [2, 1] as [number, number], raster_sha256: "fixture", threshold: 220, data: "IA==" };
+  const map = createObstacleMap(artifact); // ink occupies original x=[4,6), y=[0,1)
+  assert.equal(map.isClear([0, 0, 4, 1]), true);
+  assert.equal(map.isClear([3, 0, 5, 1]), false);
+  assert.equal(map.isClear([4, 1, 6, 2]), true);
+  assert.equal(map.isClear([4, 1, 6, 2], 0.1), false);
+  assert.equal(map.isClear([8, 0, 9, 1]), false);
+  assert.throws(() => createObstacleMap({ ...artifact, data: "" }), /Truncated/);
 });

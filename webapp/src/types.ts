@@ -62,6 +62,8 @@ export interface RawStemContour {
 
 export interface VisualSidecar {
   version: 3;
+  ink_obstacles?: InkObstacles;
+  annotation_analysis_error?: string;
   annotation_geometry?: {
     version: 1;
     staffs: AnnotationStaff[];
@@ -70,6 +72,17 @@ export interface VisualSidecar {
   raw_stem_contours?: RawStemContour[];
   notes: VisualSidecarNote[];
   visual_groups: VisualGroup[];
+}
+
+export interface InkObstacles {
+  version: 1;
+  encoding: "base64-bitset-msb";
+  source_image_size: VisualPoint;
+  mask_size: VisualPoint;
+  source_pixels_per_cell: VisualPoint;
+  raster_sha256: string;
+  threshold: number;
+  data: string;
 }
 
 export interface AnnotationStaff {
