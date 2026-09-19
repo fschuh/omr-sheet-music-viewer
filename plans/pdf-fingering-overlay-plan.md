@@ -1,7 +1,8 @@
 # PDF fingering overlay experiment and implementation plan
 
 Date: 2026-09-13  
-Status: Tasks 01–10 implemented and committed; Tasks 11–13 remain. See companion
+Status: Tasks 01–11 implemented and verified for the default-off Linux experiment;
+Tasks 12–13 remain. Physical-device/platform acceptance gaps are recorded in the companion
 experiment and integration reports for measured scope and outstanding release checks.
 
 ## 1. Objective and scope
@@ -102,8 +103,8 @@ Cross-staff, interleaved voices, unisons, and unusually dense chords must appear
 
 ## 5. Task breakdown
 
-Tasks 01–10 are implemented within the narrowed clean-score experiment; noisy-scan
-coverage and target-webview acceptance are not claimed. Tasks 11–13 are pending.
+Tasks 01–11 are implemented within the narrowed clean-score experiment; noisy-scan
+coverage and physical-device acceptance are not claimed. Tasks 12–13 are pending.
 Sizes are relative engineering effort, not delivery commitments: S = small localized work, M = several connected changes, L = substantial algorithm or cross-layer work. OCR work is intentionally unestimated until evaluated separately.
 
 ### Task 01 — Establish fixtures and a baseline review procedure

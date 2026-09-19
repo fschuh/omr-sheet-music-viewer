@@ -17,12 +17,22 @@ import {
 import type { PlaybackMoment } from "./playback";
 import type { DocumentPage, VisualGroup, VisualSidecar } from "./types";
 import { ScoreFingeringLayer } from "./ScoreFingeringLayer";
+import { ScoreFingeringStatus } from "./ScoreFingeringStatus";
 import type { FingeringLayout } from "./fingeringLayout";
 import { loadScoreFingeringsEnabled, saveScoreFingeringsEnabled } from "./preferences";
 
 test("score overlay is default-off and storage failures remain local", () => {
   assert.equal(loadScoreFingeringsEnabled(), false);
   assert.doesNotThrow(() => saveScoreFingeringsEnabled(true));
+});
+test("missing geometry offers targeted regeneration and worker failure stays annotation-local", () => {
+  const markup = renderToStaticMarkup(<ScoreFingeringStatus pages={{
+    0: { status: "Staff geometry unavailable; regenerate this page" }, 2: { status: "Fingering worker unavailable" },
+  }} canRegenerate onRegenerate={() => {}} />);
+  assert.match(markup, /Regenerate page 1/);
+  assert.doesNotMatch(markup, /Regenerate page 3/);
+  assert.match(markup, /Page 3:.*Fingering worker unavailable/);
+  assert.doesNotMatch(markup, /disabled/);
 });
 
 test("static score digits need no keyboard or playback and yield to inspection without relocating", () => {

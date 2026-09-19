@@ -19,6 +19,38 @@ notes as left hand and treble-clef notes as right hand. During playback, the
 keyboard shows the predicted hand and finger above each active note name (for
 example, `L5` or `R1`).
 
+### Experimental score fingerings
+
+**Score fingerings: on/off** adds small blue digits to the original page,
+independently of keyboard visibility and playback. It defaults off. Positions
+stay fixed during selection, playback and zoom; pitch-inspection labels may
+temporarily hide intersecting fingerings. Selected-note text exposes the value
+and its source even when the debug panel is hidden.
+
+Open **Printed-fingering exclusions** to hide labels for this PDF or a page.
+For a partially marked passage, choose a page, select **Draw exclusion on this
+page**, then drag around the relevant **noteheads**. Finish drawing to restore
+ordinary gestures. Remove a region or undo a change to restore eligible labels.
+Excluding any member hides its whole chord stack. These settings do not remove
+keyboard fingerings. They persist locally by PDF content identity, outside the
+recognition cache. Rectangles become inactive with a warning if the page raster
+changes. They are not backed up outside this app profile.
+
+Existing printed fingerings are **not automatically recognized or adopted**.
+Predicted values may disagree with them; use exclusions. Crowded passages and
+unsupported cross-staff, independent-voice, unison, partial-chord, grace or tie
+continuation cases may have no labels. The supported experiment is clean,
+conventional piano notation; noisy/faint scans have not been validated.
+
+Older cached pages without staff geometry or ink analysis still work normally,
+but cannot show this overlay. The annotation status identifies those pages;
+regenerate only the affected pages using the existing page retry controls.
+Placement failures do not prevent ordinary viewing, playback or keyboard use.
+
+See [the experiment report](plans/fingering-experiment-report.md) for coverage
+denominators and [integration verification](plans/fingering-integration.md) for
+runtime measurements, reproduction commands and remaining release checks.
+
 After the merged file is ready, **Open MusicXML** delegates it to the operating
 system. The configured default application opens it, or the system can prompt
 for an application when no association exists.

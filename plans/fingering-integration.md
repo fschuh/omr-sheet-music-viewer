@@ -101,3 +101,63 @@ debug-only fields are omitted. The browser suite now exercises the production
 hook/scheduler, asserts policy edits create no worker requests, verifies actual
 scroll-driven page priority and eviction, and fails on observed scrolling long
 tasks. Optional CPU and rendering traces are written under `/tmp`.
+
+## Task 11 — experimental release verification
+
+Usage and limitations are documented in the README. Missing-capability statuses
+now offer an explicit targeted **Regenerate page N** button, including for old
+pages whose ordinary recognition succeeded. No automatic cache deletion occurs.
+
+Checks passed on 2026-09-19:
+
+- `npm test` and `npm run build`, including explicit registration of the focused
+  fingering tests and component unavailable/error states.
+- Worker pytest: 27 passed; HOMR geometry/sidecar pytest: 135 passed plus six
+  subtests (five existing dependency/deprecation warnings).
+- `cargo test --offline --manifest-path src-tauri/Cargo.toml`: six native tests
+  passed; fixture lock verification: 16 matched pages passed.
+- Production Chromium interaction: keyboard-absent display, selection, exclusion
+  drawing/removal/undo/persistence, identity isolation, zoom stability and an
+  emulated two-finger pinch. Neither selection nor zoom/pinch rebuilt placement.
+- Installed Linux target engine WebKitGTK 2.52.6: the actual viewer hook, worker
+  and separate SVG rendered Chopin 25/9 (175 stacks / 310 digits), with its
+  screenshot visually inspected. The isolated GTK Broadway backend required an
+  explicit 96 DPI; its invalid default DPI initially produced a blank snapshot,
+  which was rejected rather than counted as verification.
+
+All seven usable held-out fixtures were rendered as original/annotated pairs with
+the shared production SVG component in WebKitGTK. Repeated bounds were identical;
+independent blue-label/original-dark-pixel overlap was zero on every page:
+
+| Held-out page | Placed digits | Supported digits | Worker ms |
+| --- | ---: | ---: | ---: |
+| Bach invention 13, p2 | 270 | 270 | 93 |
+| Bach prelude C, p3 | 149 | 149 | 64 |
+| Für Elise, p2 | 318 | 329 | 87 |
+| Chopin 25/12, p1 | 236 | 238 | 84 |
+| Chopin 25/7, p1 | 250 | 256 | 74 |
+| Mozart Allegro, p2 | 348 | 348 | 115 |
+| Mozart Rondo, p1 | 332 | 359 | 80 |
+
+Total 1,903/1,949 supported digits (97.64%); 1,903/2,224 predicted digits
+(85.57%) on these available pages. WebKit places one fewer Rondo digit than
+Chromium because engine-specific measured text bounds differ; this is why font
+metrics belong in the layout key. Bach prelude, Mozart Rondo, Chopin 25/7 and
+25/12 plus the integrated 25/9 viewer were visually reviewed in WebKit. As before,
+the frozen cyclic values measure layout, not fingering-model quality.
+
+Reproduce the engine check with a private `broadwayd` display:
+
+```sh
+broadwayd --address=127.0.0.1 --port=8097 :17
+GDK_BACKEND=broadway BROADWAY_DISPLAY=:17 WEBKIT_DISABLE_COMPOSITING_MODE=1 /usr/bin/python3 tools/fingering-webkit-review.py
+# Add --fixture <prepared-id> --view original/annotated for paired page review.
+.venv/bin/python tools/fingering-webkit-metrics.py
+```
+
+This is sufficient to continue the default-off clean-score experiment, not an
+unqualified cross-platform release claim. The actual packaged Tauri shell on a
+physical touchscreen, hardware GPU compositing, other OS webviews, and genuine
+noisy/skewed scans remain manual/platform acceptance gaps. No new HOMR dependency
+commit has been pushed; publish the pinned producer commit before distributing
+a GitHub-based worker installation. Printed-mark adoption/erasure remains absent.

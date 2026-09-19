@@ -53,10 +53,35 @@ export async function checkControls(call, evaluate, traceEvents) {
   await evaluate("document.querySelector('details').open = true");
   await clickText("Remove region 1");
   await wait(`Number(document.querySelector('#review-state').dataset.count) === ${count}`);
+  const stableDigits = await evaluate("Object.fromEntries(Array.from(document.querySelectorAll('[data-fingering-note]'), n => [n.dataset.fingeringNote, [n.getAttribute('x'),n.getAttribute('y'),n.getAttribute('font-size')]]))");
+  const postsBeforeSelection = await evaluate("window.fingeringLifecycle.posted.length");
+  const anchor = await evaluate(`(() => { const s = document.querySelector('.overlay'), r = s.getBoundingClientRect();
+    const a = JSON.parse(document.querySelector('#review-state').dataset.anchor);
+    return {x: r.left + a[0] / s.viewBox.baseVal.width * r.width, y: r.top + a[1] / s.viewBox.baseVal.height * r.height}; })()`);
+  await call("Input.dispatchMouseEvent", { type: "mousePressed", ...anchor, button: "left", clickCount: 1 });
+  await call("Input.dispatchMouseEvent", { type: "mouseReleased", ...anchor, button: "left", clickCount: 1 });
+  await wait("Boolean(document.querySelector('#review-state').dataset.selected)");
+  await evaluate("document.querySelector('[aria-label=\"Reset zoom to 100%\"]').click()");
+  await new Promise(resolve => setTimeout(resolve, 150));
+  await evaluate("document.querySelector('[aria-label=\"Fit page\"]').click()");
+  await new Promise(resolve => setTimeout(resolve, 150));
+  const afterSelection = await evaluate("Object.fromEntries(Array.from(document.querySelectorAll('[data-fingering-note]'), n => [n.dataset.fingeringNote, [n.getAttribute('x'),n.getAttribute('y'),n.getAttribute('font-size')]]))");
+  for (const [id, positions] of Object.entries(afterSelection)) assert.deepEqual(positions, stableDigits[id]);
+  assert.equal(await evaluate("window.fingeringLifecycle.posted.length"), postsBeforeSelection);
+  const beforePinch = await evaluate("document.querySelector('.document-content').style.transform");
+  await call("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 2 });
+  await call("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: 600, y: 900, id: 1 }, { x: 700, y: 900, id: 2 }] });
+  await call("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: 550, y: 900, id: 1 }, { x: 750, y: 900, id: 2 }] });
+  await call("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+  await wait(`document.querySelector('.document-content').style.transform !== ${JSON.stringify(beforePinch)}`);
+  assert.equal(await evaluate("window.fingeringLifecycle.posted.length"), postsBeforeSelection);
+  await call("Emulation.setTouchEmulationEnabled", { enabled: false });
+  await evaluate("document.querySelector('[aria-label=\"Fit page\"]').click()");
+  await new Promise(resolve => setTimeout(resolve, 150));
   const screenshot = await call("Page.captureScreenshot", { format: "png" });
   await writeFile("/tmp/fingering-controls-review.png", Buffer.from(screenshot.data, "base64"));
   console.log(JSON.stringify({ controls: "passed", placedStacks: count, afterExclusion: excludedCount,
-    checks: ["document disable", "undo", "pointer rectangle", "document isolation", "reload persistence", "remove restores"] }));
+    checks: ["document disable", "undo", "pointer rectangle", "document isolation", "reload persistence", "remove restores", "selection", "zoom stability", "emulated two-finger pinch"] }));
 
   await call("Page.navigate", { url: url + "?long" });
   await wait("JSON.parse(document.querySelector('#review-state')?.dataset.cached || '[]').length >= 2");

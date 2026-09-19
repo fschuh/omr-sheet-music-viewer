@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DocumentViewer } from "./DocumentViewer";
 import { useScoreFingerings } from "./useScoreFingerings";
+import { ScoreFingeringStatus } from "./ScoreFingeringStatus";
 import { useFingeringPolicy } from "./useFingeringPolicy";
 import { applyFingeringPolicy } from "./fingeringPolicy";
 import { FingeringPolicyControls } from "./FingeringPolicyControls";
@@ -1926,9 +1927,8 @@ export function App() {
       {activePage === "viewer" && scoreFingeringsEnabled && document ? <div className="status-strip" role="status">
         Score fingerings (experimental): {document.fingeringError ??
           (document.fingeringStatus !== "ready" ? `Predictions ${document.fingeringStatus ?? "unavailable"}` :
-            Object.entries(visibleScoreFingerings).map(([index, page]) => `Page ${Number(index) + 1}: ${page.layout
-              ? `${page.layout.placed.reduce((sum, label) => sum + label.request.digits.length, 0)} digits shown after exclusions; unsupported/crowded notes omitted`
-              : page.status}`).join(" · ") || "Preparing layout…")}
+            <ScoreFingeringStatus pages={visibleScoreFingerings} canRegenerate={nativeAvailable && !busy}
+              onRegenerate={handleRetryPage} />)}
       </div> : null}
       {activePage === "viewer" && selectedNotes.length > 0 && document && selectedPage ? <div className="status-strip" aria-live="polite">
         Selected fingerings: {selectedNotes.map(note => {
