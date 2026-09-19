@@ -33,11 +33,13 @@ export interface FingeringRequest {
   spacing: number;
   anchor: VisualPoint;
   side: "above" | "below";
+  notationTop: number;
+  notationBottom: number;
   digits: FingeringDigit[];
 }
 
 export type RequestOmissionReason = "missing-link" | "missing-geometry" | "missing-prediction" |
-  "missing-musical-identity" | "unsupported-chord" | "unsupported-cross-staff" | "unsupported-grace" | "tie-continuation";
+  "missing-musical-identity" | "unsupported-chord" | "unsupported-cross-staff" | "unsupported-voices" | "unsupported-grace" | "tie-continuation";
 
 export interface FingeringRequests {
   requests: FingeringRequest[];
@@ -82,6 +84,11 @@ export function buildFingeringRequests(
     }
     if (music.grace) { omit("unsupported-grace"); continue; }
     if (music.tieStop) { omit("tie-continuation"); continue; }
+    const independentVoices = sidecar.visual_groups.some(other => other.visual_group_id !== group.visual_group_id &&
+      other.visual_status !== "diagnostic" && other.musicxml_id && other.moment_id === group.moment_id &&
+      other.staff_group_index === group.staff_group_index && other.staff_index === group.staff_index &&
+      !(group.chord_id && other.chord_id === group.chord_id));
+    if (independentVoices) { omit("unsupported-voices"); continue; }
     const ambiguousUnison = sidecar.visual_groups.some(other => other.visual_group_id !== group.visual_group_id &&
       other.moment_id === group.moment_id && other.staff_group_index === group.staff_group_index && other.staff_index === group.staff_index &&
       Math.abs(other.center[0] - group.center[0]) < local.spacing * 0.2 && Math.abs(other.center[1] - group.center[1]) < local.spacing * 0.2);
@@ -96,9 +103,11 @@ export function buildFingeringRequests(
     // Middle staves have no validated outside-system lane ownership yet.
     if (systemStaffs.length > 2) { omit("unsupported-cross-staff"); continue; }
     const side = systemStaffs.length === 2 && systemStaffs[1].staff_id === staff.staff_id ? "below" : "above";
+    const notationY = [group.center[1], ...group.notehead_contours.flat().map(p => p[1]),
+      ...group.stem_contours.flat().map(p => p[1])].filter(Number.isFinite);
     candidates.push({ id, pageIndex, momentId: group.moment_id, chordId: group.chord_id,
       measure: music.measure, onset: music.onset, staff, spacing: local.spacing,
-      anchor: group.center, side,
+      anchor: group.center, side, notationTop: Math.min(...notationY), notationBottom: Math.max(...notationY),
       digits: [{ documentId: id, localId: note.musicxml_id, visualGroupId: group.visual_group_id, anchor: group.center, value }],
     });
   }
@@ -129,7 +138,9 @@ export function buildFingeringRequests(
       result.omissions.push(...members.map(m => ({ documentId: m.id, reason: "unsupported-chord" as const })));
       continue;
     }
-    result.requests.push({ ...candidate, digits, anchor: [digits.reduce((sum, d) => sum + d.anchor[0], 0) / digits.length,
+    result.requests.push({ ...candidate, digits, notationTop: Math.min(...members.map(m => m.notationTop)),
+      notationBottom: Math.max(...members.map(m => m.notationBottom)),
+      anchor: [digits.reduce((sum, d) => sum + d.anchor[0], 0) / digits.length,
       candidate.side === "above" ? digits[0].anchor[1] : digits[digits.length - 1].anchor[1]] });
     result.counts.supported += digits.length;
   }

@@ -13,7 +13,7 @@ and geometry content. Do not use the normal v3 recognition-cache validity bit as
 an overlay-ready bit. There is intentionally no blanket recognition-cache bump.
 
 Worker dependency and lock pin HOMR commit
-`6921e9bb03a15fcc771d6707abc9b05ccc06d752`. Publish that commit before distributing
+`a750ab029cd035474f6e4a2f82b4815f3d8d0c54`. Publish that commit before distributing
 a worker that installs from GitHub. For this two-repository development checkout,
 use `PYTHONPATH=../homr:worker .venv/bin/python ...` from the viewer repository.
 No remote push or release is performed by this implementation.

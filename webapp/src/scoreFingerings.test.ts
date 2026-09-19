@@ -97,7 +97,6 @@ test("diagnostic and partial stacks are never guessed", () => {
 
 test("shared moment alone never creates a chord; ties and repeated inputs do not duplicate labels", () => {
   const { score, values, music } = requestFixture();
-  score.visual_groups.forEach(g => { g.moment_id = "same"; });
   music["page-2-note-1"].tieStop = true;
   score.notes.push(score.notes[0]);
   const result = buildFingeringRequests(5, 2, score, values, music);
@@ -105,6 +104,14 @@ test("shared moment alone never creates a chord; ties and repeated inputs do not
   assert.equal(result.requests.length, 2);
   assert.ok(result.requests.every(r => r.digits.length === 1));
   assert.equal(result.omissions[0].reason, "tie-continuation");
+});
+
+test("independent stems on one physical onset are suppressed instead of appearing as a false stack", () => {
+  const { score, values, music } = requestFixture();
+  score.visual_groups.forEach(g => { g.moment_id = "same"; });
+  const result = buildFingeringRequests(5, 2, score, values, music);
+  assert.equal(result.requests.length, 0);
+  assert.ok(result.omissions.every(o => o.reason === "unsupported-voices"));
 });
 
 test("mixed-hand and missing-value stacks are reported", () => {
@@ -178,4 +185,14 @@ test("neighboring system boundaries constrain tall stacks", () => {
   const result = layoutFingerings(requests, [neighbor, staff], rectangleInk([]), metrics);
   assert.equal(result.placed.length, 0);
   assert.equal(result.suppressed[0].reason, "system-boundary");
+});
+
+test("a measure baseline clears the full stem envelope instead of weaving through beam gaps", () => {
+  const { score, values, music } = requestFixture();
+  const { requests } = buildFingeringRequests(5, 2, score, values, music);
+  requests[1].notationTop = 60;
+  const result = layoutFingerings(requests, [staff], rectangleInk([]), metrics);
+  assert.equal(result.placed.length, 3);
+  assert.ok(result.placed.every(p => p.bounds[3] < 60));
+  assert.equal(new Set(result.placed.map(p => p.bounds[3])).size, 1);
 });

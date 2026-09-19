@@ -3,7 +3,7 @@ import type { ObstacleMap } from "./fingeringObstacles";
 import type { AnnotationStaff, VisualBBox } from "./types";
 import { staffAt } from "./staffGeometry";
 
-export const FINGERING_LAYOUT_VERSION = "staff-lanes-v1";
+export const FINGERING_LAYOUT_VERSION = "staff-lanes-v2";
 export const FINGERING_FONT = "Arial, sans-serif";
 const FONT_SPACES = 1.2;
 const MIN_FONT_PIXELS = 10;
@@ -89,8 +89,8 @@ function candidatesFor(
       const staff = staffAt(request.staff, x);
       if (!staff || x < minX || x > maxX) continue;
       const anchor = request.side === "above"
-        ? Math.min(staff.top, ...request.digits.map(d => d.anchor[1]))
-        : Math.max(staff.bottom, ...request.digits.map(d => d.anchor[1]));
+        ? Math.min(staff.top, ...neighbors.map(n => n.notationTop))
+        : Math.max(staff.bottom, ...neighbors.map(n => n.notationBottom));
       const edge = anchor + (request.side === "above" ? -1 : 1) * request.spacing * (0.65 + lane * 0.85);
       const top = request.side === "above" ? edge - height : edge;
       const bounds: VisualBBox = [x - left, top, x + right, top + height];

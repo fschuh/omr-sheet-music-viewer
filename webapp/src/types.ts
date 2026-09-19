@@ -64,6 +64,7 @@ export interface VisualSidecar {
   version: 3;
   ink_obstacles?: InkObstacles;
   annotation_analysis_error?: string;
+  annotation_geometry_error?: string;
   annotation_geometry?: {
     version: 1;
     staffs: AnnotationStaff[];
