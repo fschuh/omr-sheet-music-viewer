@@ -5,6 +5,9 @@ import { createObstacleMap } from "./fingeringObstacles";
 import { buildFingeringRequests, type MusicalNoteIdentity } from "./scoreFingerings";
 import { documentNoteId, musicPageNumbers } from "./scoreIdentity";
 import type { PredictedFingering } from "./fingering";
+import { boxesOverlap, layoutFingerings, type FingeringFontMetrics } from "./fingeringLayout";
+import type { ObstacleMap } from "./fingeringObstacles";
+import type { VisualBBox } from "./types";
 import type { AnnotationStaff, VisualSidecar } from "./types";
 
 const staff: AnnotationStaff = {
@@ -112,4 +115,67 @@ test("mixed-hand and missing-value stacks are reported", () => {
   const result = buildFingeringRequests(5, 2, score, values, music);
   assert.equal(result.requests.length, 0);
   assert.ok(result.omissions.some(o => o.reason === "missing-prediction"));
+});
+
+const metrics: FingeringFontMetrics = { family: "test-metrics", digits: Object.fromEntries(
+  [1, 2, 3, 4, 5].map(d => [d, { left: 0.3, right: 0.3, ascent: 0.7, descent: 0.1 }])) };
+function rectangleInk(rectangles: VisualBBox[]): ObstacleMap {
+  return { width: 400, height: 600, bytes: 0, isClear: (bounds, clearance = 0) =>
+    bounds[0] >= clearance && bounds[1] >= clearance && bounds[2] <= 400 - clearance && bounds[3] <= 600 - clearance &&
+    !rectangles.some(rectangle => boxesOverlap(bounds, rectangle, clearance)) };
+}
+
+test("placement avoids a beam and a slur crossing the preferred lanes, deterministically", () => {
+  const { score, values, music } = requestFixture();
+  const { requests } = buildFingeringRequests(5, 2, score, values, music);
+  const ink = rectangleInk([[75, 82, 120, 95], [130, 74, 190, 78]]);
+  const first = layoutFingerings(requests, [staff], ink, metrics);
+  assert.equal(first.placed.length, 3);
+  assert.ok(first.placed.every(p => ink.isClear(p.bounds, 1.8)));
+  assert.deepEqual(layoutFingerings(requests, [staff], ink, metrics), first);
+  assert.ok(first.placed.some(p => p.lane > 0));
+});
+
+test("adjacent digit collisions are hard constraints including against reserved overlays", () => {
+  const { score, values, music } = requestFixture();
+  const { requests } = buildFingeringRequests(5, 2, score, values, music);
+  requests.forEach(r => { r.anchor[0] = 100; r.digits[0].anchor[0] = 100; });
+  const reserved: VisualBBox[] = [[80, 84, 120, 96]];
+  const result = layoutFingerings(requests, [staff], rectangleInk([]), metrics, reserved);
+  for (const [i, placed] of result.placed.entries()) {
+    assert.ok(!reserved.some(box => boxesOverlap(box, placed.bounds, 1.8)));
+    assert.ok(!result.placed.slice(i + 1).some(other => boxesOverlap(placed.bounds, other.bounds, 1.8)));
+  }
+  assert.equal(result.placed.length + result.suppressed.length, 3);
+});
+
+test("a tall chord is one collision object with preserved digit-to-note baselines", () => {
+  const { score, values, music } = requestFixture(true);
+  const { requests } = buildFingeringRequests(5, 2, score, values, music);
+  const result = layoutFingerings(requests, [staff], rectangleInk([]), metrics);
+  assert.equal(result.placed.length, 1);
+  const p = result.placed[0];
+  assert.equal(p.baselines.length, 3);
+  assert.ok(p.bounds[3] - p.bounds[1] > 30);
+  assert.ok(p.baselines[0] < p.baselines[1] && p.baselines[1] < p.baselines[2]);
+});
+
+test("no legal whitespace and unreadable sizes suppress instead of escaping or shrinking", () => {
+  const { score, values, music } = requestFixture();
+  const { requests } = buildFingeringRequests(5, 2, score, values, music);
+  const result = layoutFingerings(requests, [staff], rectangleInk([[0, 0, 400, 600]]), metrics);
+  assert.equal(result.placed.length, 0);
+  assert.equal(result.suppressed.length, 3);
+  assert.ok(result.suppressed.every(s => s.reason === "printed-ink"));
+  requests[0].spacing = 5;
+  assert.equal(layoutFingerings([requests[0]], [staff], rectangleInk([]), metrics).suppressed[0].reason, "minimum-size");
+});
+
+test("neighboring system boundaries constrain tall stacks", () => {
+  const { score, values, music } = requestFixture(true);
+  const { requests } = buildFingeringRequests(5, 2, score, values, music);
+  const neighbor: AnnotationStaff = { ...staff, staff_id: "previous", system_index: 10, extent: [10, 40, 300, 95] };
+  const result = layoutFingerings(requests, [neighbor, staff], rectangleInk([]), metrics);
+  assert.equal(result.placed.length, 0);
+  assert.equal(result.suppressed[0].reason, "system-boundary");
 });
