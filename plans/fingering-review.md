@@ -1,6 +1,6 @@
 # Fingering placement baseline
 
-The manifest pins 12 local pages, their PDFs, page rasters, recognized MusicXML,
+The manifest pins 16 local pages, their PDFs, page rasters, recognized MusicXML,
 v3 sidecars and fixed digit values. Paths are relative to the workspace containing
 both repositories and `omr-evals`. Verify with `python3 tools/fingering-fixtures.py`.
 Source editions/arrangements have no established redistribution license here;
@@ -13,10 +13,19 @@ ones. Future model snapshots must be separately identified and locked.
 
 Held-out pages are fixed before tuning. Do not use them to choose thresholds.
 The screenshots mentioned in the proposal were not supplied and are not fixtures.
-The current corpus does not establish coverage of noisy/skewed scans, printed
-fingerings, octave lines or cross-staff writing. These remain required challenge
-fixtures; do not claim Task 01 acceptance or a release gate until they are added
-and reviewed. Synthetic algorithm tests cannot substitute for real scan review.
+The five user-supplied Chopin studies (Op. 25 Nos. 2, 6, 7, 9 and 12) add printed
+fingerings and dense chord challenges; No. 6 page 1 also contains octave lines.
+Nos. 7 and 12 are held out before tuning. Cache artifacts are
+bound by PDF SHA-256 and pinned individually. No. 12 was regenerated at 1920px
+with this branch's producer; `tools/fingering-prepare.py` reproduces that input.
+No. 6 is separately recorded as an unavailable reference: inference fails its
+physical-staff identity check (`vnote-246`: staff 1, expected 0). It can inform
+ink review but has no usable association fixture or coverage denominator.
+No. 9 and No. 6 page 1 have been
+visually inspected: they are clean digital engravings, not noisy scans. The
+current corpus still does not establish noisy/skewed scan or cross-staff
+coverage. Such notation must remain unsupported until reviewed. Synthetic
+algorithm tests cannot substitute for real scan review.
 
 ## Review protocol
 
@@ -50,3 +59,9 @@ Für Elise page 1, original 2481 × 3508 raster (rectangles are x0,y0,x1,y1):
 These rectangles are review anchors, not production obstacles or ground-truth
 engraved positions. No real passage has yet been certified as having no legal
 space; that judgment must follow candidate/rendered-output review.
+
+Chopin Op. 25 No. 9 page 1 (2550 × 3301): the opening treble passage contains
+stacked printed fingerings. Region [560,230,990,365] is an exclusion candidate;
+do not treat its existing digits as confirmed predicted/source values. No. 6
+page 1 third-system treble corridor [300,1300,2000,1550] combines existing digits,
+slur, ledger lines and an octave indication: inspect full text bounds here.

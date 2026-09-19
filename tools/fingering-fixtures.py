@@ -37,9 +37,24 @@ def artifact(relative):
 
 def snapshot():
     fixtures = []
-    for case, page, split, purpose in CASES:
-        base = f"{RUN}/{case}/pages/page-{page:04}"
+    unavailable = []
+    selections = [(case, page, split, purpose, f"{RUN}/{case}/pages/page-{page:04}",
+                   f"omr-evals/cases/{case}/source.pdf") for case, page, split, purpose in CASES]
+    for number, suffix in [(9, " - Butterfly"), (2, ""), (6, ""), (7, ""), (12, "")]:
+        source = Path.home() / f"Documents/sheet-music/Classical/Chopin - Etude 25 No {number}{suffix}.pdf"
+        digest = hashlib.sha256(source.read_bytes()).hexdigest()
+        base = Path.home() / f".cache/com.homr.sheetmusicviewer/pdf-cache/{digest}/pages/0001"
+        if not base.with_suffix(".png").is_file():
+            base = ROOT / "testdata/fingering" / digest / "0001"
+        selections.append((f"chopin-25-{number}", 1, "held-out" if number in (7, 12) else "development",
+                           "existing printed fingerings, dense chords and long slurs", str(base), str(source)))
+    for case, page, split, purpose, base, source in selections:
         image = artifact(base + ".png")
+        if case == "chopin-25-6":
+            unavailable.append({"id": case, "source": artifact(source), "image": image,
+                                "reason": "HOMR rejects vnote-246: physical staff 1, expected 0 (1920px CPU inference)",
+                                "purpose": "printed digit/ink review only; no authoritative note alignment"})
+            continue
         xml = artifact(base + ".musicxml")
         sidecar = artifact(base + ".homr.visual.json")
         data = json.loads((WORKSPACE / sidecar["path"]).read_text())
@@ -55,12 +70,13 @@ def snapshot():
         values = {id_: 1 + i % 5 for i, id_ in enumerate(ids)}
         fixtures.append({
             "id": f"{case.split('/')[-1]}-{page}", "split": split,
-            "purpose": purpose, "source": artifact(f"omr-evals/cases/{case}/source.pdf"),
+            "purpose": purpose, "source": artifact(source),
             "rights": "Local evaluation only; edition/arrangement redistribution license not established. Do not copy source assets into this repository.",
             "image": image, "musicxml": xml, "sidecar": sidecar,
             "dimensions": dimensions, "fixed_layout_values": values,
         })
-    return {"version": 1, "value_origin": "synthetic cyclic 1–5; layout-only, not model accuracy", "fixtures": fixtures}
+    return {"version": 1, "value_origin": "synthetic cyclic 1–5; layout-only, not model accuracy", "fixtures": fixtures,
+            "unavailable_references": unavailable}
 
 
 if __name__ == "__main__":
