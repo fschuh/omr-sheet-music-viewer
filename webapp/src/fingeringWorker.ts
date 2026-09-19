@@ -4,6 +4,7 @@ import { buildFingeringRequests, type MusicalNoteIdentity } from "./scoreFingeri
 import type { EffectiveFingering } from "./fingeringAnnotations";
 import type { PredictedFingering } from "./fingering";
 import type { VisualBBox, VisualSidecar } from "./types";
+import { annotationStaffs } from "./staffGeometry";
 
 export interface FingeringWork {
   token: number;
@@ -23,6 +24,7 @@ self.onmessage = ({ data: work }: MessageEvent<FingeringWork>) => {
     const artifact = work.sidecar.ink_obstacles;
     if (!artifact) throw new Error(work.sidecar.annotation_analysis_error ?? "Page ink unavailable; regenerate this page");
     if (!work.sidecar.annotation_geometry) throw new Error(work.sidecar.annotation_geometry_error ?? "Staff geometry unavailable; regenerate this page");
+    if (!annotationStaffs(work.sidecar)) throw new Error("Invalid staff geometry; regenerate this page");
     const key = artifact.raster_sha256;
     const signature = JSON.stringify([artifact.version, artifact.encoding, artifact.source_image_size, artifact.mask_size, artifact.source_pixels_per_cell]);
     let cached = masks.get(key);

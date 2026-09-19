@@ -50,9 +50,54 @@ persistence and removal/restoration pass. Its final screenshot was inspected.
 Reproduce after preparing the Task 07 fixtures:
 
 ```sh
-webapp/node_modules/.bin/esbuild webapp/tools/fingering-controls-review.tsx --bundle --format=iife --outfile=testdata/fingering-prototype/controls.js
+webapp/node_modules/.bin/esbuild webapp/tools/fingering-controls-review.tsx --bundle --format=esm --minify '--define:process.env.NODE_ENV="production"' --outfile=testdata/fingering-prototype/controls.js
 node tools/fingering-render.mjs --controls
 ```
 
 The browser test uses an isolated temporary profile with test-only PDF identities;
 it does not modify the user's saved app policies.
+
+## Task 10 — bounded lifecycle and measured responsiveness
+
+An IntersectionObserver prioritizes up to three visible pages, with one following
+page when capacity allows. The scheduler retains at most three layouts and one
+in-flight request; the worker retains at most two ink integrals. Eviction never
+touches saved policy. Long scores keep their existing viewer artifacts; these
+limits apply to additional annotation processing, not the viewer's total document
+memory. Each integral is bounded by a 2049×2049 Uint32 buffer (16.02 MiB); making a
+new mask can transiently allocate a third before LRU eviction. Local fixtures use
+8.04–10.91 MiB per integral. The repeated-page benchmark reuses one raster/mask.
+
+Unchanged page results survive policy, selection, and viewport updates. Task keys
+include the algorithm version, measured font, merge ordinal, per-page musical
+structure and effective values, plus immutable sidecar identity. New geometry,
+page retries, value changes and document switches reject obsolete results before
+rendering; active obsolete work is terminated. Only per-page musical records and
+placement-relevant sidecar fields cross the worker boundary. Full curve validation
+and all ink/layout processing run in the worker. Startup failure, worker errors
+and 15-second timeouts affect annotations only.
+
+Initial profiling found 82–90 ms Chromium `Layerize` tasks when annotations shared
+the inspection SVG. Removing debug geometry halved message copying but did not
+solve that rendering cost. Annotation SVGs now have their own compositor layer,
+with the same source-coordinate viewBox and inspection reservation rules. Only
+the bounded set of placed pages gets this layer. CSS page containment experiments
+were slower and were not retained.
+
+Reference: Ryzen 9 5950X, Linux, isolated headless Chromium, production React build,
+1300×1800 viewport, 20 synthetic repeated Chopin 25/9 pages; not 20 independently
+recognized pages or a target-webview/touch-device benchmark. Ten 2500-pixel scrolls
+at 250 ms intervals exercised pages 0–17. Two final runs had zero main-thread
+long tasks (≥50 ms), as did the overlay-off comparison. The final run retained
+pages 15–17, one worker, and three layouts; per-message copying was 4.8–6.9 ms.
+Chromium's approximate/quantized main-thread JS heap was 50.4 MB, excluding worker
+and compositor memory; this is not a whole-process peak-memory claim. The earlier
+Task 07 worker timings cover actual distinct fixture pages.
+
+Validation: full web tests/build pass. Scheduler tests cover a 100-page queue,
+bounded eviction, cache reuse, changed values/geometry, stale replies, disposal,
+startup failure and timeout. Packet tests prove requests are unchanged after
+debug-only fields are omitted. The browser suite now exercises the production
+hook/scheduler, asserts policy edits create no worker requests, verifies actual
+scroll-driven page priority and eviction, and fails on observed scrolling long
+tasks. Optional CPU and rendering traces are written under `/tmp`.

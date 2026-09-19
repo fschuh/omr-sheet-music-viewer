@@ -303,7 +303,8 @@ export function App() {
     }
   }, [document?.documentMusicXml]);
   const [scoreFingeringsEnabled, setScoreFingeringsEnabled] = useState(loadScoreFingeringsEnabled);
-  const scoreFingerings = useScoreFingerings(document, realtimeModel.score, scoreFingeringsEnabled);
+  const [visibleFingeringPages, setVisibleFingeringPages] = useState<number[]>([]);
+  const scoreFingerings = useScoreFingerings(document, realtimeModel.score, scoreFingeringsEnabled, visibleFingeringPages);
   const fingeringPolicy = useFingeringPolicy(document?.cachePath);
   const [regionEditor, setRegionEditor] = useState<{ jobId: string; pageIndex: number } | null>(null);
   const editingPage = regionEditor?.jobId === document?.jobId ? regionEditor?.pageIndex ?? null : null;
@@ -1944,6 +1945,7 @@ export function App() {
           <>
             <DocumentViewer
               documentKey={document.jobId}
+              onVisiblePagesChange={setVisibleFingeringPages}
               scoreFingerings={scoreFingeringsEnabled ? visibleScoreFingerings : undefined}
               exclusionEditor={scoreFingeringsEnabled && editingPage !== null && fingeringPolicy.available ? {
                 pageIndex: editingPage,

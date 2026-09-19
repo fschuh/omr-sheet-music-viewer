@@ -81,6 +81,7 @@ import { FingeringExclusionLayer } from "./FingeringExclusionLayer";
 import type { FingeringRegion } from "./fingeringPolicy";
 
 interface DocumentViewerProps {
+  onVisiblePagesChange?: (indices: number[]) => void;
   exclusionEditor?: { pageIndex: number; regions: FingeringRegion[]; onAdd: (bounds: [number, number, number, number]) => void };
   scoreFingerings?: Readonly<Record<number, ScoreFingeringPage>>;
   documentKey: string;
@@ -480,13 +481,17 @@ const PageOverlay = memo(function PageOverlay({
   if (!page.visualSidecar) return null;
   const sidecar = page.visualSidecar;
   return (
+    <>
+    {fingeringLayout?.placed.length ? <svg className="overlay score-fingering-overlay"
+      viewBox={`0 0 ${page.width} ${page.height}`} aria-hidden="true">
+      <ScoreFingeringLayer layout={fingeringLayout} reserved={noteLabels.map(label =>
+        [label.x, label.y, label.x + label.width, label.y + label.height])} />
+    </svg> : null}
     <svg
       className={`overlay${playbackActive ? " playback-overlay" : ""}`}
       viewBox={`0 0 ${page.width} ${page.height}`}
       aria-hidden="true"
     >
-      <ScoreFingeringLayer layout={fingeringLayout} reserved={noteLabels.map(label =>
-        [label.x, label.y, label.x + label.width, label.y + label.height])} />
       {realtimePlayheadEnabled || realtimePlayhead?.pageIndex === page.index ? (
         <line
           className="realtime-playhead"
@@ -554,10 +559,12 @@ const PageOverlay = memo(function PageOverlay({
         anchors={fingeringLayout?.placed.flatMap(label => label.request.digits.map(digit => digit.anchor)) ?? []}
         width={page.width} height={page.height} regions={exclusionEditor.regions} onAdd={exclusionEditor.onAdd} /> : null}
     </svg>
+    </>
   );
 });
 
 export function DocumentViewer({
+  onVisiblePagesChange,
   exclusionEditor,
   scoreFingerings,
   documentKey,
@@ -635,6 +642,24 @@ export function DocumentViewer({
     () => documentPages.filter((page) => page.status !== "skipped"),
     [documentPages],
   );
+  useEffect(() => {
+    if (!onVisiblePagesChange || !stageRef.current || typeof IntersectionObserver === "undefined") return;
+    const visible = new Set<number>();
+    let previous = "";
+    const observer = new IntersectionObserver(entries => {
+      for (const entry of entries) {
+        const index = Number((entry.target as HTMLElement).dataset.pageIndex);
+        if (entry.isIntersecting) visible.add(index); else visible.delete(index);
+      }
+      const indices = [...visible].sort((a, b) => a - b).slice(0, 3);
+      const key = indices.join(",");
+      if (key !== previous) { previous = key; onVisiblePagesChange(indices); }
+    }, { root: stageRef.current, threshold: 0 });
+    for (const [index, element] of pageRefs.current) {
+      element.dataset.pageIndex = String(index); observer.observe(element);
+    }
+    return () => observer.disconnect();
+  }, [documentKey, pages, onVisiblePagesChange]);
   const firstSizedPage = pages.find(
     (page) => page.status === "loading" || page.status === "complete",
   );

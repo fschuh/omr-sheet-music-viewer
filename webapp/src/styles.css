@@ -910,7 +910,9 @@ button:disabled {
   pointer-events: none;
 }
 
+
 .overlay { pointer-events: none; }
+.score-fingering-overlay { will-change: transform; }
 
 .overlay .realtime-playhead {
   filter: drop-shadow(0 0 2px rgb(255 255 255 / 95%));

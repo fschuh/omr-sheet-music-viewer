@@ -10,6 +10,77 @@ import type { ObstacleMap } from "./fingeringObstacles";
 import type { VisualBBox } from "./types";
 import type { AnnotationStaff, VisualSidecar } from "./types";
 import { applyFingeringPolicy, emptyFingeringPolicy, fingeringDocumentId, parseFingeringPolicy } from "./fingeringPolicy";
+import { fingeringSidecarPacket, FingeringScheduler, prioritizedFingeringPages, type FingeringTask, type FingeringWorkerPort, type FingeringPageResult } from "./fingeringScheduler";
+import type { FingeringWork } from "./fingeringWorker";
+
+class FakeFingeringWorker implements FingeringWorkerPort {
+  onmessage: FingeringWorkerPort["onmessage"] = null;
+  onerror: FingeringWorkerPort["onerror"] = null;
+  messages: FingeringWork[] = [];
+  terminated = false;
+  postMessage(work: FingeringWork) { this.messages.push(work); }
+  terminate() { this.terminated = true; }
+  reply() { this.onmessage?.({ data: { token: this.messages.at(-1)!.token, result: { placed: [], suppressed: [] } } } as MessageEvent); }
+}
+function schedulerTask(index: number, key = "v1"): FingeringTask {
+  return { key, work: { pageIndex: index, musicPageNumber: index + 1, sidecar, values: {}, musicalNotes: {}, metrics: { family: "fixture", digits: {} } } };
+}
+test("compact worker packets preserve every placement request and omit debug-only layers", () => {
+  const { score, values, music } = requestFixture(true);
+  score.raw_stem_contours = [{ debug_id: 1, contour: [[0, 0]], bbox: [] }];
+  score.visual_groups[0].detected_notehead_contours = [[[0, 0]]];
+  const packet = fingeringSidecarPacket(score);
+  assert.equal(packet.raw_stem_contours, undefined);
+  assert.equal(packet.visual_groups[0].detected_notehead_contours, undefined);
+  assert.equal(packet.visual_groups[0].notehead_contours, score.visual_groups[0].notehead_contours);
+  assert.deepEqual(buildFingeringRequests(5, 2, packet, values, music), buildFingeringRequests(5, 2, score, values, music));
+});
+test("scheduler bounds a long score, prioritizes visible pages and reuses unchanged results", () => {
+  assert.deepEqual(prioritizedFingeringPages([0, 2, 3, 4, 5], [3, 4]), [3, 4, 5]);
+  assert.deepEqual(prioritizedFingeringPages([0, 2, 3, 4, 5], [0, 2, 3, 4]), [0, 2, 3]);
+  const worker = new FakeFingeringWorker();
+  let output: ReadonlyMap<number, FingeringPageResult> = new Map();
+  const scheduler = new FingeringScheduler(() => worker, pages => { output = pages; });
+  const tasks = Array.from({ length: 100 }, (_, i) => schedulerTask(i));
+  scheduler.update(tasks);
+  for (let i = 0; i < 3; i++) worker.reply();
+  assert.equal(output.size, 3); assert.equal(worker.messages.length, 3);
+  scheduler.update(tasks.map(task => ({ ...task })));
+  assert.equal(worker.messages.length, 3, "color/policy/selection updates need no work");
+  scheduler.update(tasks.slice(1, 4)); worker.reply();
+  assert.deepEqual([...output.keys()], [1, 2, 3]);
+  assert.equal(worker.messages.length, 4);
+  scheduler.dispose(); assert.equal(worker.terminated, true);
+});
+test("stale values, geometry and disposed document results cannot publish", () => {
+  const workers: FakeFingeringWorker[] = [];
+  let output: ReadonlyMap<number, FingeringPageResult> = new Map();
+  const scheduler = new FingeringScheduler(() => { const worker = new FakeFingeringWorker(); workers.push(worker); return worker; }, pages => { output = pages; });
+  scheduler.update([schedulerTask(0)]);
+  const stale = workers[0].onmessage!;
+  scheduler.update([schedulerTask(0, "changed-values")]);
+  assert.equal(workers[0].terminated, true);
+  stale({ data: { token: 1, result: { placed: ["wrong document"] } } } as MessageEvent);
+  assert.equal(output.size, 0);
+  workers[1].reply(); assert.equal(output.size, 1);
+  const changed = schedulerTask(0, "changed-values"); changed.work.sidecar = structuredClone(sidecar);
+  scheduler.update([changed]); assert.equal(output.size, 0);
+  const before = output;
+  scheduler.dispose(); workers[1].reply();
+  assert.equal(output, before);
+});
+test("worker failure is local and timeouts terminate the task", async () => {
+  let output: ReadonlyMap<number, FingeringPageResult> = new Map();
+  const worker = new FakeFingeringWorker();
+  const scheduler = new FingeringScheduler(() => worker, pages => { output = pages; }, 5);
+  scheduler.update([schedulerTask(0)]);
+  await new Promise(resolve => setTimeout(resolve, 15));
+  assert.match(output.get(0)!.status, /timed out/); assert.equal(worker.terminated, true);
+  scheduler.dispose();
+  const failed = new FingeringScheduler(() => { throw new Error("worker unavailable"); }, pages => { output = pages; });
+  failed.update([schedulerTask(1)]);
+  assert.match(output.get(1)!.status, /unavailable/); failed.dispose();
+});
 
 const staff: AnnotationStaff = {
   staff_id: "staff-0-0", staff_group_index: 0, staff_index: 0, system_index: 0,

@@ -25,8 +25,10 @@ try {
   await new Promise((resolve, reject) => { socket.onopen = resolve; socket.onerror = reject; });
   let next = 0;
   const pending = new Map();
+  const traceEvents = [];
   socket.onmessage = event => {
     const message = JSON.parse(String(event.data));
+    if (message.method === "Tracing.dataCollected") traceEvents.push(...message.params.value);
     const request = pending.get(message.id);
     if (request) { pending.delete(message.id); message.error ? request.reject(new Error(JSON.stringify(message.error))) : request.resolve(message.result); }
   };
@@ -39,7 +41,7 @@ try {
     if (response.exceptionDetails) throw new Error(JSON.stringify(response.exceptionDetails));
     return response.result.value;
   };
-  if (process.argv.includes("--controls")) await checkControls(call, evaluate);
+  if (process.argv.includes("--controls")) await checkControls(call, evaluate, traceEvents);
   for (const name of (process.argv.includes("--controls") ? [] : (await readdir(root)).sort())) {
     if (id && name !== id) continue;
     let packet;
