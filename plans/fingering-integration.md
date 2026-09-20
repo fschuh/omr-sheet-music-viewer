@@ -187,3 +187,40 @@ The selected-note editor/keyboard screenshot was visually inspected. The 20-page
 scroll regression still reports no ≥50 ms main-thread tasks and at most three
 layouts. WebKitGTK successfully computed all 346 note revisions and rendered the
 310-digit fixture; full packaged physical-device acceptance remains as above.
+
+## Staff geometry recovery, 2026-09-20
+
+Added after the tasks above, and recorded here rather than folded into them: the
+measurements, commands and outcomes for the staff-geometry work live in
+`plans/staff-geometry-evidence.md`, and the contract in `fingering-geometry.md`.
+
+The verification established in `da3e24c` and described above was re-run against
+the repaired producer and still passes: the Chromium controls and lifecycle suite
+(`node tools/fingering-render.mjs --controls`, including
+`tools/fingering-controls-check.mjs`), the Chromium fixture layout review, and the
+paired WebKitGTK review (`tools/fingering-webkit-review.py` and
+`tools/fingering-webkit-metrics.py`). Dark-pixel overlap between placed digits and
+printed ink is zero on every reviewed page, and positions are stable across loads.
+
+Two fixtures that previously produced no packet at all because their geometry was
+rejected — Chrono Trigger fanfare page 1 and Super Mario ground theme page 1 —
+now render 171 and 199 digits. Rerunning the layout review for them needs their
+packets rebuilt first:
+
+```sh
+rm -f testdata/fingering-prototype/<id>/failure.json
+PYTHONPATH=../homr:worker .venv/bin/python tools/fingering-prototype-data.py --split all --id <id>
+webapp/node_modules/.bin/esbuild webapp/tools/fingering-prototype.ts --bundle --format=iife --outfile=testdata/fingering-prototype/prototype.js
+webapp/node_modules/.bin/esbuild webapp/src/fingeringWorker.ts --bundle --format=iife --outfile=testdata/fingering-prototype/worker.js
+```
+
+Pages outside the fixture manifest, such as the two Fillmore pages, get review
+packets from a corpus run instead:
+
+```sh
+.venv/bin/python tools/staff-geometry-review.py testdata/staff-geometry/corpus-recovered fillmore-1 fillmore-2
+node tools/fingering-render.mjs --split staff-geometry --width 1300
+```
+
+The producer pin moved to an unpublished commit; see the producer-pin section of
+`fingering-geometry.md` for the distribution limitation that creates.

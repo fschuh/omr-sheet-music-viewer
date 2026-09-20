@@ -163,3 +163,103 @@ string is unchanged, so existing consumers keep reading what they always read.
 - A page that passed is a regression control, not ground truth. Nothing here
   establishes that the sixteen accepted pages are geometrically correct, only
   that they satisfy the contract they advertise.
+
+---
+
+# Corpus verification after bounded sample removal
+
+Date: 2026-09-20
+Scope: Task 4 of `plans/staff-geometry-recovery-plan.md`, with the Task 5 gate decision.
+
+The same twenty-one pinned pages were re-recognized through the same worker path,
+with the repair active, into a separate isolated cache. Both runs were then
+compared artifact by artifact.
+
+| Command | |
+| --- | --- |
+| Second run | `python tools/staff-geometry-corpus.py --output testdata/staff-geometry/corpus-recovered` |
+| Comparison | `python tools/staff-geometry-compare.py testdata/staff-geometry/corpus testdata/staff-geometry/corpus-recovered --output testdata/staff-geometry/repair-comparison.json` |
+| Review packets | `python tools/staff-geometry-review.py testdata/staff-geometry/corpus-recovered <ids>` |
+| Rendering | `node tools/fingering-render.mjs --split staff-geometry --width 1300` (and `--width 2000`) |
+
+## Outcome
+
+| Transition | Pages |
+| --- | --- |
+| supported → supported, byte-identical | 16 |
+| rejected → repaired | 5 |
+| still unavailable | 0 |
+
+| Repaired page | Staff | Columns removed | Kind |
+| --- | --- | --- | --- |
+| fillmore-1 | `staff-2-0`, `staff-2-1` | 1 and 2 of 234 | interior |
+| fillmore-2 | `staff-2-1` | 1 of 212 | interior |
+| chrono-trigger-fanfare-1-luccas-theme-1 | `staff-1-0` | 6 of 260 | interior |
+| super-mario-bros-ground-theme-1 | `staff-0-1` | 3 of 215 | interior |
+| impromptu-scan | `staff-1-0`, `staff-1-1` | 1 each of 219 | interior |
+
+The sixteen previously supported pages are **regression controls, not ground
+truth**: what their unchanged bytes establish is that the repair did not touch a
+page it had no business touching, and nothing more about whether their geometry is
+geometrically correct.
+
+## What the repair left alone
+
+Checked mechanically for every page, by `tools/staff-geometry-compare.py`:
+
+- The page MusicXML is byte-identical in both runs.
+- Note ids, and every note-to-visual-group link with its alignment method, are
+  identical.
+- A digest over the whole sidecar with the annotation fields removed — notes,
+  visual groups, notehead and stem contours, raw stem contours, preprocessing,
+  producer — is identical.
+- The only fields that differ anywhere are `annotation_geometry`, its error,
+  rejection and repairs, and `ink_obstacles`, which is generated only when
+  geometry is valid.
+
+Every staff extent on every repaired page is unchanged to within 0.0005 pixels,
+which is the worker's own three-decimal rounding when it promotes geometry onto the
+display raster. No system placement boundary moved, and no note lost coverage:
+`missing-geometry` appears in no omission list on any rendered page.
+
+## Note coverage on the repaired pages
+
+Denominators are preserved; these are the placement outcomes, with the frozen
+cyclic values that measure layout rather than fingering-model quality.
+
+| Page | Pitched | Supported | Placed | Omission reasons |
+| --- | --- | --- | --- | --- |
+| fillmore-1 | 306 | 266 | 219 | independent voices 33, tie continuation 7, system boundary 47 |
+| fillmore-2 | 281 | 245 | 245 | independent voices 26, tie continuation 10 |
+| impromptu-scan | 458 | 401 | 319 | missing link 49, printed ink 69, system boundary 13, other 8 |
+| chrono-trigger-fanfare-1-luccas-theme-1 | 188 | 177 | 171 | tie continuation 11, printed ink 6 |
+| super-mario-bros-ground-theme-1 | 208 | 208 | 199 | system boundary 9 |
+
+Every remaining omission is one of the ordinary, pre-existing reasons. None is a
+geometry reason.
+
+## Visual review
+
+Review packets were rendered at 1300 px and 2000 px wide in headless Chromium, in
+original, overlay and geometry-debug views, and the repaired regions were
+inspected against the printed staff at three times magnification. On both Fillmore
+pages the detected lines run along the printed lines through and around the removed
+column, with the sample-level wobble the accepted corpus already shows and no
+drift; the fingering digits sit under and over their own notes and clear of the
+printed ink.
+
+## Task 5 gate: defer
+
+The gate asks for at least one genuinely unrecoverable system after bounded
+removal, plus evidence that isolating it would preserve useful neighbours.
+
+**There are none.** All five rejected pages recover completely, every repair is a
+short interior run, no staff is left unavailable, and no recovery in this corpus
+was declined for any reason. There is therefore nothing to isolate, and designing a
+second annotation contract around hypothetical failures is exactly what the plan
+forbids.
+
+**Decision: skip Task 5 and proceed to Task 6.** Should a future page prove
+unrecoverable, this evidence is what a partial-support design would have to start
+from, and the boundary-validation work the plan describes would be a prerequisite
+to shipping it rather than a reason to invent replacement geometry.

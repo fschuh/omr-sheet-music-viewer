@@ -277,8 +277,8 @@ cuda = ["onnxruntime-gpu[cuda,cudnn] (>=1.24.1,<2.0.0)"]
 [package.source]
 type = "git"
 url = "https://github.com/fschuh/homr"
-reference = "a750ab029cd035474f6e4a2f82b4815f3d8d0c54"
-resolved_reference = "a750ab029cd035474f6e4a2f82b4815f3d8d0c54"
+reference = "1ff2e7665413de219e9159da4df6cad353caf0ea"
+resolved_reference = "1ff2e7665413de219e9159da4df6cad353caf0ea"
 
 [[package]]
 name = "idna"
@@ -1122,4 +1122,4 @@ cuda = ["homr"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<3.16"
-content-hash = "39cc6a32948409013a975e04b899aae1dc24a9541af9f2d63db556951b67f686"
+content-hash = "bb568cdb7ae34222c8560e5e7a7605cc294c37fda63a366f24b22276a08420bb"

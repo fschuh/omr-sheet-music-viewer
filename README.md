@@ -52,9 +52,12 @@ continuation cases may have no labels. The supported experiment is clean,
 conventional piano notation; the initial scan challenges do not establish general
 noisy/faint-scan overlay support.
 
-Older cached pages without staff geometry or ink analysis still work normally,
-but cannot show this overlay. The annotation status identifies those pages;
-regenerate only the affected pages using the existing page retry controls.
+Pages without staff geometry still work normally, but cannot show this overlay.
+The annotation status says which of two different things happened. A page cached
+before the capability existed offers **Regenerate page**, which adds the missing
+geometry. A page whose detected staff geometry the producer examined and refused
+says so and offers no retry, because running it again produces the same artifact;
+its reason code and the staff and sampled column it failed at are shown beside it.
 Placement failures do not prevent ordinary viewing, playback or keyboard use.
 
 See [the experiment report](plans/fingering-experiment-report.md) for coverage
