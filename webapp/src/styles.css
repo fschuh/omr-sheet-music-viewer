@@ -1401,6 +1401,13 @@ button:disabled {
   border-color: #7e7468;
 }
 
+.worker-log-output,
+.worker-log-output *,
+.worker-console > footer {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
 .worker-log-output {
   flex: 1;
   font-family: "Cascadia Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
