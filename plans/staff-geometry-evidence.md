@@ -248,6 +248,27 @@ column, with the sample-level wobble the accepted corpus already shows and no
 drift; the fingering digits sit under and over their own notes and clear of the
 printed ink.
 
+## The two supplied sidecars, classified
+
+Run against the real files rather than a stand-in, through the shipped classifier:
+
+```
+0001  producer-rejected  action=none  "Staff geometry was rejected; fingerings are unavailable for this page"
+0002  producer-rejected  action=none  detail: "Unordered lines or implausible staff spacing"
+```
+
+Neither offers regeneration. They were written by a producer that recorded only
+the legacy error string, so the reason code degrades to `validation-failed` and
+the legacy summary becomes the detail — which is the right behaviour for an
+artifact from before structured reasons existed, and still clearly separated from
+an artifact written before the capability existed at all.
+
+Retry itself is unchanged by this work and still reachable from the normal page
+controls. Saved finger values live in browser storage keyed by the PDF cache
+digest, independent of the session job id, and the retry path resets only
+in-memory document state, so repeated retries cannot erase them; the existing
+durable-edit tests and the Chromium controls suite continue to cover that.
+
 ## Task 5 gate: defer
 
 The gate asks for at least one genuinely unrecoverable system after bounded
