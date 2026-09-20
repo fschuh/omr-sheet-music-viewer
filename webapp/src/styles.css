@@ -262,6 +262,8 @@ button:disabled {
 }
 
 .piano-keys {
+  --black-key-height: 62%;
+
   height: calc(100% - 30px);
   position: relative;
 }
@@ -308,7 +310,7 @@ button:disabled {
   border: 1px solid #050505;
   border-radius: 0 0 4px 4px;
   box-shadow: 0 4px 5px rgb(0 0 0 / 58%);
-  height: 62%;
+  height: var(--black-key-height);
   position: absolute;
   top: 0;
   z-index: 2;
@@ -431,52 +433,102 @@ button:disabled {
   }
 }
 
+/* Above both key rows: inside a key, a marker was trapped in that key's
+   stacking context and any black key overlapping its slot painted over it. */
+.piano-key-labels {
+  inset: 0;
+  pointer-events: none;
+  position: absolute;
+  z-index: 6;
+}
+
 .piano-key-label {
+  /* A white key is 100vw / 52 wide, so the marker tracks vw to keep the designed
+     proportions instead of swamping the key on a narrow window. Everything
+     inside the marker is a fraction of it. */
+  --hand-marker: clamp(20px, 2vw, 40px);
+
   align-items: center;
+  bottom: 13%;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--hand-marker) * 0.18);
+  line-height: 1;
+  position: absolute;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+/* Ride the 3px dip the key itself takes while it is played. */
+.piano-key-label[data-pressed="true"] { transform: translate(-50%, 3px); }
+
+/* A black key stops short of the keybed, so its label sits above that gap. */
+.piano-key-label-black { bottom: calc(100% - var(--black-key-height) + 8px); }
+
+.piano-key-fingering {
+  align-items: center;
+  background: #0e3b33;
+  border: calc(var(--hand-marker) * 0.05) solid #fff;
+  border-radius: 50%;
+  box-shadow: 0 2px 6px rgb(0 0 0 / 35%);
+  box-sizing: border-box;
+  display: flex;
+  flex: none;
+  height: var(--hand-marker);
+  justify-content: center;
+  position: relative;
+  width: var(--hand-marker);
+}
+
+.piano-key-hand {
+  display: block;
+  height: calc(var(--hand-marker) * 0.715);
+  width: calc(var(--hand-marker) * 0.7);
+}
+
+.piano-key-hand[data-hand="left"] { transform: scaleX(-1); }
+
+.piano-key-hand .hand-part { fill: #6d9b91; }
+
+.piano-key-hand .hand-part.lit { fill: #fff; }
+
+.piano-key-fingering-digit {
+  align-items: center;
+  background: #fff;
+  border: calc(var(--hand-marker) * 0.0375) solid #0e3b33;
+  border-radius: 50%;
+  bottom: calc(var(--hand-marker) * -0.125);
+  box-sizing: border-box;
+  color: #0e3b33;
+  display: flex;
+  font-size: calc(var(--hand-marker) * 0.2875);
+  font-weight: 700;
+  height: calc(var(--hand-marker) * 0.425);
+  justify-content: center;
+  line-height: 1;
+  position: absolute;
+  right: calc(var(--hand-marker) * -0.125);
+  text-shadow: none;
+  width: calc(var(--hand-marker) * 0.425);
+}
+
+.piano-key-note-name {
   background: #075f51;
   border: 1px solid rgb(255 255 255 / 72%);
   border-radius: 999px;
-  bottom: 13%;
   color: #fff;
-  display: flex;
-  flex-direction: column;
   font-size: clamp(0.48rem, 0.72vw, 0.7rem);
   font-weight: 800;
-  left: 50%;
   line-height: 1;
   padding: 3px 4px 4px;
-  position: absolute;
   text-shadow: 0 1px 1px rgb(0 0 0 / 34%);
-  transform: translateX(-50%);
-  white-space: nowrap;
-  z-index: 4;
 }
 
-.piano-key-fingering {
-  background: #172c28;
-  border: 1px solid rgb(255 255 255 / 88%);
-  border-radius: 999px;
-  color: #fff;
-  font-size: clamp(0.46rem, 0.7vw, 0.68rem);
-  line-height: 1;
-  margin-bottom: 2px;
-  padding: 2px 4px;
-}
-
-.piano-key-note-name { line-height: 1; }
-
-.piano-key-black .piano-key-label {
+.piano-key-label-black .piano-key-note-name {
   background: #f7fffc;
   border-color: #075f51;
-  bottom: 8px;
   color: #075f51;
   text-shadow: none;
-}
-
-.piano-key-black .piano-key-fingering {
-  background: #064f44;
-  border-color: #fff;
-  color: #fff;
 }
 
 .empty-state {
