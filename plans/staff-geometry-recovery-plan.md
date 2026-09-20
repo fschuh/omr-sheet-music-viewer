@@ -1,7 +1,9 @@
 # Staff geometry rejection and regeneration-loop fix
 
 Date: 2026-09-20
-Status: proposed; implementation not started.
+Status: implemented, except Task 5, which its own evidence gate defers.
+Outcome and measurements: `plans/staff-geometry-evidence.md`; contract and
+limitations: `plans/fingering-geometry.md`.
 Repositories: `homr` and `sheet-music-viewer`, both on `piano_fingering_overlay`.
 
 ## Outcome
