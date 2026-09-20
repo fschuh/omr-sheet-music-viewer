@@ -56,10 +56,59 @@ test("highlights every distinct in-range playhead pitch and labels its key", () 
   assert.match(markup, />C4<\/span>/);
   assert.match(markup, />E4<\/span>/);
   assert.match(markup, />A♭3<\/span>/);
-  assert.match(markup, />R1<\/span>/);
-  assert.match(markup, />R3<\/span>/);
-  assert.match(markup, />L2<\/span>/);
+  assert.match(markup, /data-hand="right" data-finger="1"/);
+  assert.match(markup, /data-hand="right" data-finger="3"/);
+  assert.match(markup, /data-hand="left" data-finger="2"/);
   assert.match(markup, /C4, right hand finger 1/);
+});
+
+test("lights the pressing finger of the hand icon and repeats it as a digit", () => {
+  const markup = renderToStaticMarkup(
+    <PianoKeyboard notes={[{ pitch: "E4", finger: 3, left: false }]} />,
+  );
+
+  // The middle finger is the tallest rect, x=19 in the shared hand drawing.
+  assert.match(markup, /<rect x="19" y="3" width="6" height="32" rx="3" class="hand-part lit"/);
+  assert.equal(markup.match(/class="hand-part lit"/g)?.length, 1);
+  assert.equal(markup.match(/class="hand-part"/g)?.length, 5);
+  assert.match(markup, /class="piano-key-fingering-digit">3<\/span>/);
+});
+
+test("draws every label in one layer above the keys, not inside them", () => {
+  const markup = renderToStaticMarkup(
+    <PianoKeyboard
+      notes={[{ pitch: "F♯3", finger: 4, left: true }, { pitch: "C6", finger: 5, left: false }]}
+      recognizedPitches={[54]}
+    />,
+  );
+
+  // A label nested in a key would be trapped in that key's stacking context,
+  // which is what let neighbouring black keys paint over the marker.
+  assert.equal(markup.match(/class="piano-key-label[ "]/g)?.length, 2);
+  assert.doesNotMatch(markup, /class="piano-key piano-key-[a-z]+[^>]*>(?:(?!<\/div>).)*piano-key-label/s);
+
+  // F♯3 is midi 54, centred on the F3/G3 boundary, 20 white keys in; C6 is
+  // midi 84, the 38th white key, so its marker centres half a key further on.
+  assert.match(
+    markup,
+    /class="piano-key-label piano-key-label-black" style="left:38\.461[0-9]*%" data-midi="54" data-pressed="true"/,
+  );
+  assert.match(markup, /class="piano-key-label" style="left:72\.115[0-9]*%" data-midi="84"/);
+});
+
+test("stacks one marker per distinct fingering on a shared key", () => {
+  const markup = renderToStaticMarkup(
+    <PianoKeyboard notes={[
+      { pitch: "C4", finger: 5, left: true },
+      { pitch: "C4", finger: 3, left: false },
+      { pitch: "C4", finger: 5, left: true },
+    ]} />,
+  );
+
+  assert.equal(markup.match(/class="piano-key-fingering"/g)?.length, 2);
+  assert.match(markup, /data-hand="left" data-finger="5"/);
+  assert.match(markup, /data-hand="right" data-finger="3"/);
+  assert.match(markup, /C4, left hand finger 5 or right hand finger 3/);
 });
 
 test("formats stored accidental spellings like the staff note labels", () => {

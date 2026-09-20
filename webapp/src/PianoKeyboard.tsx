@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { Fragment, useMemo } from "react";
 import { pitchToMidi } from "./piano";
 
 const FIRST_PIANO_MIDI = 21; // A0
@@ -38,9 +38,54 @@ export interface PianoKeyboardSuccess {
   successTimeMs: number;
 }
 
+interface PianoKeyFingering {
+  finger: number;
+  left: boolean;
+}
+
 interface PianoKeyLabels {
   names: string[];
-  fingerings: string[];
+  fingerings: PianoKeyFingering[];
+}
+
+/**
+ * One rect per finger, thumb first, drawn as a right hand; the left hand is the
+ * same drawing mirrored. Index + 1 is the finger number, so FINGER_RECTS[2] is
+ * finger 3, the middle finger.
+ */
+const FINGER_RECTS = [
+  { x: 2, y: 27, width: 7, height: 18, rx: 3.5, transform: "rotate(-25 5.5 36)" },
+  { x: 11, y: 9, width: 6, height: 26, rx: 3 },
+  { x: 19, y: 3, width: 6, height: 32, rx: 3 },
+  { x: 27, y: 8, width: 6, height: 27, rx: 3 },
+  { x: 35, y: 16, width: 6, height: 19, rx: 3 },
+];
+
+const PALM_RECT = { x: 10, y: 27, width: 32, height: 21, rx: 9 };
+
+function fingeringKey({ finger, left }: PianoKeyFingering): string {
+  return `${left ? "L" : "R"}${finger}`;
+}
+
+function HandFingerIcon({ finger, left }: PianoKeyFingering) {
+  return (
+    <svg
+      className="piano-key-hand"
+      viewBox="-2 2 46 47"
+      data-hand={left ? "left" : "right"}
+      data-finger={finger}
+      aria-hidden="true"
+    >
+      {FINGER_RECTS.map((rect, index) => (
+        <rect
+          key={index}
+          {...rect}
+          className={index + 1 === finger ? "hand-part lit" : "hand-part"}
+        />
+      ))}
+      <rect {...PALM_RECT} className="hand-part" />
+    </svg>
+  );
 }
 
 function pianoKeyName(midi: number): string {
@@ -89,8 +134,11 @@ export function PianoKeyboard({
       const keyLabels = labels.get(midi) ?? { names: [], fingerings: [] };
       if (!keyLabels.names.includes(label)) keyLabels.names.push(label);
       if (note.finger !== undefined) {
-        const fingering = `${note.left ? "L" : "R"}${note.finger}`;
-        if (!keyLabels.fingerings.includes(fingering)) keyLabels.fingerings.push(fingering);
+        const fingering = { finger: note.finger, left: note.left === true };
+        const key = fingeringKey(fingering);
+        if (!keyLabels.fingerings.some((existing) => fingeringKey(existing) === key)) {
+          keyLabels.fingerings.push(fingering);
+        }
       }
       labels.set(midi, keyLabels);
     }
@@ -123,8 +171,8 @@ export function PianoKeyboard({
   const activePitchNames = Array.from(activeLabels.values()).flatMap((labels) => labels.names);
   const accessibleNotes = Array.from(activeLabels.values()).flatMap((labels) =>
     labels.names.map((name) => {
-      const spokenFingerings = labels.fingerings.map((fingering) =>
-        `${fingering.startsWith("L") ? "left" : "right"} hand finger ${fingering.slice(1)}`,
+      const spokenFingerings = labels.fingerings.map(({ finger, left }) =>
+        `${left ? "left" : "right"} hand finger ${finger}`,
       );
       const fingering = spokenFingerings.length > 0
         ? `, ${spokenFingerings.join(" or ")}`
@@ -167,12 +215,25 @@ export function PianoKeyboard({
     ) : null;
   }
 
-  function keyLabel(labels: PianoKeyLabels) {
+  function keyLabel(key: PianoKey, labels: PianoKeyLabels) {
+    // Black keys are centred on a white-key boundary; white keys on their own
+    // middle. Both are measured in white keys, the unit the layout is built on.
+    const center = key.black
+      ? (key.whiteIndex / WHITE_KEY_COUNT) * 100
+      : ((key.whiteIndex + 0.5) / WHITE_KEY_COUNT) * 100;
     return (
-      <span className="piano-key-label">
-        {labels.fingerings.length > 0 ? (
-          <span className="piano-key-fingering">{labels.fingerings.join("/")}</span>
-        ) : null}
+      <span
+        className={`piano-key-label${key.black ? " piano-key-label-black" : ""}`}
+        style={{ left: `${center}%` }}
+        data-midi={key.midi}
+        data-pressed={recognizedPitchSet.has(key.midi) ? "true" : undefined}
+      >
+        {labels.fingerings.map((fingering) => (
+          <span key={fingeringKey(fingering)} className="piano-key-fingering">
+            <HandFingerIcon {...fingering} />
+            <span className="piano-key-fingering-digit">{fingering.finger}</span>
+          </span>
+        ))}
         <span className="piano-key-note-name">{labels.names.join("/")}</span>
       </span>
     );
@@ -222,7 +283,6 @@ export function PianoKeyboard({
               >
                 {attackFeedback(key.midi)}
                 {successFeedback(key.midi)}
-                {labels ? keyLabel(labels) : null}
               </div>
             );
           })}
@@ -250,9 +310,19 @@ export function PianoKeyboard({
               >
                 {attackFeedback(key.midi)}
                 {successFeedback(key.midi)}
-                {labels ? keyLabel(labels) : null}
               </div>
             );
+          })}
+        </div>
+        {/*
+          Labels sit in a layer above both key rows. Inside a key they were
+          trapped in that key's stacking context, so a black key -- or a later
+          black key next door -- painted over the marker.
+        */}
+        <div className="piano-key-labels">
+          {PIANO_KEYS.map((key) => {
+            const labels = activeLabels.get(key.midi);
+            return labels ? <Fragment key={key.midi}>{keyLabel(key, labels)}</Fragment> : null;
           })}
         </div>
       </div>
