@@ -27,7 +27,7 @@ OMR_TARGET_WIDTH = 1920
 OMR_RESAMPLING_FILTER = Image.Resampling.HAMMING
 OMR_RESAMPLING = OMR_RESAMPLING_FILTER.name
 MANIFEST_SCHEMA_VERSION = 1
-VISUAL_SIDECAR_CACHE_REVISION = 44
+VISUAL_SIDECAR_CACHE_REVISION = 45
 
 VISUAL_STATUSES = {"canonical", "fallback", "diagnostic"}
 VISUAL_PROVENANCES = {
@@ -104,7 +104,57 @@ def atomic_write_json(path: Path, value: dict[str, Any]) -> None:
     os.replace(temporary, path)
 
 
-def read_visual_sidecar(path: Path) -> dict[str, Any]:
+# Stages a geometry rejection can come from, in the order they run. A later stage
+# never relabels an earlier one: a page the producer already refused keeps that
+# reason even though the worker would also have refused it.
+STAGE_WORKER_PRE_SCALE = "worker-pre-scale"
+STAGE_WORKER_POST_SCALE = "worker-post-scale"
+
+
+def withdraw_invalid_annotation_geometry(sidecar: dict[str, Any], stage: str) -> bool:
+    """Validate advertised geometry and, if it fails, disable only that capability.
+
+    Optional annotations must never take down ordinary recognition, so a failure
+    strips the geometry block and records why, at the stage that caught it. The
+    stripped sidecar is then self-consistent and passes the strict validator.
+    """
+    from homr.visual_sidecar.annotation_geometry import (
+        geometry_diagnostic,
+        rejection_payload,
+        validate_annotation_geometry,
+    )
+
+    if not sidecar.get("annotation_geometry"):
+        return False
+    try:
+        validate_annotation_geometry(sidecar)
+    except ValueError as error:
+        diagnostic = geometry_diagnostic(error)
+        sidecar.pop("annotation_geometry", None)
+        # An earlier stage's reason is the originating one and stays untouched.
+        if not sidecar.get("annotation_geometry_rejection"):
+            payload = rejection_payload(diagnostic)
+            payload["stage"] = stage
+            sidecar["annotation_geometry_error"] = diagnostic.message
+            sidecar["annotation_geometry_rejection"] = payload
+        worker_log(
+            f"Optional staff geometry withdrawn at {stage}: "
+            f"{getattr(diagnostic, 'reason', 'validation-failed')}"
+        )
+        return True
+    return False
+
+
+def read_visual_sidecar(
+    path: Path, *, tolerate_invalid_geometry: bool = False
+) -> dict[str, Any]:
+    """Read and validate a v3 sidecar.
+
+    ``tolerate_invalid_geometry`` is for a sidecar this worker is about to rewrite:
+    the optional geometry is withdrawn with a reason instead of failing the page.
+    Stored artifacts are still read strictly, so cache validation keeps rejecting
+    an artifact that does not satisfy the contract it advertises.
+    """
     sidecar = json.loads(path.read_text(encoding="utf-8"))
     if (
         not isinstance(sidecar, dict)
@@ -243,9 +293,12 @@ def read_visual_sidecar(path: Path) -> dict[str, Any]:
         if note is None or note.get("visual_group_id") != visual_group_id:
             raise ValueError("Visual sidecar inverse links disagree")
     if "annotation_geometry" in sidecar:
-        from homr.visual_sidecar.annotation_geometry import validate_annotation_geometry
+        if tolerate_invalid_geometry:
+            withdraw_invalid_annotation_geometry(sidecar, STAGE_WORKER_PRE_SCALE)
+        else:
+            from homr.visual_sidecar.annotation_geometry import validate_annotation_geometry
 
-        validate_annotation_geometry(sidecar)
+            validate_annotation_geometry(sidecar)
     return sidecar
 
 
@@ -726,12 +779,16 @@ class PdfProcessor:
         page_path = rendered["path"]
         music_xml = page_path.with_suffix(".musicxml")
         visual_sidecar = page_path.with_suffix(".homr.visual.json")
-        sidecar = read_visual_sidecar(generated_sidecar)
+        sidecar = read_visual_sidecar(generated_sidecar, tolerate_invalid_geometry=True)
         scale_visual_sidecar(
             sidecar,
             source_size=(rendered["omr_width"], rendered["omr_height"]),
             target_size=(rendered["width"], rendered["height"]),
         )
+        # Scaling and rounding move every coordinate, so geometry that the producer
+        # accepted can still be out of contract on the displayed raster. Catching it
+        # here keeps a malformed payload out of the published artifact entirely.
+        withdraw_invalid_annotation_geometry(sidecar, STAGE_WORKER_POST_SCALE)
         if sidecar.get("annotation_geometry"):
             from sheet_music_worker.fingering_obstacles import page_ink_artifact
 

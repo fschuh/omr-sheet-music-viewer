@@ -5,8 +5,17 @@ import { fingeringSidecarPacket, FingeringScheduler, prioritizedFingeringPages, 
 import type { LoadedDocument } from "./types";
 import type { RealtimeScore } from "./realtime";
 import type { MusicalNoteIdentity } from "./scoreFingerings";
+import { annotationStatus, SUPPORTED_MESSAGE, type AnnotationAction } from "./annotationStatus";
 
-export interface ScoreFingeringPage { layout?: FingeringLayout; status: string }
+export interface ScoreFingeringPage {
+  layout?: FingeringLayout;
+  status: string;
+  /** What the reader can usefully do; never a substring of the status line. */
+  action?: AnnotationAction;
+  /** Stable reason code when the annotation contract reached a verdict. */
+  reason?: string;
+  detail?: string;
+}
 const EMPTY_VISIBLE: readonly number[] = [];
 const createWorker = () => new Worker(new URL("./fingeringWorker.ts", import.meta.url), { type: "module" }) as FingeringWorkerPort;
 
@@ -42,13 +51,15 @@ export function useScoreFingerings(document: LoadedDocument | null, score: Realt
     for (const index of indices) {
       const page = pages.find(p => p.index === index)!;
       const sidecar = page.visualSidecar, ordinal = numbers.get(index);
-      const status = page.status !== "complete" ? "Waiting for page recognition" :
-        !values || !score ? "Waiting for predictions" :
-        !sidecar?.annotation_geometry ? "Staff geometry unavailable; regenerate this page" :
-        !sidecar.ink_obstacles ? "Page ink unavailable; regenerate this page" :
-        font.error ?? (!font.metrics ? "Waiting for font readiness" : "Placing fingerings…");
-      statuses[index] = { status };
-      if (status !== "Placing fingerings…" || !sidecar || !ordinal || !font.metrics || !values) continue;
+      const annotation = sidecar ? annotationStatus(sidecar) : undefined;
+      const entry: ScoreFingeringPage = page.status !== "complete" ? { status: "Waiting for page recognition" } :
+        !values || !score ? { status: "Waiting for predictions" } :
+        !annotation ? { status: "Waiting for page recognition" } :
+        annotation.state !== "supported" ? { status: annotation.message, action: annotation.action, reason: annotation.reason, detail: annotation.detail } :
+        font.error ? { status: font.error } :
+        !font.metrics ? { status: "Waiting for font readiness" } : { status: SUPPORTED_MESSAGE };
+      statuses[index] = entry;
+      if (entry.status !== SUPPORTED_MESSAGE || !sidecar || !ordinal || !font.metrics || !values) continue;
       const pageValues: NonNullable<typeof values> = {}, pageNotes: typeof musicalNotes = {};
       for (const note of sidecar.notes) {
         const id = documentNoteId(ordinal, note.musicxml_id);

@@ -12,12 +12,15 @@ from sheet_music_worker.processor import (
     OMR_RESAMPLING,
     OMR_TARGET_WIDTH,
     RASTER_DPI,
+    STAGE_WORKER_POST_SCALE,
+    STAGE_WORKER_PRE_SCALE,
     VISUAL_SIDECAR_CACHE_REVISION,
     PdfProcessor,
     read_visual_sidecar,
     scale_visual_sidecar,
     sha256_file,
     validate_artifacts,
+    withdraw_invalid_annotation_geometry,
 )
 
 
@@ -781,3 +784,224 @@ def test_failed_page_retry_removes_the_previous_merged_score(tmp_path: Path) -> 
     assert not merged_music_xml.exists()
     manifest = json.loads((cache_directory / "manifest.json").read_text(encoding="utf-8"))
     assert "documentMusicXml" not in manifest
+
+
+def annotation_staff(
+    xs: list[float], top: float = 20.0, unit: float = 5.0, slope: float = 0.0
+) -> dict[str, object]:
+    lines = [[[x, top + line * unit + (x - xs[0]) * slope] for x in xs] for line in range(5)]
+    return {
+        "staff_id": "staff-0-0",
+        "staff_group_index": 0,
+        "staff_index": 0,
+        "system_index": 0,
+        "lines": lines,
+        "spacing": [[x, unit] for x in xs],
+        "extent": [
+            lines[0][0][0],
+            min(point[1] for point in lines[0]),
+            lines[0][-1][0],
+            max(point[1] for point in lines[4]),
+        ],
+    }
+
+
+def geometry_sidecar(staff: dict[str, object], size: list[int]) -> dict[str, object]:
+    return {
+        "version": 3,
+        "source_image_size": size,
+        "notes": [
+            {
+                "musicxml_id": "homr-note-1",
+                "part": 1,
+                "measure": 1,
+                "musicxml_staff_number": 1,
+                "voice": 1,
+                "pitch": None,
+                "duration": "rest_1",
+                "match_confidence": 0,
+                "visual_group_id": None,
+                "alignment_method": "none",
+            }
+        ],
+        "visual_groups": [],
+        "annotation_geometry": {"version": 1, "staffs": [staff]},
+    }
+
+
+def test_scaling_that_shrinks_a_staff_below_one_pixel_is_caught_after_scaling() -> None:
+    # The producer accepted this grid on its own raster; only the display raster
+    # makes the staff space implausible, so nothing earlier could have seen it.
+    sidecar = geometry_sidecar(annotation_staff([100, 400, 900], unit=4.0), [1000, 2000])
+    scale_visual_sidecar(sidecar, source_size=(1000, 2000), target_size=(200, 400))
+
+    withdrawn = withdraw_invalid_annotation_geometry(sidecar, STAGE_WORKER_POST_SCALE)
+
+    assert withdrawn
+    assert "annotation_geometry" not in sidecar
+    rejection = sidecar["annotation_geometry_rejection"]
+    assert rejection["reason"] == "implausible-staff-spacing"
+    assert rejection["stage"] == STAGE_WORKER_POST_SCALE
+    assert sidecar["annotation_geometry_error"] == rejection["message"]
+    # Ordinary recognition is untouched: only the optional capability went away.
+    assert sidecar["notes"][0]["musicxml_id"] == "homr-note-1"
+    assert sidecar["version"] == 3
+
+
+def test_scale_induced_duplicate_x_values_are_caught_after_scaling() -> None:
+    # Two samples 0.4 source pixels apart land on the same rounded display x.
+    sidecar = geometry_sidecar(annotation_staff([100.0, 100.4, 5000.0]), [10000, 400])
+    scale_visual_sidecar(sidecar, source_size=(10000, 400), target_size=(10, 400))
+    assert sidecar["annotation_geometry"]["staffs"][0]["lines"][0][0][0] == (
+        sidecar["annotation_geometry"]["staffs"][0]["lines"][0][1][0]
+    )
+
+    withdraw_invalid_annotation_geometry(sidecar, STAGE_WORKER_POST_SCALE)
+
+    rejection = sidecar["annotation_geometry_rejection"]
+    assert rejection["reason"] == "non-increasing-x"
+    assert rejection["stage"] == STAGE_WORKER_POST_SCALE
+
+
+def test_a_defect_present_before_scaling_is_named_at_the_pre_scale_stage(
+    tmp_path: Path,
+) -> None:
+    staff = annotation_staff([10, 50, 90])
+    staff["lines"][4][2][1] = 900.0  # outside the declared source image
+    staff["extent"][3] = 900.0
+    sidecar = geometry_sidecar(staff, [100, 200])
+    path = tmp_path / "pre-scale.homr.visual.json"
+    path.write_text(json.dumps(sidecar), encoding="utf-8")
+
+    tolerated = read_visual_sidecar(path, tolerate_invalid_geometry=True)
+
+    assert "annotation_geometry" not in tolerated
+    assert tolerated["annotation_geometry_rejection"]["stage"] == STAGE_WORKER_PRE_SCALE
+    assert tolerated["notes"][0]["musicxml_id"] == "homr-note-1"
+    # A stored artifact is still read strictly, so cache validation keeps rejecting it.
+    import pytest
+
+    with pytest.raises(ValueError):
+        read_visual_sidecar(path)
+
+
+def test_an_earlier_rejection_is_never_relabelled_by_a_later_stage() -> None:
+    sidecar = {
+        "version": 3,
+        "source_image_size": [100, 200],
+        "notes": [],
+        "visual_groups": [],
+        "annotation_geometry_error": "Unordered lines or implausible staff spacing",
+        "annotation_geometry_rejection": {
+            "version": 1,
+            "reason": "implausible-staff-spacing",
+            "stage": "producer-validation",
+            "message": "Unordered lines or implausible staff spacing",
+            "staff_id": "staff-2-1",
+            "sample_index": 33,
+        },
+    }
+    original = json.loads(json.dumps(sidecar))
+
+    assert not withdraw_invalid_annotation_geometry(sidecar, STAGE_WORKER_POST_SCALE)
+    assert sidecar == original
+
+
+def test_valid_nonuniform_scaling_and_rounding_still_validate(tmp_path: Path) -> None:
+    # A skewed staff on an awkward scale factor: every coordinate is rounded to
+    # three decimals, and the spacing samples must still agree with the lines.
+    sidecar = geometry_sidecar(
+        annotation_staff([13.0, 197.0, 611.0, 997.0], top=101.0, unit=7.3, slope=0.013),
+        [1000, 1400],
+    )
+    scale_visual_sidecar(sidecar, source_size=(1000, 1400), target_size=(1731, 997))
+
+    assert not withdraw_invalid_annotation_geometry(sidecar, STAGE_WORKER_POST_SCALE)
+    assert "annotation_geometry_rejection" not in sidecar
+    path = tmp_path / "scaled.homr.visual.json"
+    path.write_text(json.dumps(sidecar), encoding="utf-8")
+    assert read_visual_sidecar(path)["annotation_geometry"]["version"] == 1
+
+
+def test_each_stage_reports_its_own_distinct_reason_and_stage() -> None:
+    spacing_defect = geometry_sidecar(annotation_staff([10, 50, 90]), [100, 200])
+    spacing_defect["annotation_geometry"]["staffs"][0]["spacing"][1][1] = 99.0
+    withdraw_invalid_annotation_geometry(spacing_defect, STAGE_WORKER_POST_SCALE)
+
+    extent_defect = geometry_sidecar(annotation_staff([10, 50, 90]), [100, 200])
+    extent_defect["annotation_geometry"]["staffs"][0]["extent"][0] += 3
+    withdraw_invalid_annotation_geometry(extent_defect, STAGE_WORKER_PRE_SCALE)
+
+    assert spacing_defect["annotation_geometry_rejection"]["reason"] == "spacing-disagreement"
+    assert extent_defect["annotation_geometry_rejection"]["reason"] == "extent-disagreement"
+    assert {
+        spacing_defect["annotation_geometry_rejection"]["stage"],
+        extent_defect["annotation_geometry_rejection"]["stage"],
+    } == {STAGE_WORKER_POST_SCALE, STAGE_WORKER_PRE_SCALE}
+
+
+class GeometryEngine(FakeHomrEngine):
+    """A producer that advertises optional geometry alongside its note links."""
+
+    def __init__(self, defective: bool = False) -> None:
+        super().__init__()
+        self.defective = defective
+
+    def process_image(self, image_path: Path) -> tuple[Path, Path]:
+        music_xml, visual_sidecar = super().process_image(image_path)
+        width, height = self.image_sizes[-1]
+        staff = annotation_staff(
+            [width * 0.1, width * 0.5, width * 0.9], top=height * 0.2, unit=height * 0.02
+        )
+        if self.defective:
+            staff["spacing"][1][1] += 5.0
+        sidecar = json.loads(visual_sidecar.read_text(encoding="utf-8"))
+        sidecar["annotation_geometry"] = {"version": 1, "staffs": [staff]}
+        visual_sidecar.write_text(json.dumps(sidecar), encoding="utf-8")
+        return music_xml, visual_sidecar
+
+
+def published_sidecar(cache_root: Path, pdf_path: Path) -> dict[str, object]:
+    pages = cache_root / "pdf-cache" / sha256_file(pdf_path) / "pages"
+    return json.loads((pages / "0001.homr.visual.json").read_text(encoding="utf-8"))
+
+
+def run_one_page(tmp_path: Path, engine: FakeHomrEngine) -> dict[str, object]:
+    pdf_path = tmp_path / "score.pdf"
+    Image.new("RGB", (240, 320), "white").save(pdf_path, "PDF", resolution=300)
+    cache_root = tmp_path / "cache"
+    events: list[dict[str, object]] = []
+    PdfProcessor(events.append, engine).process_pdf(  # type: ignore[arg-type]
+        job_id="geometry",
+        pdf_path=pdf_path,
+        cache_root=cache_root,
+        cancel=threading.Event(),
+    )
+    completed = [event for event in events if event["type"] == "job_completed"]
+    assert completed and completed[0]["status"] == "complete"
+    return published_sidecar(cache_root, pdf_path)
+
+
+def test_a_published_page_keeps_valid_geometry_and_gains_its_ink_analysis(
+    tmp_path: Path,
+) -> None:
+    sidecar = run_one_page(tmp_path, GeometryEngine())
+
+    assert sidecar["annotation_geometry"]["version"] == 1
+    assert sidecar["ink_obstacles"]["version"] == 1
+    assert "annotation_geometry_rejection" not in sidecar
+
+
+def test_malformed_producer_geometry_is_withdrawn_without_failing_the_page(
+    tmp_path: Path,
+) -> None:
+    sidecar = run_one_page(tmp_path, GeometryEngine(defective=True))
+
+    assert "annotation_geometry" not in sidecar
+    assert sidecar["annotation_geometry_rejection"]["stage"] == STAGE_WORKER_PRE_SCALE
+    assert sidecar["annotation_geometry_rejection"]["reason"] == "spacing-disagreement"
+    # Ink analysis is conditional on valid geometry, so its absence is expected
+    # here and must not be reported as an independent failure.
+    assert "ink_obstacles" not in sidecar
+    assert "annotation_analysis_error" not in sidecar
+    assert sidecar["notes"][0]["musicxml_id"] == "homr-note-1"

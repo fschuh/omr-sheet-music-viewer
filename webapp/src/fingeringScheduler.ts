@@ -1,10 +1,14 @@
 import type { FingeringWork } from "./fingeringWorker";
 import type { FingeringLayout } from "./fingeringLayout";
 import type { VisualSidecar } from "./types";
+import type { AnnotationAction } from "./annotationStatus";
 
 export const FINGERING_PAGE_LIMIT = 3;
 export interface FingeringTask { key: string; source?: VisualSidecar; work: Omit<FingeringWork, "token"> }
-export interface FingeringPageResult { task: FingeringTask; layout?: FingeringLayout; status: string; milliseconds?: number }
+export interface FingeringPageResult {
+  task: FingeringTask; layout?: FingeringLayout; status: string; milliseconds?: number;
+  action?: AnnotationAction; reason?: string; detail?: string;
+}
 export interface FingeringWorkerPort {
   onmessage: ((event: MessageEvent) => void) | null;
   onerror: ((event: Event) => void) | null;
@@ -19,6 +23,7 @@ export function fingeringSidecarPacket(sidecar: VisualSidecar): VisualSidecar {
   return { version: sidecar.version, source_image_size: sidecar.source_image_size, notes: sidecar.notes,
     annotation_geometry: sidecar.annotation_geometry, ink_obstacles: sidecar.ink_obstacles,
     annotation_analysis_error: sidecar.annotation_analysis_error, annotation_geometry_error: sidecar.annotation_geometry_error,
+    annotation_geometry_rejection: sidecar.annotation_geometry_rejection,
     visual_groups: sidecar.visual_groups.map(group => ({ visual_group_id: group.visual_group_id,
       staff_group_index: group.staff_group_index, staff_index: group.staff_index, staff_position: group.staff_position,
       center: group.center, bbox: group.bbox, notehead_contours: group.notehead_contours, stem_contours: group.stem_contours,
@@ -57,7 +62,7 @@ export class FingeringScheduler {
     const fail = (status: string) => {
       if (this.disposed || this.active?.token !== token) return;
       this.stopWorker();
-      this.cache.set(task.work.pageIndex, { task, status });
+      this.cache.set(task.work.pageIndex, { task, status, action: "none" });
       this.publish(new Map(this.cache)); this.next();
     };
     try {
@@ -66,7 +71,8 @@ export class FingeringScheduler {
         if (this.disposed || this.active?.token !== token || data.token !== token) return;
         clearTimeout(this.timeout); this.active = undefined;
         this.cache.set(task.work.pageIndex, { task, layout: data.error ? undefined : data.result,
-          status: data.error ?? "Ready; unsupported/crowded notes omitted", milliseconds: data.milliseconds });
+          status: data.error ?? "Ready; unsupported/crowded notes omitted", milliseconds: data.milliseconds,
+          action: data.action, reason: data.reason, detail: data.detail });
         this.publish(new Map(this.cache)); this.next();
       };
       this.worker.onerror = () => fail("Fingering worker unavailable");

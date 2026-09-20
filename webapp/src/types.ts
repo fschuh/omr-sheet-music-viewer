@@ -60,11 +60,30 @@ export interface RawStemContour {
   bbox: VisualPoint[];
 }
 
+/** The producer's structured reason for withdrawing optional staff geometry. */
+export interface AnnotationGeometryRejectionRecord {
+  version: number;
+  reason: string;
+  /** Where the failure was caught: export, producer-validation, worker-pre-scale, worker-post-scale. */
+  stage: string;
+  message: string;
+  staff_id?: string;
+  staff_group_index?: number;
+  staff_index?: number;
+  system_index?: number;
+  sample_index?: number;
+  x?: number;
+  gaps?: number[];
+  limits?: Record<string, unknown>;
+  diagnostics?: AnnotationGeometryRejectionRecord[];
+}
+
 export interface VisualSidecar {
   version: 3;
   ink_obstacles?: InkObstacles;
   annotation_analysis_error?: string;
   annotation_geometry_error?: string;
+  annotation_geometry_rejection?: AnnotationGeometryRejectionRecord;
   annotation_geometry?: {
     version: 1;
     staffs: AnnotationStaff[];

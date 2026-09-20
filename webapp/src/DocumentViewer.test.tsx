@@ -25,14 +25,29 @@ test("score overlay is default-off and storage failures remain local", () => {
   assert.equal(loadScoreFingeringsEnabled(), false);
   assert.doesNotThrow(() => saveScoreFingeringsEnabled(true));
 });
-test("missing geometry offers targeted regeneration and worker failure stays annotation-local", () => {
+test("only a genuinely old artifact offers regeneration; a rejection explains itself instead", () => {
   const markup = renderToStaticMarkup(<ScoreFingeringStatus pages={{
-    0: { status: "Staff geometry unavailable; regenerate this page" }, 2: { status: "Fingering worker unavailable" },
+    0: { status: "Staff geometry unavailable; regenerate to add geometry", action: "regenerate", reason: "capability-absent" },
+    1: { status: "Staff geometry was rejected; fingerings are unavailable for this page", action: "none",
+      reason: "implausible-staff-spacing", detail: "implausible-staff-spacing, at producer-validation, staff staff-2-1, sample 33" },
+    2: { status: "Fingering worker unavailable", action: "none" },
   }} canRegenerate onRegenerate={() => {}} />);
   assert.match(markup, /Regenerate page 1/);
+  assert.doesNotMatch(markup, /Regenerate page 2/);
   assert.doesNotMatch(markup, /Regenerate page 3/);
+  assert.match(markup, /Page 2: Staff geometry was rejected/);
+  assert.match(markup, /implausible-staff-spacing, at producer-validation, staff staff-2-1, sample 33/);
   assert.match(markup, /Page 3:.*Fingering worker unavailable/);
   assert.doesNotMatch(markup, /disabled/);
+});
+
+test("a page that placed digits shows no regeneration offer even with a stale action", () => {
+  const layout = { placed: [{ request: { digits: [{ value: { finger: 1 } }] } }], suppressed: [] } as unknown as FingeringLayout;
+  const markup = renderToStaticMarkup(<ScoreFingeringStatus pages={{
+    0: { layout, status: "Ready; unsupported/crowded notes omitted", action: "regenerate" },
+  }} canRegenerate onRegenerate={() => {}} />);
+  assert.match(markup, /1 digits after exclusions/);
+  assert.doesNotMatch(markup, /Regenerate page 1/);
 });
 
 test("static score digits need no keyboard or playback and yield to inspection without relocating", () => {
