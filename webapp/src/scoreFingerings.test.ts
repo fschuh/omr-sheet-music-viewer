@@ -176,6 +176,27 @@ test("geometry capability is additive and rejects malformed data", () => {
   assert.equal(annotationStaffs(inconsistent), undefined);
 });
 
+test("a trimmed staff extent omits the notes it no longer covers and keeps the rest", () => {
+  // A producer that trimmed a defective edge column publishes a shorter extent.
+  // Notes beyond it lose their geometry rather than acquiring an extrapolated one.
+  const { score, values, music } = requestFixture();
+  const trimmed = score.annotation_geometry!.staffs[0];
+  trimmed.lines = trimmed.lines.map(line => [[120, line[0][1] + (line[1][1] - line[0][1]) * (110 / 290)], line[1]] as typeof line);
+  trimmed.spacing = [[120, 10], [300, 10]];
+  trimmed.extent = [120, Math.min(...trimmed.lines[0].map(p => p[1])), 300, Math.max(...trimmed.lines[4].map(p => p[1]))];
+  assert.deepEqual(annotationStaffs(score), [trimmed]);
+  assert.equal(staffAt(trimmed, 119), undefined);
+  assert.ok(staffAt(trimmed, 121));
+
+  const result = buildFingeringRequests(5, 2, score, values, music);
+
+  // The first note sits at x=100, outside the surviving domain; the others remain.
+  assert.deepEqual(result.omissions, [{ documentId: documentNoteId(2, "note-0"), reason: "missing-geometry" }]);
+  assert.equal(result.requests.length, 2);
+  assert.equal(result.counts.pitched, 3);
+  assert.equal(result.counts.supported, 2);
+});
+
 test("staff interpolation retains skew and never extrapolates", () => {
   assert.deepEqual(staffAt(staff, 155), { top: 105, bottom: 145, spacing: 10 });
   assert.equal(staffAt(staff, 301), undefined);
