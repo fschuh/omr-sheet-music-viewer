@@ -1,0 +1,240 @@
+{
+  "version": 1,
+  "purpose": "Pinned inputs for the staff-geometry rejection and recovery work. Source PDFs and the application's own cache are read-only; every derived artifact is written under the ignored testdata/ directory.",
+  "entries": [
+    {
+      "id": "bach-bwv846-prelude-in-c-major-1",
+      "role": "fixture",
+      "split": "development",
+      "purpose": "regular broken chords",
+      "pdf": "omr-evals/cases/flawless/bach-bwv846-prelude-in-c-major/source.pdf",
+      "pdf_sha256": "794a394bdcd0cb49398eaef527a0cffca40f1aebced10118fcc337ce426fdcb6",
+      "page": 1,
+      "rights": "Local evaluation only; edition/arrangement redistribution license not established. Do not copy source assets into this repository.",
+      "pdf_sha256_verified": true
+    },
+    {
+      "id": "bach-bwv846-prelude-in-c-major-3",
+      "role": "fixture",
+      "split": "held-out",
+      "purpose": "chords and final system",
+      "pdf": "omr-evals/cases/flawless/bach-bwv846-prelude-in-c-major/source.pdf",
+      "pdf_sha256": "794a394bdcd0cb49398eaef527a0cffca40f1aebced10118fcc337ce426fdcb6",
+      "page": 3,
+      "rights": "Local evaluation only; edition/arrangement redistribution license not established. Do not copy source assets into this repository.",
+      "pdf_sha256_verified": true
+    },
+    {
+      "id": "bach-bwv784-invention-no-13-in-a-minor-1",
+      "role": "fixture",
+      "split": "development",
+      "purpose": "dense independent beamed voices",
+      "pdf": "omr-evals/cases/flawless/bach-bwv784-invention-no-13-in-a-minor/source.pdf",
+      "pdf_sha256": "b9dd413a70f201d44907a80bff817cb64b4e872be1d054fa96715a3997df22a9",
+      "page": 1,
+      "rights": "Local evaluation only; edition/arrangement redistribution license not established. Do not copy source assets into this repository.",
+      "pdf_sha256_verified": true
+    },
+    {
+      "id": "bach-bwv784-invention-no-13-in-a-minor-2",
+      "role": "fixture",
+      "split": "held-out",
+      "purpose": "dense continuation",
+      "pdf": "omr-evals/cases/flawless/bach-bwv784-invention-no-13-in-a-minor/source.pdf",
+      "pdf_sha256": "b9dd413a70f201d44907a80bff817cb64b4e872be1d054fa96715a3997df22a9",
+      "page": 2,
+      "rights": "Local evaluation only; edition/arrangement redistribution license not established. Do not copy source assets into this repository.",
+      "pdf_sha256_verified": true
+    },
+    {
+      "id": "mozart-k545-piano-sonata-16-I-allegro-1",
+      "role": "fixture",
+      "split": "development",
+      "purpose": "ordinary classical notation and slurs",
+      "pdf": "omr-evals/cases/flawless/mozart-k545-piano-sonata-16-I-allegro/source.pdf",
+      "pdf_sha256": "698a687b485ceabe6b00ced1097c368fd1b5b0c507f5a0351a94a943bae50759",
+      "page": 1,
+      "rights": "Local evaluation only; edition/arrangement redistribution license not established. Do not copy source assets into this repository.",
+      "pdf_sha256_verified": true
+    },
+    {
+      "id": "mozart-k545-piano-sonata-16-I-allegro-2",
+      "role": "fixture",
+      "split": "held-out",
+      "purpose": "runs and ledger notes",
+      "pdf": "omr-evals/cases/flawless/mozart-k545-piano-sonata-16-I-allegro/source.pdf",
+      "pdf_sha256": "698a687b485ceabe6b00ced1097c368fd1b5b0c507f5a0351a94a943bae50759",
+      "page": 2,
+      "rights": "Local evaluation only; edition/arrangement redistribution license not established. Do not copy source assets into this repository.",
+      "pdf_sha256_verified": true
+    },
+    {
+      "id": "mozart-k545-piano-sonata-16-II-andante-1",
+      "role": "fixture",
+      "split": "development",
+      "purpose": "slow melody and accompaniment",
+      "pdf": "omr-evals/cases/flawless/mozart-k545-piano-sonata-16-II-andante/source.pdf",
+      "pdf_sha256": "f498cb1b489ef4dd7dd01efc9337b897f6081513f5c5ae92b83184ed17715e19",
+      "page": 1,
+      "rights": "Local evaluation only; edition/arrangement redistribution license not established. Do not copy source assets into this repository.",
+      "pdf_sha256_verified": true
+    },
+    {
+      "id": "mozart-k545-piano-sonata-16-III-presto-rondo-1",
+      "role": "fixture",
+      "split": "held-out",
+      "purpose": "dense articulation",
+      "pdf": "omr-evals/cases/flawless/mozart-k545-piano-sonata-16-III-presto-rondo/source.pdf",
+      "pdf_sha256": "20e052c208fc1be3ae1ef84da42ccc48da97732ee209c63bf8621e0f9d1e730b",
+      "page": 1,
+      "rights": "Local evaluation only; edition/arrangement redistribution license not established. Do not copy source assets into this repository.",
+      "pdf_sha256_verified": true
+    },
+    {
+      "id": "beethoven-fur-elise-1",
+      "role": "fixture",
+      "split": "development",
+      "purpose": "ledger notes, clef changes, chords and repeats",
+      "pdf": "omr-evals/cases/slightly-flawed/beethoven-fur-elise/source.pdf",
+      "pdf_sha256": "9456a81cae58000cbd5313ef7e96149f8933849890b85d9e03da508795bd82b1",
+      "page": 1,
+      "rights": "Local evaluation only; edition/arrangement redistribution license not established. Do not copy source assets into this repository.",
+      "pdf_sha256_verified": true
+    },
+    {
+      "id": "beethoven-fur-elise-2",
+      "role": "fixture",
+      "split": "held-out",
+      "purpose": "recognition and association challenge",
+      "pdf": "omr-evals/cases/slightly-flawed/beethoven-fur-elise/source.pdf",
+      "pdf_sha256": "9456a81cae58000cbd5313ef7e96149f8933849890b85d9e03da508795bd82b1",
+      "page": 2,
+      "rights": "Local evaluation only; edition/arrangement redistribution license not established. Do not copy source assets into this repository.",
+      "pdf_sha256_verified": true
+    },
+    {
+      "id": "chrono-trigger-fanfare-1-luccas-theme-1",
+      "role": "fixture",
+      "split": "development",
+      "purpose": "short game arrangement",
+      "pdf": "omr-evals/cases/flawless/chrono-trigger-fanfare-1-luccas-theme/source.pdf",
+      "pdf_sha256": "dd4755150a6f3165ae0dc111057e8e261b79a5bbeaa9d4142814d92effb7a784",
+      "page": 1,
+      "rights": "Local evaluation only; edition/arrangement redistribution license not established. Do not copy source assets into this repository.",
+      "pdf_sha256_verified": true
+    },
+    {
+      "id": "super-mario-bros-ground-theme-1",
+      "role": "fixture",
+      "split": "development",
+      "purpose": "syncopation and chord stacks",
+      "pdf": "omr-evals/cases/slightly-flawed/super-mario-bros-ground-theme/source.pdf",
+      "pdf_sha256": "0deffa2d72ece9827694435239c4a279d51689e0444b1480f423e63214c9ca91",
+      "page": 1,
+      "rights": "Local evaluation only; edition/arrangement redistribution license not established. Do not copy source assets into this repository.",
+      "pdf_sha256_verified": true
+    },
+    {
+      "id": "chopin-25-9-1",
+      "role": "fixture",
+      "split": "development",
+      "purpose": "existing printed fingerings, dense chords and long slurs",
+      "pdf": "/home/fschuh/Documents/sheet-music/Classical/Chopin - Etude 25 No 9 - Butterfly.pdf",
+      "pdf_sha256": "25a4474821f1b123a4bde2ad82f58be34aa18314958bcd36de39abed1cc821a6",
+      "page": 1,
+      "rights": "Local evaluation only; edition/arrangement redistribution license not established. Do not copy source assets into this repository.",
+      "pdf_sha256_verified": true
+    },
+    {
+      "id": "chopin-25-2-1",
+      "role": "fixture",
+      "split": "development",
+      "purpose": "existing printed fingerings, dense chords and long slurs",
+      "pdf": "/home/fschuh/Documents/sheet-music/Classical/Chopin - Etude 25 No 2.pdf",
+      "pdf_sha256": "904e58714b2fb99bfd13cc31c5a05b96ed44c9e32b260a684ce20a30736d9629",
+      "page": 1,
+      "rights": "Local evaluation only; edition/arrangement redistribution license not established. Do not copy source assets into this repository.",
+      "pdf_sha256_verified": true
+    },
+    {
+      "id": "chopin-25-7-1",
+      "role": "fixture",
+      "split": "held-out",
+      "purpose": "existing printed fingerings, dense chords and long slurs",
+      "pdf": "/home/fschuh/Documents/sheet-music/Classical/Chopin - Etude 25 No 7.pdf",
+      "pdf_sha256": "cc22b30f8b5d55b1bbec0a709469737409cd4f5869ffd55ff16e801abdf851ab",
+      "page": 1,
+      "rights": "Local evaluation only; edition/arrangement redistribution license not established. Do not copy source assets into this repository.",
+      "pdf_sha256_verified": true
+    },
+    {
+      "id": "chopin-25-12-1",
+      "role": "fixture",
+      "split": "held-out",
+      "purpose": "existing printed fingerings, dense chords and long slurs",
+      "pdf": "/home/fschuh/Documents/sheet-music/Classical/Chopin - Etude 25 No 12.pdf",
+      "pdf_sha256": "e145da9db6ed1dd25af1ef996988e9398b640bd83bd8b0fb6b724e0715fda6ca",
+      "page": 1,
+      "rights": "Local evaluation only; edition/arrangement redistribution license not established. Do not copy source assets into this repository.",
+      "pdf_sha256_verified": true
+    },
+    {
+      "id": "nocturne-scan",
+      "role": "scan",
+      "pdf": "/home/fschuh/Documents/sheet-music/Scans/Chopin_Klavierwerke_Band_1_Peters_Nocturnes_Op.9_1200dpi.pdf",
+      "pdf_sha256": "81d94ee13103556ea482236809f8c86da46420622c9e9cec5248bc54a1b5f324",
+      "page": 1,
+      "pdf_sha256_verified": true
+    },
+    {
+      "id": "impromptu-scan",
+      "role": "scan",
+      "pdf": "/home/fschuh/Documents/sheet-music/Scans/chopin-opus_66-fantasie-impromptu.pdf",
+      "pdf_sha256": "664ae34b45dc4be5ed34b2cc10ec43da0a263abdf56ae9f396f21efc5ccd03e6",
+      "page": 1,
+      "pdf_sha256_verified": true
+    },
+    {
+      "id": "hisaishi-scan",
+      "role": "scan",
+      "pdf": "/home/fschuh/Documents/sheet-music/Scans/Joe Hisaishi - Fantasia (for Nausica).pdf",
+      "pdf_sha256": "1e160026109414135437a8c83160c6cbbe956b605bca31e9f863d5ba77ce0e26",
+      "page": 1,
+      "pdf_sha256_verified": true
+    },
+    {
+      "id": "fillmore-1",
+      "role": "reported-failure",
+      "pdf": "/home/fschuh/Documents/sheet-music/Videogame/ActRaiser - Fillmore Act1.pdf",
+      "pdf_sha256": "4530384c6e83e764e22d00969785c63694c3f2c57e8406eb8349b7740d6fa691",
+      "page": 1,
+      "pdf_sha256_verified": true
+    },
+    {
+      "id": "fillmore-2",
+      "role": "reported-failure",
+      "pdf": "/home/fschuh/Documents/sheet-music/Videogame/ActRaiser - Fillmore Act1.pdf",
+      "pdf_sha256": "4530384c6e83e764e22d00969785c63694c3f2c57e8406eb8349b7740d6fa691",
+      "page": 2,
+      "pdf_sha256_verified": true
+    }
+  ],
+  "supplied_sidecars": {
+    "origin": "Produced on another machine and copied to /home/fschuh/dev/tmp/visual-sidecars. They carry an explicit producer rejection and no annotation grid, so they are status and user-interface fixtures only, never raw-grid repair fixtures.",
+    "files": [
+      {
+        "path": "/home/fschuh/dev/tmp/visual-sidecars/0001.homr.visual.json",
+        "sha256": "97bcfb5d8cb86c8371d4a8d9e6910a4f2873aae39ca48bde3d24896b4779c092"
+      },
+      {
+        "path": "/home/fschuh/dev/tmp/visual-sidecars/0002.homr.visual.json",
+        "sha256": "137d121f8ecb3738f1614d2d003d7670279b95f772f1f6de3b2f12f39b66f02b"
+      }
+    ]
+  },
+  "application_cache": {
+    "note": "The viewer's own cache for the same PDF, read-only. It was written by an older producer and is retained as a legacy-capability fixture.",
+    "path": "/home/fschuh/.cache/com.homr.sheetmusicviewer/pdf-cache/4530384c6e83e764e22d00969785c63694c3f2c57e8406eb8349b7740d6fa691"
+  },
+  "path_convention": "Relative paths are resolved against the multi-repository workspace root, the directory that contains this repository alongside homr and omr-evals."
+}
