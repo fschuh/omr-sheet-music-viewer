@@ -1,0 +1,1759 @@
+{
+  "scope": "Scan-transfer challenge: first pages of three user-supplied PDFs, fixed clean-pilot OCR/association settings, manually selected annotated windows; not random whole-page validation.",
+  "rapidocr_version": "3.7.0",
+  "manifest_sha256": "a39265a15e6149a81b5a713c148624a318942294669c9c10603adf1cff229957",
+  "model_sha256": {
+    "ch_PP-OCRv4_det_infer.onnx": "d2a7720d45a54257208b1e13e36a8479894cb74155a5efe29462512d42f49da9",
+    "ch_PP-OCRv4_rec_infer.onnx": "48fc40f24f6d2a207a2b1091d3437eb3cc3eb6b676dc3ef9c37384005483683b",
+    "ch_ppocr_mobile_v2.0_cls_infer.onnx": "e47acedf663230f8863ff1ab0e64dd2d82b838fceb5957146dab185a89d6215c"
+  },
+  "seconds": 7.932,
+  "packet_sha256": {
+    "nocturne-scan": null,
+    "impromptu-scan": null,
+    "hisaishi-scan": null
+  },
+  "source_musicxml_fingering_counts": {
+    "nocturne-scan": 0,
+    "impromptu-scan": 0,
+    "hisaishi-scan": 0
+  },
+  "ocr_text_proposals": {
+    "correct": 23,
+    "proposed": 28,
+    "gold": 32,
+    "precision": 0.8214,
+    "recall": 0.7188
+  },
+  "ocr_digit_candidates": {
+    "location": {
+      "correct": 21,
+      "proposed": 23,
+      "gold": 32,
+      "precision": 0.913,
+      "recall": 0.6562
+    },
+    "value": {
+      "correct": 21,
+      "proposed": 23,
+      "gold": 32,
+      "precision": 0.913,
+      "recall": 0.6562
+    },
+    "assignment": {
+      "correct": 12,
+      "proposed": 23,
+      "gold": 32,
+      "precision": 0.5217,
+      "recall": 0.375
+    }
+  },
+  "pdf_ascii_digit_candidates": {
+    "location": {
+      "correct": 0,
+      "proposed": 0,
+      "gold": 32,
+      "precision": null,
+      "recall": 0.0
+    },
+    "value": {
+      "correct": 0,
+      "proposed": 0,
+      "gold": 32,
+      "precision": null,
+      "recall": 0.0
+    },
+    "assignment": {
+      "correct": 0,
+      "proposed": 0,
+      "gold": 32,
+      "precision": null,
+      "recall": 0.0
+    }
+  },
+  "oracle_transcription": {
+    "correct": 29,
+    "proposed": 29,
+    "gold": 32,
+    "precision": 1.0,
+    "recall": 0.9062
+  },
+  "oracle_association": {
+    "nearest_note": {
+      "correct": 15,
+      "proposed": 15,
+      "gold": 32,
+      "precision": 1.0,
+      "recall": 0.4688
+    },
+    "unambiguous_note": {
+      "correct": 15,
+      "proposed": 15,
+      "gold": 32,
+      "precision": 1.0,
+      "recall": 0.4688
+    }
+  },
+  "windows": [
+    {
+      "id": "nocturne-upper",
+      "page": "nocturne-scan",
+      "bounds": [
+        320,
+        225,
+        795,
+        310
+      ],
+      "gold": [
+        {
+          "box": [
+            329,
+            228,
+            340,
+            242
+          ],
+          "digit": "2",
+          "note": "homr-note-1"
+        },
+        {
+          "box": [
+            411,
+            238,
+            420,
+            252
+          ],
+          "digit": "1",
+          "note": "homr-note-4"
+        },
+        {
+          "box": [
+            434,
+            232,
+            445,
+            247
+          ],
+          "digit": "4",
+          "note": "homr-note-5"
+        },
+        {
+          "box": [
+            458,
+            239,
+            470,
+            254
+          ],
+          "digit": "2",
+          "note": "homr-note-6"
+        },
+        {
+          "box": [
+            505,
+            232,
+            516,
+            247
+          ],
+          "digit": "1",
+          "note": "homr-note-7"
+        },
+        {
+          "box": [
+            551,
+            232,
+            563,
+            247
+          ],
+          "digit": "2",
+          "note": "homr-note-10"
+        },
+        {
+          "box": [
+            598,
+            235,
+            610,
+            250
+          ],
+          "digit": "3",
+          "note": "homr-note-13"
+        },
+        {
+          "box": [
+            645,
+            240,
+            658,
+            255
+          ],
+          "digit": "4",
+          "note": "homr-note-16"
+        },
+        {
+          "box": [
+            770,
+            251,
+            782,
+            266
+          ],
+          "digit": "1",
+          "note": "homr-note-25"
+        }
+      ],
+      "ocr_text": [
+        {
+          "box": [
+            328.15686274509807,
+            228.5686274509804,
+            347.01960784313724,
+            243.35294117647058
+          ],
+          "text": "2",
+          "score": 0.99655
+        },
+        {
+          "box": [
+            432.156862745098,
+            236.72549019607843,
+            443.88235294117646,
+            248.9607843137255
+          ],
+          "text": "4",
+          "score": 0.99971
+        },
+        {
+          "box": [
+            457.1372549019608,
+            241.8235294117647,
+            469.37254901960785,
+            255.58823529411765
+          ],
+          "text": "2",
+          "score": 0.99934
+        },
+        {
+          "box": [
+            505.05882352941177,
+            233.15686274509804,
+            516.2745098039215,
+            248.9607843137255
+          ],
+          "text": "1",
+          "score": 0.99175
+        },
+        {
+          "box": [
+            549.921568627451,
+            232.13725490196077,
+            562.6666666666667,
+            246.41176470588235
+          ],
+          "text": "2",
+          "score": 0.99903
+        },
+        {
+          "box": [
+            597.3333333333334,
+            236.72549019607843,
+            608.0392156862745,
+            252.01960784313727
+          ],
+          "text": "3",
+          "score": 0.99986
+        },
+        {
+          "box": [
+            643.2156862745098,
+            241.31372549019608,
+            655.9607843137255,
+            255.58823529411765
+          ],
+          "text": "4",
+          "score": 0.99962
+        },
+        {
+          "box": [
+            769.1372549019609,
+            252.01960784313727,
+            778.313725490196,
+            266.29411764705884
+          ],
+          "text": "1",
+          "score": 0.99556
+        }
+      ],
+      "ocr_digits": [
+        {
+          "box": [
+            328.15686274509807,
+            228.5686274509804,
+            347.01960784313724,
+            243.35294117647058
+          ],
+          "text": "2",
+          "score": 0.99655,
+          "note": "homr-note-1"
+        },
+        {
+          "box": [
+            432.156862745098,
+            236.72549019607843,
+            443.88235294117646,
+            248.9607843137255
+          ],
+          "text": "4",
+          "score": 0.99971,
+          "note": "homr-note-5"
+        },
+        {
+          "box": [
+            457.1372549019608,
+            241.8235294117647,
+            469.37254901960785,
+            255.58823529411765
+          ],
+          "text": "2",
+          "score": 0.99934,
+          "note": "homr-note-6"
+        },
+        {
+          "box": [
+            505.05882352941177,
+            233.15686274509804,
+            516.2745098039215,
+            248.9607843137255
+          ],
+          "text": "1",
+          "score": 0.99175,
+          "note": "homr-note-7"
+        },
+        {
+          "box": [
+            549.921568627451,
+            232.13725490196077,
+            562.6666666666667,
+            246.41176470588235
+          ],
+          "text": "2",
+          "score": 0.99903,
+          "note": "homr-note-10"
+        },
+        {
+          "box": [
+            597.3333333333334,
+            236.72549019607843,
+            608.0392156862745,
+            252.01960784313727
+          ],
+          "text": "3",
+          "score": 0.99986,
+          "note": "homr-note-13"
+        },
+        {
+          "box": [
+            643.2156862745098,
+            241.31372549019608,
+            655.9607843137255,
+            255.58823529411765
+          ],
+          "text": "4",
+          "score": 0.99962,
+          "note": "homr-note-16"
+        },
+        {
+          "box": [
+            769.1372549019609,
+            252.01960784313727,
+            778.313725490196,
+            266.29411764705884
+          ],
+          "text": "1",
+          "score": 0.99556,
+          "note": "homr-note-25"
+        }
+      ],
+      "pdf_digits": [],
+      "pdf_non_ascii_words": 0
+    },
+    {
+      "id": "nocturne-lower",
+      "page": "nocturne-scan",
+      "bounds": [
+        499,
+        335,
+        660,
+        446
+      ],
+      "gold": [
+        {
+          "box": [
+            500,
+            425,
+            515,
+            438
+          ],
+          "digit": "5",
+          "note": "homr-note-8"
+        },
+        {
+          "box": [
+            524,
+            421,
+            540,
+            436
+          ],
+          "digit": "3",
+          "note": "homr-note-9"
+        },
+        {
+          "box": [
+            548,
+            418,
+            561,
+            433
+          ],
+          "digit": "1",
+          "note": "homr-note-11"
+        },
+        {
+          "box": [
+            573,
+            416,
+            586,
+            432
+          ],
+          "digit": "3",
+          "note": "homr-note-12"
+        },
+        {
+          "box": [
+            598,
+            413,
+            610,
+            429
+          ],
+          "digit": "1",
+          "note": "homr-note-14"
+        },
+        {
+          "box": [
+            618,
+            411,
+            632,
+            424
+          ],
+          "digit": "5",
+          "note": "homr-note-15"
+        },
+        {
+          "box": [
+            642,
+            426,
+            657,
+            441
+          ],
+          "digit": "5",
+          "note": "homr-note-17"
+        }
+      ],
+      "ocr_text": [
+        {
+          "box": [
+            502.05882352941177,
+            426.2549019607843,
+            510.2156862745098,
+            436.9607843137255
+          ],
+          "text": "5",
+          "score": 0.99888
+        },
+        {
+          "box": [
+            525.5098039215686,
+            422.6862745098039,
+            535.7058823529412,
+            435.4313725490196
+          ],
+          "text": "3",
+          "score": 0.99987
+        },
+        {
+          "box": [
+            547.9411764705883,
+            419.62745098039215,
+            557.6274509803922,
+            430.33333333333337
+          ],
+          "text": "1",
+          "score": 0.99898
+        },
+        {
+          "box": [
+            572.9215686274509,
+            417.078431372549,
+            583.6274509803922,
+            428.29411764705884
+          ],
+          "text": "3",
+          "score": 0.99975
+        },
+        {
+          "box": [
+            595.8627450980392,
+            414.01960784313724,
+            605.0392156862745,
+            425.2352941176471
+          ],
+          "text": "1",
+          "score": 0.99643
+        },
+        {
+          "box": [
+            618.2941176470588,
+            413.0,
+            625.4313725490197,
+            422.6862745098039
+          ],
+          "text": "5",
+          "score": 0.99844
+        }
+      ],
+      "ocr_digits": [
+        {
+          "box": [
+            502.05882352941177,
+            426.2549019607843,
+            510.2156862745098,
+            436.9607843137255
+          ],
+          "text": "5",
+          "score": 0.99888,
+          "note": null
+        },
+        {
+          "box": [
+            525.5098039215686,
+            422.6862745098039,
+            535.7058823529412,
+            435.4313725490196
+          ],
+          "text": "3",
+          "score": 0.99987,
+          "note": null
+        },
+        {
+          "box": [
+            547.9411764705883,
+            419.62745098039215,
+            557.6274509803922,
+            430.33333333333337
+          ],
+          "text": "1",
+          "score": 0.99898,
+          "note": null
+        },
+        {
+          "box": [
+            572.9215686274509,
+            417.078431372549,
+            583.6274509803922,
+            428.29411764705884
+          ],
+          "text": "3",
+          "score": 0.99975,
+          "note": null
+        },
+        {
+          "box": [
+            595.8627450980392,
+            414.01960784313724,
+            605.0392156862745,
+            425.2352941176471
+          ],
+          "text": "1",
+          "score": 0.99643,
+          "note": null
+        },
+        {
+          "box": [
+            618.2941176470588,
+            413.0,
+            625.4313725490197,
+            422.6862745098039
+          ],
+          "text": "5",
+          "score": 0.99844,
+          "note": null
+        }
+      ],
+      "pdf_digits": [],
+      "pdf_non_ascii_words": 0
+    },
+    {
+      "id": "impromptu-upper",
+      "page": "impromptu-scan",
+      "bounds": [
+        950,
+        108,
+        1270,
+        210
+      ],
+      "gold": [
+        {
+          "box": [
+            968,
+            119,
+            980,
+            133
+          ],
+          "digit": "2",
+          "note": "homr-note-31"
+        },
+        {
+          "box": [
+            1106,
+            116,
+            1118,
+            131
+          ],
+          "digit": "4",
+          "note": "homr-note-44"
+        },
+        {
+          "box": [
+            1125,
+            118,
+            1137,
+            133
+          ],
+          "digit": "2",
+          "note": null,
+          "printed_note_center": [
+            1128,
+            151
+          ],
+          "unavailable_reason": "Printed note has only a diagnostic visual group, no canonical musicxml_id"
+        },
+        {
+          "box": [
+            1141,
+            114,
+            1153,
+            129
+          ],
+          "digit": "3",
+          "note": null,
+          "printed_note_center": [
+            1146,
+            145
+          ],
+          "unavailable_reason": "Printed note has only a diagnostic visual group, no canonical musicxml_id"
+        }
+      ],
+      "ocr_text": [
+        {
+          "box": [
+            968.3529411764706,
+            119.2156862745098,
+            980.5882352941177,
+            133.49019607843138
+          ],
+          "text": "2",
+          "score": 0.99676
+        },
+        {
+          "box": [
+            1107.0196078431372,
+            114.62745098039215,
+            1153.4117647058824,
+            131.9607843137255
+          ],
+          "text": "423",
+          "score": 0.99775
+        }
+      ],
+      "ocr_digits": [
+        {
+          "box": [
+            968.3529411764706,
+            119.2156862745098,
+            980.5882352941177,
+            133.49019607843138
+          ],
+          "text": "2",
+          "score": 0.99676,
+          "note": "homr-note-31"
+        }
+      ],
+      "pdf_digits": [],
+      "pdf_non_ascii_words": 0
+    },
+    {
+      "id": "impromptu-lower",
+      "page": "impromptu-scan",
+      "bounds": [
+        393,
+        169,
+        615,
+        340
+      ],
+      "gold": [
+        {
+          "box": [
+            407,
+            173,
+            420,
+            188
+          ],
+          "digit": "2",
+          "note": null,
+          "printed_note_center": [
+            406,
+            260
+          ],
+          "unavailable_reason": "Printed note has only a fallback visual link, not a canonical association"
+        },
+        {
+          "box": [
+            432,
+            173,
+            444,
+            188
+          ],
+          "digit": "4",
+          "note": null,
+          "printed_note_center": [
+            429,
+            244
+          ],
+          "unavailable_reason": "Printed note has only a fallback visual link, not a canonical association"
+        },
+        {
+          "box": [
+            450,
+            173,
+            463,
+            190
+          ],
+          "digit": "5",
+          "note": "homr-note-9"
+        },
+        {
+          "box": [
+            505,
+            316,
+            519,
+            333
+          ],
+          "digit": "5",
+          "note": "homr-note-12"
+        },
+        {
+          "box": [
+            526,
+            309,
+            540,
+            326
+          ],
+          "digit": "3",
+          "note": "homr-note-13"
+        },
+        {
+          "box": [
+            548,
+            308,
+            562,
+            326
+          ],
+          "digit": "2",
+          "note": "homr-note-14"
+        },
+        {
+          "box": [
+            569,
+            306,
+            583,
+            324
+          ],
+          "digit": "1",
+          "note": "homr-note-15"
+        }
+      ],
+      "negative": "Also contains triplet 3s and m.d./m.g. instructions",
+      "ocr_text": [
+        {
+          "box": [
+            412.88235294117646,
+            193.47058823529412,
+            454.1764705882353,
+            212.84313725490196
+          ],
+          "text": "!.!.",
+          "score": 0.78828
+        },
+        {
+          "box": [
+            516.8823529411765,
+            306.6470588235294,
+            581.1176470588235,
+            328.05882352941177
+          ],
+          "text": "321",
+          "score": 0.85922
+        },
+        {
+          "box": [
+            509.2352941176471,
+            317.3529411764706,
+            520.4509803921569,
+            329.07843137254906
+          ],
+          "text": "5",
+          "score": 0.53371
+        }
+      ],
+      "ocr_digits": [
+        {
+          "box": [
+            509.2352941176471,
+            317.3529411764706,
+            520.4509803921569,
+            329.07843137254906
+          ],
+          "text": "5",
+          "score": 0.53371,
+          "note": null
+        }
+      ],
+      "pdf_digits": [],
+      "pdf_non_ascii_words": 0
+    },
+    {
+      "id": "hisaishi-upper",
+      "page": "hisaishi-scan",
+      "bounds": [
+        350,
+        1170,
+        435,
+        1295
+      ],
+      "gold": [
+        {
+          "box": [
+            365,
+            1188,
+            377,
+            1202
+          ],
+          "digit": "2",
+          "note": "homr-note-112"
+        },
+        {
+          "box": [
+            387,
+            1177,
+            398,
+            1191
+          ],
+          "digit": "1",
+          "note": "homr-note-113"
+        }
+      ],
+      "negative": "Also contains a bracketed triplet 3",
+      "ocr_text": [
+        {
+          "box": [
+            389.2549019607843,
+            1178.6666666666667,
+            396.3921568627451,
+            1190.9019607843138
+          ],
+          "text": "1",
+          "score": 0.99611
+        },
+        {
+          "box": [
+            365.80392156862746,
+            1188.862745098039,
+            377.01960784313724,
+            1202.6274509803923
+          ],
+          "text": "2",
+          "score": 0.9965
+        },
+        {
+          "box": [
+            352.03921568627453,
+            1266.8627450980393,
+            387.72549019607845,
+            1284.1960784313726
+          ],
+          "text": "3\u4e00",
+          "score": 0.82947
+        }
+      ],
+      "ocr_digits": [
+        {
+          "box": [
+            389.2549019607843,
+            1178.6666666666667,
+            396.3921568627451,
+            1190.9019607843138
+          ],
+          "text": "1",
+          "score": 0.99611,
+          "note": "homr-note-113"
+        },
+        {
+          "box": [
+            365.80392156862746,
+            1188.862745098039,
+            377.01960784313724,
+            1202.6274509803923
+          ],
+          "text": "2",
+          "score": 0.9965,
+          "note": "homr-note-112"
+        }
+      ],
+      "pdf_digits": [],
+      "pdf_non_ascii_words": 0
+    },
+    {
+      "id": "hisaishi-lower",
+      "page": "hisaishi-scan",
+      "bounds": [
+        655,
+        995,
+        780,
+        1115
+      ],
+      "gold": [
+        {
+          "box": [
+            738,
+            1002,
+            749,
+            1016
+          ],
+          "digit": "2",
+          "note": "homr-note-95"
+        }
+      ],
+      "ocr_text": [
+        {
+          "box": [
+            738.6078431372549,
+            1003.6666666666666,
+            749.313725490196,
+            1016.4117647058823
+          ],
+          "text": "2",
+          "score": 0.99824
+        }
+      ],
+      "ocr_digits": [
+        {
+          "box": [
+            738.6078431372549,
+            1003.6666666666666,
+            749.313725490196,
+            1016.4117647058823
+          ],
+          "text": "2",
+          "score": 0.99824,
+          "note": "homr-note-95"
+        }
+      ],
+      "pdf_digits": [],
+      "pdf_non_ascii_words": 0
+    },
+    {
+      "id": "hisaishi-compound",
+      "page": "hisaishi-scan",
+      "bounds": [
+        641,
+        1118,
+        687,
+        1140
+      ],
+      "gold": [
+        {
+          "box": [
+            647,
+            1119,
+            659,
+            1133
+          ],
+          "digit": "1",
+          "note": null,
+          "unavailable_reason": "Compound 1-5 marking; semantics not represented by a single adopted value",
+          "form": "compound"
+        },
+        {
+          "box": [
+            668,
+            1119,
+            681,
+            1133
+          ],
+          "digit": "5",
+          "note": null,
+          "unavailable_reason": "Compound 1-5 marking; semantics not represented by a single adopted value",
+          "form": "compound"
+        }
+      ],
+      "ocr_text": [
+        {
+          "box": [
+            647.6274509803922,
+            1118.0,
+            658.3333333333334,
+            1131.2549019607843
+          ],
+          "text": "1",
+          "score": 0.99782
+        },
+        {
+          "box": [
+            671.0784313725491,
+            1118.0,
+            681.2745098039215,
+            1132.2745098039215
+          ],
+          "text": "5",
+          "score": 0.99961
+        }
+      ],
+      "ocr_digits": [
+        {
+          "box": [
+            647.6274509803922,
+            1118.0,
+            658.3333333333334,
+            1131.2549019607843
+          ],
+          "text": "1",
+          "score": 0.99782,
+          "note": null
+        },
+        {
+          "box": [
+            671.0784313725491,
+            1118.0,
+            681.2745098039215,
+            1132.2745098039215
+          ],
+          "text": "5",
+          "score": 0.99961,
+          "note": null
+        }
+      ],
+      "pdf_digits": [],
+      "pdf_non_ascii_words": 0
+    },
+    {
+      "id": "hisaishi-measure-1",
+      "page": "hisaishi-scan",
+      "bounds": [
+        175,
+        455,
+        218,
+        497
+      ],
+      "gold": [],
+      "negative": "Boxed measure number 1, paper texture",
+      "ocr_text": [],
+      "ocr_digits": [],
+      "pdf_digits": [],
+      "pdf_non_ascii_words": 0
+    },
+    {
+      "id": "hisaishi-measure-4",
+      "page": "hisaishi-scan",
+      "bounds": [
+        111,
+        840,
+        155,
+        880
+      ],
+      "gold": [],
+      "negative": "Boxed measure number 4, paper texture",
+      "ocr_text": [
+        {
+          "box": [
+            127.31372549019608,
+            851.7254901960785,
+            138.52941176470588,
+            867.5294117647059
+          ],
+          "text": "4",
+          "score": 0.99977
+        }
+      ],
+      "ocr_digits": [
+        {
+          "box": [
+            127.31372549019608,
+            851.7254901960785,
+            138.52941176470588,
+            867.5294117647059
+          ],
+          "text": "4",
+          "score": 0.99977,
+          "note": null
+        }
+      ],
+      "pdf_digits": [],
+      "pdf_non_ascii_words": 0
+    },
+    {
+      "id": "nocturne-page-number",
+      "page": "nocturne-scan",
+      "bounds": [
+        1160,
+        44,
+        1210,
+        80
+      ],
+      "gold": [],
+      "negative": "Printed page number 3",
+      "ocr_text": [
+        {
+          "box": [
+            1175.8039215686274,
+            52.15686274509804,
+            1191.6078431372548,
+            71.52941176470588
+          ],
+          "text": "3",
+          "score": 0.99392
+        }
+      ],
+      "ocr_digits": [
+        {
+          "box": [
+            1175.8039215686274,
+            52.15686274509804,
+            1191.6078431372548,
+            71.52941176470588
+          ],
+          "text": "3",
+          "score": 0.99392,
+          "note": null
+        }
+      ],
+      "pdf_digits": [],
+      "pdf_non_ascii_words": 0
+    },
+    {
+      "id": "nocturne-time-signature",
+      "page": "nocturne-scan",
+      "bounds": [
+        280,
+        259,
+        314,
+        305
+      ],
+      "gold": [],
+      "negative": "6/4 time signature",
+      "ocr_text": [],
+      "ocr_digits": [],
+      "pdf_digits": [],
+      "pdf_non_ascii_words": 0
+    },
+    {
+      "id": "nocturne-tuplet-11",
+      "page": "nocturne-scan",
+      "bounds": [
+        1048,
+        302,
+        1078,
+        318
+      ],
+      "gold": [],
+      "negative": "Tuplet number 11 and staff line",
+      "ocr_text": [
+        {
+          "box": [
+            1055.137254901961,
+            302.5098039215686,
+            1076.0392156862745,
+            317.80392156862746
+          ],
+          "text": "11",
+          "score": 0.78078
+        }
+      ],
+      "ocr_digits": [],
+      "pdf_digits": [],
+      "pdf_non_ascii_words": 0
+    },
+    {
+      "id": "impromptu-octave",
+      "page": "impromptu-scan",
+      "bounds": [
+        713,
+        383,
+        747,
+        420
+      ],
+      "gold": [],
+      "negative": "Octave indication, notehead and dotted line",
+      "ocr_text": [],
+      "ocr_digits": [],
+      "pdf_digits": [],
+      "pdf_non_ascii_words": 0
+    },
+    {
+      "id": "hisaishi-texture",
+      "page": "hisaishi-scan",
+      "bounds": [
+        65,
+        230,
+        200,
+        380
+      ],
+      "gold": [],
+      "negative": "Textured paper and decorative watermark",
+      "ocr_text": [],
+      "ocr_digits": [],
+      "pdf_digits": [],
+      "pdf_non_ascii_words": 0
+    }
+  ],
+  "oracle": [
+    {
+      "window": "nocturne-upper",
+      "box": [
+        329,
+        228,
+        340,
+        242
+      ],
+      "digit": "2",
+      "note": "homr-note-1",
+      "text": "2",
+      "score": 0.99969,
+      "accepted": true,
+      "nearest_note": "homr-note-1",
+      "unambiguous_note": "homr-note-1"
+    },
+    {
+      "window": "nocturne-upper",
+      "box": [
+        411,
+        238,
+        420,
+        252
+      ],
+      "digit": "1",
+      "note": "homr-note-4",
+      "text": "1",
+      "score": 0.99901,
+      "accepted": true,
+      "nearest_note": "homr-note-4",
+      "unambiguous_note": "homr-note-4"
+    },
+    {
+      "window": "nocturne-upper",
+      "box": [
+        434,
+        232,
+        445,
+        247
+      ],
+      "digit": "4",
+      "note": "homr-note-5",
+      "text": "4",
+      "score": 0.99914,
+      "accepted": true,
+      "nearest_note": "homr-note-5",
+      "unambiguous_note": "homr-note-5"
+    },
+    {
+      "window": "nocturne-upper",
+      "box": [
+        458,
+        239,
+        470,
+        254
+      ],
+      "digit": "2",
+      "note": "homr-note-6",
+      "text": "2",
+      "score": 0.99725,
+      "accepted": true,
+      "nearest_note": "homr-note-6",
+      "unambiguous_note": "homr-note-6"
+    },
+    {
+      "window": "nocturne-upper",
+      "box": [
+        505,
+        232,
+        516,
+        247
+      ],
+      "digit": "1",
+      "note": "homr-note-7",
+      "text": "1",
+      "score": 0.99889,
+      "accepted": true,
+      "nearest_note": "homr-note-7",
+      "unambiguous_note": "homr-note-7"
+    },
+    {
+      "window": "nocturne-upper",
+      "box": [
+        551,
+        232,
+        563,
+        247
+      ],
+      "digit": "2",
+      "note": "homr-note-10",
+      "text": "2",
+      "score": 0.9985,
+      "accepted": true,
+      "nearest_note": "homr-note-10",
+      "unambiguous_note": "homr-note-10"
+    },
+    {
+      "window": "nocturne-upper",
+      "box": [
+        598,
+        235,
+        610,
+        250
+      ],
+      "digit": "3",
+      "note": "homr-note-13",
+      "text": "3",
+      "score": 0.99982,
+      "accepted": true,
+      "nearest_note": "homr-note-13",
+      "unambiguous_note": "homr-note-13"
+    },
+    {
+      "window": "nocturne-upper",
+      "box": [
+        645,
+        240,
+        658,
+        255
+      ],
+      "digit": "4",
+      "note": "homr-note-16",
+      "text": "4",
+      "score": 0.99876,
+      "accepted": true,
+      "nearest_note": "homr-note-16",
+      "unambiguous_note": "homr-note-16"
+    },
+    {
+      "window": "nocturne-upper",
+      "box": [
+        770,
+        251,
+        782,
+        266
+      ],
+      "digit": "1",
+      "note": "homr-note-25",
+      "text": "1",
+      "score": 0.99938,
+      "accepted": true,
+      "nearest_note": "homr-note-25",
+      "unambiguous_note": "homr-note-25"
+    },
+    {
+      "window": "nocturne-lower",
+      "box": [
+        500,
+        425,
+        515,
+        438
+      ],
+      "digit": "5",
+      "note": "homr-note-8",
+      "text": "5",
+      "score": 0.99982,
+      "accepted": true,
+      "nearest_note": null,
+      "unambiguous_note": null
+    },
+    {
+      "window": "nocturne-lower",
+      "box": [
+        524,
+        421,
+        540,
+        436
+      ],
+      "digit": "3",
+      "note": "homr-note-9",
+      "text": "3",
+      "score": 0.99974,
+      "accepted": true,
+      "nearest_note": null,
+      "unambiguous_note": null
+    },
+    {
+      "window": "nocturne-lower",
+      "box": [
+        548,
+        418,
+        561,
+        433
+      ],
+      "digit": "1",
+      "note": "homr-note-11",
+      "text": "1",
+      "score": 0.99789,
+      "accepted": true,
+      "nearest_note": null,
+      "unambiguous_note": null
+    },
+    {
+      "window": "nocturne-lower",
+      "box": [
+        573,
+        416,
+        586,
+        432
+      ],
+      "digit": "3",
+      "note": "homr-note-12",
+      "text": "3",
+      "score": 0.99952,
+      "accepted": true,
+      "nearest_note": null,
+      "unambiguous_note": null
+    },
+    {
+      "window": "nocturne-lower",
+      "box": [
+        598,
+        413,
+        610,
+        429
+      ],
+      "digit": "1",
+      "note": "homr-note-14",
+      "text": "1",
+      "score": 0.99358,
+      "accepted": true,
+      "nearest_note": null,
+      "unambiguous_note": null
+    },
+    {
+      "window": "nocturne-lower",
+      "box": [
+        618,
+        411,
+        632,
+        424
+      ],
+      "digit": "5",
+      "note": "homr-note-15",
+      "text": "5",
+      "score": 0.99969,
+      "accepted": true,
+      "nearest_note": null,
+      "unambiguous_note": null
+    },
+    {
+      "window": "nocturne-lower",
+      "box": [
+        642,
+        426,
+        657,
+        441
+      ],
+      "digit": "5",
+      "note": "homr-note-17",
+      "text": "5.",
+      "score": 0.81126,
+      "accepted": false,
+      "nearest_note": null,
+      "unambiguous_note": null
+    },
+    {
+      "window": "impromptu-upper",
+      "box": [
+        968,
+        119,
+        980,
+        133
+      ],
+      "digit": "2",
+      "note": "homr-note-31",
+      "text": "2",
+      "score": 0.998,
+      "accepted": true,
+      "nearest_note": "homr-note-31",
+      "unambiguous_note": "homr-note-31"
+    },
+    {
+      "window": "impromptu-upper",
+      "box": [
+        1106,
+        116,
+        1118,
+        131
+      ],
+      "digit": "4",
+      "note": "homr-note-44",
+      "text": "4",
+      "score": 0.99946,
+      "accepted": true,
+      "nearest_note": "homr-note-44",
+      "unambiguous_note": "homr-note-44"
+    },
+    {
+      "window": "impromptu-upper",
+      "box": [
+        1125,
+        118,
+        1137,
+        133
+      ],
+      "digit": "2",
+      "note": null,
+      "printed_note_center": [
+        1128,
+        151
+      ],
+      "unavailable_reason": "Printed note has only a diagnostic visual group, no canonical musicxml_id",
+      "text": "2",
+      "score": 0.98507,
+      "accepted": true,
+      "nearest_note": null,
+      "unambiguous_note": null
+    },
+    {
+      "window": "impromptu-upper",
+      "box": [
+        1141,
+        114,
+        1153,
+        129
+      ],
+      "digit": "3",
+      "note": null,
+      "printed_note_center": [
+        1146,
+        145
+      ],
+      "unavailable_reason": "Printed note has only a diagnostic visual group, no canonical musicxml_id",
+      "text": "3",
+      "score": 0.99902,
+      "accepted": true,
+      "nearest_note": null,
+      "unambiguous_note": null
+    },
+    {
+      "window": "impromptu-lower",
+      "box": [
+        407,
+        173,
+        420,
+        188
+      ],
+      "digit": "2",
+      "note": null,
+      "printed_note_center": [
+        406,
+        260
+      ],
+      "unavailable_reason": "Printed note has only a fallback visual link, not a canonical association",
+      "text": "2",
+      "score": 0.99882,
+      "accepted": true,
+      "nearest_note": null,
+      "unambiguous_note": null
+    },
+    {
+      "window": "impromptu-lower",
+      "box": [
+        432,
+        173,
+        444,
+        188
+      ],
+      "digit": "4",
+      "note": null,
+      "printed_note_center": [
+        429,
+        244
+      ],
+      "unavailable_reason": "Printed note has only a fallback visual link, not a canonical association",
+      "text": "f",
+      "score": 0.72797,
+      "accepted": false,
+      "nearest_note": null,
+      "unambiguous_note": null
+    },
+    {
+      "window": "impromptu-lower",
+      "box": [
+        450,
+        173,
+        463,
+        190
+      ],
+      "digit": "5",
+      "note": "homr-note-9",
+      "text": "5",
+      "score": 0.45424,
+      "accepted": false,
+      "nearest_note": "homr-note-9",
+      "unambiguous_note": "homr-note-9"
+    },
+    {
+      "window": "impromptu-lower",
+      "box": [
+        505,
+        316,
+        519,
+        333
+      ],
+      "digit": "5",
+      "note": "homr-note-12",
+      "text": "5",
+      "score": 0.87925,
+      "accepted": true,
+      "nearest_note": null,
+      "unambiguous_note": null
+    },
+    {
+      "window": "impromptu-lower",
+      "box": [
+        526,
+        309,
+        540,
+        326
+      ],
+      "digit": "3",
+      "note": "homr-note-13",
+      "text": "3",
+      "score": 0.83011,
+      "accepted": true,
+      "nearest_note": null,
+      "unambiguous_note": null
+    },
+    {
+      "window": "impromptu-lower",
+      "box": [
+        548,
+        308,
+        562,
+        326
+      ],
+      "digit": "2",
+      "note": "homr-note-14",
+      "text": "2",
+      "score": 0.99021,
+      "accepted": true,
+      "nearest_note": null,
+      "unambiguous_note": null
+    },
+    {
+      "window": "impromptu-lower",
+      "box": [
+        569,
+        306,
+        583,
+        324
+      ],
+      "digit": "1",
+      "note": "homr-note-15",
+      "text": "1",
+      "score": 0.99605,
+      "accepted": true,
+      "nearest_note": null,
+      "unambiguous_note": null
+    },
+    {
+      "window": "hisaishi-upper",
+      "box": [
+        365,
+        1188,
+        377,
+        1202
+      ],
+      "digit": "2",
+      "note": "homr-note-112",
+      "text": "2",
+      "score": 0.99594,
+      "accepted": true,
+      "nearest_note": "homr-note-112",
+      "unambiguous_note": "homr-note-112"
+    },
+    {
+      "window": "hisaishi-upper",
+      "box": [
+        387,
+        1177,
+        398,
+        1191
+      ],
+      "digit": "1",
+      "note": "homr-note-113",
+      "text": "1",
+      "score": 0.99613,
+      "accepted": true,
+      "nearest_note": "homr-note-113",
+      "unambiguous_note": "homr-note-113"
+    },
+    {
+      "window": "hisaishi-lower",
+      "box": [
+        738,
+        1002,
+        749,
+        1016
+      ],
+      "digit": "2",
+      "note": "homr-note-95",
+      "text": "2",
+      "score": 0.9988,
+      "accepted": true,
+      "nearest_note": "homr-note-95",
+      "unambiguous_note": "homr-note-95"
+    },
+    {
+      "window": "hisaishi-compound",
+      "box": [
+        647,
+        1119,
+        659,
+        1133
+      ],
+      "digit": "1",
+      "note": null,
+      "unavailable_reason": "Compound 1-5 marking; semantics not represented by a single adopted value",
+      "form": "compound",
+      "text": "1",
+      "score": 0.99448,
+      "accepted": true,
+      "nearest_note": null,
+      "unambiguous_note": null
+    },
+    {
+      "window": "hisaishi-compound",
+      "box": [
+        668,
+        1119,
+        681,
+        1133
+      ],
+      "digit": "5",
+      "note": null,
+      "unavailable_reason": "Compound 1-5 marking; semantics not represented by a single adopted value",
+      "form": "compound",
+      "text": "5",
+      "score": 0.99881,
+      "accepted": true,
+      "nearest_note": null,
+      "unambiguous_note": null
+    }
+  ]
+}

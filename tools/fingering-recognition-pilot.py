@@ -65,14 +65,14 @@ def pdf_words(path, coordinate_width):
     return result
 
 
-def notes_for(data, width):
+def notes_for(data, width, all_staffs=False):
     sidecar = data["sidecar"]
     scale = width / sidecar["source_image_size"][0]
     # Research baseline is explicitly restricted to the first upper staff.
     return [{"id": g["musicxml_id"], "center": [v * scale for v in g["center"]]}
             for g in sidecar["visual_groups"] if g.get("musicxml_id")
             and g.get("visual_status") == "canonical"
-            and g["staff_group_index"] == 0 and g["staff_index"] == 0]
+            and (all_staffs or g["staff_group_index"] == 0 and g["staff_index"] == 0)]
 
 
 def associate(box, notes, conservative=False):
@@ -106,7 +106,8 @@ def summarize(rows, field):
         for pi, gi in pairs:
             p, g = predictions[pi], gold[gi]
             counts["value"] += p["text"] == g["digit"]
-            counts["assignment"] += p["text"] == g["digit"] and p.get("note") == g["note"]
+            counts["assignment"] += (g["note"] is not None and
+                                     p["text"] == g["digit"] and p.get("note") == g["note"])
     return {key: metrics(counts[key], counts["proposed"], counts["gold"])
             for key in ("location", "value", "assignment")}
 
@@ -114,12 +115,14 @@ def summarize(rows, field):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--prepare-only", action="store_true")
+    parser.add_argument("--manifest", type=Path, default=ROOT / "plans/fingering-recognition-pilot.json")
+    parser.add_argument("--artifact-dir", type=Path, default=ROOT / "testdata/fingering-recognition")
     parser.add_argument("--pdf-root", type=Path, default=Path.home() / "Documents/sheet-music/Classical")
     parser.add_argument("--output", type=Path, default=ROOT / "testdata/fingering-recognition/results.json")
     args = parser.parse_args()
-    manifest = json.loads((ROOT / "plans/fingering-recognition-pilot.json").read_text())
+    manifest = json.loads(args.manifest.read_text())
     width = manifest["coordinate_width"]
-    out = ROOT / "testdata/fingering-recognition"
+    out = args.artifact_dir
     out.mkdir(parents=True, exist_ok=True)
     pages = {}
     for key, spec in manifest["pages"].items():
@@ -128,13 +131,18 @@ def main():
         assert hashlib.sha256(image_path.read_bytes()).hexdigest() == spec["image_sha256"], key
         source = Image.open(image_path).convert("RGB")
         data, packet_hash = None, None
-        if not spec.get("negative_only"):
+        if "sidecar" in spec:
+            for field in ("sidecar", "musicxml"):
+                assert hashlib.sha256((ROOT / spec[field]).read_bytes()).hexdigest() == spec[f"{field}_sha256"], field
+            data = {"sidecar": json.loads((ROOT / spec["sidecar"]).read_text()),
+                    "musicXml": (ROOT / spec["musicxml"]).read_text()}
+        elif not spec.get("negative_only"):
             packet_hash = hashlib.sha256((directory / "packet.js").read_bytes()).hexdigest()
             assert packet_hash == spec["packet_sha256"], f"Changed note identities: {key}"
             data = packet(directory / "packet.js")
         else:
             assert all(not w["gold"] for w in manifest["windows"] if w["page"] == key)
-        pages[key] = {"image": source, "notes": notes_for(data, width) if data else [],
+        pages[key] = {"image": source, "notes": notes_for(data, width, spec.get("all_staffs", False)) if data else [],
                       "data": data, "packet_sha256": packet_hash}
     tiles = []
     for window in manifest["windows"]:
@@ -146,10 +154,20 @@ def main():
         marked = crop.copy()
         draw = ImageDraw.Draw(marked)
         for index, gold in enumerate(window["gold"]):
-            assert any(n["id"] == gold["note"] for n in page["notes"]), gold
+            if gold["note"] is None:
+                assert gold.get("unavailable_reason"), "Missing links must remain explicit in the denominator"
+            else:
+                assert any(n["id"] == gold["note"] for n in page["notes"]), gold
             box = [(gold["box"][i] - bounds[i % 2]) * scale for i in range(4)]
             draw.rectangle(box, outline="red", width=1)
             draw.text((box[0], box[1] - 12), str(index + 1), fill="blue")
+            target = next((n["center"] for n in page["notes"] if n["id"] == gold["note"]),
+                          gold.get("printed_note_center"))
+            if target:
+                tx, ty = (target[0] - bounds[0]) * scale, (target[1] - bounds[1]) * scale
+                color = "green" if gold["note"] is not None else "orange"
+                draw.line(((box[0] + box[2]) / 2, (box[1] + box[3]) / 2, tx, ty), fill=color, width=1)
+                draw.ellipse((tx - 3, ty - 3, tx + 3, ty + 3), outline=color, width=2)
         marked.save(out / f'{window["id"]}-gold.png')
         for index, gold in enumerate(window["gold"]):
             glyph = page["image"].crop(tuple(round(v * scale) for v in gold["box"]))
@@ -218,7 +236,7 @@ def main():
                            "unambiguous_note": associate(gold["box"], page["notes"], conservative=True)})
     accepted = [o for o in oracle if o["accepted"]]
     report = {"scope": manifest["scope"], "rapidocr_version": importlib.metadata.version("rapidocr"),
-              "manifest_sha256": hashlib.sha256((ROOT / "plans/fingering-recognition-pilot.json").read_bytes()).hexdigest(),
+              "manifest_sha256": hashlib.sha256(args.manifest.read_bytes()).hexdigest(),
               "model_sha256": hashes, "seconds": round(time.perf_counter() - start, 3),
               "packet_sha256": {k: p["packet_sha256"] for k, p in pages.items()},
               "source_musicxml_fingering_counts": {k: len(ET.fromstring(p["data"]["musicXml"]).findall(".//fingering"))
@@ -227,7 +245,7 @@ def main():
               "ocr_digit_candidates": summarize(rows, "ocr_digits"),
               "pdf_ascii_digit_candidates": summarize(rows, "pdf_digits"),
               "oracle_transcription": metrics(sum(o["text"] == o["digit"] for o in accepted), len(accepted), len(oracle)),
-              "oracle_association": {key: metrics(sum(o[key] == o["note"] for o in oracle),
+              "oracle_association": {key: metrics(sum(o["note"] is not None and o[key] == o["note"] for o in oracle),
                                                     sum(o[key] is not None for o in oracle), len(oracle))
                                      for key in ("nearest_note", "unambiguous_note")},
               "windows": rows, "oracle": oracle}

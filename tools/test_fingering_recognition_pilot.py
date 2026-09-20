@@ -14,6 +14,30 @@ spec.loader.exec_module(pilot)
 
 
 class RecognitionPilotTests(unittest.TestCase):
+    def test_scan_results_include_unavailable_targets_and_rescore_exactly(self):
+        manifest_path = pilot.ROOT / "plans/fingering-recognition-scans.json"
+        manifest = json.loads(manifest_path.read_text())
+        report = json.loads((pilot.ROOT / "plans/fingering-recognition-scan-results.json").read_text())
+        self.assertEqual(report["manifest_sha256"], hashlib.sha256(manifest_path.read_bytes()).hexdigest())
+        gold = [g for w in manifest["windows"] for g in w["gold"]]
+        self.assertEqual(len(gold), 32)
+        self.assertEqual(sum(g["note"] is None for g in gold), 6)
+        self.assertTrue(all(g.get("unavailable_reason") for g in gold if g["note"] is None))
+        for field, metric in (("ocr_digits", "ocr_digit_candidates"), ("pdf_digits", "pdf_ascii_digit_candidates")):
+            self.assertEqual(report[metric], pilot.summarize(report["windows"], field))
+        self.assertEqual(report["ocr_digit_candidates"]["assignment"]["correct"], 12)
+        self.assertEqual(report["ocr_digit_candidates"]["assignment"]["gold"], 32)
+        for key, score in report["oracle_association"].items():
+            self.assertEqual(score, pilot.metrics(
+                sum(o["note"] is not None and o[key] == o["note"] for o in report["oracle"]),
+                sum(o[key] is not None for o in report["oracle"]), len(gold)))
+        for window in manifest["windows"]:
+            self.assertEqual(next(w["gold"] for w in report["windows"] if w["id"] == window["id"]), window["gold"])
+            for item in window["gold"]:
+                x0, y0, x1, y1 = item["box"]
+                a, b, c, d = window["bounds"]
+                self.assertTrue(a <= x0 < x1 <= c and b <= y0 < y1 <= d)
+
     def test_committed_results_recompute_and_match_annotation_revision(self):
         manifest_path = pilot.ROOT / "plans/fingering-recognition-pilot.json"
         manifest = json.loads(manifest_path.read_text())
@@ -48,6 +72,28 @@ class RecognitionPilotTests(unittest.TestCase):
         self.assertEqual(result["assignment"]["correct"], 0)
         row["pred"][0].update(text="3", note="lower")
         self.assertEqual(pilot.summarize([row], "pred")["value"]["correct"], 0)
+
+    def test_missing_authoritative_link_never_counts_as_correct_null_assignment(self):
+        row = {"gold": [{"box": [0, 0, 10, 10], "digit": "2", "note": None}],
+               "pred": [{"box": [0, 0, 10, 10], "text": "2", "note": None}]}
+        result = pilot.summarize([row], "pred")
+        self.assertEqual(result["value"]["correct"], 1)
+        self.assertEqual(result["assignment"]["correct"], 0)
+        self.assertEqual(result["assignment"]["gold"], 1)
+
+    def test_all_staffs_expands_pool_without_admitting_diagnostic_or_fallback_links(self):
+        def group(identifier, system, staff, status):
+            return {"musicxml_id": identifier, "staff_group_index": system, "staff_index": staff,
+                    "visual_status": status, "center": [100, 200]}
+        data = {"sidecar": {"source_image_size": [2600, 3600], "visual_groups": [
+            group("first", 0, 0, "canonical"), group("bass", 0, 1, "canonical"),
+            group("later", 2, 0, "canonical"), group("fallback", 0, 0, "fallback"),
+            group(None, 0, 0, "diagnostic")]}}
+        self.assertEqual(pilot.notes_for(data, 1300), [{"id": "first", "center": [50, 100]}])
+        self.assertEqual([n["id"] for n in pilot.notes_for(data, 1300, True)], ["first", "bass", "later"])
+
+    def test_below_staff_fingers_remain_unsupported_by_frozen_baseline(self):
+        self.assertIsNone(pilot.associate([5, 30, 15, 40], [{"id": "above", "center": [10, 20]}]))
 
     def test_negative_windows_count_false_positives(self):
         row = {"gold": [], "pred": [{"box": [0, 0, 10, 10], "text": "3"}]}

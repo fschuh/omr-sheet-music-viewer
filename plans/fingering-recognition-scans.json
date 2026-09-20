@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "coordinate_width": 1300,
+  "scope": "Scan-transfer challenge: first pages of three user-supplied PDFs, fixed clean-pilot OCR/association settings, manually selected annotated windows; not random whole-page validation.",
+  "pages": {
+    "nocturne-scan": {
+      "pdf": "Chopin_Klavierwerke_Band_1_Peters_Nocturnes_Op.9_1200dpi.pdf",
+      "pdf_sha256": "81d94ee13103556ea482236809f8c86da46420622c9e9cec5248bc54a1b5f324",
+      "image": "testdata/fingering-scans/nocturne-1-2550.png",
+      "image_sha256": "d0116c74120420d99ec7c148d717d246a2ffddd735eda00f00cd552eccf9be2a",
+      "sidecar": "testdata/fingering/81d94ee13103556ea482236809f8c86da46420622c9e9cec5248bc54a1b5f324/0001.homr.visual.json",
+      "sidecar_sha256": "8e7e2f8c6134764018a3787710aa11ba35c828eba48d6a4f7fb97b399e9e3e7c",
+      "musicxml": "testdata/fingering/81d94ee13103556ea482236809f8c86da46420622c9e9cec5248bc54a1b5f324/0001.musicxml",
+      "musicxml_sha256": "537ed6260f060ef6f92d7cfbe3c279c4052dfe668c0fe894e9c917dce84e2d02",
+      "all_staffs": true
+    },
+    "impromptu-scan": {
+      "pdf": "chopin-opus_66-fantasie-impromptu.pdf",
+      "pdf_sha256": "664ae34b45dc4be5ed34b2cc10ec43da0a263abdf56ae9f396f21efc5ccd03e6",
+      "image": "testdata/fingering-scans/impromptu-1-2550.png",
+      "image_sha256": "5f6c3af1b666cdadae5275da4b80161c1e986be26f3f73c733a0962b00308824",
+      "sidecar": "testdata/fingering/664ae34b45dc4be5ed34b2cc10ec43da0a263abdf56ae9f396f21efc5ccd03e6/0001.homr.visual.json",
+      "sidecar_sha256": "11ca3b9a7fd337f9b939581204b6b0a913b90ef353f0b740752a3a5c5310725b",
+      "musicxml": "testdata/fingering/664ae34b45dc4be5ed34b2cc10ec43da0a263abdf56ae9f396f21efc5ccd03e6/0001.musicxml",
+      "musicxml_sha256": "94e030d57524491507db9deabf9e753d365ab5f0a77c1fac988b6bdd641ed82d",
+      "all_staffs": true
+    },
+    "hisaishi-scan": {
+      "pdf": "Joe Hisaishi - Fantasia (for Nausica).pdf",
+      "pdf_sha256": "1e160026109414135437a8c83160c6cbbe956b605bca31e9f863d5ba77ce0e26",
+      "image": "testdata/fingering-scans/hisaishi-1-2550.png",
+      "image_sha256": "9dec1ac55ec91aba1577bddc077056aa8c0d6ce0cf30ac5233c3c8a14d7a59ef",
+      "sidecar": "testdata/fingering/1e160026109414135437a8c83160c6cbbe956b605bca31e9f863d5ba77ce0e26/0001.homr.visual.json",
+      "sidecar_sha256": "0ad814e4f8ba15073ca5317811b208afd8b50fdc113604fb88d231fed8589c1d",
+      "musicxml": "testdata/fingering/1e160026109414135437a8c83160c6cbbe956b605bca31e9f863d5ba77ce0e26/0001.musicxml",
+      "musicxml_sha256": "03243f00449f2793c1bb99e6d96b763b879c1b5c6b8584f203f3044c0e9ae094",
+      "all_staffs": true
+    }
+  },
+  "windows": [
+    {"id": "nocturne-upper", "page": "nocturne-scan", "bounds": [320, 225, 795, 310], "gold": [
+      {"box": [329, 228, 340, 242], "digit": "2", "note": "homr-note-1"},
+      {"box": [411, 238, 420, 252], "digit": "1", "note": "homr-note-4"},
+      {"box": [434, 232, 445, 247], "digit": "4", "note": "homr-note-5"},
+      {"box": [458, 239, 470, 254], "digit": "2", "note": "homr-note-6"},
+      {"box": [505, 232, 516, 247], "digit": "1", "note": "homr-note-7"},
+      {"box": [551, 232, 563, 247], "digit": "2", "note": "homr-note-10"},
+      {"box": [598, 235, 610, 250], "digit": "3", "note": "homr-note-13"},
+      {"box": [645, 240, 658, 255], "digit": "4", "note": "homr-note-16"},
+      {"box": [770, 251, 782, 266], "digit": "1", "note": "homr-note-25"}
+    ]},
+    {"id": "nocturne-lower", "page": "nocturne-scan", "bounds": [499, 335, 660, 446], "gold": [
+      {"box": [500, 425, 515, 438], "digit": "5", "note": "homr-note-8"},
+      {"box": [524, 421, 540, 436], "digit": "3", "note": "homr-note-9"},
+      {"box": [548, 418, 561, 433], "digit": "1", "note": "homr-note-11"},
+      {"box": [573, 416, 586, 432], "digit": "3", "note": "homr-note-12"},
+      {"box": [598, 413, 610, 429], "digit": "1", "note": "homr-note-14"},
+      {"box": [618, 411, 632, 424], "digit": "5", "note": "homr-note-15"},
+      {"box": [642, 426, 657, 441], "digit": "5", "note": "homr-note-17"}
+    ]},
+    {"id": "impromptu-upper", "page": "impromptu-scan", "bounds": [950, 108, 1270, 210], "gold": [
+      {"box": [968, 119, 980, 133], "digit": "2", "note": "homr-note-31"},
+      {"box": [1106, 116, 1118, 131], "digit": "4", "note": "homr-note-44"},
+      {"box": [1125, 118, 1137, 133], "digit": "2", "note": null, "printed_note_center": [1128, 151], "unavailable_reason": "Printed note has only a diagnostic visual group, no canonical musicxml_id"},
+      {"box": [1141, 114, 1153, 129], "digit": "3", "note": null, "printed_note_center": [1146, 145], "unavailable_reason": "Printed note has only a diagnostic visual group, no canonical musicxml_id"}
+    ]},
+    {"id": "impromptu-lower", "page": "impromptu-scan", "bounds": [393, 169, 615, 340], "gold": [
+      {"box": [407, 173, 420, 188], "digit": "2", "note": null, "printed_note_center": [406, 260], "unavailable_reason": "Printed note has only a fallback visual link, not a canonical association"},
+      {"box": [432, 173, 444, 188], "digit": "4", "note": null, "printed_note_center": [429, 244], "unavailable_reason": "Printed note has only a fallback visual link, not a canonical association"},
+      {"box": [450, 173, 463, 190], "digit": "5", "note": "homr-note-9"},
+      {"box": [505, 316, 519, 333], "digit": "5", "note": "homr-note-12"},
+      {"box": [526, 309, 540, 326], "digit": "3", "note": "homr-note-13"},
+      {"box": [548, 308, 562, 326], "digit": "2", "note": "homr-note-14"},
+      {"box": [569, 306, 583, 324], "digit": "1", "note": "homr-note-15"}
+    ], "negative": "Also contains triplet 3s and m.d./m.g. instructions"},
+    {"id": "hisaishi-upper", "page": "hisaishi-scan", "bounds": [350, 1170, 435, 1295], "gold": [
+      {"box": [365, 1188, 377, 1202], "digit": "2", "note": "homr-note-112"},
+      {"box": [387, 1177, 398, 1191], "digit": "1", "note": "homr-note-113"}
+    ], "negative": "Also contains a bracketed triplet 3"},
+    {"id": "hisaishi-lower", "page": "hisaishi-scan", "bounds": [655, 995, 780, 1115], "gold": [
+      {"box": [738, 1002, 749, 1016], "digit": "2", "note": "homr-note-95"}
+    ]},
+    {"id": "hisaishi-compound", "page": "hisaishi-scan", "bounds": [641, 1118, 687, 1140], "gold": [
+      {"box": [647, 1119, 659, 1133], "digit": "1", "note": null, "unavailable_reason": "Compound 1-5 marking; semantics not represented by a single adopted value", "form": "compound"},
+      {"box": [668, 1119, 681, 1133], "digit": "5", "note": null, "unavailable_reason": "Compound 1-5 marking; semantics not represented by a single adopted value", "form": "compound"}
+    ]},
+    {"id": "hisaishi-measure-1", "page": "hisaishi-scan", "bounds": [175, 455, 218, 497], "gold": [], "negative": "Boxed measure number 1, paper texture"},
+    {"id": "hisaishi-measure-4", "page": "hisaishi-scan", "bounds": [111, 840, 155, 880], "gold": [], "negative": "Boxed measure number 4, paper texture"},
+    {"id": "nocturne-page-number", "page": "nocturne-scan", "bounds": [1160, 44, 1210, 80], "gold": [], "negative": "Printed page number 3"},
+    {"id": "nocturne-time-signature", "page": "nocturne-scan", "bounds": [280, 259, 314, 305], "gold": [], "negative": "6/4 time signature"},
+    {"id": "nocturne-tuplet-11", "page": "nocturne-scan", "bounds": [1048, 302, 1078, 318], "gold": [], "negative": "Tuplet number 11 and staff line"},
+    {"id": "impromptu-octave", "page": "impromptu-scan", "bounds": [713, 383, 747, 420], "gold": [], "negative": "Octave indication, notehead and dotted line"},
+    {"id": "hisaishi-texture", "page": "hisaishi-scan", "bounds": [65, 230, 200, 380], "gold": [], "negative": "Textured paper and decorative watermark"}
+  ]
+}

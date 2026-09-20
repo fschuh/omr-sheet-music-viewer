@@ -1,9 +1,10 @@
 # Printed-fingering recognition: measured pilot and recommendation
 
 2026-09-19, Task 13. **Do not adopt automatically; do not train a new model yet.**
-The bounded pilot is complete. The broader planned recognition acceptance set is
-not: real scans, different fingering fonts/editions, measure-number negatives and
-held-out recognition pages still need annotation and evaluation. This is research,
+The bounded clean pilot below is complete. The subsequent
+[real-scan transfer challenge](fingering-recognition-scan-report.md) adds older fonts,
+noisy/warped paper and measure-number negatives using the fixed pilot settings.
+A larger balanced whole-page acceptance set is still needed for production. This is research,
 not a newly enabled application feature. Tasks 01–12 remain the usable default-off
 overlay experiment, with their separate platform/device acceptance limitations.
 

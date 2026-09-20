@@ -49,7 +49,8 @@ Existing printed fingerings are **not automatically recognized or adopted**.
 Predicted values may disagree with them; use exclusions. Crowded passages and
 unsupported cross-staff, independent-voice, unison, partial-chord, grace or tie
 continuation cases may have no labels. The supported experiment is clean,
-conventional piano notation; noisy/faint scans have not been validated.
+conventional piano notation; the initial scan challenges do not establish general
+noisy/faint-scan overlay support.
 
 Older cached pages without staff geometry or ink analysis still work normally,
 but cannot show this overlay. The annotation status identifies those pages;
@@ -61,7 +62,9 @@ denominators and [integration verification](plans/fingering-integration.md) for
 runtime measurements, reproduction commands and remaining release checks.
 The separate [printed-fingering recognition pilot](plans/fingering-recognition-report.md)
 documents OCR/association errors and the proposed confirmation workflow; it does
-not enable automatic adoption. Broader scan/font recognition validation remains open.
+not enable automatic adoption. The [real-scan follow-up](plans/fingering-recognition-scan-report.md)
+adds three user-supplied scans and reports recognition misses, hard negatives and
+unavailable note/geometry cases. Production recognition validation remains open.
 
 After the merged file is ready, **Open MusicXML** delegates it to the operating
 system. The configured default application opens it, or the system can prompt

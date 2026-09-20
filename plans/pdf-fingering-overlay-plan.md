@@ -2,8 +2,9 @@
 
 Date: 2026-09-13  
 Status: Tasks 01–12 implemented and verified for the default-off Linux experiment;
-Task 13 has a [measured recognition pilot and recommendation](fingering-recognition-report.md);
-its broader scan/font/held-out acceptance set remains incomplete. Physical-device/platform acceptance gaps are recorded in the companion
+Task 13's bounded research recommendation is delivered through the
+[clean pilot](fingering-recognition-report.md) and [real-scan transfer challenge](fingering-recognition-scan-report.md).
+Production recognition and broad scan-overlay support are not established. Physical-device/platform acceptance gaps are recorded in the companion
 experiment and integration reports for measured scope and outstanding release checks.
 
 ## 1. Objective and scope
