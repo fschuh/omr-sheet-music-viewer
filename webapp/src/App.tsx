@@ -60,11 +60,14 @@ import {
 import {
   loadDebugPanelEnabled,
   loadListenInputSource,
+  loadNoteHighwayEnabled,
   loadPlaybackPiano,
   saveDebugPanelEnabled,
   saveListenInputSource,
+  saveNoteHighwayEnabled,
   savePlaybackPiano,
 } from "./preferences";
+import { NoteHighway } from "./noteHighway/NoteHighway";
 import { pianoLayerForDynamic, type PianoId } from "./pianoRegistry";
 import {
   cancelJob,
@@ -326,6 +329,7 @@ export function App() {
   } | null>(null);
   const realtimeRenderSignatureRef = useRef("");
   const [tempoMultiplier, setTempoMultiplier] = useState(1);
+  const [noteHighwayEnabled, setNoteHighwayEnabled] = useState(loadNoteHighwayEnabled);
   const realtimeRouteRef = useRef<PerformanceRoute | null>(null);
   const realtimeStartGenerationRef = useRef(0);
   const documentPagesRef = useRef(document?.pages ?? []);
@@ -439,6 +443,19 @@ export function App() {
       },
     );
   }
+  const noteHighwayVisible = noteHighwayEnabled &&
+    playbackMode === "realtime" &&
+    realtimeStatus !== "inactive";
+  const getRealtimeRoute = useCallback(() => realtimeRouteRef.current, []);
+  const getRealtimeOffset = useCallback(
+    () => realtimeControllerRef.current?.getOffset() ?? 0,
+    [],
+  );
+  const toggleNoteHighway = useCallback(() => {
+    const next = !noteHighwayEnabled;
+    saveNoteHighwayEnabled(next);
+    setNoteHighwayEnabled(next);
+  }, [noteHighwayEnabled]);
   const recognizerRef = useRef<NoteRecognizer | null>(null);
   // Debug-surface only, and deliberately not persisted: a reload, and switching
   // the debug panel off, both return listen mode to the production default.
@@ -1894,7 +1911,11 @@ export function App() {
         </div>
       ) : null}
 
-      <section className={`workspace${debugPanelEnabled ? "" : " debug-panel-hidden"}`}>
+      <section
+        className={`workspace${debugPanelEnabled ? "" : " debug-panel-hidden"}${
+          noteHighwayVisible ? " note-highway-active" : ""
+        }`}
+      >
         {document && document.pages.length > 0 ? (
           <>
             <DocumentViewer
@@ -1930,6 +1951,9 @@ export function App() {
               realtimeGroupIdsByPage={playbackMode === "realtime" ? realtimeGroupIdsByPage : undefined}
               tempoBpm={realtimeFrame?.bpm ?? realtimeOpeningBpm * tempoMultiplier}
               tempoMultiplier={tempoMultiplier}
+              noteHighwayEnabled={noteHighwayEnabled}
+              noteHighwayVisible={noteHighwayVisible}
+              onNoteHighwayToggle={toggleNoteHighway}
               listenFeedback={listenFeedback}
               initialViewportTransform={
                 viewerViewportRef.current?.documentKey === document.jobId
@@ -2051,8 +2075,16 @@ export function App() {
               </dl>
               {workerInfo ? <p className="worker-info">{workerInfo}</p> : null}
             </aside> : null}
+            {noteHighwayVisible ? (
+              <NoteHighway
+                getRoute={getRealtimeRoute}
+                getOffset={getRealtimeOffset}
+                tempoMultiplier={tempoMultiplier}
+              />
+            ) : null}
             {playbackActive ? (
               <PianoKeyboard
+                highwayAttached={noteHighwayVisible}
                 notes={playbackMode === "realtime"
                   ? realtimeDisplayNotes
                   : playbackMoment?.keyboardNotes ?? []}

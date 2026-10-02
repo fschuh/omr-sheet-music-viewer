@@ -4,6 +4,7 @@ import type { ListenInputSource } from "@fschuh/piano-transcription-engine";
 export const DEBUG_PANEL_STORAGE_KEY = "homr.debug-panel-enabled.v1";
 export const PLAYBACK_PIANO_STORAGE_KEY = "homr.playback-piano.v1";
 export const LISTEN_INPUT_SOURCE_STORAGE_KEY = "homr.listen-input-source.v1";
+export const NOTE_HIGHWAY_STORAGE_KEY = "homr.note-highway-enabled.v1";
 
 export function loadDebugPanelEnabled(): boolean {
   if (typeof window === "undefined") return false;
@@ -20,6 +21,24 @@ export function saveDebugPanelEnabled(enabled: boolean): void {
     window.localStorage.setItem(DEBUG_PANEL_STORAGE_KEY, String(enabled));
   } catch {
     // A disabled/full local store should not prevent changing the setting for this session.
+  }
+}
+
+export function loadNoteHighwayEnabled(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.localStorage.getItem(NOTE_HIGHWAY_STORAGE_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+export function saveNoteHighwayEnabled(enabled: boolean): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(NOTE_HIGHWAY_STORAGE_KEY, String(enabled));
+  } catch {
+    // A disabled/full local store should not prevent changing the current session.
   }
 }
 

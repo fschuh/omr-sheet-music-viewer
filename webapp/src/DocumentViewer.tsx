@@ -4,6 +4,7 @@ import { playbackGroupIdsForPage } from "./playback";
 import type { PlaybackCommand, PlaybackMoment } from "./playback";
 import type { PlaybackMode, PlaybackStatus, RealtimePlayhead } from "./realtime";
 import type { ListenModeFeedback } from "./noteRecognizer";
+import { NOTE_HIGHWAY_TOP_FRACTION } from "./noteHighway/highwayModel";
 import { midiToPitchName } from "./piano";
 import type {
   DocumentPage,
@@ -97,12 +98,17 @@ interface DocumentViewerProps {
   realtimeGroupIdsByPage?: Readonly<Record<number, readonly string[]>>;
   tempoBpm?: number;
   tempoMultiplier?: number;
+  /** The realtime-only 3D note highway preference. */
+  noteHighwayEnabled?: boolean;
+  /** The highway is on screen, so playback scrolling keeps the staff above it. */
+  noteHighwayVisible?: boolean;
   listenFeedback: ListenModeFeedback;
   initialViewportTransform?: ViewportTransform;
   onViewportTransformChange?: (transform: ViewportTransform) => void;
   onPlaybackCommand: (command: PlaybackCommand) => void;
   onPlaybackModeChange?: (mode: PlaybackMode) => void;
   onTempoMultiplierChange?: (multiplier: number) => void;
+  onNoteHighwayToggle?: () => void;
   onSelectGroup: (group: VisualGroupRef | null) => void;
   onRetryPage: (pageIndex: number) => void;
 }
@@ -563,12 +569,15 @@ export function DocumentViewer({
   realtimeGroupIdsByPage,
   tempoBpm = 120,
   tempoMultiplier = 1,
+  noteHighwayEnabled = false,
+  noteHighwayVisible = false,
   listenFeedback,
   initialViewportTransform,
   onViewportTransformChange,
   onPlaybackCommand,
   onPlaybackModeChange,
   onTempoMultiplierChange,
+  onNoteHighwayToggle,
   onSelectGroup,
   onRetryPage,
 }: DocumentViewerProps) {
@@ -1036,7 +1045,12 @@ export function DocumentViewer({
     const current = transformRef.current;
     const safeTop = rect.height * 0.12;
     const keyboardHeight = Math.min(210, Math.max(150, window.innerHeight * 0.24));
-    const safeBottom = Math.max(safeTop + 80, rect.height - keyboardHeight - 20);
+    // The highway is positioned against the workspace, which this viewer fills.
+    const viewerRect = stage.parentElement?.getBoundingClientRect() ?? rect;
+    const obscuredFrom = noteHighwayVisible
+      ? viewerRect.top + viewerRect.height * NOTE_HIGHWAY_TOP_FRACTION - rect.top
+      : rect.height - keyboardHeight - 20;
+    const safeBottom = Math.max(safeTop + 80, obscuredFrom);
     const safeLeft = rect.width * 0.12;
     const safeRight = rect.width * 0.88;
     const screenStaffTop = current.y + staffTop * current.scale;
@@ -1066,7 +1080,7 @@ export function DocumentViewer({
     if (Math.abs(x - current.x) > 0.5 || Math.abs(y - current.y) > 0.5) {
       commitTransform({ ...current, x, y });
     }
-  }, [layout.width, pages, playbackActive, playbackMoment]);
+  }, [layout.width, noteHighwayVisible, pages, playbackActive, playbackMoment]);
 
   return (
     <div className="viewer">
@@ -1143,6 +1157,16 @@ export function DocumentViewer({
               ) : null}
             </div>
           </div> : null}
+          {playbackMode === "realtime" && onNoteHighwayToggle ? (
+            <button
+              type="button"
+              className={`note-highway-toggle${noteHighwayEnabled ? " active" : ""}`}
+              aria-label={noteHighwayEnabled ? "Hide 3D note highway" : "Show 3D note highway"}
+              aria-pressed={noteHighwayEnabled}
+              title={noteHighwayEnabled ? "Hide the 3D note highway" : "Show notes approaching the keyboard in 3D"}
+              onClick={onNoteHighwayToggle}
+            >3D</button>
+          ) : null}
           <button
             type="button"
             className={`playback-toggle${effectivelyActive ? " active" : ""}`}

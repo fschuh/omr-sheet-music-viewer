@@ -311,6 +311,44 @@ test("renders realtime selector, transport states, tempo, and vertical playhead"
   assert.doesNotMatch(markup, /Realtime is not available/);
 });
 
+test("shows the 3D note highway toggle state in realtime mode only", () => {
+  const markupFor = (mode: "realtime" | "note-by-note", enabled: boolean) => renderToStaticMarkup(
+    <DocumentViewer
+      documentKey="fixture"
+      pages={[page]}
+      selectedGroup={null}
+      highlightAllNotes={false}
+      showOriginalNoteheadContours={false}
+      showDetectedNoteheadContours={false}
+      showRefinedNoteheadContours={false}
+      showRawStemContours={false}
+      playbackActive={false}
+      playbackNoteSoundsEnabled
+      playbackAvailable
+      playbackMoment={null}
+      playbackMode={mode}
+      realtimeAvailable
+      noteHighwayEnabled={enabled}
+      listenFeedback={listenFeedback}
+      onPlaybackModeChange={() => undefined}
+      onNoteHighwayToggle={() => undefined}
+      onPlaybackCommand={() => undefined}
+      onSelectGroup={() => undefined}
+      onRetryPage={() => undefined}
+    />,
+  );
+
+  assert.match(
+    markupFor("realtime", true),
+    /class="note-highway-toggle active" aria-label="Hide 3D note highway" aria-pressed="true"/,
+  );
+  assert.match(
+    markupFor("realtime", false),
+    /class="note-highway-toggle" aria-label="Show 3D note highway" aria-pressed="false"/,
+  );
+  assert.doesNotMatch(markupFor("note-by-note", true), /note-highway-toggle/);
+});
+
 test("explains why realtime playback is disabled", () => {
   const markup = renderToStaticMarkup(
     <DocumentViewer

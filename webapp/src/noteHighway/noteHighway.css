@@ -1,0 +1,17 @@
+/* Spans exactly the keys' width and ends on their top edge, so each lane lands
+   on its key. The variables come from .workspace, shared with the keyboard; the
+   top edge is set inline from NOTE_HIGHWAY_TOP_FRACTION. */
+.note-highway {
+  bottom: var(--piano-keyboard-height);
+  left: var(--piano-keyboard-inset-x);
+  pointer-events: none;
+  position: absolute;
+  right: var(--piano-keyboard-inset-x);
+  z-index: 4;
+}
+
+.note-highway-canvas {
+  display: block;
+  height: 100%;
+  width: 100%;
+}

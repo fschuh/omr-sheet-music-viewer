@@ -1,14 +1,14 @@
 import { Fragment, useMemo } from "react";
 import { pitchToMidi } from "./piano";
 
-const FIRST_PIANO_MIDI = 21; // A0
-const LAST_PIANO_MIDI = 108; // C8
-const WHITE_KEY_COUNT = 52;
-const BLACK_KEY_WIDTH_IN_WHITE_KEYS = 0.64;
+export const FIRST_PIANO_MIDI = 21; // A0
+export const LAST_PIANO_MIDI = 108; // C8
+export const WHITE_KEY_COUNT = 52;
+export const BLACK_KEY_WIDTH_IN_WHITE_KEYS = 0.64;
 const BLACK_PITCH_CLASSES = new Set([1, 3, 6, 8, 10]);
 const SHARP_NAMES = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"];
 
-interface PianoKey {
+export interface PianoKey {
   midi: number;
   name: string;
   black: boolean;
@@ -20,6 +20,8 @@ interface PianoKeyboardProps {
   recognizedPitches?: readonly number[];
   attackPitches?: readonly PianoKeyboardAttack[];
   successPitches?: readonly PianoKeyboardSuccess[];
+  /** The note highway lands on the keys, so the visible heading is dropped. */
+  highwayAttached?: boolean;
 }
 
 export interface PianoKeyboardNote {
@@ -106,6 +108,18 @@ function buildPianoKeys(): PianoKey[] {
 
 export const PIANO_KEYS = buildPianoKeys();
 
+/**
+ * The rendered key elements under `root`, by MIDI number, for callers that
+ * restyle keys every frame without re-rendering the keyboard.
+ */
+export function findPianoKeyElements(root: ParentNode): Map<number, HTMLElement> {
+  const keys = new Map<number, HTMLElement>();
+  for (const element of Array.from(root.querySelectorAll<HTMLElement>(".piano-keys .piano-key[data-midi]"))) {
+    keys.set(Number(element.dataset.midi), element);
+  }
+  return keys;
+}
+
 export function formatKeyboardPitch(pitch: string): string {
   const normalized = pitch.trim();
   const conventional = /^([A-Ga-g])([#b♯♭]*)(-?\d+)$/.exec(normalized);
@@ -124,6 +138,7 @@ export function PianoKeyboard({
   recognizedPitches = [],
   attackPitches = [],
   successPitches = [],
+  highwayAttached = false,
 }: PianoKeyboardProps) {
   const activeLabels = useMemo(() => {
     const labels = new Map<number, PianoKeyLabels>();
@@ -193,6 +208,9 @@ export function PianoKeyboard({
     ].filter(Boolean).join(" ");
   }
 
+  // Its opacity is the key's --approach, written per frame by the note highway.
+  const approachOverlay = highwayAttached ? <span className="piano-key-approach" /> : null;
+
   function attackFeedback(midi: number) {
     const attack = attackByPitch.get(midi);
     return attack ? (
@@ -241,7 +259,7 @@ export function PianoKeyboard({
 
   return (
     <section
-      className="piano-keyboard-overlay"
+      className={`piano-keyboard-overlay${highwayAttached ? " highway-attached" : ""}`}
       aria-label={`88-key piano keyboard. ${
         activePitchNames.length > 0
           ? `Notes under the playhead: ${accessibleNotes.join("; ")}`
@@ -281,6 +299,7 @@ export function PianoKeyboard({
                 data-attack={attack ? attack.attackTimeMs : undefined}
                 data-success={success ? success.successTimeMs : undefined}
               >
+                {approachOverlay}
                 {attackFeedback(key.midi)}
                 {successFeedback(key.midi)}
               </div>
@@ -308,6 +327,7 @@ export function PianoKeyboard({
                 data-attack={attack ? attack.attackTimeMs : undefined}
                 data-success={success ? success.successTimeMs : undefined}
               >
+                {approachOverlay}
                 {attackFeedback(key.midi)}
                 {successFeedback(key.midi)}
               </div>

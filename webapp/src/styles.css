@@ -181,6 +181,10 @@ button:disabled {
 }
 
 .workspace {
+  /* Shared by the keyboard overlay and the note highway that sits on it. */
+  --piano-keyboard-height: clamp(150px, 24vh, 210px);
+  --piano-keyboard-inset-x: 14px;
+
   display: grid;
   flex: 1;
   grid-template-columns: minmax(0, 1fr) 330px;
@@ -193,6 +197,11 @@ button:disabled {
   grid-template-columns: minmax(0, 1fr);
 }
 
+/* The highway takes the screen space the keyboard heading used to. */
+.workspace.note-highway-active {
+  --piano-keyboard-height: clamp(116px, 18vh, 168px);
+}
+
 .piano-keyboard-overlay {
   animation: piano-keyboard-enter 180ms ease-out;
   background: linear-gradient(180deg, #2d2a27 0%, #171614 100%);
@@ -200,14 +209,35 @@ button:disabled {
   bottom: 0;
   box-shadow: 0 -10px 30px rgb(20 17 14 / 38%);
   color: #f7f3ec;
-  height: clamp(150px, 24vh, 210px);
+  height: var(--piano-keyboard-height);
   left: 0;
-  padding: 8px 14px 12px;
+  padding: 8px var(--piano-keyboard-inset-x) 12px;
   position: absolute;
   right: 0;
   user-select: none;
   z-index: 5;
 }
+
+/* Under the note highway the keys start at the overlay's top edge, where the
+   notes land; the heading stays available to screen readers only. */
+.piano-keyboard-overlay.highway-attached {
+  background: #171614;
+  border-top: 0;
+  box-shadow: none;
+  padding-top: 0;
+}
+
+.piano-keyboard-overlay.highway-attached .piano-keyboard-heading {
+  clip-path: inset(50%);
+  height: 1px;
+  overflow: hidden;
+  padding: 0;
+  position: absolute;
+  white-space: nowrap;
+  width: 1px;
+}
+
+.piano-keyboard-overlay.highway-attached .piano-keys { height: 100%; }
 
 @keyframes piano-keyboard-enter {
   from { opacity: 0; transform: translateY(22px); }
@@ -364,6 +394,24 @@ button:disabled {
   transform: translateY(3px);
   z-index: 4;
 }
+
+/* Fades in as the key's next note travels down the note highway; the key's
+   own playing highlight replaces it once the note sounds. */
+.piano-key-approach {
+  background: linear-gradient(180deg, #b9eee4 0%, #42baa4 63%, #16806c 100%);
+  border-radius: inherit;
+  inset: 0;
+  opacity: var(--approach, 0);
+  pointer-events: none;
+  position: absolute;
+}
+
+.piano-key-black .piano-key-approach {
+  background: linear-gradient(180deg, #44cbb3 0%, #0f8b76 72%, #075b4e 100%);
+}
+
+.piano-key.active .piano-key-approach,
+.piano-key.user-active .piano-key-approach { display: none; }
 
 .piano-key-attack {
   animation: piano-key-attack 280ms ease-out both;
@@ -726,6 +774,22 @@ button:disabled {
 
 .viewer-toolbar .playback-controls .realtime-stop {
   color: #8e2f26;
+}
+
+/* Same off/on treatment as the sound toggle: dimmed when off, tinted when on. */
+.viewer-toolbar .playback-controls .note-highway-toggle {
+  color: #635c53;
+  font-size: 0.7rem;
+  font-weight: 800;
+  margin-right: 4px;
+  opacity: 0.68;
+}
+
+.viewer-toolbar .playback-controls .note-highway-toggle.active {
+  background: #e1eee9;
+  border-color: #7aada3;
+  color: #0a6656;
+  opacity: 1;
 }
 
 .tempo-control { position: relative; }
@@ -1871,7 +1935,12 @@ button:disabled {
 
 @media (max-width: 700px) {
   .topbar h1 { font-size: 1rem; }
-  .workspace { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr) auto; }
+  .workspace {
+    --piano-keyboard-inset-x: 6px;
+
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 1fr) auto;
+  }
   .inspector {
     border-left: 0;
     border-top: 1px solid #d0cbc3;
@@ -1880,7 +1949,6 @@ button:disabled {
 
   .worker-console { flex-basis: 220px; }
 
-  .piano-keyboard-overlay { padding-left: 6px; padding-right: 6px; }
   .piano-keyboard-heading { gap: 8px; }
   .piano-keyboard-current > span,
   .piano-keyboard-range { display: none; }
