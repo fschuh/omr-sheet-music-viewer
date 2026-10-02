@@ -284,3 +284,166 @@ forbids.
 unrecoverable, this evidence is what a partial-support design would have to start
 from, and the boundary-validation work the plan describes would be a prerequisite
 to shipping it rather than a reason to invent replacement geometry.
+
+---
+
+# A recovery declined by the vertical-extent rule
+
+Date: 2026-10-01
+Scope: a page that bounded removal does not recover, and what that means for the
+Task 5 gate. Investigation only: no producer or viewer code was changed.
+Repositories: `homr` at `1ff2e76` and `sheet-music-viewer` at `4c1b688`, both on
+`piano_fingering_overlay` with clean working trees.
+
+Runtime of record: Windows 11, `homr` imported from
+`C:\Users\freds\Dev\MachineLearning\music\omr-sheet-music-viewer\homr\homr`
+through `homr/.venv` (Python 3.13.5, onnxruntime 1.24.1 with CUDA available),
+transformer `pytorch_model_396-f6feedb4`, segmentation `segnet_308-3296ccd4`,
+pypdfium2 5.12.0. Scripts and outputs live outside the repository, in
+`C:\Users\freds\Dev\MachineLearning\music\experiments\staff-extent-recovery\`.
+
+## The page
+
+*Chrono Cross — The Scars of Time*, page 4 (PDF sha256 `ceac609b…db729d32`).
+Pages 1–3 carry fingerings; page 4 carries none. The merged document has
+fingerings for measures 51–59 and the page's note ids are consistent, so the
+absence is entirely the annotation gate: the published sidecar has no
+`annotation_geometry` and no `ink_obstacles`, and the viewer classifies it
+`producer-rejected`.
+
+| | |
+| --- | --- |
+| Rejection | `implausible-staff-spacing` at `producer-validation` |
+| Staff | `staff-1-0` (system 1, treble), sample 24, x≈491.4 |
+| Gaps at that sample | 32.5, 19.7, 25.8, 10.0 against a unit of 22.0 |
+| Recovery | declined, `recovery-changes-vertical-extent` |
+| Extent top before / after removal | 803.33 → 808.08 px |
+
+The cause is printed, not detected: in measure 54 a dotted-half chord is tied
+across the bar to a chord at its end, and the two tie arcs run nearly parallel to
+the outer staff lines. Seven columns of the 231 on that staff are out of
+contract, and the captured pre-validation grid shows which line each one lost:
+
+| Sample | x | Line 1 y | Gaps |
+| --- | --- | --- | --- |
+| 24 | 491.4 | 810.1 | 32.4, 19.7, 25.8, 10.0 |
+| 31–34 | 584.4–624.2 | 807.1 → 804.3 | 35–38, 20, 19, 19 |
+| 35 | 637.5 | **803.3** | 38.7, 20.1, 23.8, 10.0 |
+| 36 | 650.8 | 811.0 | 31.0, 20.2, 23.1, 10.6 |
+
+Line 1 climbs from 807 to 803 across samples 31–35, following the upper tie as it
+rises, while on the rest of the staff the top line sits at 808.1–809.0. In
+samples 24, 35 and 36 line 4 is also pulled down onto the lower tie, closing the
+last gap to ten pixels. The staff's topmost point is therefore sample 35, which
+is itself one of the implausible columns.
+
+Every other recovery check passed. `recover_staff` reaches the extent rule only
+after budgets, run length, span, neighbour agreement, slope and chord deviation
+are all satisfied, and with the rule disabled the final re-validation that
+follows it passes too. The extent rule is the sole reason this page has no
+fingerings.
+
+## What disabling the rule does on this page
+
+The same page was re-recognized through `HomrEngine.process_image` and promoted
+as the worker does, twice: unchanged, and with only the vertical-extent
+comparison in `recover_staff` replaced by `False` (`launcher.py` patches it in
+memory; nothing in `homr` was edited).
+
+| | Unchanged | Extent rule disabled |
+| --- | --- | --- |
+| Outcome | rejected, same reason, staff and sample as the cached page | geometry valid, ink generated |
+| Repair | — | `staff-1-0`, 7 interior columns removed |
+| Page MusicXML | | byte-identical to the unchanged run |
+
+The unchanged run reproduces the cached rejection, and its MusicXML matches the
+cached page when id attributes are excluded from the comparison, so the cached result is not stale.
+
+Placement was then run through the viewer's own code (`annotationStatus`,
+`buildFingeringRequests`, `layoutFingerings`) in Node, against the merged
+document's fingerings (`place.ts`). Font metrics are fixed Arial proportions
+rather than canvas measurements, so label boxes are approximate:
+
+| Sidecar | Status | Supported digits | Placed | Suppressed |
+| --- | --- | --- | --- | --- |
+| page 3, cached (control) | supported | 144 | 133 | printed ink 6 |
+| page 4, cached | producer-rejected | — | 0 | — |
+| page 4, extent rule disabled | supported | 113 | 79 | system boundary 10, printed ink 8 |
+
+The rendered overlay shows digits on all three systems, including the repaired
+staff (the m.54 chord and its sixteenths). Every remaining omission and
+suppression is an ordinary, pre-existing reason; none is a geometry reason.
+
+What the rule was guarding against moved by a small amount here. System 1's top
+extent shrinks by 4.74 px, about 0.22 staff spaces. The boundary `systemRegion`
+derives between systems 0 and 1 is the midpoint of the gap, so it moves down by
+2.37 px, about 0.11 spaces, giving system 0 that much more room. Because the
+removed extreme was itself pulled up by the tie, the shrunken extent is the one
+that follows the printed staff. That is a reading of this one staff, not a
+property of the rule.
+
+## The corpus never exercises this rule
+
+The two earlier sections already establish it: no defective run in the 21-page
+corpus holds a staff's topmost or bottommost point, and after recovery every
+staff extent is unchanged to within rounding. A corpus comparison with the rule
+disabled can therefore show that removing it does not disturb those pages, but it
+cannot show that removing it is safe, because no page in it reaches the rule.
+
+A two-mode corpus run was started anyway, with the Scars of Time pages added
+(`run_corpus.py`, `compare_runs.py`). It did not complete: the run was stopped by
+the host for low system memory while idle, after 14 of the 25 baseline pages and
+before any page ran with the rule disabled. The completed baseline pages match
+this file's earlier record — twelve supported unrepaired, chrono-trigger and
+super-mario supported after repair — and none was declined by the extent rule.
+**No comparison between the two modes exists, and no conclusion is drawn from
+the partial run.**
+
+## Possible fixes, none applied
+
+Three were identified. Only the first touches core recognition.
+
+1. **Make line tracking resist parallel ties — core `homr`.** The implausible
+   samples come from `homr/staff_detection.py`, which builds `Staff.grid`; the
+   sidecar's `export_staff_geometry` only copies that grid. Rejecting a sample
+   whose spacing departs from the staff's regular spacing, and following the
+   line's own slope rather than a curve diverging from it, would fix the cause.
+   Because `Staff.grid` also feeds recognition, this needs the omr-evals pitch
+   benchmarks as well as this corpus.
+2. **Relax the vertical-extent rule — annotation layer only.** This lives in
+   `homr/visual_sidecar/annotation_recovery.py` and works on the exported copy,
+   so recognition cannot change, as the run above confirms. Two forms:
+   - remove the rule, which is what was tested above;
+   - narrower and untested: allow the extent to move only when the removed
+     extreme sample is itself one of the implausible columns, as sample 35 is
+     here. A detection pulled off the line by printed ink would then stop
+     setting the placement boundary, while the rule would still prevent removing
+     a plausible extreme.
+
+   Either way, the module's limits are documented as frozen before any challenge
+   test, so a change needs a principled basis and pages that actually reach the
+   rule, not just this page passing.
+3. **Per-staff or per-system rejection — annotation layer and viewer.** This is
+   Task 5: a separately versioned contract carrying unavailable systems and
+   validated placement boundaries, with the viewer accepting partial geometry.
+   Systems 0 and 2 of this page are clean and would keep their fingerings even
+   without option 1 or 2.
+
+## Bearing on the Task 5 gate
+
+The gate was deferred because nothing in the corpus was unrecoverable after
+bounded removal. This page is the first observed case of that: one staff whose
+recovery is declined, on a page whose other two systems are clean. It is one page
+and one cause, and it is recoverable by option 2 as well as by isolation, so it
+does not by itself show that partial support is the right answer. It is the
+first input the gate asked for.
+
+## What is still not established
+
+- Whether disabling or narrowing the extent rule is safe on pages that reach it.
+  That needs pages where printed ink pulls an outer line, for example long ties or
+  slurs running along the staff, and the two-mode corpus run completed on them.
+- Whether any boundary movement the rule would permit can push a label into a
+  neighbouring system's ink. Here the move is 0.11 spaces; no distribution exists.
+- The placement figures for page 4 use approximate font metrics and were not
+  rendered in the application or in Chromium.
