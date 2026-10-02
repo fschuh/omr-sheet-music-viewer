@@ -41,9 +41,9 @@ MIDI assignments are device- and channel-independent, and
 the Settings page can rescan inputs after a bridge or device is connected. 
 On Windows, BLE MIDI hardware requires a bridge that exposes it as a
 standard MIDI port. 
-MIDI discovery runs after the viewer opens; if the system MIDI service does not
-respond, the viewer remains usable and reports that MIDI controls are disabled
-for the session.
+MIDI discovery runs after the viewer opens; if the system MIDI service is slow
+to respond, the viewer remains usable, reports that MIDI controls are waiting,
+and enables them automatically once the pending scan completes.
 Holding an assigned MIDI Note or nonzero Control Change repeats navigation until
 the corresponding Note Off or zero-value Control Change arrives. Playback-mode
 toggle messages and message types without a release signal remain one-shot.

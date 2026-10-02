@@ -83,6 +83,7 @@ import {
   readMusicXml,
   refreshMidiInputs,
   retryPage,
+  subscribeToMidiInputChanges,
   subscribeToMidiMessages,
   subscribeToWorkerEvents,
   type WorkerEvent,
@@ -1059,27 +1060,48 @@ export function App() {
     }, repeatTiming.delayMs);
   }, [stopMidiRepeat]);
 
+  const applyMidiInputs = useCallback((ports: string[], error: string | null) => {
+    setMidiPorts(error === null ? ports : []);
+    setMidiError(error);
+    if (error !== null) {
+      midiCaptureCommandRef.current = null;
+      setMidiCaptureCommand(null);
+    }
+  }, []);
+
   const handleRefreshMidiInputs = useCallback(() => {
     if (!nativeAvailable || midiRefreshInProgressRef.current) return;
     midiRefreshInProgressRef.current = true;
     setMidiRefreshing(true);
     setMidiError(null);
     void refreshMidiInputs()
-      .then((ports) => {
-        setMidiPorts(ports);
-        setMidiError(null);
-      })
+      .then((ports) => applyMidiInputs(ports, null))
       .catch((refreshError: unknown) => {
-        setMidiPorts([]);
-        midiCaptureCommandRef.current = null;
-        setMidiCaptureCommand(null);
-        setMidiError(refreshError instanceof Error ? refreshError.message : String(refreshError));
+        applyMidiInputs([], refreshError instanceof Error ? refreshError.message : String(refreshError));
       })
       .finally(() => {
         midiRefreshInProgressRef.current = false;
         setMidiRefreshing(false);
       });
-  }, [nativeAvailable]);
+  }, [applyMidiInputs, nativeAvailable]);
+
+  useEffect(() => {
+    if (!nativeAvailable) return;
+    let disposed = false;
+    let unsubscribe: (() => void) | undefined;
+    // A scan that outlives the refresh timeout still reports here, which clears the
+    // "MIDI service has not responded yet" warning without restarting the app.
+    void subscribeToMidiInputChanges(({ ports, error }) => applyMidiInputs(ports, error)).then(
+      (unlisten) => {
+        if (disposed) unlisten();
+        else unsubscribe = unlisten;
+      },
+    );
+    return () => {
+      disposed = true;
+      unsubscribe?.();
+    };
+  }, [applyMidiInputs, nativeAvailable]);
 
   const cancelMidiCapture = useCallback(() => {
     midiCaptureCommandRef.current = null;

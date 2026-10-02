@@ -7,8 +7,8 @@ use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc, Mutex};
+use std::panic::{self, AssertUnwindSafe};
+use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::thread;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -28,7 +28,8 @@ const PROTOCOL_VERSION: u8 = 1;
 const DEFAULT_KEYBOARD_REPEAT_DELAY_MS: u32 = 400;
 const DEFAULT_KEYBOARD_REPEAT_INTERVAL_MS: u32 = 75;
 const MIDI_INITIALIZATION_TIMEOUT: Duration = Duration::from_secs(4);
-const MIDI_UNAVAILABLE_ERROR: &str = "MIDI initialization timed out because the system MIDI service did not respond. MIDI controls are disabled for this session; keyboard controls and the rest of the app remain available. Restart the MIDI service or your computer, then reopen the app to try again.";
+const MIDI_PENDING_ERROR: &str = "The system MIDI service has not responded yet. MIDI controls will turn on automatically when it does; keyboard controls and the rest of the app remain available.";
+const MIDI_SCAN_PANICKED_ERROR: &str = "MIDI initialization stopped unexpectedly. Scan again from Settings to retry; keyboard controls and the rest of the app remain available.";
 
 #[cfg(target_os = "linux")]
 fn install_linux_microphone_permission_handler<R: tauri::Runtime>(
@@ -140,12 +141,72 @@ fn keyboard_repeat_timing() -> KeyboardRepeatTiming {
 
 type MidiConnections = Vec<MidiInputConnection<()>>;
 type MidiScanResult = Result<(Vec<String>, MidiConnections), String>;
+type MidiPortsResult = Result<Vec<String>, String>;
+
+#[derive(Default)]
+struct BackgroundScanState {
+    in_progress: bool,
+    completed_scans: u64,
+    last_result: Option<MidiPortsResult>,
+}
+
+/// Runs at most one scan at a time on a background thread. A caller waits a bounded time for
+/// the result, but a scan that outlives the wait keeps running and still reports through
+/// `on_complete`, so a slow-starting system MIDI service recovers without an app restart.
+#[derive(Clone, Default)]
+struct BackgroundScan {
+    state: Arc<(Mutex<BackgroundScanState>, Condvar)>,
+}
+
+impl BackgroundScan {
+    /// Returns `None` when the scan is still running after `timeout`. When a scan is already
+    /// running, this waits for that scan instead of starting `operation`.
+    fn run<F, C>(&self, timeout: Duration, operation: F, on_complete: C) -> Option<MidiPortsResult>
+    where
+        F: FnOnce() -> MidiPortsResult + Send + 'static,
+        C: FnOnce(&MidiPortsResult) + Send + 'static,
+    {
+        let (lock, condvar) = &*self.state;
+        let mut state = lock.lock().unwrap_or_else(PoisonError::into_inner);
+        let target_scan = state.completed_scans + 1;
+        if !state.in_progress {
+            state.in_progress = true;
+            let shared = self.state.clone();
+            thread::spawn(move || {
+                let result = panic::catch_unwind(AssertUnwindSafe(operation))
+                    .unwrap_or_else(|_| Err(MIDI_SCAN_PANICKED_ERROR.into()));
+                let (lock, condvar) = &*shared;
+                let mut state = lock.lock().unwrap_or_else(PoisonError::into_inner);
+                state.in_progress = false;
+                state.completed_scans += 1;
+                state.last_result = Some(result.clone());
+                drop(state);
+                condvar.notify_all();
+                on_complete(&result);
+            });
+        }
+        let (state, _) = condvar
+            .wait_timeout_while(state, timeout, |state| state.completed_scans < target_scan)
+            .unwrap_or_else(PoisonError::into_inner);
+        if state.completed_scans < target_scan {
+            None
+        } else {
+            state.last_result.clone()
+        }
+    }
+}
 
 #[derive(Clone, Default)]
 struct MidiInputManager {
     connections: Arc<Mutex<MidiConnections>>,
-    refresh_in_progress: Arc<AtomicBool>,
-    unavailable: Arc<AtomicBool>,
+    scan: BackgroundScan,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MidiInputsChangedEvent {
+    ports: Vec<String>,
+    error: Option<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -226,64 +287,38 @@ fn discover_midi_inputs(app: &AppHandle) -> MidiScanResult {
     Ok((connected_names, connections))
 }
 
-fn run_with_timeout<T, F>(timeout: Duration, operation: F) -> Result<T, mpsc::RecvTimeoutError>
-where
-    T: Send + 'static,
-    F: FnOnce() -> T + Send + 'static,
-{
-    let (sender, receiver) = mpsc::sync_channel(1);
-    thread::spawn(move || {
-        let _ = sender.send(operation());
-    });
-    receiver.recv_timeout(timeout)
-}
-
 impl MidiInputManager {
-    fn refresh(&self, app: AppHandle) -> Result<Vec<String>, String> {
-        if self.unavailable.load(Ordering::Acquire) {
-            return Err(MIDI_UNAVAILABLE_ERROR.into());
-        }
-        if self
-            .refresh_in_progress
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_err()
-        {
-            return Err("A MIDI input scan is already in progress.".into());
-        }
-
-        let previous_connections = match self.connections.lock() {
-            Ok(mut connections) => std::mem::take(&mut *connections),
-            Err(_) => {
-                self.refresh_in_progress.store(false, Ordering::Release);
-                return Err("MIDI input lock was poisoned".into());
-            }
-        };
-        let scan = run_with_timeout(MIDI_INITIALIZATION_TIMEOUT, move || {
+    fn refresh(&self, app: AppHandle) -> MidiPortsResult {
+        let connections = self.connections.clone();
+        let scan_app = app.clone();
+        let operation = move || {
             // WinMM devices are commonly exclusive, so release old handles before reconnecting.
-            // This also keeps a stalled driver call away from the UI thread and manager lock.
-            drop(previous_connections);
-            discover_midi_inputs(&app)
-        });
-        self.refresh_in_progress.store(false, Ordering::Release);
-
-        match scan {
-            Ok(Ok((connected_names, connections))) => {
-                *self
-                    .connections
-                    .lock()
-                    .map_err(|_| "MIDI input lock was poisoned")? = connections;
-                Ok(connected_names)
-            }
-            Ok(Err(error)) => Err(error),
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                self.unavailable.store(true, Ordering::Release);
-                Err(MIDI_UNAVAILABLE_ERROR.into())
-            }
-            Err(mpsc::RecvTimeoutError::Disconnected) => {
-                self.unavailable.store(true, Ordering::Release);
-                Err("MIDI initialization stopped unexpectedly. MIDI controls are disabled for this session; keyboard controls and the rest of the app remain available. Reopen the app to try again.".into())
-            }
-        }
+            // This also keeps a stalled driver call away from the UI thread.
+            drop(std::mem::take(
+                &mut *connections.lock().unwrap_or_else(PoisonError::into_inner),
+            ));
+            let (connected_names, new_connections) = discover_midi_inputs(&scan_app)?;
+            *connections.lock().unwrap_or_else(PoisonError::into_inner) = new_connections;
+            Ok(connected_names)
+        };
+        // Every completed scan is broadcast so the UI also receives results that arrive after
+        // this command has already returned the pending error.
+        let on_complete = move |result: &MidiPortsResult| {
+            let event = match result {
+                Ok(ports) => MidiInputsChangedEvent {
+                    ports: ports.clone(),
+                    error: None,
+                },
+                Err(error) => MidiInputsChangedEvent {
+                    ports: Vec::new(),
+                    error: Some(error.clone()),
+                },
+            };
+            let _ = app.emit("midi-inputs-changed", event);
+        };
+        self.scan
+            .run(MIDI_INITIALIZATION_TIMEOUT, operation, on_complete)
+            .unwrap_or_else(|| Err(MIDI_PENDING_ERROR.into()))
     }
 }
 
@@ -764,12 +799,13 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use std::path::Path;
-    use std::thread;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{mpsc, Arc};
     use std::time::Duration;
 
     use super::{
         has_music_xml_extension, is_channel_voice_message, repeat_timing_from_windows_settings,
-        run_with_timeout, strip_ansi_codes, KeyboardRepeatTiming,
+        strip_ansi_codes, BackgroundScan, KeyboardRepeatTiming, MIDI_SCAN_PANICKED_ERROR,
     };
 
     #[test]
@@ -800,17 +836,79 @@ mod tests {
     }
 
     #[test]
-    fn background_operations_return_before_the_timeout() {
-        assert_eq!(run_with_timeout(Duration::from_millis(100), || 42), Ok(42));
+    fn background_scans_return_before_the_timeout() {
+        let (completed, completions) = mpsc::channel();
+        let result = BackgroundScan::default().run(
+            Duration::from_secs(5),
+            || Ok(vec!["Pedal".to_string()]),
+            move |result| completed.send(result.clone()).unwrap(),
+        );
+        assert_eq!(result, Some(Ok(vec!["Pedal".to_string()])));
+        assert_eq!(
+            completions.recv_timeout(Duration::from_secs(5)),
+            Ok(Ok(vec!["Pedal".to_string()]))
+        );
     }
 
     #[test]
-    fn stalled_background_operations_time_out() {
-        let result = run_with_timeout(Duration::from_millis(1), || {
-            thread::sleep(Duration::from_millis(25));
-            42
-        });
-        assert_eq!(result, Err(std::sync::mpsc::RecvTimeoutError::Timeout));
+    fn stalled_background_scans_report_late_results_without_starting_duplicates() {
+        let scan = BackgroundScan::default();
+        let started = Arc::new(AtomicUsize::new(0));
+        let (release, released) = mpsc::channel::<()>();
+        let (completed, completions) = mpsc::channel();
+
+        let first_started = started.clone();
+        let first = scan.run(
+            Duration::from_millis(1),
+            move || {
+                first_started.fetch_add(1, Ordering::SeqCst);
+                released.recv().unwrap();
+                Ok(vec!["Late pedal".to_string()])
+            },
+            move |result| completed.send(result.clone()).unwrap(),
+        );
+        assert_eq!(first, None);
+
+        let joined_started = started.clone();
+        let joined = scan.run(
+            Duration::from_millis(1),
+            move || {
+                joined_started.fetch_add(1, Ordering::SeqCst);
+                Ok(Vec::new())
+            },
+            |_| panic!("a joined scan must not report its own completion"),
+        );
+        assert_eq!(joined, None);
+
+        release.send(()).unwrap();
+        assert_eq!(
+            completions.recv_timeout(Duration::from_secs(5)),
+            Ok(Ok(vec!["Late pedal".to_string()]))
+        );
+        assert_eq!(started.load(Ordering::SeqCst), 1);
+
+        let retry_started = started.clone();
+        let retry = scan.run(
+            Duration::from_secs(5),
+            move || {
+                retry_started.fetch_add(1, Ordering::SeqCst);
+                Ok(Vec::new())
+            },
+            |_| {},
+        );
+        assert_eq!(retry, Some(Ok(Vec::new())));
+        assert_eq!(started.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn panicking_background_scans_report_an_error_and_allow_retries() {
+        let scan = BackgroundScan::default();
+        let result = scan.run(Duration::from_secs(5), || panic!("driver failure"), |_| {});
+        assert_eq!(result, Some(Err(MIDI_SCAN_PANICKED_ERROR.to_string())));
+        assert_eq!(
+            scan.run(Duration::from_secs(5), || Ok(Vec::new()), |_| {}),
+            Some(Ok(Vec::new()))
+        );
     }
 
     #[test]

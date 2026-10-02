@@ -62,6 +62,11 @@ export interface MidiMessageEvent {
   bytes: number[];
 }
 
+export interface MidiInputsChangedEvent {
+  ports: string[];
+  error: string | null;
+}
+
 export interface KeyboardRepeatTiming {
   delayMs: number;
   intervalMs: number;
@@ -136,4 +141,10 @@ export async function subscribeToMidiMessages(
   callback: (event: MidiMessageEvent) => void,
 ): Promise<UnlistenFn> {
   return listen<MidiMessageEvent>("midi-message", ({ payload }) => callback(payload));
+}
+
+export async function subscribeToMidiInputChanges(
+  callback: (event: MidiInputsChangedEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<MidiInputsChangedEvent>("midi-inputs-changed", ({ payload }) => callback(payload));
 }
