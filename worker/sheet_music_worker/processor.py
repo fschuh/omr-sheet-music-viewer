@@ -27,7 +27,7 @@ OMR_TARGET_WIDTH = 1920
 OMR_RESAMPLING_FILTER = Image.Resampling.HAMMING
 OMR_RESAMPLING = OMR_RESAMPLING_FILTER.name
 MANIFEST_SCHEMA_VERSION = 1
-VISUAL_SIDECAR_CACHE_REVISION = 46
+VISUAL_SIDECAR_CACHE_REVISION = 47
 
 VISUAL_STATUSES = {"canonical", "fallback", "diagnostic"}
 VISUAL_PROVENANCES = {
@@ -36,6 +36,7 @@ VISUAL_PROVENANCES = {
     "merged_fragments",
     "transformer_recovered",
 }
+REST_STATUSES = {"supported", "unsupported", "unverified"}
 ALIGNMENT_METHODS = {
     "structural",
     "stem_repair",
@@ -242,7 +243,60 @@ def read_visual_sidecar(path: Path) -> dict[str, Any]:
         note = notes_by_id.get(musicxml_id)
         if note is None or note.get("visual_group_id") != visual_group_id:
             raise ValueError("Visual sidecar inverse links disagree")
+
+    if "rest_verification" in sidecar:
+        # Rest verification is optional diagnostics: a malformed block must not cost the
+        # page its note links, so it is dropped with the reason instead of rejecting.
+        error = rest_verification_error(sidecar["rest_verification"], set(notes_by_id))
+        if error is not None:
+            worker_log(f"Ignoring the visual sidecar's rest verification: {error}")
+            del sidecar["rest_verification"]
     return sidecar
+
+
+def _is_optional(value: Any, check: Callable[[Any], bool]) -> bool:
+    return value is None or check(value)
+
+
+def rest_verification_error(block: Any, note_ids: set[str]) -> str | None:
+    """Why a sidecar's rest verification block is unusable, or None when it is valid."""
+    if not isinstance(block, dict) or block.get("version") != 1:
+        return "rest verification v1 is required"
+    rests = block.get("rests")
+    if not isinstance(rests, list):
+        return "rest verification has no rest list"
+    rest_ids: set[str] = set()
+    for rest in rests:
+        if (
+            not isinstance(rest, dict)
+            or not isinstance(rest.get("rest_id"), str)
+            or not rest["rest_id"]
+            or rest.get("status") not in REST_STATUSES
+            or not isinstance(rest.get("reason"), str)
+            or not isinstance(rest.get("duration"), str)
+            or not all(
+                _is_integer(rest.get(key))
+                for key in ("part", "measure", "musicxml_staff_number", "voice")
+            )
+            or not all(
+                _is_optional(rest.get(key), lambda value: _is_integer(value) and value >= 0)
+                for key in ("staff_group_index", "staff_index")
+            )
+            or not _is_optional(rest.get("center"), _is_point)
+            or not isinstance(rest.get("staff_lines"), list)
+            or not all(_is_number(value) for value in rest["staff_lines"])
+            or not _is_optional(rest.get("unit_size"), lambda value: _is_number(value) and value > 0)
+            or not isinstance(rest.get("position_estimated", False), bool)
+        ):
+            return "rest verification has an invalid rest record"
+        if rest["rest_id"] in rest_ids or rest["rest_id"] in note_ids:
+            return "rest verification IDs must be unique and distinct from note IDs"
+        rest_ids.add(rest["rest_id"])
+        if rest["status"] == "unsupported" and (
+            rest["center"] is None or rest["unit_size"] is None or len(rest["staff_lines"]) != 5
+        ):
+            return "an unsupported rest needs a position, staff lines and a staff space"
+    return None
 
 
 def _scale_point(point: list[float], scale_x: float, scale_y: float) -> list[float]:
@@ -335,6 +389,18 @@ def scale_visual_sidecar(
                 [_scale_point(point, scale_x, scale_y) for point in contour]
                 for contour in contours
             ]
+
+    rest_verification = sidecar.get("rest_verification")
+    if isinstance(rest_verification, dict):
+        for rest in rest_verification.get("rests", []):
+            center = rest.get("center")
+            if isinstance(center, list) and len(center) == 2:
+                rest["center"] = _scale_point(center, scale_x, scale_y)
+            rest["staff_lines"] = [
+                round(float(y) * scale_y, 3) for y in rest.get("staff_lines", [])
+            ]
+            if _is_number(rest.get("unit_size")):
+                rest["unit_size"] = round(float(rest["unit_size"]) * scale_y, 3)
 
     sidecar["source_image_size"] = [target_width, target_height]
     return sidecar

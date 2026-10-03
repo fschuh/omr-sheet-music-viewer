@@ -15,6 +15,7 @@ from sheet_music_worker.processor import (
     VISUAL_SIDECAR_CACHE_REVISION,
     PdfProcessor,
     read_visual_sidecar,
+    rest_verification_error,
     scale_visual_sidecar,
     sha256_file,
     validate_artifacts,
@@ -249,6 +250,112 @@ def test_read_visual_sidecar_rejects_incomplete_cross_staff_repair(
         assert "Cross-staff repair metadata" in str(error)
     else:
         raise AssertionError("Expected incomplete cross-staff metadata to be rejected")
+
+
+def rest_record(rest_id: str, status: str = "unsupported", **changes: object) -> dict[str, object]:
+    record: dict[str, object] = {
+        "rest_id": rest_id,
+        "part": 1,
+        "measure": 2,
+        "musicxml_staff_number": 1,
+        "voice": 1,
+        "duration": "rest_8",
+        "status": status,
+        "reason": "no_rest_shaped_ink" if status == "unsupported" else "rest_shaped_ink",
+        "staff_group_index": 0,
+        "staff_index": 0,
+        "center": [40, 50],
+        "staff_lines": [30, 40, 50, 60, 70],
+        "unit_size": 10,
+        "position_estimated": False,
+    }
+    record.update(changes)
+    return record
+
+
+def sidecar_with_rests(*rests: dict[str, object]) -> dict[str, object]:
+    sidecar = cross_staff_repaired_sidecar()
+    sidecar["rest_verification"] = {"version": 1, "rests": list(rests)}
+    return sidecar
+
+
+def test_read_visual_sidecar_keeps_valid_rest_verification(tmp_path: Path) -> None:
+    path = tmp_path / "score.homr.visual.json"
+    sidecar = sidecar_with_rests(
+        rest_record("homr-rest-1", "supported"),
+        rest_record("homr-rest-2"),
+        rest_record("homr-rest-3", "unverified", reason="multi_measure_rest", center=None,
+                    staff_lines=[], unit_size=None),
+    )
+    path.write_text(json.dumps(sidecar), encoding="utf-8")
+
+    assert read_visual_sidecar(path) == sidecar
+
+
+def test_read_visual_sidecar_drops_unusable_rest_verification_but_keeps_the_page(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "score.homr.visual.json"
+    sidecar = sidecar_with_rests(rest_record("homr-rest-1", center=None))
+    path.write_text(json.dumps(sidecar), encoding="utf-8")
+
+    result = read_visual_sidecar(path)
+
+    assert "rest_verification" not in result
+    assert result["notes"] == cross_staff_repaired_sidecar()["notes"]
+
+
+def test_rest_verification_rules() -> None:
+    notes = {"homr-note-1"}
+    valid = {"version": 1, "rests": [rest_record("homr-rest-1")]}
+    assert rest_verification_error(valid, notes) is None
+    cases = [
+        ("rest verification v1 is required", {"version": 2, "rests": []}),
+        ("rest verification has no rest list", {"version": 1}),
+        (
+            "rest verification has an invalid rest record",
+            {"version": 1, "rests": [rest_record("homr-rest-1", status="maybe")]},
+        ),
+        (
+            "rest verification has an invalid rest record",
+            {"version": 1, "rests": [rest_record("homr-rest-1", position_estimated="yes")]},
+        ),
+        (
+            "rest verification IDs must be unique and distinct from note IDs",
+            {"version": 1, "rests": [rest_record("homr-note-1")]},
+        ),
+        (
+            "an unsupported rest needs a position, staff lines and a staff space",
+            {"version": 1, "rests": [rest_record("homr-rest-1", staff_lines=[30, 40])]},
+        ),
+    ]
+    for expected, block in cases:
+        assert rest_verification_error(block, notes) == expected
+    duplicate = {"version": 1, "rests": [rest_record("homr-rest-1"), rest_record("homr-rest-1")]}
+    assert (
+        rest_verification_error(duplicate, notes)
+        == "rest verification IDs must be unique and distinct from note IDs"
+    )
+
+
+def test_scale_visual_sidecar_moves_rest_geometry_to_the_display_raster() -> None:
+    sidecar = {
+        "version": 3,
+        "source_image_size": [100, 200],
+        "notes": [],
+        "visual_groups": [],
+        "rest_verification": {
+            "version": 1,
+            "rests": [rest_record("homr-rest-1", "supported")],
+        },
+    }
+
+    scale_visual_sidecar(sidecar, source_size=(100, 200), target_size=(200, 300))
+
+    rest = sidecar["rest_verification"]["rests"][0]
+    assert rest["center"] == [80.0, 75.0]
+    assert rest["staff_lines"] == [45.0, 60.0, 75.0, 90.0, 105.0]
+    assert rest["unit_size"] == 15.0
 
 
 def test_validate_artifacts_rejects_a_page_without_notes(tmp_path: Path) -> None:
