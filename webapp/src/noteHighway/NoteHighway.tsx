@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
-import { scoreOffsetToSeconds, type PerformanceRoute } from "../realtime";
-import { HIGHWAY_LOOKAHEAD_SECONDS, NOTE_HIGHWAY_TOP_FRACTION } from "./highwayModel";
+import { NOTE_HIGHWAY_TOP_FRACTION } from "./highwayModel";
 import { NoteHighwayRenderer } from "./highwayRenderer";
+import type { HighwayFrameSource } from "./highwaySources";
 import { KeyApproachPainter } from "./keyApproachPainter";
 import "./noteHighway.css";
 
@@ -9,21 +9,21 @@ import "./noteHighway.css";
 const MAX_PIXEL_RATIO = 2;
 
 interface NoteHighwayProps {
-  /** Read every frame, so a seek that swaps the route is drawn on the next frame. */
-  getRoute: () => PerformanceRoute | null;
-  /** Current route offset in quarters, read every frame from the playback clock. */
-  getOffset: () => number;
-  tempoMultiplier: number;
+  /**
+   * Read every animation frame, so playback position, seeks and route changes
+   * are drawn on the next frame without re-rendering this component.
+   */
+  getFrame: HighwayFrameSource;
 }
 
 /**
  * Notes travel toward the keyboard and reach its top edge when they sound. The
  * layer is decorative and never takes pointer input, like the keyboard below it.
  */
-export function NoteHighway({ getRoute, getOffset, tempoMultiplier }: NoteHighwayProps) {
+export function NoteHighway({ getFrame }: NoteHighwayProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const latest = useRef({ getRoute, getOffset, tempoMultiplier });
-  latest.current = { getRoute, getOffset, tempoMultiplier };
+  const latestGetFrame = useRef(getFrame);
+  latestGetFrame.current = getFrame;
 
   useEffect(() => {
     const container = containerRef.current;
@@ -64,16 +64,12 @@ export function NoteHighway({ getRoute, getOffset, tempoMultiplier }: NoteHighwa
     let frame = 0;
     const draw = () => {
       frame = requestAnimationFrame(draw);
-      const { getRoute: currentRoute, getOffset: currentOffset, tempoMultiplier: multiplier } =
-        latest.current;
-      const route = currentRoute();
-      active.setRoute(route);
-      const now = route ? scoreOffsetToSeconds(route, currentOffset(), 1) : 0;
-      const windowSeconds = HIGHWAY_LOOKAHEAD_SECONDS * multiplier;
+      const { track, now, window: span } = latestGetFrame.current();
+      active.setTrack(track);
       // render() skips the GPU work and the painter skips unchanged keys, so
-      // leaving the loop running while paused costs almost nothing per frame.
-      active.render(now, windowSeconds);
-      active.keyApproach(now, windowSeconds, approach);
+      // leaving the loop running while nothing moves costs almost nothing.
+      active.render(now, span);
+      active.keyApproach(now, span, approach);
       approachPainter.paint(approach);
     };
     frame = requestAnimationFrame(draw);

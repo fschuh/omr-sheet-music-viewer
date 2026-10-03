@@ -68,6 +68,10 @@ import {
   savePlaybackPiano,
 } from "./preferences";
 import { NoteHighway } from "./noteHighway/NoteHighway";
+import {
+  useNoteByNoteHighwaySource,
+  useRealtimeHighwaySource,
+} from "./noteHighway/highwaySources";
 import { pianoLayerForDynamic, type PianoId } from "./pianoRegistry";
 import {
   cancelJob,
@@ -444,13 +448,20 @@ export function App() {
       },
     );
   }
-  const noteHighwayVisible = noteHighwayEnabled &&
-    playbackMode === "realtime" &&
-    realtimeStatus !== "inactive";
+  const noteHighwayVisible = noteHighwayEnabled && playbackActive;
   const getRealtimeRoute = useCallback(() => realtimeRouteRef.current, []);
   const getRealtimeOffset = useCallback(
     () => realtimeControllerRef.current?.getOffset() ?? 0,
     [],
+  );
+  const realtimeHighwayFrame = useRealtimeHighwaySource(
+    getRealtimeRoute,
+    getRealtimeOffset,
+    tempoMultiplier,
+  );
+  const noteByNoteHighwayFrame = useNoteByNoteHighwaySource(
+    playbackTimeline,
+    notePlaybackMoment ? Math.max(0, playbackTimeline.indexOf(notePlaybackMoment)) : 0,
   );
   const toggleNoteHighway = useCallback(() => {
     const next = !noteHighwayEnabled;
@@ -2099,9 +2110,7 @@ export function App() {
             </aside> : null}
             {noteHighwayVisible ? (
               <NoteHighway
-                getRoute={getRealtimeRoute}
-                getOffset={getRealtimeOffset}
-                tempoMultiplier={tempoMultiplier}
+                getFrame={playbackMode === "realtime" ? realtimeHighwayFrame : noteByNoteHighwayFrame}
               />
             ) : null}
             {playbackActive ? (

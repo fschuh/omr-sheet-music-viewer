@@ -1,8 +1,5 @@
-import type { PerformanceRoute } from "../realtime";
 import {
   BLACK_KEY_LANE_HALF_WIDTH,
-  buildHighwayGridLines,
-  buildHighwayNotes,
   GRID_LINE_INSTANCE_FLOATS,
   HIGHWAY_HALF_WIDTH,
   highwayCamera,
@@ -12,8 +9,7 @@ import {
   upperBound,
   visibleNoteRange,
   type HighwayCamera,
-  type HighwayGridLines,
-  type HighwayNotes,
+  type HighwayTrack,
 } from "./highwayModel";
 
 const KEY_COUNT = 88;
@@ -33,7 +29,7 @@ layout(location = 4) in vec2 a_time;
 
 uniform mat4 u_viewProjection;
 uniform float u_now;
-uniform float u_unitsPerSecond;
+uniform float u_unitsPerTime;
 uniform float u_length;
 uniform float u_minLength;
 uniform float u_gap;
@@ -46,8 +42,8 @@ out float v_black;
 out float v_sounding;
 
 void main() {
-  float headZ = -(a_time.x - u_now) * u_unitsPerSecond;
-  float tailZ = min(-(a_time.y - u_now) * u_unitsPerSecond + u_gap, headZ - u_minLength);
+  float headZ = -(a_time.x - u_now) * u_unitsPerTime;
+  float tailZ = min(-(a_time.y - u_now) * u_unitsPerTime + u_gap, headZ - u_minLength);
   // The part of a note already past the hit line has gone into the keyboard.
   float nearZ = min(headZ, 0.0);
   float farZ = max(tailZ, -u_length);
@@ -178,7 +174,7 @@ layout(location = 1) in vec2 a_line;
 
 uniform mat4 u_viewProjection;
 uniform float u_now;
-uniform float u_unitsPerSecond;
+uniform float u_unitsPerTime;
 uniform float u_halfWidth;
 uniform float u_length;
 
@@ -187,7 +183,7 @@ out float v_strength;
 out float v_across;
 
 void main() {
-  float z = -(a_line.x - u_now) * u_unitsPerSecond;
+  float z = -(a_line.x - u_now) * u_unitsPerTime;
   if (z > 0.0 || z < -u_length) {
     gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
     return;
@@ -288,7 +284,7 @@ interface GpuResources {
   floorProgram: WebGLProgram;
   lineProgram: WebGLProgram;
   noteUniforms: Record<
-    "u_viewProjection" | "u_now" | "u_unitsPerSecond" | "u_length" | "u_minLength" | "u_gap" |
+    "u_viewProjection" | "u_now" | "u_unitsPerTime" | "u_length" | "u_minLength" | "u_gap" |
     "u_whiteColor" | "u_blackColor",
     WebGLUniformLocation | null
   >;
@@ -298,7 +294,7 @@ interface GpuResources {
     WebGLUniformLocation | null
   >;
   lineUniforms: Record<
-    "u_viewProjection" | "u_now" | "u_unitsPerSecond" | "u_halfWidth" | "u_length",
+    "u_viewProjection" | "u_now" | "u_unitsPerTime" | "u_halfWidth" | "u_length",
     WebGLUniformLocation | null
   >;
   noteVao: WebGLVertexArrayObject;
@@ -312,19 +308,19 @@ interface GpuResources {
 
 /**
  * Draws the note highway with three instanced draw calls per frame. Note and
- * grid-line data are uploaded once per route; each frame only rebinds the
+ * grid-line data are uploaded once per track; each frame only rebinds the
  * instance window that can be visible and updates a handful of uniforms, so the
- * per-frame cost does not grow with the length of the score.
+ * per-frame cost does not grow with the length of the score. Track time is
+ * whatever axis the track uses (seconds or note-by-note steps).
  */
 export class NoteHighwayRenderer {
   private resources: GpuResources | null = null;
-  private notes: HighwayNotes | null = null;
-  private lines: HighwayGridLines | null = null;
-  private route: PerformanceRoute | null = null;
+  private track: HighwayTrack | null = null;
   private camera: HighwayCamera | null = null;
   private readonly glow = new Float32Array(KEY_COUNT);
   private lastDraw = "";
   private sizeVersion = 0;
+  private trackVersion = 0;
 
   private constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -354,7 +350,7 @@ export class NoteHighwayRenderer {
 
   private readonly handleContextRestored = () => {
     this.resources = this.createResources();
-    this.uploadRoute();
+    this.uploadTrack();
     this.lastDraw = "";
   };
 
@@ -417,7 +413,7 @@ export class NoteHighwayRenderer {
       floorProgram,
       lineProgram,
       noteUniforms: uniforms(gl, noteProgram, [
-        "u_viewProjection", "u_now", "u_unitsPerSecond", "u_length", "u_minLength", "u_gap",
+        "u_viewProjection", "u_now", "u_unitsPerTime", "u_length", "u_minLength", "u_gap",
         "u_whiteColor", "u_blackColor",
       ] as const),
       floorUniforms: uniforms(gl, floorProgram, [
@@ -425,7 +421,7 @@ export class NoteHighwayRenderer {
         "u_whiteColor", "u_blackColor",
       ] as const),
       lineUniforms: uniforms(gl, lineProgram, [
-        "u_viewProjection", "u_now", "u_unitsPerSecond", "u_halfWidth", "u_length",
+        "u_viewProjection", "u_now", "u_unitsPerTime", "u_halfWidth", "u_length",
       ] as const),
       noteVao,
       floorVao,
@@ -437,27 +433,24 @@ export class NoteHighwayRenderer {
     };
   }
 
-  private uploadRoute(): void {
+  private uploadTrack(): void {
     const resources = this.resources;
     if (!resources) return;
     const gl = this.gl;
+    const empty = new Float32Array(0);
     gl.bindBuffer(gl.ARRAY_BUFFER, resources.noteInstanceBuffer);
-    gl.bufferData(gl.ARRAY_BUFFER, this.notes?.instances ?? new Float32Array(0), gl.STATIC_DRAW);
+    gl.bufferData(gl.ARRAY_BUFFER, this.track?.notes.instances ?? empty, gl.STATIC_DRAW);
     gl.bindBuffer(gl.ARRAY_BUFFER, resources.lineInstanceBuffer);
-    gl.bufferData(gl.ARRAY_BUFFER, this.lines?.instances ?? new Float32Array(0), gl.STATIC_DRAW);
+    gl.bufferData(gl.ARRAY_BUFFER, this.track?.lines.instances ?? empty, gl.STATIC_DRAW);
     gl.bindBuffer(gl.ARRAY_BUFFER, null);
   }
 
-  hasRoute(route: PerformanceRoute | null): boolean {
-    return this.route === route;
-  }
-
-  setRoute(route: PerformanceRoute | null): void {
-    if (route === this.route) return;
-    this.route = route;
-    this.notes = route ? buildHighwayNotes(route) : null;
-    this.lines = route ? buildHighwayGridLines(route) : null;
-    this.uploadRoute();
+  /** Uploads a new track; the same track object again is a no-op. */
+  setTrack(track: HighwayTrack | null): void {
+    if (track === this.track) return;
+    this.track = track;
+    this.trackVersion += 1;
+    this.uploadTrack();
     this.lastDraw = "";
   }
 
@@ -472,17 +465,17 @@ export class NoteHighwayRenderer {
     this.lastDraw = "";
   }
 
-  /** Draws the highway at `nowSeconds`; a no-op when nothing visible changed. */
-  render(nowSeconds: number, windowSeconds: number): void {
+  /** Draws the highway at `now`; a no-op when nothing visible changed. */
+  render(now: number, window: number): void {
     const resources = this.resources;
     const camera = this.camera;
     if (!resources || !camera || this.gl.isContextLost()) return;
-    const drawKey = `${this.sizeVersion}:${nowSeconds}:${windowSeconds}:${this.notes?.count ?? -1}`;
+    const drawKey = `${this.sizeVersion}:${this.trackVersion}:${now}:${window}`;
     if (drawKey === this.lastDraw) return;
     this.lastDraw = drawKey;
 
     const gl = this.gl;
-    const unitsPerSecond = camera.length / windowSeconds;
+    const unitsPerTime = camera.length / window;
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
     gl.clearColor(0, 0, 0, 0);
     gl.clearDepth(1);
@@ -491,11 +484,11 @@ export class NoteHighwayRenderer {
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
     gl.disable(gl.CULL_FACE);
 
-    const notes = this.notes;
+    const notes = this.track?.notes ?? null;
     const range = notes
-      ? visibleNoteRange(notes, nowSeconds, windowSeconds)
+      ? visibleNoteRange(notes, now, window)
       : { start: 0, end: 0 };
-    this.updateGlow(nowSeconds, range.start);
+    this.updateGlow(now, range.start);
 
     // Floor and grid lines lie flat on y = 0 under every note, so they skip the
     // depth buffer and the notes are depth-tested only against each other.
@@ -513,16 +506,16 @@ export class NoteHighwayRenderer {
     gl.bindVertexArray(resources.floorVao);
     gl.drawArrays(gl.TRIANGLES, 0, 6);
 
-    const lines = this.lines;
+    const lines = this.track?.lines ?? null;
     if (lines && lines.count > 0) {
-      const lineStart = lowerBound(lines.times, lines.count, nowSeconds);
-      const lineEnd = upperBound(lines.times, lines.count, nowSeconds + windowSeconds);
+      const lineStart = lowerBound(lines.times, lines.count, now);
+      const lineEnd = upperBound(lines.times, lines.count, now + window);
       if (lineEnd > lineStart) {
         gl.useProgram(resources.lineProgram);
         const line = resources.lineUniforms;
         gl.uniformMatrix4fv(line.u_viewProjection, false, camera.viewProjection);
-        gl.uniform1f(line.u_now, nowSeconds);
-        gl.uniform1f(line.u_unitsPerSecond, unitsPerSecond);
+        gl.uniform1f(line.u_now, now);
+        gl.uniform1f(line.u_unitsPerTime, unitsPerTime);
         gl.uniform1f(line.u_halfWidth, HIGHWAY_HALF_WIDTH);
         gl.uniform1f(line.u_length, camera.length);
         gl.bindVertexArray(resources.lineVao);
@@ -543,8 +536,8 @@ export class NoteHighwayRenderer {
       gl.useProgram(resources.noteProgram);
       const note = resources.noteUniforms;
       gl.uniformMatrix4fv(note.u_viewProjection, false, camera.viewProjection);
-      gl.uniform1f(note.u_now, nowSeconds);
-      gl.uniform1f(note.u_unitsPerSecond, unitsPerSecond);
+      gl.uniform1f(note.u_now, now);
+      gl.uniform1f(note.u_unitsPerTime, unitsPerTime);
       gl.uniform1f(note.u_length, camera.length);
       gl.uniform1f(note.u_minLength, MIN_NOTE_LENGTH);
       gl.uniform1f(note.u_gap, REPEAT_GAP);
@@ -567,20 +560,20 @@ export class NoteHighwayRenderer {
     gl.bindVertexArray(null);
   }
 
-  /** Per-key approach progress for the current route; see keyApproachProgress. */
-  keyApproach(nowSeconds: number, windowSeconds: number, out: Float32Array): void {
-    if (this.notes) keyApproachProgress(this.notes, nowSeconds, windowSeconds, out);
+  /** Per-key approach progress for the current track; see keyApproachProgress. */
+  keyApproach(now: number, window: number, out: Float32Array): void {
+    if (this.track) keyApproachProgress(this.track.notes, now, window, out);
     else out.fill(0);
   }
 
-  /** Lights the lane of every note sounding at `nowSeconds`. */
-  private updateGlow(nowSeconds: number, rangeStart: number): void {
+  /** Lights the lane of every note sounding at `now`. */
+  private updateGlow(now: number, rangeStart: number): void {
     this.glow.fill(0);
-    const notes = this.notes;
+    const notes = this.track?.notes;
     if (!notes) return;
-    const sounding = upperBound(notes.starts, notes.count, nowSeconds);
+    const sounding = upperBound(notes.starts, notes.count, now);
     for (let index = rangeStart; index < sounding; index += 1) {
-      if (notes.ends[index] > nowSeconds) this.glow[notes.midis[index] - 21] = 1;
+      if (notes.ends[index] > now) this.glow[notes.midis[index] - 21] = 1;
     }
   }
 

@@ -4,11 +4,11 @@ import { PIANO_KEYS } from "../PianoKeyboard";
 import type { PerformanceNote, PerformanceRoute } from "../realtime";
 import {
   BLACK_NOTE_HEIGHT,
-  buildHighwayGridLines,
-  buildHighwayNotes,
   HIGHWAY_HALF_WIDTH,
   highwayCamera,
   highwayKeyLane,
+  highwayTrackForRoute,
+  highwayTrackForSteps,
   keyApproachProgress,
   NOTE_INSTANCE_FLOATS,
   projectToNdc,
@@ -59,18 +59,18 @@ test("puts every key's lane under that key on the 88-key keyboard", () => {
 });
 
 test("builds note instances in score seconds with distinct black-key models", () => {
-  const notes = buildHighwayNotes(route([
+  const notes = highwayTrackForRoute(route([
     note("b", "C#4", 2, 3),
     note("a", "C4", 0, 1),
     note("out", "C9", 0, 1),
     note("empty", "D4", 1, 1),
-  ]));
+  ])).notes;
   assert.equal(notes.count, 2);
   // 120 BPM: a quarter is half a second, and instances are sorted by start.
   assert.deepEqual(Array.from(notes.starts), [0, 1]);
   assert.deepEqual(Array.from(notes.ends), [0.5, 1.5]);
   assert.deepEqual(Array.from(notes.midis), [60, 61]);
-  assert.equal(notes.maxDurationSeconds, 0.5);
+  assert.equal(notes.maxDuration, 0.5);
   const white = notes.instances.subarray(0, NOTE_INSTANCE_FLOATS);
   const black = notes.instances.subarray(NOTE_INSTANCE_FLOATS, NOTE_INSTANCE_FLOATS * 2);
   assert.equal(white[3], 0);
@@ -82,18 +82,46 @@ test("builds note instances in score seconds with distinct black-key models", ()
 });
 
 test("marks bar starts strongly and quarters faintly", () => {
-  const lines = buildHighwayGridLines(route([note("a", "C4", 0, 4)], 60));
+  const lines = highwayTrackForRoute(route([note("a", "C4", 0, 4)], 60)).lines;
   assert.deepEqual(Array.from(lines.times), [0, 1, 2, 3]);
   assert.ok(lines.instances[1] > lines.instances[3]);
 });
 
+test("lays note-by-note moments out one step each, extending tied notes", () => {
+  const moment = (pitches: string[], held: string[], barKey: string) => ({
+    pitches,
+    keyboardNotes: [...pitches, ...held].map((pitch) => ({ pitch })),
+    barKey,
+  });
+  const track = highwayTrackForSteps([
+    moment(["C4", "E4"], [], "bar-1"),
+    moment(["D4"], ["E4"], "bar-1"),
+    moment(["E4"], [], "bar-2"),
+    moment([], ["E4"], "bar-2"),
+    // C4 is not held into this moment, so showing it here does not revive it.
+    moment([], ["C4"], "bar-2"),
+  ]);
+  const notes = Array.from(track.notes.midis, (midi, index) => ({
+    midi,
+    start: track.notes.starts[index],
+    end: track.notes.ends[index],
+  }));
+  assert.deepEqual(notes, [
+    { midi: 60, start: 0, end: 1 },
+    { midi: 64, start: 0, end: 2 },
+    { midi: 62, start: 1, end: 2 },
+    { midi: 64, start: 2, end: 4 },
+  ]);
+  assert.deepEqual(Array.from(track.lines.times), [0, 2], "a line at each bar's first moment");
+});
+
 test("selects only notes that can be on the highway", () => {
-  const notes = buildHighwayNotes(route([
+  const notes = highwayTrackForRoute(route([
     note("long", "C4", 0, 16),
     note("past", "E4", 1, 2),
     note("soon", "G4", 12, 13),
     note("later", "A4", 30, 31),
-  ]));
+  ])).notes;
   const { start, end } = visibleNoteRange(notes, 6, 3);
   const selected = Array.from(notes.midis.subarray(start, end));
   assert.ok(selected.includes(60), "a note still sounding stays in range");
@@ -103,12 +131,12 @@ test("selects only notes that can be on the highway", () => {
 
 test("ramps each key toward its nearest upcoming note", () => {
   // 120 BPM: C4 at 2 s and again at 3 s, E4 at 1 s, G4 beyond a 2 s window.
-  const notes = buildHighwayNotes(route([
+  const notes = highwayTrackForRoute(route([
     note("c-first", "C4", 4, 5),
     note("c-again", "C4", 6, 7),
     note("e", "E4", 2, 3),
     note("g", "G4", 10, 11),
-  ]));
+  ])).notes;
   const progress = new Float32Array(88);
   keyApproachProgress(notes, 0.5, 2, progress);
   assert.equal(progress[60 - 21], 0.25, "C4 follows its nearer note, 1.5 s away");

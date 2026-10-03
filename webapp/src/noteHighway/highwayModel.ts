@@ -22,8 +22,10 @@ export const BLACK_KEY_LANE_HALF_WIDTH = BLACK_KEY_WIDTH_IN_WHITE_KEYS / 2;
  */
 export const NOTE_HIGHWAY_TOP_FRACTION = 0.46;
 
-/** Real seconds between a note appearing at the far end and reaching the keys. */
+/** Realtime: real seconds between a note appearing at the far end and reaching the keys. */
 export const HIGHWAY_LOOKAHEAD_SECONDS = 3.2;
+/** Note-by-note: how many upcoming moments the highway shows. */
+export const HIGHWAY_LOOKAHEAD_STEPS = 8;
 
 /**
  * Camera pitch below the horizon and vertical field of view. Steeper than a
@@ -42,9 +44,9 @@ export const WHITE_NOTE_HEIGHT = 0.3;
 export const BLACK_NOTE_HALF_WIDTH = 0.27;
 export const BLACK_NOTE_HEIGHT = 0.9;
 
-/** Floats per note instance: centre x, half width, height, black, start s, end s. */
+/** Floats per note instance: centre x, half width, height, black, start, end. */
 export const NOTE_INSTANCE_FLOATS = 6;
-/** Floats per grid line instance: time s, strength. */
+/** Floats per grid line instance: time, strength. */
 export const GRID_LINE_INSTANCE_FLOATS = 2;
 
 const MEASURE_LINE_STRENGTH = 1;
@@ -81,33 +83,48 @@ export interface HighwayNotes {
   midis: Uint8Array;
   count: number;
   /** Longest note, so a binary search on starts can find every note still sounding. */
-  maxDurationSeconds: number;
+  maxDuration: number;
+}
+
+export interface HighwayGridLines {
+  instances: Float32Array;
+  times: Float64Array;
+  count: number;
 }
 
 /**
- * Times are unscaled score seconds (tempo map applied, tempo multiplier not), so
- * the instance data survives tempo-multiplier changes; the renderer scales the
- * lookahead window instead.
+ * Everything the highway draws, on one time axis: unscaled score seconds in
+ * realtime mode, moment steps in note-by-note mode. The renderer only needs the
+ * axis to be monotonic; the caller picks a matching lookahead window.
  */
-export function buildHighwayNotes(route: PerformanceRoute): HighwayNotes {
-  const notes: { lane: HighwayKeyLane; start: number; end: number }[] = [];
-  for (const note of route.notes) {
-    const midi = pitchToMidi(note.pitch);
-    if (midi === null || midi < FIRST_PIANO_MIDI || midi > LAST_PIANO_MIDI) continue;
-    const lane = KEY_LANES.get(midi);
-    if (!lane) continue;
-    const start = scoreOffsetToSeconds(route, note.onset, 1);
-    const end = scoreOffsetToSeconds(route, note.release, 1);
-    if (!(end > start)) continue;
-    notes.push({ lane, start, end });
-  }
-  notes.sort((left, right) => left.start - right.start);
+export interface HighwayTrack {
+  notes: HighwayNotes;
+  lines: HighwayGridLines;
+}
 
+interface TrackNote {
+  midi: number;
+  start: number;
+  end: number;
+}
+
+interface TrackLine {
+  time: number;
+  strength: number;
+}
+
+function packNotes(source: TrackNote[]): HighwayNotes {
+  const notes = source
+    .flatMap((note) => {
+      const lane = KEY_LANES.get(note.midi);
+      return lane && note.end > note.start ? [{ ...note, lane }] : [];
+    })
+    .sort((left, right) => left.start - right.start);
   const instances = new Float32Array(notes.length * NOTE_INSTANCE_FLOATS);
   const starts = new Float64Array(notes.length);
   const ends = new Float64Array(notes.length);
   const midis = new Uint8Array(notes.length);
-  let maxDurationSeconds = 0;
+  let maxDuration = 0;
   notes.forEach(({ lane, start, end }, index) => {
     const offset = index * NOTE_INSTANCE_FLOATS;
     instances[offset] = lane.center;
@@ -119,20 +136,50 @@ export function buildHighwayNotes(route: PerformanceRoute): HighwayNotes {
     starts[index] = start;
     ends[index] = end;
     midis[index] = lane.midi;
-    maxDurationSeconds = Math.max(maxDurationSeconds, end - start);
+    maxDuration = Math.max(maxDuration, end - start);
   });
-  return { instances, starts, ends, midis, count: notes.length, maxDurationSeconds };
+  return { instances, starts, ends, midis, count: notes.length, maxDuration };
 }
 
-export interface HighwayGridLines {
-  instances: Float32Array;
-  times: Float64Array;
-  count: number;
+function packLines(source: TrackLine[]): HighwayGridLines {
+  const lines = [...source].sort((left, right) => left.time - right.time);
+  const instances = new Float32Array(lines.length * GRID_LINE_INSTANCE_FLOATS);
+  const times = new Float64Array(lines.length);
+  lines.forEach(({ time, strength }, index) => {
+    instances[index * GRID_LINE_INSTANCE_FLOATS] = time;
+    instances[index * GRID_LINE_INSTANCE_FLOATS + 1] = strength;
+    times[index] = time;
+  });
+  return { instances, times, count: lines.length };
 }
 
-/** A strong line at every bar start of the route and a faint one on each quarter. */
-export function buildHighwayGridLines(route: PerformanceRoute): HighwayGridLines {
-  const lines: { time: number; strength: number }[] = [];
+function pianoMidi(pitch: string): number | null {
+  const midi = pitchToMidi(pitch);
+  return midi !== null && midi >= FIRST_PIANO_MIDI && midi <= LAST_PIANO_MIDI ? midi : null;
+}
+
+const routeTracks = new WeakMap<PerformanceRoute, HighwayTrack>();
+
+/**
+ * Realtime track in unscaled score seconds (tempo map applied, tempo multiplier
+ * not), so it survives tempo-multiplier changes; the caller scales the lookahead
+ * window instead. A strong line marks every bar start and a faint one each
+ * quarter. Cached per route, which is rebuilt on every seek.
+ */
+export function highwayTrackForRoute(route: PerformanceRoute): HighwayTrack {
+  const cached = routeTracks.get(route);
+  if (cached) return cached;
+  const notes: TrackNote[] = [];
+  for (const note of route.notes) {
+    const midi = pianoMidi(note.pitch);
+    if (midi === null) continue;
+    notes.push({
+      midi,
+      start: scoreOffsetToSeconds(route, note.onset, 1),
+      end: scoreOffsetToSeconds(route, note.release, 1),
+    });
+  }
+  const lines: TrackLine[] = [];
   for (const occurrence of route.occurrences) {
     lines.push({
       time: scoreOffsetToSeconds(route, occurrence.scoreStart, 1),
@@ -142,15 +189,56 @@ export function buildHighwayGridLines(route: PerformanceRoute): HighwayGridLines
       lines.push({ time: scoreOffsetToSeconds(route, beat, 1), strength: BEAT_LINE_STRENGTH });
     }
   }
-  lines.sort((left, right) => left.time - right.time);
-  const instances = new Float32Array(lines.length * GRID_LINE_INSTANCE_FLOATS);
-  const times = new Float64Array(lines.length);
-  lines.forEach(({ time, strength }, index) => {
-    instances[index * GRID_LINE_INSTANCE_FLOATS] = time;
-    instances[index * GRID_LINE_INSTANCE_FLOATS + 1] = strength;
-    times[index] = time;
+  const track = { notes: packNotes(notes), lines: packLines(lines) };
+  routeTracks.set(route, track);
+  return track;
+}
+
+/** The parts of a note-by-note playback moment the highway reads. */
+export interface HighwayStepMoment {
+  /** Pitches attacked at this moment. */
+  pitches: readonly string[];
+  /** Every pitch shown on the keyboard here, including tied notes held over. */
+  keyboardNotes: readonly { pitch: string }[];
+  barKey: string;
+}
+
+/**
+ * Note-by-note track with one step per moment, since moments carry an order but
+ * no durations. A note lasts one step, extended through following moments
+ * where it is held by a tie; a strong line marks each bar's first moment.
+ */
+export function highwayTrackForSteps(moments: readonly HighwayStepMoment[]): HighwayTrack {
+  const notes: TrackNote[] = [];
+  const lines: TrackLine[] = [];
+  let open = new Map<number, TrackNote>();
+  moments.forEach((moment, step) => {
+    if (step === 0 || moment.barKey !== moments[step - 1].barKey) {
+      lines.push({ time: step, strength: MEASURE_LINE_STRENGTH });
+    }
+    const attacked = new Set<number>();
+    for (const pitch of moment.pitches) {
+      const midi = pianoMidi(pitch);
+      if (midi !== null) attacked.add(midi);
+    }
+    const next = new Map<number, TrackNote>();
+    for (const { pitch } of moment.keyboardNotes) {
+      const midi = pianoMidi(pitch);
+      if (midi === null || attacked.has(midi) || next.has(midi)) continue;
+      const held = open.get(midi);
+      if (held && held.end === step) {
+        held.end = step + 1;
+        next.set(midi, held);
+      }
+    }
+    for (const midi of attacked) {
+      const note = { midi, start: step, end: step + 1 };
+      notes.push(note);
+      next.set(midi, note);
+    }
+    open = next;
   });
-  return { instances, times, count: lines.length };
+  return { notes: packNotes(notes), lines: packLines(lines) };
 }
 
 /** First index in sorted[0, count) whose value is >= target. */
@@ -184,20 +272,21 @@ export function upperBound(sorted: ArrayLike<number>, count: number, target: num
  */
 export function visibleNoteRange(
   notes: HighwayNotes,
-  nowSeconds: number,
-  windowSeconds: number,
+  now: number,
+  window: number,
 ): { start: number; end: number } {
   return {
-    start: lowerBound(notes.starts, notes.count, nowSeconds - notes.maxDurationSeconds - 1),
-    end: upperBound(notes.starts, notes.count, nowSeconds + windowSeconds),
+    start: lowerBound(notes.starts, notes.count, now - notes.maxDuration - 1),
+    end: upperBound(notes.starts, notes.count, now + window),
   };
 }
 
 /**
- * How long a key keeps its full approach level after its note starts, bridging
- * the frame or two before the keyboard's own "playing" highlight takes over.
+ * How long, in track time, a key keeps its full approach level after its note
+ * starts, bridging the frame or two before the keyboard's own "playing"
+ * highlight takes over.
  */
-const APPROACH_HOLD_SECONDS = 0.08;
+const APPROACH_HOLD = 0.08;
 
 /**
  * Writes, per key (index = midi - 21), how close that key's next note is: just
@@ -206,20 +295,20 @@ const APPROACH_HOLD_SECONDS = 0.08;
  */
 export function keyApproachProgress(
   notes: HighwayNotes,
-  nowSeconds: number,
-  windowSeconds: number,
+  now: number,
+  window: number,
   out: Float32Array,
 ): void {
   out.fill(0);
-  if (!(windowSeconds > 0)) return;
-  const begin = lowerBound(notes.starts, notes.count, nowSeconds - APPROACH_HOLD_SECONDS);
-  const end = upperBound(notes.starts, notes.count, nowSeconds + windowSeconds);
+  if (!(window > 0)) return;
+  const begin = lowerBound(notes.starts, notes.count, now - APPROACH_HOLD);
+  const end = upperBound(notes.starts, notes.count, now + window);
   // Starts are ascending, so the first note met for a key is its nearest one.
   for (let index = begin; index < end; index += 1) {
     const key = notes.midis[index] - FIRST_PIANO_MIDI;
     if (out[key] > 0) continue;
-    const remaining = notes.starts[index] - nowSeconds;
-    out[key] = Math.max(1e-6, Math.min(1, 1 - remaining / windowSeconds));
+    const remaining = notes.starts[index] - now;
+    out[key] = Math.max(1e-6, Math.min(1, 1 - remaining / window));
   }
 }
 

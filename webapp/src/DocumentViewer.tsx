@@ -98,7 +98,7 @@ interface DocumentViewerProps {
   realtimeGroupIdsByPage?: Readonly<Record<number, readonly string[]>>;
   tempoBpm?: number;
   tempoMultiplier?: number;
-  /** The realtime-only 3D note highway preference. */
+  /** The 3D note highway preference, shared by both playback modes. */
   noteHighwayEnabled?: boolean;
   /** The highway is on screen, so playback scrolling keeps the staff above it. */
   noteHighwayVisible?: boolean;
@@ -1157,7 +1157,7 @@ export function DocumentViewer({
               ) : null}
             </div>
           </div> : null}
-          {playbackMode === "realtime" && onNoteHighwayToggle ? (
+          {onNoteHighwayToggle ? (
             <button
               type="button"
               className={`note-highway-toggle${noteHighwayEnabled ? " active" : ""}`}
