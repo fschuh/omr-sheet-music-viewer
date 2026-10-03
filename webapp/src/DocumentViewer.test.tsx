@@ -637,3 +637,63 @@ test("restores a supplied viewport transform after remounting", () => {
   assert.match(markup, />175%<\/span>/);
   assert.match(markup, /translate3d\(-320px, -640px, 0\) scale\(1.75\)/);
 });
+
+test("debug mode draws ghosts of unsupported rests only", () => {
+  const rest = (restId: string, status: "supported" | "unsupported", reason: string) => ({
+    rest_id: restId,
+    part: 1,
+    measure: 1,
+    musicxml_staff_number: 1,
+    voice: 1,
+    duration: "rest_8",
+    status,
+    reason,
+    staff_group_index: 0,
+    staff_index: 0,
+    center: [400, 340] as [number, number],
+    staff_lines: [320, 330, 340, 350, 360],
+    unit_size: 10,
+  });
+  const restPage: DocumentPage = {
+    ...page,
+    visualSidecar: {
+      ...sidecar,
+      rest_verification: {
+        version: 1,
+        rests: [
+          rest("homr-rest-1", "supported", "rest_shaped_ink"),
+          rest("homr-rest-2", "unsupported", "no_rest_shaped_ink"),
+          { ...rest("homr-rest-3", "unsupported", "note_without_pitch"), position_estimated: true },
+        ],
+      },
+    },
+  };
+  const renderRests = (showUnsupportedRests: boolean) =>
+    renderToStaticMarkup(
+      <DocumentViewer
+        documentKey="rest-fixture"
+        pages={[restPage]}
+        selectedGroup={null}
+        highlightAllNotes={false}
+        showOriginalNoteheadContours={false}
+        showDetectedNoteheadContours={false}
+        showRefinedNoteheadContours={false}
+        showRawStemContours={false}
+        showUnsupportedRests={showUnsupportedRests}
+        playbackActive={false}
+        playbackNoteSoundsEnabled
+        playbackAvailable={false}
+        playbackMoment={null}
+        listenFeedback={listenFeedback}
+        onPlaybackCommand={() => undefined}
+        onSelectGroup={() => undefined}
+        onRetryPage={() => undefined}
+      />,
+    );
+
+  const shown = renderRests(true);
+  assert.doesNotMatch(shown, /data-rest-id="homr-rest-1"/);
+  assert.match(shown, /class="ghost-rest" data-rest-id="homr-rest-2" data-rest-reason="no_rest_shaped_ink" data-rest-kind="eighth"/);
+  assert.match(shown, /class="ghost-rest estimated" data-rest-id="homr-rest-3" data-rest-reason="note_without_pitch"/);
+  assert.doesNotMatch(renderRests(false), /ghost-rest/);
+});

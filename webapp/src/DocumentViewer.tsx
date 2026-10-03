@@ -1,6 +1,7 @@
 import { memo, useEffect, useId, useMemo, useRef, useState } from "react";
 import { layoutNoteLabels, selectedGroupIds } from "./noteLabels";
 import { playbackGroupIdsForPage } from "./playback";
+import { restGlyph } from "./restGlyphs";
 import type { PlaybackCommand, PlaybackMoment } from "./playback";
 import type { PlaybackMode, PlaybackStatus, RealtimePlayhead } from "./realtime";
 import type { ListenModeFeedback } from "./noteRecognizer";
@@ -85,6 +86,8 @@ interface DocumentViewerProps {
   showRefinedNoteheadContours: boolean;
   showRawStemContours: boolean;
   showDiagnosticVisualGroups?: boolean;
+  /** Draw ghosts of the rests that have no rest-shaped ink on the page. */
+  showUnsupportedRests?: boolean;
   playbackActive: boolean;
   playbackNoteSoundsEnabled: boolean;
   playbackAvailable: boolean;
@@ -274,6 +277,7 @@ interface PageOverlayProps {
   showRefinedNoteheadContours: boolean;
   showRawStemContours: boolean;
   showDiagnosticVisualGroups: boolean;
+  showUnsupportedRests: boolean;
   playbackActive: boolean;
   playbackGroupIds: readonly string[];
   realtimePlayhead?: RealtimePlayhead | null;
@@ -367,11 +371,24 @@ const PageOverlay = memo(function PageOverlay({
   showRefinedNoteheadContours,
   showRawStemContours,
   showDiagnosticVisualGroups,
+  showUnsupportedRests,
   playbackActive,
   playbackGroupIds,
   realtimePlayhead,
   realtimePlayheadEnabled = false,
 }: PageOverlayProps) {
+  const ghostRests = useMemo(
+    () =>
+      showUnsupportedRests
+        ? (page.visualSidecar?.rest_verification?.rests ?? [])
+            .filter((rest) => rest.status === "unsupported")
+            .flatMap((rest) => {
+              const glyph = restGlyph(rest);
+              return glyph ? [{ rest, glyph }] : [];
+            })
+        : [],
+    [page.visualSidecar, showUnsupportedRests],
+  );
   const selectedIds = useMemo(
     () => {
       if (playbackActive) return new Set(playbackGroupIds);
@@ -501,6 +518,22 @@ const PageOverlay = memo(function PageOverlay({
           ))
         : null}
       {visualGroupLayers}
+      {ghostRests.length > 0 ? (
+        <g className="ghost-rests">
+          {ghostRests.map(({ rest, glyph }) => (
+            <g
+              key={rest.rest_id}
+              className={`ghost-rest${rest.position_estimated ? " estimated" : ""}`}
+              data-rest-id={rest.rest_id}
+              data-rest-reason={rest.reason}
+              data-rest-kind={glyph.kind}
+            >
+              {glyph.fills ? <path className="ghost-rest-fill" d={glyph.fills} /> : null}
+              {glyph.strokes ? <path className="ghost-rest-stroke" d={glyph.strokes} /> : null}
+            </g>
+          ))}
+        </g>
+      ) : null}
       {playbackGroupLayers}
       <g className="note-label-connectors">
         {noteLabels.map((label) => (
@@ -556,6 +589,7 @@ export function DocumentViewer({
   showRefinedNoteheadContours,
   showRawStemContours,
   showDiagnosticVisualGroups = false,
+  showUnsupportedRests = false,
   playbackActive,
   playbackNoteSoundsEnabled,
   playbackAvailable,
@@ -1372,6 +1406,7 @@ export function DocumentViewer({
                 showRefinedNoteheadContours={showRefinedNoteheadContours}
                 showRawStemContours={showRawStemContours}
                 showDiagnosticVisualGroups={showDiagnosticVisualGroups}
+                showUnsupportedRests={showUnsupportedRests}
               />
               {page.status !== "complete" ? (
                 <div className="page-placeholder">

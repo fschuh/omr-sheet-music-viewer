@@ -280,6 +280,7 @@ export function App() {
   const [showRefinedNoteheadContours, setShowRefinedNoteheadContours] = useState(false);
   const [showRawStemContours, setShowRawStemContours] = useState(false);
   const [showDiagnosticVisualGroups, setShowDiagnosticVisualGroups] = useState(false);
+  const [showUnsupportedRests, setShowUnsupportedRests] = useState(false);
   const [workerInfo, setWorkerInfo] = useState<string | null>(null);
   const [workerLogs, setWorkerLogs] = useState<WorkerLogEntry[]>([]);
   const [workerLogPath, setWorkerLogPath] = useState<string | null>(null);
@@ -1952,6 +1953,7 @@ export function App() {
               showDiagnosticVisualGroups={
                 debugPanelEnabled && showDiagnosticVisualGroups
               }
+              showUnsupportedRests={debugPanelEnabled && showUnsupportedRests}
               playbackActive={playbackActive}
               playbackNoteSoundsEnabled={
                 playbackMode === "note-by-note"
@@ -2056,6 +2058,10 @@ export function App() {
                   }}
                 />
                 Diagnostic visual groups
+              </label>
+              <label className="checkbox-row">
+                <input type="checkbox" checked={showUnsupportedRests} onChange={(event) => setShowUnsupportedRests(event.target.checked)} />
+                Unsupported rests
               </label>
               <h2>Selection</h2>
               {selectedVisualGroup && selectedGroup ? (

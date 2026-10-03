@@ -1081,6 +1081,34 @@ button:disabled {
   stroke-width: 2.75;
 }
 
+/* Rests MusicXML has but the page does not print, drawn as ghosts where they were read. */
+.overlay .ghost-rest {
+  filter:
+    drop-shadow(0 0 1px rgb(107 33 168 / 72%))
+    drop-shadow(0 0 3px rgb(233 213 255 / 92%));
+}
+
+.overlay .ghost-rest-fill {
+  fill: rgb(216 180 254 / 40%);
+  stroke: #b96bef;
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.overlay .ghost-rest-stroke {
+  fill: none;
+  stroke: #b96bef;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2.25;
+  vector-effect: non-scaling-stroke;
+}
+
+/* The transformer gave no position; it was placed between its neighbours. */
+.overlay .ghost-rest.estimated :where(.ghost-rest-fill, .ghost-rest-stroke) {
+  stroke-dasharray: 4 3;
+}
+
 .visual-group.playback-selected polygon,
 .visual-group.playback-selected ellipse {
   fill: rgb(19 169 141 / 90%);
