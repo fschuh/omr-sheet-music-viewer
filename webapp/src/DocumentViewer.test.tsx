@@ -638,6 +638,58 @@ test("restores a supplied viewport transform after remounting", () => {
   assert.match(markup, /translate3d\(-320px, -640px, 0\) scale\(1.75\)/);
 });
 
+test("debug mode haloes the notes whose printed value disagrees", () => {
+  const linked = sidecar.notes.filter((note) => note.visual_group_id !== null);
+  assert.ok(linked.length >= 2);
+  const [mismatch, agreed] = linked;
+  const valuePage: DocumentPage = {
+    ...page,
+    visualSidecar: {
+      ...sidecar,
+      note_value_verification: {
+        version: 1,
+        notes: [
+          { musicxml_id: mismatch.musicxml_id, printed: "eighth", dotted: false, status: "disagrees", reason: "1_bands" },
+          { musicxml_id: agreed.musicxml_id, printed: "quarter", dotted: false, status: "agrees", reason: "0_bands" },
+        ],
+      },
+    },
+  };
+  const renderValues = (showValueMismatches: boolean) =>
+    renderToStaticMarkup(
+      <DocumentViewer
+        documentKey="value-fixture"
+        pages={[valuePage]}
+        selectedGroup={null}
+        highlightAllNotes={false}
+        showOriginalNoteheadContours={false}
+        showDetectedNoteheadContours={false}
+        showRefinedNoteheadContours={false}
+        showRawStemContours={false}
+        showValueMismatches={showValueMismatches}
+        playbackActive={false}
+        playbackNoteSoundsEnabled
+        playbackAvailable={false}
+        playbackMoment={null}
+        listenFeedback={listenFeedback}
+        onPlaybackCommand={() => undefined}
+        onSelectGroup={() => undefined}
+        onRetryPage={() => undefined}
+      />,
+    );
+
+  const shown = renderValues(true);
+  const marked = [...shown.matchAll(/data-visual-group-id="([^"]+)"[^>]*data-value-mismatch="true"/g)].map(
+    (match) => match[1],
+  );
+  assert.deepEqual(marked, [mismatch.visual_group_id]);
+  assert.match(
+    shown,
+    new RegExp(`data-visual-group-id="${mismatch.visual_group_id}"[^>]*data-diagnostic-highlight="halo"`),
+  );
+  assert.doesNotMatch(renderValues(false), /data-value-mismatch/);
+});
+
 test("debug mode draws ghosts of unsupported rests only", () => {
   const rest = (restId: string, status: "supported" | "unsupported", reason: string) => ({
     rest_id: restId,

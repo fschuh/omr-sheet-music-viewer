@@ -14,6 +14,7 @@ from sheet_music_worker.processor import (
     RASTER_DPI,
     VISUAL_SIDECAR_CACHE_REVISION,
     PdfProcessor,
+    note_value_verification_error,
     read_visual_sidecar,
     rest_verification_error,
     scale_visual_sidecar,
@@ -336,6 +337,83 @@ def test_rest_verification_rules() -> None:
         rest_verification_error(duplicate, notes)
         == "rest verification IDs must be unique and distinct from note IDs"
     )
+
+
+def note_value_record(musicxml_id: str = "homr-note-1", **changes: object) -> dict[str, object]:
+    record: dict[str, object] = {
+        "musicxml_id": musicxml_id,
+        "printed": "eighth",
+        "dotted": False,
+        "status": "disagrees",
+        "reason": "1_bands",
+    }
+    record.update(changes)
+    return record
+
+
+def test_read_visual_sidecar_keeps_valid_note_value_verification(tmp_path: Path) -> None:
+    path = tmp_path / "score.homr.visual.json"
+    sidecar = cross_staff_repaired_sidecar()
+    sidecar["note_value_verification"] = {"version": 1, "notes": [note_value_record()]}
+    path.write_text(json.dumps(sidecar), encoding="utf-8")
+
+    assert read_visual_sidecar(path) == sidecar
+
+
+def test_read_visual_sidecar_drops_unusable_note_value_verification_but_keeps_the_page(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "score.homr.visual.json"
+    sidecar = cross_staff_repaired_sidecar()
+    sidecar["note_value_verification"] = {
+        "version": 1,
+        "notes": [note_value_record(printed="64th")],
+    }
+    path.write_text(json.dumps(sidecar), encoding="utf-8")
+
+    result = read_visual_sidecar(path)
+
+    assert "note_value_verification" not in result
+    assert result["notes"] == cross_staff_repaired_sidecar()["notes"]
+
+
+def test_note_value_verification_rules() -> None:
+    notes = {"homr-note-1", "homr-note-2"}
+    valid = {
+        "version": 1,
+        "notes": [
+            note_value_record(),
+            note_value_record("homr-note-2", printed=None, dotted=None, status="unknown",
+                              reason="stem_unclear"),
+        ],
+    }
+    assert note_value_verification_error(valid, notes) is None
+    cases = [
+        ("note value verification v1 is required", {"version": 2, "notes": []}),
+        ("note value verification has no note list", {"version": 1}),
+        (
+            "note value verification has an invalid note record",
+            {"version": 1, "notes": [note_value_record(status="maybe")]},
+        ),
+        (
+            "note value verification has an invalid note record",
+            {"version": 1, "notes": [note_value_record(dotted="yes")]},
+        ),
+        (
+            "note value verification must name each linked note at most once",
+            {"version": 1, "notes": [note_value_record("homr-rest-1")]},
+        ),
+        (
+            "note value verification must name each linked note at most once",
+            {"version": 1, "notes": [note_value_record(), note_value_record()]},
+        ),
+        (
+            "a compared note needs its printed value",
+            {"version": 1, "notes": [note_value_record(printed=None)]},
+        ),
+    ]
+    for expected, block in cases:
+        assert note_value_verification_error(block, notes) == expected
 
 
 def test_scale_visual_sidecar_moves_rest_geometry_to_the_display_raster() -> None:

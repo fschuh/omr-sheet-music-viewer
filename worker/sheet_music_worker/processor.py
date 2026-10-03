@@ -27,7 +27,7 @@ OMR_TARGET_WIDTH = 1920
 OMR_RESAMPLING_FILTER = Image.Resampling.HAMMING
 OMR_RESAMPLING = OMR_RESAMPLING_FILTER.name
 MANIFEST_SCHEMA_VERSION = 1
-VISUAL_SIDECAR_CACHE_REVISION = 47
+VISUAL_SIDECAR_CACHE_REVISION = 48
 
 VISUAL_STATUSES = {"canonical", "fallback", "diagnostic"}
 VISUAL_PROVENANCES = {
@@ -37,6 +37,8 @@ VISUAL_PROVENANCES = {
     "transformer_recovered",
 }
 REST_STATUSES = {"supported", "unsupported", "unverified"}
+NOTE_VALUE_STATUSES = {"agrees", "disagrees", "unknown"}
+PRINTED_NOTE_VALUES = {"whole", "half", "quarter", "eighth", "16th", "32nd"}
 ALIGNMENT_METHODS = {
     "structural",
     "stem_repair",
@@ -251,6 +253,14 @@ def read_visual_sidecar(path: Path) -> dict[str, Any]:
         if error is not None:
             worker_log(f"Ignoring the visual sidecar's rest verification: {error}")
             del sidecar["rest_verification"]
+    if "note_value_verification" in sidecar:
+        # Likewise optional: printed note values only mark notes for inspection.
+        error = note_value_verification_error(
+            sidecar["note_value_verification"], set(notes_by_id)
+        )
+        if error is not None:
+            worker_log(f"Ignoring the visual sidecar's note value verification: {error}")
+            del sidecar["note_value_verification"]
     return sidecar
 
 
@@ -296,6 +306,32 @@ def rest_verification_error(block: Any, note_ids: set[str]) -> str | None:
             rest["center"] is None or rest["unit_size"] is None or len(rest["staff_lines"]) != 5
         ):
             return "an unsupported rest needs a position, staff lines and a staff space"
+    return None
+
+
+def note_value_verification_error(block: Any, note_ids: set[str]) -> str | None:
+    """Why a sidecar's note value verification block is unusable, or None when valid."""
+    if not isinstance(block, dict) or block.get("version") != 1:
+        return "note value verification v1 is required"
+    readings = block.get("notes")
+    if not isinstance(readings, list):
+        return "note value verification has no note list"
+    seen: set[str] = set()
+    for reading in readings:
+        if (
+            not isinstance(reading, dict)
+            or not isinstance(reading.get("musicxml_id"), str)
+            or reading.get("status") not in NOTE_VALUE_STATUSES
+            or not isinstance(reading.get("reason"), str)
+            or not _is_optional(reading.get("printed"), lambda value: value in PRINTED_NOTE_VALUES)
+            or not _is_optional(reading.get("dotted"), lambda value: isinstance(value, bool))
+        ):
+            return "note value verification has an invalid note record"
+        if reading["musicxml_id"] not in note_ids or reading["musicxml_id"] in seen:
+            return "note value verification must name each linked note at most once"
+        seen.add(reading["musicxml_id"])
+        if reading["status"] != "unknown" and reading["printed"] is None:
+            return "a compared note needs its printed value"
     return None
 
 

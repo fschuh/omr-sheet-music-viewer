@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DocumentViewer } from "./DocumentViewer";
+import { printedValueSummary } from "./noteValues";
 import {
   addPredictedFingeringsToMusicXml,
   cachedFingeringsFromMusicXml,
@@ -281,6 +282,7 @@ export function App() {
   const [showRawStemContours, setShowRawStemContours] = useState(false);
   const [showDiagnosticVisualGroups, setShowDiagnosticVisualGroups] = useState(false);
   const [showUnsupportedRests, setShowUnsupportedRests] = useState(false);
+  const [showValueMismatches, setShowValueMismatches] = useState(false);
   const [workerInfo, setWorkerInfo] = useState<string | null>(null);
   const [workerLogs, setWorkerLogs] = useState<WorkerLogEntry[]>([]);
   const [workerLogPath, setWorkerLogPath] = useState<string | null>(null);
@@ -1954,6 +1956,7 @@ export function App() {
                 debugPanelEnabled && showDiagnosticVisualGroups
               }
               showUnsupportedRests={debugPanelEnabled && showUnsupportedRests}
+              showValueMismatches={debugPanelEnabled && showValueMismatches}
               playbackActive={playbackActive}
               playbackNoteSoundsEnabled={
                 playbackMode === "note-by-note"
@@ -2063,6 +2066,10 @@ export function App() {
                 <input type="checkbox" checked={showUnsupportedRests} onChange={(event) => setShowUnsupportedRests(event.target.checked)} />
                 Unsupported rests
               </label>
+              <label className="checkbox-row">
+                <input type="checkbox" checked={showValueMismatches} onChange={(event) => setShowValueMismatches(event.target.checked)} />
+                Note value mismatches
+              </label>
               <h2>Selection</h2>
               {selectedVisualGroup && selectedGroup ? (
                 <>
@@ -2071,6 +2078,8 @@ export function App() {
                     <dt>Visual group</dt><dd>{selectedVisualGroup.visual_group_id}</dd>
                     <dt>MusicXML ID</dt><dd>{selectedVisualGroup.musicxml_id ?? "None"}</dd>
                     <dt>Notes</dt><dd>{noteSummary(selectedNotes)}</dd>
+                    <dt>Printed value</dt>
+                    <dd>{selectedPage?.visualSidecar ? printedValueSummary(selectedPage.visualSidecar, selectedNotes) : "Not read"}</dd>
                     <dt>Staff position</dt><dd>{selectedVisualGroup.staff_position}</dd>
                     <dt>Visual status</dt><dd>{selectedVisualGroup.visual_status}</dd>
                     <dt>Provenance</dt><dd>{selectedVisualGroup.provenance}</dd>

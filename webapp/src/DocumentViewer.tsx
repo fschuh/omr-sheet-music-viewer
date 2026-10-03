@@ -1,6 +1,7 @@
 import { memo, useEffect, useId, useMemo, useRef, useState } from "react";
 import { layoutNoteLabels, selectedGroupIds } from "./noteLabels";
 import { playbackGroupIdsForPage } from "./playback";
+import { valueMismatchGroupIds } from "./noteValues";
 import { restGlyph } from "./restGlyphs";
 import type { PlaybackCommand, PlaybackMoment } from "./playback";
 import type { PlaybackMode, PlaybackStatus, RealtimePlayhead } from "./realtime";
@@ -28,6 +29,7 @@ const MAX_TEMPO_PERCENTAGE = 300;
 const MIN_VISIBLE_DOCUMENT_PX = 96;
 const DEFAULT_VIEWPORT_TRANSFORM: ViewportTransform = { scale: 1, x: 24, y: 24 };
 const NO_REALTIME_GROUPS: readonly string[] = [];
+const NO_GROUP_IDS: ReadonlySet<string> = new Set();
 
 function FitWidthIcon() {
   return (
@@ -88,6 +90,8 @@ interface DocumentViewerProps {
   showDiagnosticVisualGroups?: boolean;
   /** Draw ghosts of the rests that have no rest-shaped ink on the page. */
   showUnsupportedRests?: boolean;
+  /** Halo the notes whose printed value disagrees with the recognized one. */
+  showValueMismatches?: boolean;
   playbackActive: boolean;
   playbackNoteSoundsEnabled: boolean;
   playbackAvailable: boolean;
@@ -278,6 +282,7 @@ interface PageOverlayProps {
   showRawStemContours: boolean;
   showDiagnosticVisualGroups: boolean;
   showUnsupportedRests: boolean;
+  showValueMismatches: boolean;
   playbackActive: boolean;
   playbackGroupIds: readonly string[];
   realtimePlayhead?: RealtimePlayhead | null;
@@ -288,6 +293,8 @@ interface VisualGroupLayerProps {
   group: VisualGroup;
   selected: boolean;
   playback: boolean;
+  /** The page prints a different value than was recognized for this note. */
+  valueMismatch?: boolean;
   showOriginalNoteheadContours: boolean;
   showDetectedNoteheadContours: boolean;
   showRefinedNoteheadContours: boolean;
@@ -298,6 +305,7 @@ const VisualGroupLayer = memo(function VisualGroupLayer({
   group,
   selected,
   playback,
+  valueMismatch = false,
   showOriginalNoteheadContours,
   showDetectedNoteheadContours,
   showRefinedNoteheadContours,
@@ -310,8 +318,9 @@ const VisualGroupLayer = memo(function VisualGroupLayer({
       data-visual-group-id={group.visual_group_id}
       data-visual-status={group.visual_status}
       data-diagnostic-highlight={
-        group.visual_status === "diagnostic" ? "halo" : undefined
+        group.visual_status === "diagnostic" || valueMismatch ? "halo" : undefined
       }
+      data-value-mismatch={valueMismatch ? "true" : undefined}
       data-playback-selected={playback ? "true" : undefined}
     >
       {fittedNoteheads && !showOriginalNoteheadContours
@@ -372,11 +381,19 @@ const PageOverlay = memo(function PageOverlay({
   showRawStemContours,
   showDiagnosticVisualGroups,
   showUnsupportedRests,
+  showValueMismatches,
   playbackActive,
   playbackGroupIds,
   realtimePlayhead,
   realtimePlayheadEnabled = false,
 }: PageOverlayProps) {
+  const valueMismatchIds = useMemo(
+    () =>
+      showValueMismatches && page.visualSidecar
+        ? valueMismatchGroupIds(page.visualSidecar)
+        : NO_GROUP_IDS,
+    [page.visualSidecar, showValueMismatches],
+  );
   const ghostRests = useMemo(
     () =>
       showUnsupportedRests
@@ -447,6 +464,7 @@ const PageOverlay = memo(function PageOverlay({
           group={group}
           selected={!playbackActive && selectedIds.has(group.visual_group_id)}
           playback={false}
+          valueMismatch={valueMismatchIds.has(group.visual_group_id)}
           showOriginalNoteheadContours={showOriginalNoteheadContours}
           showDetectedNoteheadContours={showDetectedNoteheadContours}
           showRefinedNoteheadContours={showRefinedNoteheadContours}
@@ -461,6 +479,7 @@ const PageOverlay = memo(function PageOverlay({
       showRefinedNoteheadContours,
       visualSelectionKey,
       showDiagnosticVisualGroups,
+      valueMismatchIds,
     ]);
   const playbackGroupLayers = useMemo(() => {
     if (!playbackActive) return [];
@@ -590,6 +609,7 @@ export function DocumentViewer({
   showRawStemContours,
   showDiagnosticVisualGroups = false,
   showUnsupportedRests = false,
+  showValueMismatches = false,
   playbackActive,
   playbackNoteSoundsEnabled,
   playbackAvailable,
@@ -1407,6 +1427,7 @@ export function DocumentViewer({
                 showRawStemContours={showRawStemContours}
                 showDiagnosticVisualGroups={showDiagnosticVisualGroups}
                 showUnsupportedRests={showUnsupportedRests}
+                showValueMismatches={showValueMismatches}
               />
               {page.status !== "complete" ? (
                 <div className="page-placeholder">

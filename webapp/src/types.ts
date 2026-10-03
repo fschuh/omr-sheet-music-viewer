@@ -90,6 +90,24 @@ export interface RestVerification {
   rests: SidecarRest[];
 }
 
+export type NoteValueStatus = "agrees" | "disagrees" | "unknown";
+
+/** One linked MusicXML note's value as printed on the page, against the recognized one. */
+export interface SidecarNoteValue {
+  musicxml_id: string;
+  /** "whole", "half", "quarter", "eighth", "16th" or "32nd"; null when not read. */
+  printed: string | null;
+  /** Whether an augmentation dot is printed; null when not read. */
+  dotted: boolean | null;
+  status: NoteValueStatus;
+  reason: string;
+}
+
+export interface NoteValueVerification {
+  version: 1;
+  notes: SidecarNoteValue[];
+}
+
 export interface VisualSidecar {
   version: 3;
   source_image_size: [number, number];
@@ -97,6 +115,7 @@ export interface VisualSidecar {
   notes: VisualSidecarNote[];
   visual_groups: VisualGroup[];
   rest_verification?: RestVerification;
+  note_value_verification?: NoteValueVerification;
 }
 
 export function isLinkedVisualGroup(group: VisualGroup): boolean {
