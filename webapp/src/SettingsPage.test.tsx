@@ -202,7 +202,7 @@ test("the repairs card shows the shared-notehead timing toggle whether or not de
     const on = renderSettings({ debugPanelEnabled });
     assert.match(on, /<h3 id="repairs-title">Repairs<\/h3>/);
     assert.match(on, /aria-label="Note timing at shared noteheads" checked=""/);
-    assert.match(on, /A change applies to scores opened afterwards\./);
+    assert.match(on, /After a change, a score is recognized again the next time\s+it is opened\./);
     const off = renderSettings({ debugPanelEnabled, sharedNoteheadTimingRepair: false });
     assert.match(off, /aria-label="Note timing at shared noteheads"/);
     assert.doesNotMatch(off, /aria-label="Note timing at shared noteheads" checked=""/);

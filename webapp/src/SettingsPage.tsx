@@ -346,7 +346,8 @@ export function SettingsPage({
             <h3 id="repairs-title">Repairs</h3>
             <p>
               Corrections made while a score is recognized, where the page shows what the
-              recognizer missed. A change applies to scores opened afterwards.
+              recognizer missed. After a change, a score is recognized again the next time
+              it is opened.
             </p>
           </div>
         </header>

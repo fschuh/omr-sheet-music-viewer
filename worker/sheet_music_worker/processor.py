@@ -514,9 +514,7 @@ class PdfProcessor:
             homr_version=package_version("homr"),
             rasterizer_version=package_version("pypdfium2"),
         )
-        cache_directory = (
-            cache_root / "pdf-cache" / repairs.cache_directory_name(identity.pdf_sha256)
-        )
+        cache_directory = cache_root / "pdf-cache" / identity.pdf_sha256
         pages_directory = cache_directory / "pages"
         pages_directory.mkdir(parents=True, exist_ok=True)
         manifest_path = cache_directory / "manifest.json"

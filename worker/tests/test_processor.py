@@ -721,14 +721,14 @@ def test_repair_settings_are_read_from_the_request() -> None:
             RepairSettings.from_params(invalid)
 
 
-def test_pdf_processing_keeps_a_cache_for_each_repair_setting(tmp_path: Path) -> None:
+def test_pdf_processing_recognizes_pages_again_when_the_repairs_change(tmp_path: Path) -> None:
     pdf_path = tmp_path / "score.pdf"
     Image.new("RGB", (120, 80), "white").save(pdf_path, "PDF", resolution=300)
     engine = FakeHomrEngine()
     cache_root = tmp_path / "cache"
     off = RepairSettings(shared_notehead_timing=False)
 
-    def process(repairs: RepairSettings) -> list[dict[str, object]]:
+    def process(repairs: RepairSettings) -> list[bool]:
         events: list[dict[str, object]] = []
         PdfProcessor(events.append, engine).process_pdf(  # type: ignore[arg-type]
             job_id="job",
@@ -737,44 +737,23 @@ def test_pdf_processing_keeps_a_cache_for_each_repair_setting(tmp_path: Path) ->
             cancel=threading.Event(),
             repairs=repairs,
         )
-        return events
+        return [bool(e["cached"]) for e in events if e.get("type") == "page_completed"]
 
-    process(RepairSettings())
-    process(off)
-    assert engine.repairs == [RepairSettings(), off]
-    sha = sha256_file(pdf_path)
-    for name, expected in ((sha, True), (f"{sha}-without-shared-notehead-timing", False)):
-        manifest = json.loads(
-            (cache_root / "pdf-cache" / name / "manifest.json").read_text(encoding="utf-8")
-        )
-        assert manifest["repairs"] == {"sharedNoteheadTiming": expected}
+    def recorded_repairs() -> object:
+        manifest_path = cache_root / "pdf-cache" / sha256_file(pdf_path) / "manifest.json"
+        return json.loads(manifest_path.read_text(encoding="utf-8"))["repairs"]
 
-    # Switching back reuses the pages recognized with the repairs on.
-    events = process(RepairSettings())
-    assert len(engine.calls) == 2
-    completed = [event for event in events if event.get("type") == "page_completed"]
-    assert [event["cached"] for event in completed] == [True]
-
-
-def test_pdf_processing_does_not_reuse_pages_recognized_with_other_repairs(
-    tmp_path: Path,
-) -> None:
-    pdf_path = tmp_path / "score.pdf"
-    Image.new("RGB", (120, 80), "white").save(pdf_path, "PDF", resolution=300)
-    engine = FakeHomrEngine()
-    cache_root = tmp_path / "cache"
-    PdfProcessor(lambda _event: None, engine).process_pdf(  # type: ignore[arg-type]
-        job_id="first", pdf_path=pdf_path, cache_root=cache_root, cancel=threading.Event()
-    )
-    manifest_path = cache_root / "pdf-cache" / sha256_file(pdf_path) / "manifest.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    manifest["repairs"] = {"sharedNoteheadTiming": False}
-    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
-
-    PdfProcessor(lambda _event: None, engine).process_pdf(  # type: ignore[arg-type]
-        job_id="second", pdf_path=pdf_path, cache_root=cache_root, cancel=threading.Event()
-    )
-    assert len(engine.calls) == 2
+    assert process(RepairSettings()) == [False]
+    assert recorded_repairs() == {"sharedNoteheadTiming": True}
+    assert process(off) == [False]
+    assert recorded_repairs() == {"sharedNoteheadTiming": False}
+    assert process(off) == [True]
+    assert process(RepairSettings()) == [False]
+    assert engine.repairs == [RepairSettings(), off, RepairSettings()]
+    # One cache per PDF, however many repair settings it has been opened with.
+    assert [path.name for path in (cache_root / "pdf-cache").iterdir()] == [
+        sha256_file(pdf_path)
+    ]
 
 
 def test_pdf_processing_invalidates_an_older_sidecar_cache_revision(tmp_path: Path) -> None:

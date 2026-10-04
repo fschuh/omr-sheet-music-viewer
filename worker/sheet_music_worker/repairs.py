@@ -28,11 +28,6 @@ class RepairSettings:
         return cls(shared_notehead_timing=shared_notehead_timing)
 
     def to_manifest(self) -> dict[str, bool]:
+        """How the cache records the repairs its pages were recognized with: pages
+        recognized with other repairs are recognized again, in the same cache."""
         return {"sharedNoteheadTiming": self.shared_notehead_timing}
-
-    def cache_directory_name(self, pdf_sha256: str) -> str:
-        """Each combination of repairs keeps its own cache, so switching one off and on
-        again reuses the pages already recognized either way."""
-        if self.shared_notehead_timing:
-            return pdf_sha256
-        return f"{pdf_sha256}-without-shared-notehead-timing"
