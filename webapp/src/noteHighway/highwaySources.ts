@@ -1,4 +1,5 @@
 import { useCallback, useLayoutEffect, useRef } from "react";
+import type { PracticeHand } from "../playback";
 import { scoreOffsetToSeconds, type PerformanceRoute } from "../realtime";
 import {
   HIGHWAY_LOOKAHEAD_SECONDS,
@@ -25,20 +26,22 @@ const STEP_GLIDE_MS = 160;
 /**
  * Realtime: score seconds on the playback clock. The window grows with the tempo
  * multiplier so notes take the same real time to reach the keys at any tempo.
+ * While one hand is practised, the other hand's notes are ghosts.
  */
 export function useRealtimeHighwaySource(
   getRoute: () => PerformanceRoute | null,
   getOffset: () => number,
   tempoMultiplier: number,
+  hand: PracticeHand,
 ): HighwayFrameSource {
-  const multiplier = useRef(tempoMultiplier);
-  multiplier.current = tempoMultiplier;
+  const latest = useRef({ tempoMultiplier, hand });
+  latest.current = { tempoMultiplier, hand };
   return useCallback(() => {
-    const window = HIGHWAY_LOOKAHEAD_SECONDS * multiplier.current;
+    const window = HIGHWAY_LOOKAHEAD_SECONDS * latest.current.tempoMultiplier;
     const route = getRoute();
     if (!route) return { track: null, now: 0, window };
     return {
-      track: highwayTrackForRoute(route),
+      track: highwayTrackForRoute(route, latest.current.hand),
       now: scoreOffsetToSeconds(route, getOffset(), 1),
       window,
     };
@@ -50,18 +53,26 @@ function easeOutCubic(progress: number): number {
 }
 
 /**
- * Note-by-note: one step per moment, positioned at the current moment and gliding
- * to the next one whenever playback advances. The track is built on first use
- * for each timeline, so a hidden highway costs nothing.
+ * Note-by-note: one step per practised moment, positioned at the current moment
+ * and gliding to the next one whenever playback advances. `moments` is the full
+ * timeline, so moments the practised hand skips still show the other hand's
+ * ghosts between steps; `currentIndex` indexes the practised hand's timeline.
+ * The track is built on first use for each timeline and hand, so a hidden
+ * highway costs nothing.
  */
 export function useNoteByNoteHighwaySource(
   moments: readonly HighwayStepMoment[],
   currentIndex: number,
+  hand: PracticeHand,
 ): HighwayFrameSource {
-  const trackCache = useRef<{ moments: readonly HighwayStepMoment[]; track: HighwayTrack } | null>(null);
-  const momentsRef = useRef(moments);
-  momentsRef.current = moments;
-  const glide = useRef({ from: currentIndex, to: currentIndex, startedAt: 0 });
+  const trackCache = useRef<{
+    moments: readonly HighwayStepMoment[];
+    hand: PracticeHand;
+    track: HighwayTrack;
+  } | null>(null);
+  const latest = useRef({ moments, hand });
+  latest.current = { moments, hand };
+  const glide = useRef({ from: currentIndex, to: currentIndex, startedAt: 0, hand });
 
   const positionAt = useCallback((time: number) => {
     const { from, to, startedAt } = glide.current;
@@ -72,18 +83,25 @@ export function useNoteByNoteHighwaySource(
   useLayoutEffect(() => {
     const time = performance.now();
     const from = positionAt(time);
-    // Jumps beyond the visible span (bar, page, seek) would only smear: cut instead.
-    const far = Math.abs(currentIndex - from) > HIGHWAY_LOOKAHEAD_STEPS;
-    glide.current = { from: far ? currentIndex : from, to: currentIndex, startedAt: time };
-  }, [currentIndex, positionAt]);
+    // Jumps beyond the visible span (bar, page, seek) would only smear, and a
+    // hand change renumbers the steps: cut instead of gliding.
+    const cut = hand !== glide.current.hand ||
+      Math.abs(currentIndex - from) > HIGHWAY_LOOKAHEAD_STEPS;
+    glide.current = { from: cut ? currentIndex : from, to: currentIndex, startedAt: time, hand };
+  }, [currentIndex, hand, positionAt]);
 
   return useCallback(() => {
-    const current = momentsRef.current;
-    if (trackCache.current?.moments !== current) {
-      trackCache.current = { moments: current, track: highwayTrackForSteps(current) };
+    const { moments: currentMoments, hand: currentHand } = latest.current;
+    const cached = trackCache.current;
+    if (cached?.moments !== currentMoments || cached.hand !== currentHand) {
+      trackCache.current = {
+        moments: currentMoments,
+        hand: currentHand,
+        track: highwayTrackForSteps(currentMoments, currentHand),
+      };
     }
     return {
-      track: trackCache.current.track,
+      track: trackCache.current!.track,
       now: positionAt(performance.now()),
       window: HIGHWAY_LOOKAHEAD_STEPS,
     };

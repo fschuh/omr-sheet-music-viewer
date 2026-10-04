@@ -8,6 +8,9 @@ import {
   playbackGroupIdsForPage,
   runPlaybackCommand,
   seekPlaybackToGroup,
+  seekPracticePlaybackToGroup,
+  snapMomentToTimeline,
+  timelineForPracticeHand,
   type PlaybackCommand,
   type PlaybackState,
 } from "./playback";
@@ -210,7 +213,7 @@ test("note-by-note playback ignores grace notes sharing the main note's onset", 
   assert.equal(timeline.length, 1);
   assert.deepEqual(timeline[0].visualGroupIds, ["main"]);
   assert.deepEqual(timeline[0].pitches, ["C5"]);
-  assert.deepEqual(timeline[0].keyboardNotes, [{ pitch: "C5" }]);
+  assert.deepEqual(timeline[0].keyboardNotes, [{ pitch: "C5", left: false }]);
 });
 
 test("note-by-note playback skips inferred cross-voice chord tie continuations", () => {
@@ -285,7 +288,80 @@ test("note-by-note playback displays but does not replay a tied tone beside a fr
   assert.equal(timeline.length, 2);
   assert.deepEqual(timeline[1].visualGroupIds, ["stop-d", "stop-g"]);
   assert.deepEqual(timeline[1].pitches, ["D5"]);
-  assert.deepEqual(timeline[1].keyboardNotes, [{ pitch: "G5" }, { pitch: "D5" }]);
+  assert.deepEqual(timeline[1].keyboardNotes, [
+    { pitch: "G5", left: false },
+    { pitch: "D5", left: false },
+  ]);
+});
+
+function twoHandTimeline() {
+  // Moment 1: both hands; moment 2: right hand only; moment 3: left hand only.
+  const rh1 = group("rh1", 0, 0, 100, 230);
+  const lh1 = group("lh1", 0, 1, 100, 420);
+  const rh2 = group("rh2", 0, 0, 200, 230);
+  const lh3 = group("lh3", 0, 1, 300, 420);
+  rh1.moment_id = "m1";
+  lh1.moment_id = "m1";
+  rh2.moment_id = "m2";
+  lh3.moment_id = "m3";
+  const scorePage = page(0, [rh1, lh1, rh2, lh3], [1, 1, 1, 1]);
+  ["C5", "C3", "D5", "E3"].forEach((pitch, index) => {
+    scorePage.visualSidecar!.notes[index].pitch = pitch;
+  });
+  scorePage.musicXml = `<?xml version="1.0"?>
+    <score-partwise version="4.0">
+      <part-list><score-part id="P1"><part-name>Piano</part-name></score-part></part-list>
+      <part id="P1"><measure number="1">
+        <attributes><divisions>1</divisions><staves>2</staves>
+          <clef number="1"><sign>G</sign></clef><clef number="2"><sign>F</sign></clef></attributes>
+        <note id="note-rh1"><pitch><step>C</step><octave>5</octave></pitch><duration>1</duration><voice>1</voice><staff>1</staff></note>
+        <note id="note-rh2"><pitch><step>D</step><octave>5</octave></pitch><duration>1</duration><voice>1</voice><staff>1</staff></note>
+        <backup><duration>2</duration></backup>
+        <note id="note-lh1"><pitch><step>C</step><octave>3</octave></pitch><duration>1</duration><voice>2</voice><staff>2</staff></note>
+        <forward><duration>1</duration></forward>
+        <note id="note-lh3"><pitch><step>E</step><octave>3</octave></pitch><duration>1</duration><voice>2</voice><staff>2</staff></note>
+      </measure></part>
+    </score-partwise>`;
+  return buildPlaybackTimeline([scorePage]);
+}
+
+test("narrows note-by-note to one hand and skips the moments it does not play", () => {
+  const full = twoHandTimeline();
+  assert.deepEqual(full.map((moment) => moment.visualGroupIds), [["lh1", "rh1"], ["rh2"], ["lh3"]]);
+  assert.equal(timelineForPracticeHand(full, "both"), full);
+
+  const left = timelineForPracticeHand(full, "left");
+  assert.deepEqual(left.map((moment) => moment.id), [full[0].id, full[2].id]);
+  assert.deepEqual(left[0].visualGroupIds, ["lh1"]);
+  assert.deepEqual(left[0].pitches, ["C3"]);
+  assert.deepEqual(left[0].keyboardNotes, [{ pitch: "C3", left: true }]);
+
+  const right = timelineForPracticeHand(full, "right");
+  assert.deepEqual(right.map((moment) => moment.id), [full[0].id, full[1].id]);
+  assert.deepEqual(right[0].pitches, ["C5"]);
+
+  const atFirst = runPlaybackCommand(left, initialPlaybackState, "togglePlayback");
+  assert.equal(run(left, atFirst, "forwardNote").currentMomentId, full[2].id);
+});
+
+test("lands on the practised hand's next moment from a skipped one", () => {
+  const full = twoHandTimeline();
+  const left = timelineForPracticeHand(full, "left");
+  const right = timelineForPracticeHand(full, "right");
+  assert.equal(snapMomentToTimeline(full, left, full[1].id), full[2].id);
+  assert.equal(snapMomentToTimeline(full, right, full[2].id), full[1].id, "or the last one before");
+
+  const active = { ...initialPlaybackState, active: true, currentMomentId: full[0].id };
+  const seeked = seekPracticePlaybackToGroup(full, left, active, { pageIndex: 0, visualGroupId: "rh2" });
+  assert.equal(seeked.currentMomentId, full[2].id);
+  const started = runPlaybackCommand(
+    left,
+    initialPlaybackState,
+    "togglePlayback",
+    { pageIndex: 0, visualGroupId: "rh2" },
+    full,
+  );
+  assert.equal(started.currentMomentId, full[2].id);
 });
 
 test("note-by-note playback reuses document tie inference across pages", () => {

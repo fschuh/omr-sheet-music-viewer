@@ -19,13 +19,14 @@ const REPEAT_GAP = 0.12;
 
 const WHITE_NOTE_COLOR = new Float32Array([0.25, 0.84, 0.72]);
 const BLACK_NOTE_COLOR = new Float32Array([0.56, 0.42, 1.0]);
+const GHOST_NOTE_COLOR = new Float32Array([0.66, 0.69, 0.74]);
 
 const NOTE_VERTEX_SHADER = `#version 300 es
 layout(location = 0) in vec3 a_corner;
 layout(location = 1) in vec3 a_normal;
 layout(location = 2) in vec2 a_axes;
 layout(location = 3) in vec4 a_lane;
-layout(location = 4) in vec2 a_time;
+layout(location = 4) in vec3 a_time; // start, end, ghost
 
 uniform mat4 u_viewProjection;
 uniform float u_now;
@@ -40,6 +41,7 @@ out vec2 v_faceSize;
 out float v_far;
 out float v_black;
 out float v_sounding;
+out float v_ghost;
 
 void main() {
   float headZ = -(a_time.x - u_now) * u_unitsPerTime;
@@ -60,6 +62,7 @@ void main() {
   v_far = clamp(-world.z / u_length, 0.0, 1.0);
   v_black = a_lane.w;
   v_sounding = headZ >= 0.0 ? 1.0 : 0.0;
+  v_ghost = a_time.z;
 }`;
 
 const NOTE_FRAGMENT_SHADER = `#version 300 es
@@ -71,22 +74,26 @@ in vec2 v_faceSize;
 in float v_far;
 in float v_black;
 in float v_sounding;
+in float v_ghost;
 
 uniform vec3 u_whiteColor;
 uniform vec3 u_blackColor;
+uniform vec3 u_ghostColor;
 
 out vec4 outColor;
 
 void main() {
-  vec3 base = mix(u_whiteColor, u_blackColor, v_black);
+  // The other hand's notes keep their shape but lose their colour and most of
+  // their opacity, so they show where that hand plays without competing.
+  vec3 base = mix(mix(u_whiteColor, u_blackColor, v_black), u_ghostColor, v_ghost);
   vec3 light = normalize(vec3(-0.35, 0.85, 0.45));
   float diffuse = max(dot(normalize(v_normal), light), 0.0);
   vec3 color = base * (0.38 + 0.72 * diffuse);
   vec2 edgeDistance = min(v_uv, 1.0 - v_uv) * v_faceSize;
   float edge = 1.0 - smoothstep(0.025, 0.075, min(edgeDistance.x, edgeDistance.y));
-  color = mix(color, vec3(1.0), edge * 0.5);
-  color = mix(color, min(base * 1.6 + 0.25, vec3(1.0)), v_sounding * 0.55);
-  float alpha = 1.0 - smoothstep(0.6, 1.0, v_far);
+  color = mix(color, vec3(1.0), edge * mix(0.5, 0.2, v_ghost));
+  color = mix(color, min(base * 1.6 + 0.25, vec3(1.0)), v_sounding * 0.55 * (1.0 - v_ghost));
+  float alpha = (1.0 - smoothstep(0.6, 1.0, v_far)) * mix(1.0, 0.3, v_ghost);
   outColor = vec4(color * alpha, alpha);
 }`;
 
@@ -285,7 +292,7 @@ interface GpuResources {
   lineProgram: WebGLProgram;
   noteUniforms: Record<
     "u_viewProjection" | "u_now" | "u_unitsPerTime" | "u_length" | "u_minLength" | "u_gap" |
-    "u_whiteColor" | "u_blackColor",
+    "u_whiteColor" | "u_blackColor" | "u_ghostColor",
     WebGLUniformLocation | null
   >;
   floorUniforms: Record<
@@ -414,7 +421,7 @@ export class NoteHighwayRenderer {
       lineProgram,
       noteUniforms: uniforms(gl, noteProgram, [
         "u_viewProjection", "u_now", "u_unitsPerTime", "u_length", "u_minLength", "u_gap",
-        "u_whiteColor", "u_blackColor",
+        "u_whiteColor", "u_blackColor", "u_ghostColor",
       ] as const),
       floorUniforms: uniforms(gl, floorProgram, [
         "u_viewProjection", "u_halfWidth", "u_length", "u_blackHalfWidth", "u_glow",
@@ -543,12 +550,13 @@ export class NoteHighwayRenderer {
       gl.uniform1f(note.u_gap, REPEAT_GAP);
       gl.uniform3fv(note.u_whiteColor, WHITE_NOTE_COLOR);
       gl.uniform3fv(note.u_blackColor, BLACK_NOTE_COLOR);
+      gl.uniform3fv(note.u_ghostColor, GHOST_NOTE_COLOR);
       gl.bindVertexArray(resources.noteVao);
       gl.bindBuffer(gl.ARRAY_BUFFER, resources.noteInstanceBuffer);
       const stride = NOTE_INSTANCE_FLOATS * 4;
       const offset = range.start * stride;
       gl.vertexAttribPointer(3, 4, gl.FLOAT, false, stride, offset);
-      gl.vertexAttribPointer(4, 2, gl.FLOAT, false, stride, offset + 4 * 4);
+      gl.vertexAttribPointer(4, 3, gl.FLOAT, false, stride, offset + 4 * 4);
       gl.drawElementsInstanced(
         gl.TRIANGLES,
         resources.noteIndexCount,
@@ -573,7 +581,7 @@ export class NoteHighwayRenderer {
     if (!notes) return;
     const sounding = upperBound(notes.starts, notes.count, now);
     for (let index = rangeStart; index < sounding; index += 1) {
-      if (notes.ends[index] > now) this.glow[notes.midis[index] - 21] = 1;
+      if (notes.ends[index] > now && !notes.ghosts[index]) this.glow[notes.midis[index] - 21] = 1;
     }
   }
 

@@ -11,12 +11,16 @@ import {
   currentPlaybackMoment,
   effectivePlaybackNoteSounds,
   initialPlaybackState,
+  noteInPracticeHand,
   playbackCommandNames,
   playbackGroupIdsByPageForAnchors,
   runPlaybackCommand as applyPlaybackCommand,
-  seekPlaybackToGroup,
+  seekPracticePlaybackToGroup,
+  snapMomentToTimeline,
+  timelineForPracticeHand,
   type PlaybackCommand,
   type PlaybackState,
+  type PracticeHand,
 } from "./playback";
 import { pianoSampler, pitchToMidi } from "./piano";
 import { LISTEN_ENGINE } from "./listenEngine";
@@ -303,13 +307,23 @@ export function App() {
       };
     }
   }, [document?.documentMusicXml]);
-  const playbackTimeline = useMemo(
+  const fullPlaybackTimeline = useMemo(
     () => buildPlaybackTimeline(
       document?.pages ?? [],
       document?.predictedFingerings,
       realtimeModel.score,
     ),
     [document?.pages, document?.predictedFingerings, realtimeModel.score],
+  );
+  // Practice-hand settings are per session and start from ordinary playback.
+  const [practiceHand, setPracticeHand] = useState<PracticeHand>("both");
+  const [practicedHandSoundEnabled, setPracticedHandSoundEnabled] = useState(true);
+  const [otherHandSoundEnabled, setOtherHandSoundEnabled] = useState(false);
+  // Note-by-note steps through, highlights, sounds and listens for this timeline;
+  // it is the full one unless a single hand is being practised.
+  const playbackTimeline = useMemo(
+    () => timelineForPracticeHand(fullPlaybackTimeline, practiceHand),
+    [fullPlaybackTimeline, practiceHand],
   );
   const realtimeVisualMap = useMemo(
     () => buildRealtimeVisualMap(document?.pages ?? []),
@@ -361,17 +375,19 @@ export function App() {
   }, []);
   const realtimeDisplayNotes = useMemo(() => {
     if (!realtimeFrame) return [];
-    return realtimeFrame.activeNotes.map((note) => {
-      const fingeringId = note.fingeringMusicXmlId === undefined
-        ? note.musicXmlId
-        : note.fingeringMusicXmlId;
-      const predicted = fingeringId ? document?.predictedFingerings?.[fingeringId] : undefined;
-      return { pitch: note.pitch, ...predicted };
-    });
-  }, [document?.predictedFingerings, realtimeFrame]);
+    return realtimeFrame.activeNotes
+      .filter((note) => noteInPracticeHand(note.left, practiceHand))
+      .map((note) => {
+        const fingeringId = note.fingeringMusicXmlId === undefined
+          ? note.musicXmlId
+          : note.fingeringMusicXmlId;
+        const predicted = fingeringId ? document?.predictedFingerings?.[fingeringId] : undefined;
+        return { pitch: note.pitch, ...predicted };
+      });
+  }, [document?.predictedFingerings, practiceHand, realtimeFrame]);
   const realtimeGroupIdsByPage = useMemo(() => {
     const anchors = (realtimeFrame?.activeNotes ?? []).flatMap((note) =>
-      note.visual
+      note.visual && noteInPracticeHand(note.left, practiceHand)
         ? [{
             pageIndex: note.visual.pageIndex,
             visualGroupId: note.visual.visualGroupId,
@@ -379,7 +395,7 @@ export function App() {
         : [],
     );
     return playbackGroupIdsByPageForAnchors(playbackTimeline, anchors);
-  }, [playbackTimeline, realtimeFrame]);
+  }, [playbackTimeline, practiceHand, realtimeFrame]);
   const realtimeMoment = useMemo(() => {
     if (!realtimeFrame || !realtimeRouteRef.current) return null;
     const route = realtimeRouteRef.current;
@@ -458,16 +474,51 @@ export function App() {
     getRealtimeRoute,
     getRealtimeOffset,
     tempoMultiplier,
+    practiceHand,
   );
   const noteByNoteHighwayFrame = useNoteByNoteHighwaySource(
-    playbackTimeline,
+    fullPlaybackTimeline,
     notePlaybackMoment ? Math.max(0, playbackTimeline.indexOf(notePlaybackMoment)) : 0,
+    practiceHand,
   );
+  // Both hands sound in ordinary playback. Practising one hand, each hand follows
+  // its own switch; accompaniment by the other hand exists in realtime only,
+  // since note-by-note skips most of that hand's moments.
+  const practicedHandAudible = practiceHand === "both" || practicedHandSoundEnabled;
+  const otherHandAudible = practiceHand === "both" ||
+    (playbackMode === "realtime" && otherHandSoundEnabled);
+  useEffect(() => {
+    realtimeControllerRef.current?.setAudibleHands(practiceHand === "both"
+      ? { left: true, right: true }
+      : practiceHand === "left"
+        ? { left: practicedHandAudible, right: otherHandAudible }
+        : { left: otherHandAudible, right: practicedHandAudible });
+  }, [otherHandAudible, practiceHand, practicedHandAudible]);
+  const practicedHandAudibleRef = useRef(practicedHandAudible);
+  practicedHandAudibleRef.current = practicedHandAudible;
   const toggleNoteHighway = useCallback(() => {
     const next = !noteHighwayEnabled;
     saveNoteHighwayEnabled(next);
     setNoteHighwayEnabled(next);
   }, [noteHighwayEnabled]);
+  const handlePracticeHandChange = useCallback((hand: PracticeHand) => {
+    if (hand === practiceHand) return;
+    setPracticeHand(hand);
+    // Keep note-by-note on a moment the new hand plays, rather than letting the
+    // playhead fall back to the start. The hand and the moment land in the same
+    // render, and listen mode retargets from it like any other move.
+    const state = playbackStateRef.current;
+    if (!state.active || !state.currentMomentId) return;
+    const currentMomentId = snapMomentToTimeline(
+      fullPlaybackTimeline,
+      timelineForPracticeHand(fullPlaybackTimeline, hand),
+      state.currentMomentId,
+    );
+    if (currentMomentId === state.currentMomentId) return;
+    const next = { ...state, currentMomentId };
+    playbackStateRef.current = next;
+    setPlaybackState(next);
+  }, [fullPlaybackTimeline, practiceHand]);
   const recognizerRef = useRef<NoteRecognizer | null>(null);
   // Debug-surface only, and deliberately not persisted: a reload, and switching
   // the debug panel off, both return listen mode to the production default.
@@ -523,7 +574,8 @@ export function App() {
       playbackStateRef.current = next;
       setPlaybackState(next);
       if (next.currentMomentId !== previousMomentId) retargetListenMode(next);
-      if (!playNormalSound || !effectivePlaybackNoteSounds(next)) {
+      // A practised-hand moment holds only that hand's notes, so its own switch decides.
+      if (!playNormalSound || !effectivePlaybackNoteSounds(next) || !practicedHandAudibleRef.current) {
         pianoSampler.stop();
         setPlaybackAudioError(null);
         return;
@@ -696,11 +748,18 @@ export function App() {
         return;
       }
       commitPlaybackState(
-        applyPlaybackCommand(playbackTimeline, playbackStateRef.current, command, selectedGroup),
+        applyPlaybackCommand(
+          playbackTimeline,
+          playbackStateRef.current,
+          command,
+          selectedGroup,
+          fullPlaybackTimeline,
+        ),
       );
     },
     [
       commitPlaybackState,
+      fullPlaybackTimeline,
       playbackMode,
       playbackTimeline,
       realtimeFrame?.offset,
@@ -721,10 +780,22 @@ export function App() {
         seekRealtime(group, realtimeStatus);
         return;
       }
-      const next = seekPlaybackToGroup(playbackTimeline, playbackStateRef.current, group);
+      const next = seekPracticePlaybackToGroup(
+        fullPlaybackTimeline,
+        playbackTimeline,
+        playbackStateRef.current,
+        group,
+      );
       if (next !== playbackStateRef.current) commitPlaybackState(next);
     },
-    [commitPlaybackState, playbackMode, playbackTimeline, realtimeStatus, seekRealtime],
+    [
+      commitPlaybackState,
+      fullPlaybackTimeline,
+      playbackMode,
+      playbackTimeline,
+      realtimeStatus,
+      seekRealtime,
+    ],
   );
   const handlePlaybackModeChange = useCallback((mode: PlaybackMode) => {
     if (mode === playbackMode || (mode === "realtime" && !realtimeModel.score)) return;
@@ -758,10 +829,17 @@ export function App() {
       : selectedGroup;
     if (mode === "realtime") startRealtime(group);
     else commitPlaybackState(
-      applyPlaybackCommand(playbackTimeline, playbackStateRef.current, "togglePlayback", group),
+      applyPlaybackCommand(
+        playbackTimeline,
+        playbackStateRef.current,
+        "togglePlayback",
+        group,
+        fullPlaybackTimeline,
+      ),
     );
   }, [
     commitPlaybackState,
+    fullPlaybackTimeline,
     notePlaybackMoment,
     playbackActive,
     playbackMode,
@@ -1984,6 +2062,12 @@ export function App() {
               realtimeGroupIdsByPage={playbackMode === "realtime" ? realtimeGroupIdsByPage : undefined}
               tempoBpm={realtimeFrame?.bpm ?? realtimeOpeningBpm * tempoMultiplier}
               tempoMultiplier={tempoMultiplier}
+              practiceHand={practiceHand}
+              practicedHandSoundEnabled={practicedHandSoundEnabled}
+              otherHandSoundEnabled={otherHandSoundEnabled}
+              onPracticeHandChange={handlePracticeHandChange}
+              onPracticedHandSoundChange={setPracticedHandSoundEnabled}
+              onOtherHandSoundChange={setOtherHandSoundEnabled}
               noteHighwayEnabled={noteHighwayEnabled}
               noteHighwayVisible={noteHighwayVisible}
               onNoteHighwayToggle={toggleNoteHighway}

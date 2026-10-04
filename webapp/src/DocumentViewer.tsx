@@ -1,7 +1,7 @@
 import { memo, useEffect, useId, useMemo, useRef, useState } from "react";
 import { layoutNoteLabels, selectedGroupIds } from "./noteLabels";
 import { playbackGroupIdsForPage } from "./playback";
-import type { PlaybackCommand, PlaybackMoment } from "./playback";
+import type { PlaybackCommand, PlaybackMoment, PracticeHand } from "./playback";
 import type { PlaybackMode, PlaybackStatus, RealtimePlayhead } from "./realtime";
 import type { ListenModeFeedback } from "./noteRecognizer";
 import { NOTE_HIGHWAY_TOP_FRACTION } from "./noteHighway/highwayModel";
@@ -27,6 +27,16 @@ const MAX_TEMPO_PERCENTAGE = 300;
 const MIN_VISIBLE_DOCUMENT_PX = 96;
 const DEFAULT_VIEWPORT_TRANSFORM: ViewportTransform = { scale: 1, x: 24, y: 24 };
 const NO_REALTIME_GROUPS: readonly string[] = [];
+/** In keyboard order, left to right. */
+const PRACTICE_HAND_OPTIONS: ReadonlyArray<{
+  hand: PracticeHand;
+  label: string;
+  description: string;
+}> = [
+  { hand: "left", label: "LH", description: "Practice the left hand" },
+  { hand: "both", label: "Both", description: "Play both hands" },
+  { hand: "right", label: "RH", description: "Practice the right hand" },
+];
 
 function FitWidthIcon() {
   return (
@@ -98,6 +108,11 @@ interface DocumentViewerProps {
   realtimeGroupIdsByPage?: Readonly<Record<number, readonly string[]>>;
   tempoBpm?: number;
   tempoMultiplier?: number;
+  /** The hand being practised; the hand controls are hidden without onPracticeHandChange. */
+  practiceHand?: PracticeHand;
+  /** Sound switches for the practised and the other hand, used while one hand is practised. */
+  practicedHandSoundEnabled?: boolean;
+  otherHandSoundEnabled?: boolean;
   /** The 3D note highway preference, shared by both playback modes. */
   noteHighwayEnabled?: boolean;
   /** The highway is on screen, so playback scrolling keeps the staff above it. */
@@ -109,6 +124,9 @@ interface DocumentViewerProps {
   onPlaybackModeChange?: (mode: PlaybackMode) => void;
   onTempoMultiplierChange?: (multiplier: number) => void;
   onNoteHighwayToggle?: () => void;
+  onPracticeHandChange?: (hand: PracticeHand) => void;
+  onPracticedHandSoundChange?: (enabled: boolean) => void;
+  onOtherHandSoundChange?: (enabled: boolean) => void;
   onSelectGroup: (group: VisualGroupRef | null) => void;
   onRetryPage: (pageIndex: number) => void;
 }
@@ -569,6 +587,9 @@ export function DocumentViewer({
   realtimeGroupIdsByPage,
   tempoBpm = 120,
   tempoMultiplier = 1,
+  practiceHand = "both",
+  practicedHandSoundEnabled = true,
+  otherHandSoundEnabled = false,
   noteHighwayEnabled = false,
   noteHighwayVisible = false,
   listenFeedback,
@@ -578,6 +599,9 @@ export function DocumentViewer({
   onPlaybackModeChange,
   onTempoMultiplierChange,
   onNoteHighwayToggle,
+  onPracticeHandChange,
+  onPracticedHandSoundChange,
+  onOtherHandSoundChange,
   onSelectGroup,
   onRetryPage,
 }: DocumentViewerProps) {
@@ -602,6 +626,7 @@ export function DocumentViewer({
   );
   const [isPointerPanning, setIsPointerPanning] = useState(false);
   const [tempoPopoverOpen, setTempoPopoverOpen] = useState(false);
+  const [handSoundMenuOpen, setHandSoundMenuOpen] = useState(false);
   const realtimeUnavailableTooltipId = useId();
   const tempoPercentage = Math.round(tempoMultiplier * 100);
   const [tempoPercentageText, setTempoPercentageText] = useState(String(tempoPercentage));
@@ -694,6 +719,23 @@ export function DocumentViewer({
   useEffect(() => {
     if (playbackMode !== "realtime") setTempoPopoverOpen(false);
   }, [playbackMode]);
+
+  useEffect(() => {
+    if (practiceHand === "both") setHandSoundMenuOpen(false);
+  }, [practiceHand]);
+
+  useEffect(() => {
+    if (!handSoundMenuOpen) return;
+    function closeHandSoundMenu(event: KeyboardEvent) {
+      if (event.code !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      setHandSoundMenuOpen(false);
+    }
+    window.addEventListener("keydown", closeHandSoundMenu, true);
+    return () => window.removeEventListener("keydown", closeHandSoundMenu, true);
+  }, [handSoundMenuOpen]);
 
   useEffect(() => {
     if (!tempoInputFocused.current || !tempoPopoverOpen) {
@@ -1157,6 +1199,25 @@ export function DocumentViewer({
               ) : null}
             </div>
           </div> : null}
+          {onPracticeHandChange ? (
+            <div
+              className="playback-mode-selector practice-hand-selector"
+              role="group"
+              aria-label="Practice hand"
+            >
+              {PRACTICE_HAND_OPTIONS.map(({ hand, label, description }) => (
+                <button
+                  key={hand}
+                  type="button"
+                  className={practiceHand === hand ? "selected" : ""}
+                  aria-label={description}
+                  aria-pressed={practiceHand === hand}
+                  title={description}
+                  onClick={() => onPracticeHandChange(hand)}
+                >{label}</button>
+              ))}
+            </div>
+          ) : null}
           {onNoteHighwayToggle ? (
             <button
               type="button"
@@ -1187,15 +1248,60 @@ export function DocumentViewer({
               onClick={() => onPlaybackCommand("stopPlayback")}
             >■</button>
           ) : null}
-          <button
-            type="button"
-            className={`sound-toggle${playbackNoteSoundsEnabled ? " active" : ""}`}
-            aria-label={playbackNoteSoundsEnabled ? "Mute note sounds" : "Play note sounds"}
-            aria-pressed={playbackNoteSoundsEnabled}
-            title={playbackNoteSoundsEnabled ? "Mute note sounds (M)" : "Play note sounds (M)"}
-            disabled={!effectivelyActive}
-            onClick={() => onPlaybackCommand("toggleNoteSounds")}
-          >{playbackNoteSoundsEnabled ? "🔊" : "🔇"}</button>
+          <div className="hand-sound-control">
+            <button
+              type="button"
+              className={`sound-toggle${playbackNoteSoundsEnabled ? " active" : ""}`}
+              aria-label={playbackNoteSoundsEnabled ? "Mute note sounds" : "Play note sounds"}
+              aria-pressed={playbackNoteSoundsEnabled}
+              title={playbackNoteSoundsEnabled ? "Mute note sounds (M)" : "Play note sounds (M)"}
+              disabled={!effectivelyActive}
+              onClick={() => onPlaybackCommand("toggleNoteSounds")}
+            >{playbackNoteSoundsEnabled ? "🔊" : "🔇"}</button>
+            {onPracticeHandChange ? (
+              <button
+                type="button"
+                className="hand-sound-menu-button"
+                aria-label="Hand sound options"
+                aria-expanded={handSoundMenuOpen}
+                aria-haspopup="dialog"
+                title={practiceHand === "both"
+                  ? "Choose LH or RH to set each hand's sound"
+                  : "Choose which hands sound"}
+                disabled={practiceHand === "both"}
+                onClick={() => setHandSoundMenuOpen((open) => !open)}
+              >▾</button>
+            ) : null}
+            {handSoundMenuOpen && practiceHand !== "both" ? (
+              <div className="hand-sound-popover" role="dialog" aria-label="Hand sound">
+                <label className="checkbox-row">
+                  <input
+                    type="checkbox"
+                    checked={practicedHandSoundEnabled}
+                    onChange={(event) => onPracticedHandSoundChange?.(event.target.checked)}
+                  />
+                  Practiced hand ({practiceHand === "left" ? "LH" : "RH"})
+                </label>
+                <label
+                  className={`checkbox-row${playbackMode === "realtime" ? "" : " disabled"}`}
+                  title={playbackMode === "realtime"
+                    ? undefined
+                    : "Accompaniment is available in Realtime"}
+                >
+                  <input
+                    type="checkbox"
+                    checked={otherHandSoundEnabled}
+                    disabled={playbackMode !== "realtime"}
+                    onChange={(event) => onOtherHandSoundChange?.(event.target.checked)}
+                  />
+                  Other hand ({practiceHand === "left" ? "RH" : "LH"})
+                </label>
+                {playbackMode === "realtime" ? null : (
+                  <p className="hand-sound-note">Accompaniment is available in Realtime.</p>
+                )}
+              </div>
+            ) : null}
+          </div>
           <button
             type="button"
             className={`listen-toggle${listenActive ? " active" : ""}`}

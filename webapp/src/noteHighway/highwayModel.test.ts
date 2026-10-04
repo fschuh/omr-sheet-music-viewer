@@ -11,6 +11,7 @@ import {
   highwayTrackForSteps,
   keyApproachProgress,
   NOTE_INSTANCE_FLOATS,
+  practiceStepPositions,
   projectToNdc,
   visibleNoteRange,
   WHITE_NOTE_HEIGHT,
@@ -113,6 +114,49 @@ test("lays note-by-note moments out one step each, extending tied notes", () => 
     { midi: 64, start: 2, end: 4 },
   ]);
   assert.deepEqual(Array.from(track.lines.times), [0, 2], "a line at each bar's first moment");
+});
+
+test("ghosts the other hand's notes and keeps them from lighting keys", () => {
+  const twoHands = route([
+    { ...note("rh", "C5", 2, 3), left: false },
+    { ...note("lh", "C3", 2, 3), left: true },
+  ]);
+  assert.deepEqual(Array.from(highwayTrackForRoute(twoHands).notes.ghosts), [0, 0]);
+  const left = highwayTrackForRoute(twoHands, "left").notes;
+  const ghostByMidi = Object.fromEntries(Array.from(left.midis, (midi, index) => [midi, left.ghosts[index]]));
+  assert.deepEqual(ghostByMidi, { 72: 1, 48: 0 });
+  const instanceGhost = left.instances[NOTE_INSTANCE_FLOATS - 1 + NOTE_INSTANCE_FLOATS * left.midis.indexOf(72)];
+  assert.equal(instanceGhost, 1, "the shader receives the ghost flag");
+
+  const progress = new Float32Array(88);
+  keyApproachProgress(left, 0.5, 2, progress);
+  assert.ok(progress[48 - 21] > 0);
+  assert.equal(progress[72 - 21], 0);
+});
+
+test("spreads moments the practised hand skips between its steps", () => {
+  const attack = (pitch: string, left: boolean) => ({ pitch, left, startsAttack: true });
+  const moments = [
+    { pitches: ["C5", "C3"], keyboardNotes: [], notes: [attack("C5", false), attack("C3", true)], barKey: "b1" },
+    { pitches: ["D5"], keyboardNotes: [], notes: [attack("D5", false)], barKey: "b1" },
+    { pitches: ["E3"], keyboardNotes: [], notes: [attack("E3", true)], barKey: "b1" },
+  ];
+  assert.deepEqual(practiceStepPositions(moments, "both"), [0, 1, 2]);
+  assert.deepEqual(practiceStepPositions(moments, "left"), [0, 0.5, 1]);
+
+  const track = highwayTrackForSteps(moments, "left");
+  const notes = Array.from(track.notes.midis, (midi, index) => ({
+    midi,
+    start: track.notes.starts[index],
+    end: track.notes.ends[index],
+    ghost: track.notes.ghosts[index],
+  })).sort((left, right) => left.start - right.start || left.midi - right.midi);
+  assert.deepEqual(notes, [
+    { midi: 48, start: 0, end: 1, ghost: 0 },
+    { midi: 72, start: 0, end: 0.5, ghost: 1 },
+    { midi: 74, start: 0.5, end: 1, ghost: 1 },
+    { midi: 52, start: 1, end: 2, ghost: 0 },
+  ]);
 });
 
 test("selects only notes that can be on the highway", () => {

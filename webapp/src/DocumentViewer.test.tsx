@@ -352,6 +352,42 @@ test("shows the 3D note highway toggle state in both playback modes", () => {
   );
 });
 
+test("offers a practice-hand selector and a hand sound menu for one hand only", () => {
+  const markupFor = (hand: "both" | "left" | "right") => renderToStaticMarkup(
+    <DocumentViewer
+      documentKey="fixture"
+      pages={[page]}
+      selectedGroup={null}
+      highlightAllNotes={false}
+      showOriginalNoteheadContours={false}
+      showDetectedNoteheadContours={false}
+      showRefinedNoteheadContours={false}
+      showRawStemContours={false}
+      playbackActive
+      playbackNoteSoundsEnabled
+      playbackAvailable
+      playbackMoment={moment}
+      practiceHand={hand}
+      listenFeedback={listenFeedback}
+      onPlaybackModeChange={() => undefined}
+      onPracticeHandChange={() => undefined}
+      onPlaybackCommand={() => undefined}
+      onSelectGroup={() => undefined}
+      onRetryPage={() => undefined}
+    />,
+  );
+
+  const both = markupFor("both");
+  assert.match(both, /aria-label="Practice hand"/);
+  assert.match(both, /aria-label="Practice the left hand" aria-pressed="false"[^>]*>LH</);
+  assert.match(both, /aria-label="Play both hands" aria-pressed="true"[^>]*>Both</);
+  assert.match(both, /aria-label="Hand sound options"[^>]*disabled=""/);
+
+  const left = markupFor("left");
+  assert.match(left, /aria-label="Practice the left hand" aria-pressed="true"/);
+  assert.doesNotMatch(left, /aria-label="Hand sound options"[^>]*disabled=""/);
+});
+
 test("explains why realtime playback is disabled", () => {
   const markup = renderToStaticMarkup(
     <DocumentViewer

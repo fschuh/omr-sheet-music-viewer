@@ -777,6 +777,55 @@ button:disabled {
 }
 
 /* Same off/on treatment as the sound toggle: dimmed when off, tinted when on. */
+/* The sound toggle and its per-hand menu read as one split button. */
+.hand-sound-control {
+  display: flex;
+  margin-right: 2px;
+  position: relative;
+}
+
+.viewer-toolbar .playback-controls .hand-sound-control .sound-toggle {
+  margin-right: 0;
+}
+
+.viewer-toolbar .playback-controls .hand-sound-control .sound-toggle:has(+ .hand-sound-menu-button) {
+  border-bottom-right-radius: 0;
+  border-top-right-radius: 0;
+}
+
+.viewer-toolbar .playback-controls .hand-sound-menu-button {
+  border-bottom-left-radius: 0;
+  border-left: 0;
+  border-top-left-radius: 0;
+  color: #635c53;
+  font-size: 0.7rem;
+  width: 18px;
+}
+
+.hand-sound-popover {
+  background: #fff;
+  border: 1px solid #c8c1b7;
+  border-radius: 9px;
+  box-shadow: 0 8px 28px rgb(31 27 23 / 24%);
+  color: #39342e;
+  left: 0;
+  padding: 12px 12px 4px;
+  position: absolute;
+  top: 36px;
+  width: 240px;
+  z-index: 20;
+}
+
+.hand-sound-popover .checkbox-row input { accent-color: #087361; }
+
+.hand-sound-popover .checkbox-row.disabled { color: #9a948c; }
+
+.viewer-toolbar .hand-sound-popover .hand-sound-note {
+  color: #746d64;
+  font-size: 0.75rem;
+  margin: -4px 0 10px 24px;
+}
+
 .viewer-toolbar .playback-controls .note-highway-toggle {
   color: #635c53;
   font-size: 0.7rem;
