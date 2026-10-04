@@ -28,7 +28,7 @@ OMR_TARGET_WIDTH = 1920
 OMR_RESAMPLING_FILTER = Image.Resampling.HAMMING
 OMR_RESAMPLING = OMR_RESAMPLING_FILTER.name
 MANIFEST_SCHEMA_VERSION = 1
-VISUAL_SIDECAR_CACHE_REVISION = 49
+VISUAL_SIDECAR_CACHE_REVISION = 50
 
 VISUAL_STATUSES = {"canonical", "fallback", "diagnostic"}
 VISUAL_PROVENANCES = {
@@ -438,6 +438,16 @@ def scale_visual_sidecar(
             ]
             if _is_number(rest.get("unit_size")):
                 rest["unit_size"] = round(float(rest["unit_size"]) * scale_y, 3)
+
+    tempo_marks = sidecar.get("tempo_marks")
+    if isinstance(tempo_marks, dict):
+        for mark in tempo_marks.get("marks", []):
+            box = mark.get("box")
+            if isinstance(box, list) and len(box) == 4 and all(_is_number(v) for v in box):
+                mark["box"] = [
+                    *_scale_point(box[:2], scale_x, scale_y),
+                    *_scale_point(box[2:], scale_x, scale_y),
+                ]
 
     sidecar["source_image_size"] = [target_width, target_height]
     return sidecar

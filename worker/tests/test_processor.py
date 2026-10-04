@@ -450,6 +450,28 @@ def test_scale_visual_sidecar_moves_rest_geometry_to_the_display_raster() -> Non
     assert rest["unit_size"] == 15.0
 
 
+def test_scale_visual_sidecar_moves_tempo_marks_to_the_display_raster() -> None:
+    sidecar = {
+        "version": 3,
+        "source_image_size": [100, 200],
+        "notes": [],
+        "visual_groups": [],
+        "tempo_marks": {
+            "version": 1,
+            "marks": [
+                {"text": "140", "box": [10.0, 20.0, 40.0, 30.0], "status": "written"},
+                {"text": "96", "box": None, "status": "unread"},
+            ],
+        },
+    }
+
+    scale_visual_sidecar(sidecar, source_size=(100, 200), target_size=(200, 300))
+
+    marks = sidecar["tempo_marks"]["marks"]
+    assert marks[0]["box"] == [20.0, 30.0, 80.0, 45.0]
+    assert marks[1]["box"] is None
+
+
 def test_validate_artifacts_rejects_a_page_without_notes(tmp_path: Path) -> None:
     pages = tmp_path / "pages"
     pages.mkdir()
