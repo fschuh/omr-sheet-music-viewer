@@ -85,6 +85,7 @@ interface SettingsPageProps {
   playbackPiano: PianoId;
   listenInputSource: ListenInputSource;
   debugPanelEnabled: boolean;
+  sharedNoteheadTimingRepair: boolean;
   listenMatcherProfileOverride: ListenMatcherProfileId | null;
   nativeAvailable: boolean;
   midiPorts: string[];
@@ -95,6 +96,7 @@ interface SettingsPageProps {
   onChangePlaybackPiano: (pianoId: PianoId) => void;
   onChangeListenInputSource: (inputSource: ListenInputSource) => void;
   onChangeDebugPanelEnabled: (enabled: boolean) => void;
+  onChangeSharedNoteheadTimingRepair: (enabled: boolean) => void;
   onChangeListenMatcherProfileOverride: (profileId: ListenMatcherProfileId | null) => void;
   onBeginMidiCapture: (command: PlaybackCommand) => void;
   onCancelMidiCapture: () => void;
@@ -107,6 +109,7 @@ export function SettingsPage({
   playbackPiano,
   listenInputSource,
   debugPanelEnabled,
+  sharedNoteheadTimingRepair,
   listenMatcherProfileOverride,
   nativeAvailable,
   midiPorts,
@@ -117,6 +120,7 @@ export function SettingsPage({
   onChangePlaybackPiano,
   onChangeListenInputSource,
   onChangeDebugPanelEnabled,
+  onChangeSharedNoteheadTimingRepair,
   onChangeListenMatcherProfileOverride,
   onBeginMidiCapture,
   onCancelMidiCapture,
@@ -334,6 +338,34 @@ export function SettingsPage({
             );
           })}
         </div>
+      </section>
+
+      <section className="settings-card" aria-labelledby="repairs-title">
+        <header className="settings-card-header">
+          <div>
+            <h3 id="repairs-title">Repairs</h3>
+            <p>
+              Corrections made while a score is recognized, where the page shows what the
+              recognizer missed. A change applies to scores opened afterwards.
+            </p>
+          </div>
+        </header>
+        <label className="settings-toggle-row">
+          <input
+            type="checkbox"
+            aria-label="Note timing at shared noteheads"
+            checked={sharedNoteheadTimingRepair}
+            onChange={(event) => onChangeSharedNoteheadTimingRepair(event.target.checked)}
+          />
+          <span>
+            <strong>Note timing at shared noteheads</strong>
+            <small>
+              Where two voices share one notehead, such as an eighth note on the first note
+              of a 16th run, the notes after it start when the shorter note ends, as printed.
+              Only applied where the bar then adds up to its time signature.
+            </small>
+          </span>
+        </label>
       </section>
 
       <section className="settings-card" aria-labelledby="debug-title">

@@ -5,6 +5,7 @@ export const DEBUG_PANEL_STORAGE_KEY = "homr.debug-panel-enabled.v1";
 export const PLAYBACK_PIANO_STORAGE_KEY = "homr.playback-piano.v1";
 export const LISTEN_INPUT_SOURCE_STORAGE_KEY = "homr.listen-input-source.v1";
 export const NOTE_HIGHWAY_STORAGE_KEY = "homr.note-highway-enabled.v1";
+export const SHARED_NOTEHEAD_TIMING_STORAGE_KEY = "homr.repair-shared-notehead-timing.v1";
 
 export function loadDebugPanelEnabled(): boolean {
   if (typeof window === "undefined") return false;
@@ -37,6 +38,25 @@ export function saveNoteHighwayEnabled(enabled: boolean): void {
   if (typeof window === "undefined") return;
   try {
     window.localStorage.setItem(NOTE_HIGHWAY_STORAGE_KEY, String(enabled));
+  } catch {
+    // A disabled/full local store should not prevent changing the current session.
+  }
+}
+
+/** On unless it was switched off: the repair is part of recognizing a score correctly. */
+export function loadSharedNoteheadTimingRepair(): boolean {
+  if (typeof window === "undefined") return true;
+  try {
+    return window.localStorage.getItem(SHARED_NOTEHEAD_TIMING_STORAGE_KEY) !== "false";
+  } catch {
+    return true;
+  }
+}
+
+export function saveSharedNoteheadTimingRepair(enabled: boolean): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(SHARED_NOTEHEAD_TIMING_STORAGE_KEY, String(enabled));
   } catch {
     // A disabled/full local store should not prevent changing the current session.
   }

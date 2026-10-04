@@ -18,6 +18,7 @@ from sheet_music_worker import WORKER_VERSION
 from sheet_music_worker.homr_engine import HomrEngine, NoMusicDetectedError
 from sheet_music_worker.logging import worker_log
 from sheet_music_worker.musicxml_merge import merge_musicxml_pages
+from sheet_music_worker.repairs import RepairSettings
 
 RASTER_DPI = 300
 # Set this to True to pre-resize PDF rasters before handing them to HOMR.
@@ -27,7 +28,7 @@ OMR_TARGET_WIDTH = 1920
 OMR_RESAMPLING_FILTER = Image.Resampling.HAMMING
 OMR_RESAMPLING = OMR_RESAMPLING_FILTER.name
 MANIFEST_SCHEMA_VERSION = 1
-VISUAL_SIDECAR_CACHE_REVISION = 48
+VISUAL_SIDECAR_CACHE_REVISION = 49
 
 VISUAL_STATUSES = {"canonical", "fallback", "diagnostic"}
 VISUAL_PROVENANCES = {
@@ -501,6 +502,7 @@ class PdfProcessor:
         cache_root: Path,
         cancel: threading.Event,
         force_page_index: int | None = None,
+        repairs: RepairSettings = RepairSettings(),
     ) -> None:
         if not pdf_path.is_file() or pdf_path.suffix.lower() != ".pdf":
             raise ValueError(f"PDF does not exist: {pdf_path}")
@@ -512,7 +514,9 @@ class PdfProcessor:
             homr_version=package_version("homr"),
             rasterizer_version=package_version("pypdfium2"),
         )
-        cache_directory = cache_root / "pdf-cache" / identity.pdf_sha256
+        cache_directory = (
+            cache_root / "pdf-cache" / repairs.cache_directory_name(identity.pdf_sha256)
+        )
         pages_directory = cache_directory / "pages"
         pages_directory.mkdir(parents=True, exist_ok=True)
         manifest_path = cache_directory / "manifest.json"
@@ -529,7 +533,7 @@ class PdfProcessor:
                 f"Opened {pdf_path.name}: {page_count} page(s), rendering display images at "
                 f"{RASTER_DPI} DPI and passing HOMR {omr_input_description}"
             )
-            manifest = self._load_manifest(manifest_path, identity, page_count)
+            manifest = self._load_manifest(manifest_path, identity, page_count, repairs)
             reusable = sum(
                 1 for page in manifest["pages"] if page_is_reusable(page, cache_directory)
             )
@@ -599,7 +603,7 @@ class PdfProcessor:
                     )
                     try:
                         generated_xml, generated_sidecar = self._homr.process_image(
-                            rendered["omr_path"]
+                            rendered["omr_path"], repairs
                         )
                         music_xml, visual_sidecar = self._promote_homr_artifacts(
                             rendered, generated_xml, generated_sidecar
@@ -722,7 +726,11 @@ class PdfProcessor:
             document.close()
 
     def _load_manifest(
-        self, path: Path, identity: DocumentIdentity, page_count: int
+        self,
+        path: Path,
+        identity: DocumentIdentity,
+        page_count: int,
+        repairs: RepairSettings,
     ) -> dict[str, Any]:
         expected = {
             "schemaVersion": MANIFEST_SCHEMA_VERSION,
@@ -742,6 +750,7 @@ class PdfProcessor:
                 "targetWidth": OMR_TARGET_WIDTH if DOWNSAMPLE_OMR_INPUT else None,
                 "resampling": OMR_RESAMPLING if DOWNSAMPLE_OMR_INPUT else None,
             },
+            "repairs": repairs.to_manifest(),
         }
         if path.is_file():
             try:

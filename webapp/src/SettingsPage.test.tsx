@@ -6,8 +6,11 @@ import { defaultPlaybackShortcuts } from "./shortcuts";
 import { LISTEN_MATCHER_PROFILE_IDS } from "@fschuh/piano-transcription-engine";
 import {
   LISTEN_INPUT_SOURCE_STORAGE_KEY,
+  SHARED_NOTEHEAD_TIMING_STORAGE_KEY,
   loadListenInputSource,
+  loadSharedNoteheadTimingRepair,
   saveListenInputSource,
+  saveSharedNoteheadTimingRepair,
 } from "./preferences";
 
 test("renders every playback command with its default keyboard key and empty MIDI slot", () => {
@@ -17,6 +20,7 @@ test("renders every playback command with its default keyboard key and empty MID
       playbackPiano="splendid"
       listenInputSource="microphone"
       debugPanelEnabled={false}
+      sharedNoteheadTimingRepair
       listenMatcherProfileOverride={null}
       nativeAvailable
       midiPorts={["Bluetooth MIDI bridge"]}
@@ -27,6 +31,7 @@ test("renders every playback command with its default keyboard key and empty MID
       onChangePlaybackPiano={() => undefined}
       onChangeListenInputSource={() => undefined}
       onChangeDebugPanelEnabled={() => undefined}
+      onChangeSharedNoteheadTimingRepair={() => undefined}
       onChangeListenMatcherProfileOverride={() => undefined}
       onBeginMidiCapture={() => undefined}
       onCancelMidiCapture={() => undefined}
@@ -52,6 +57,7 @@ test("renders every playback command with its default keyboard key and empty MID
   assert.match(markup, />Splendid Grand Piano<\/option>/);
   assert.match(markup, />Salamander Grand Piano<\/option>/);
   assert.match(markup, />Enable debug panel<\/strong>/);
+  // The debug panel toggle carries no label attribute; the repair toggle does.
   assert.doesNotMatch(markup, /type="checkbox" checked=""/);
 });
 
@@ -62,6 +68,7 @@ test("disables MIDI assignment when initialization fails", () => {
       playbackPiano="salamander"
       listenInputSource="midi"
       debugPanelEnabled
+      sharedNoteheadTimingRepair
       listenMatcherProfileOverride={null}
       nativeAvailable
       midiPorts={[]}
@@ -72,6 +79,7 @@ test("disables MIDI assignment when initialization fails", () => {
       onChangePlaybackPiano={() => undefined}
       onChangeListenInputSource={() => undefined}
       onChangeDebugPanelEnabled={() => undefined}
+      onChangeSharedNoteheadTimingRepair={() => undefined}
       onChangeListenMatcherProfileOverride={() => undefined}
       onBeginMidiCapture={() => undefined}
       onCancelMidiCapture={() => undefined}
@@ -94,6 +102,7 @@ function renderSettings(
       playbackPiano="splendid"
       listenInputSource="microphone"
       debugPanelEnabled
+      sharedNoteheadTimingRepair
       listenMatcherProfileOverride={null}
       nativeAvailable
       midiPorts={[]}
@@ -104,6 +113,7 @@ function renderSettings(
       onChangePlaybackPiano={() => undefined}
       onChangeListenInputSource={() => undefined}
       onChangeDebugPanelEnabled={() => undefined}
+      onChangeSharedNoteheadTimingRepair={() => undefined}
       onChangeListenMatcherProfileOverride={() => undefined}
       onBeginMidiCapture={() => undefined}
       onCancelMidiCapture={() => undefined}
@@ -181,6 +191,45 @@ test("listen input defaults to microphone and persists a valid MIDI selection", 
     assert.equal(loadListenInputSource(), "midi");
     values.set(LISTEN_INPUT_SOURCE_STORAGE_KEY, "invalid");
     assert.equal(loadListenInputSource(), "microphone");
+  } finally {
+    if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow);
+    else Reflect.deleteProperty(globalThis, "window");
+  }
+});
+
+test("the repairs card shows the shared-notehead timing toggle whether or not debugging is on", () => {
+  for (const debugPanelEnabled of [false, true]) {
+    const on = renderSettings({ debugPanelEnabled });
+    assert.match(on, /<h3 id="repairs-title">Repairs<\/h3>/);
+    assert.match(on, /aria-label="Note timing at shared noteheads" checked=""/);
+    assert.match(on, /A change applies to scores opened afterwards\./);
+    const off = renderSettings({ debugPanelEnabled, sharedNoteheadTimingRepair: false });
+    assert.match(off, /aria-label="Note timing at shared noteheads"/);
+    assert.doesNotMatch(off, /aria-label="Note timing at shared noteheads" checked=""/);
+  }
+});
+
+test("the shared-notehead timing repair is on until it is switched off", () => {
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  const values = new Map<string, string>();
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      localStorage: {
+        getItem: (key: string) => values.get(key) ?? null,
+        setItem: (key: string, value: string) => values.set(key, value),
+      },
+    },
+  });
+  try {
+    assert.equal(loadSharedNoteheadTimingRepair(), true);
+    saveSharedNoteheadTimingRepair(false);
+    assert.equal(values.get(SHARED_NOTEHEAD_TIMING_STORAGE_KEY), "false");
+    assert.equal(loadSharedNoteheadTimingRepair(), false);
+    saveSharedNoteheadTimingRepair(true);
+    assert.equal(loadSharedNoteheadTimingRepair(), true);
+    values.set(SHARED_NOTEHEAD_TIMING_STORAGE_KEY, "garbled");
+    assert.equal(loadSharedNoteheadTimingRepair(), true);
   } finally {
     if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow);
     else Reflect.deleteProperty(globalThis, "window");

@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from sheet_music_worker.logging import worker_log
+from sheet_music_worker.repairs import RepairSettings
 
 
 class NoMusicDetectedError(RuntimeError):
@@ -22,7 +23,6 @@ class HomrEngine:
     def __init__(self) -> None:
         self._initialized = False
         self._config: object | None = None
-        self._xml_arguments: object | None = None
 
     def initialize(self) -> None:
         if self._initialized:
@@ -34,7 +34,6 @@ class HomrEngine:
 
         worker_log("Loading the HOMR recognition pipeline")
         from homr.main import ProcessingConfig, download_weights
-        from homr.music_xml_generator import XmlGeneratorArguments
         from homr.onnx_providers import coreml_available, cuda_available
 
         worker_log("Detecting available inference providers")
@@ -61,19 +60,24 @@ class HomrEngine:
             coreml_encoder=False,
             write_visual_sidecar=True,
         )
-        self._xml_arguments = XmlGeneratorArguments()
         self._initialized = True
         worker_log("HOMR initialization complete")
 
-    def process_image(self, image_path: Path) -> tuple[Path, Path]:
+    def process_image(
+        self, image_path: Path, repairs: RepairSettings = RepairSettings()
+    ) -> tuple[Path, Path]:
         self.initialize()
         from homr.main import process_image
+        from homr.music_xml_generator import XmlGeneratorArguments
 
-        if self._config is None or self._xml_arguments is None:
+        if self._config is None:
             raise RuntimeError("HOMR failed to initialize")
 
         try:
-            result = process_image(str(image_path), self._config, self._xml_arguments)
+            xml_arguments = XmlGeneratorArguments(
+                repair_shared_notehead_timing=repairs.shared_notehead_timing
+            )
+            result = process_image(str(image_path), self._config, xml_arguments)
         except Exception as error:
             if str(error) in NO_MUSIC_ERROR_MESSAGES:
                 raise NoMusicDetectedError(str(error)) from error

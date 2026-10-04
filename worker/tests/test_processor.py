@@ -2,11 +2,15 @@ import json
 import threading
 import xml.etree.ElementTree as ElementTree
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
+import pytest
 from PIL import Image
 
 from sheet_music_worker import processor as processor_module
 from sheet_music_worker.homr_engine import NoMusicDetectedError
+from sheet_music_worker.repairs import RepairSettings
 from sheet_music_worker.processor import (
     DOWNSAMPLE_OMR_INPUT,
     OMR_RESAMPLING,
@@ -27,9 +31,13 @@ class FakeHomrEngine:
     def __init__(self) -> None:
         self.calls: list[Path] = []
         self.image_sizes: list[tuple[int, int]] = []
+        self.repairs: list[RepairSettings] = []
 
-    def process_image(self, image_path: Path) -> tuple[Path, Path]:
+    def process_image(
+        self, image_path: Path, repairs: RepairSettings = RepairSettings()
+    ) -> tuple[Path, Path]:
         self.calls.append(image_path)
+        self.repairs.append(repairs)
         with Image.open(image_path) as image:
             self.image_sizes.append(image.size)
         music_xml = image_path.with_suffix(".musicxml")
@@ -78,23 +86,29 @@ class FakeHomrEngine:
 
 
 class SecondPageFailureEngine(FakeHomrEngine):
-    def process_image(self, image_path: Path) -> tuple[Path, Path]:
+    def process_image(
+        self, image_path: Path, repairs: RepairSettings = RepairSettings()
+    ) -> tuple[Path, Path]:
         if image_path.stem.removesuffix(".omr") == "0002":
             raise RuntimeError("deliberate page failure")
-        return super().process_image(image_path)
+        return super().process_image(image_path, repairs)
 
 
 class FirstPageNoMusicEngine(FakeHomrEngine):
-    def process_image(self, image_path: Path) -> tuple[Path, Path]:
+    def process_image(
+        self, image_path: Path, repairs: RepairSettings = RepairSettings()
+    ) -> tuple[Path, Path]:
         if image_path.stem.removesuffix(".omr") == "0001":
             self.calls.append(image_path)
             raise NoMusicDetectedError("No staffs found")
-        return super().process_image(image_path)
+        return super().process_image(image_path, repairs)
 
 
 class EmptySidecarEngine(FakeHomrEngine):
-    def process_image(self, image_path: Path) -> tuple[Path, Path]:
-        music_xml, visual_sidecar = super().process_image(image_path)
+    def process_image(
+        self, image_path: Path, repairs: RepairSettings = RepairSettings()
+    ) -> tuple[Path, Path]:
+        music_xml, visual_sidecar = super().process_image(image_path, repairs)
         visual_sidecar.write_text(
             json.dumps(
                 {
@@ -696,6 +710,73 @@ def test_pdf_processing_rasterizes_then_reuses_cache(tmp_path: Path) -> None:
     assert merged_music_xml.read_text(encoding="utf-8") == annotated_music_xml
 
 
+def test_repair_settings_are_read_from_the_request() -> None:
+    assert RepairSettings.from_params(None) == RepairSettings(shared_notehead_timing=True)
+    assert RepairSettings.from_params({}) == RepairSettings(shared_notehead_timing=True)
+    assert RepairSettings.from_params({"sharedNoteheadTiming": False}) == RepairSettings(
+        shared_notehead_timing=False
+    )
+    for invalid in ([], "off", {"sharedNoteheadTiming": "false"}, {"sharedNoteheadTimng": False}):
+        with pytest.raises(ValueError):
+            RepairSettings.from_params(invalid)
+
+
+def test_pdf_processing_keeps_a_cache_for_each_repair_setting(tmp_path: Path) -> None:
+    pdf_path = tmp_path / "score.pdf"
+    Image.new("RGB", (120, 80), "white").save(pdf_path, "PDF", resolution=300)
+    engine = FakeHomrEngine()
+    cache_root = tmp_path / "cache"
+    off = RepairSettings(shared_notehead_timing=False)
+
+    def process(repairs: RepairSettings) -> list[dict[str, object]]:
+        events: list[dict[str, object]] = []
+        PdfProcessor(events.append, engine).process_pdf(  # type: ignore[arg-type]
+            job_id="job",
+            pdf_path=pdf_path,
+            cache_root=cache_root,
+            cancel=threading.Event(),
+            repairs=repairs,
+        )
+        return events
+
+    process(RepairSettings())
+    process(off)
+    assert engine.repairs == [RepairSettings(), off]
+    sha = sha256_file(pdf_path)
+    for name, expected in ((sha, True), (f"{sha}-without-shared-notehead-timing", False)):
+        manifest = json.loads(
+            (cache_root / "pdf-cache" / name / "manifest.json").read_text(encoding="utf-8")
+        )
+        assert manifest["repairs"] == {"sharedNoteheadTiming": expected}
+
+    # Switching back reuses the pages recognized with the repairs on.
+    events = process(RepairSettings())
+    assert len(engine.calls) == 2
+    completed = [event for event in events if event.get("type") == "page_completed"]
+    assert [event["cached"] for event in completed] == [True]
+
+
+def test_pdf_processing_does_not_reuse_pages_recognized_with_other_repairs(
+    tmp_path: Path,
+) -> None:
+    pdf_path = tmp_path / "score.pdf"
+    Image.new("RGB", (120, 80), "white").save(pdf_path, "PDF", resolution=300)
+    engine = FakeHomrEngine()
+    cache_root = tmp_path / "cache"
+    PdfProcessor(lambda _event: None, engine).process_pdf(  # type: ignore[arg-type]
+        job_id="first", pdf_path=pdf_path, cache_root=cache_root, cancel=threading.Event()
+    )
+    manifest_path = cache_root / "pdf-cache" / sha256_file(pdf_path) / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["repairs"] = {"sharedNoteheadTiming": False}
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    PdfProcessor(lambda _event: None, engine).process_pdf(  # type: ignore[arg-type]
+        job_id="second", pdf_path=pdf_path, cache_root=cache_root, cancel=threading.Event()
+    )
+    assert len(engine.calls) == 2
+
+
 def test_pdf_processing_invalidates_an_older_sidecar_cache_revision(tmp_path: Path) -> None:
     pdf_path = tmp_path / "score.pdf"
     Image.new("RGB", (120, 80), "white").save(pdf_path, "PDF", resolution=300)
@@ -944,3 +1025,29 @@ def test_failed_page_retry_removes_the_previous_merged_score(tmp_path: Path) -> 
     assert not merged_music_xml.exists()
     manifest = json.loads((cache_directory / "manifest.json").read_text(encoding="utf-8"))
     assert "documentMusicXml" not in manifest
+
+
+def test_homr_engine_hands_the_repairs_to_the_musicxml_writer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import homr.main
+
+    from sheet_music_worker.homr_engine import HomrEngine
+
+    written: list[bool] = []
+
+    def fake_process_image(image_path: str, config: object, xml_arguments: Any) -> Any:
+        written.append(xml_arguments.repair_shared_notehead_timing)
+        music_xml = tmp_path / "page.musicxml"
+        visual_sidecar = tmp_path / "page.homr.visual.json"
+        music_xml.write_text("<score-partwise/>", encoding="utf-8")
+        visual_sidecar.write_text("{}", encoding="utf-8")
+        return SimpleNamespace(musicxml_path=music_xml, visual_sidecar_path=visual_sidecar)
+
+    monkeypatch.setattr(homr.main, "process_image", fake_process_image)
+    engine = HomrEngine()
+    monkeypatch.setattr(engine, "_initialized", True)
+    monkeypatch.setattr(engine, "_config", object())
+    engine.process_image(tmp_path / "page.png")
+    engine.process_image(tmp_path / "page.png", RepairSettings(shared_notehead_timing=False))
+    assert written == [True, False]

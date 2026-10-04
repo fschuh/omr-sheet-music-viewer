@@ -63,10 +63,12 @@ import {
   loadListenInputSource,
   loadNoteHighwayEnabled,
   loadPlaybackPiano,
+  loadSharedNoteheadTimingRepair,
   saveDebugPanelEnabled,
   saveListenInputSource,
   saveNoteHighwayEnabled,
   savePlaybackPiano,
+  saveSharedNoteheadTimingRepair,
 } from "./preferences";
 import { NoteHighway } from "./noteHighway/NoteHighway";
 import { pianoLayerForDynamic, type PianoId } from "./pianoRegistry";
@@ -249,6 +251,9 @@ export function App() {
   const workerLogOutput = useRef<HTMLDivElement | null>(null);
   const [activePage, setActivePage] = useState<"viewer" | "settings">("viewer");
   const [debugPanelEnabled, setDebugPanelEnabled] = useState(loadDebugPanelEnabled);
+  const [sharedNoteheadTimingRepair, setSharedNoteheadTimingRepair] = useState(
+    loadSharedNoteheadTimingRepair,
+  );
   const [playbackPiano, setPlaybackPiano] = useState(loadPlaybackPiano);
   const [listenInputSource, setListenInputSource] = useState(loadListenInputSource);
   const listenInputSourceRef = useRef<ListenInputSource>(listenInputSource);
@@ -1696,7 +1701,7 @@ export function App() {
       setTempoMultiplier(1);
       pianoSampler.stop();
       setPlaybackState(initialPlaybackState);
-      const jobId = await openPdf(path);
+      const jobId = await openPdf(path, { sharedNoteheadTiming: sharedNoteheadTimingRepair });
       activeJobId.current = jobId;
       setDocument((current) =>
         current?.jobId === jobId
@@ -1870,6 +1875,7 @@ export function App() {
           playbackPiano={playbackPiano}
           listenInputSource={listenInputSource}
           debugPanelEnabled={debugPanelEnabled}
+          sharedNoteheadTimingRepair={sharedNoteheadTimingRepair}
           listenMatcherProfileOverride={listenMatcherProfileOverride}
           nativeAvailable={nativeAvailable}
           midiPorts={midiPorts}
@@ -1891,6 +1897,10 @@ export function App() {
             stopListenMode();
             setListenInputSource(inputSource);
             saveListenInputSource(inputSource);
+          }}
+          onChangeSharedNoteheadTimingRepair={(enabled) => {
+            setSharedNoteheadTimingRepair(enabled);
+            saveSharedNoteheadTimingRepair(enabled);
           }}
           onChangeDebugPanelEnabled={(enabled) => {
             setDebugPanelEnabled(enabled);
