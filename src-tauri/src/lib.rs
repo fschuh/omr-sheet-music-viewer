@@ -775,8 +775,41 @@ fn open_cache_directory(app: AppHandle, path: String) -> Result<(), String> {
     open_with_system(&directory)
 }
 
+/// Debian and Ubuntu patch WebKitGTK to turn hardware acceleration off whenever the GL vendor is
+/// NVIDIA, which leaves every frame to the CPU. `WEBKIT_FORCE_DMABUF_RENDERER` skips that check.
+/// With it on, NVIDIA's explicit sync can end the app with a Wayland protocol error, so
+/// `__NV_DISABLE_EXPLICIT_SYNC` turns that off. Other GPUs and unpatched builds ignore both.
+#[cfg(any(target_os = "linux", test))]
+const LINUX_WEBKIT_GPU_ENVIRONMENT: [(&str, &str); 2] = [
+    ("WEBKIT_FORCE_DMABUF_RENDERER", "1"),
+    ("__NV_DISABLE_EXPLICIT_SYNC", "1"),
+];
+
+/// A variable that is already set wins, so launching with `WEBKIT_FORCE_DMABUF_RENDERER=0`
+/// restores the distribution's CPU rendering.
+#[cfg(any(target_os = "linux", test))]
+fn missing_webkit_gpu_environment(
+    is_set: impl Fn(&str) -> bool,
+) -> Vec<(&'static str, &'static str)> {
+    LINUX_WEBKIT_GPU_ENVIRONMENT
+        .into_iter()
+        .filter(|&(name, _)| !is_set(name))
+        .collect()
+}
+
+/// Must run before Tauri starts GTK, WebKit or any thread: WebKit reads these variables once at
+/// startup, and `set_var` is not thread-safe.
+#[cfg(target_os = "linux")]
+fn enable_webkit_gpu_rendering() {
+    for (name, value) in missing_webkit_gpu_environment(|name| std::env::var_os(name).is_some()) {
+        std::env::set_var(name, value);
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(target_os = "linux")]
+    enable_webkit_gpu_rendering();
     tauri::Builder::default()
         .manage(WorkerSupervisor::default())
         .manage(MidiInputManager::default())
@@ -815,9 +848,9 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        has_music_xml_extension, is_channel_voice_message, repeat_timing_from_windows_settings,
-        strip_ansi_codes, BackgroundScan, KeyboardRepeatTiming, RepairSettings,
-        MIDI_SCAN_PANICKED_ERROR,
+        has_music_xml_extension, is_channel_voice_message, missing_webkit_gpu_environment,
+        repeat_timing_from_windows_settings, strip_ansi_codes, BackgroundScan,
+        KeyboardRepeatTiming, RepairSettings, MIDI_SCAN_PANICKED_ERROR,
     };
 
     #[test]
@@ -848,6 +881,26 @@ mod tests {
                 tuplets: false
             }
         );
+    }
+
+    #[test]
+    fn webkit_gpu_environment_fills_in_unset_variables() {
+        assert_eq!(
+            missing_webkit_gpu_environment(|_| false),
+            vec![
+                ("WEBKIT_FORCE_DMABUF_RENDERER", "1"),
+                ("__NV_DISABLE_EXPLICIT_SYNC", "1"),
+            ]
+        );
+    }
+
+    #[test]
+    fn webkit_gpu_environment_keeps_variables_already_set() {
+        assert_eq!(
+            missing_webkit_gpu_environment(|name| name == "WEBKIT_FORCE_DMABUF_RENDERER"),
+            vec![("__NV_DISABLE_EXPLICIT_SYNC", "1")]
+        );
+        assert!(missing_webkit_gpu_environment(|_| true).is_empty());
     }
 
     #[test]
