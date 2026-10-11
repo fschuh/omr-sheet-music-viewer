@@ -84,6 +84,8 @@ fn install_linux_microphone_permission_handler<R: tauri::Runtime>(
 #[serde(rename_all = "camelCase")]
 struct RepairSettings {
     shared_notehead_timing: bool,
+    time_signatures: bool,
+    tuplets: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
@@ -822,18 +824,28 @@ mod tests {
     fn repair_settings_use_the_field_names_the_worker_reads() {
         let off = RepairSettings {
             shared_notehead_timing: false,
+            time_signatures: true,
+            tuplets: false,
         };
         assert_eq!(
             serde_json::to_value(off).unwrap(),
-            serde_json::json!({"sharedNoteheadTiming": false})
+            serde_json::json!({
+                "sharedNoteheadTiming": false,
+                "timeSignatures": true,
+                "tuplets": false
+            })
         );
         assert_eq!(
-            serde_json::from_value::<RepairSettings>(
-                serde_json::json!({"sharedNoteheadTiming": true})
-            )
+            serde_json::from_value::<RepairSettings>(serde_json::json!({
+                "sharedNoteheadTiming": true,
+                "timeSignatures": false,
+                "tuplets": false
+            }))
             .unwrap(),
             RepairSettings {
-                shared_notehead_timing: true
+                shared_notehead_timing: true,
+                time_signatures: false,
+                tuplets: false
             }
         );
     }

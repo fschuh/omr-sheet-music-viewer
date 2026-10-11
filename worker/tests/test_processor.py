@@ -28,18 +28,38 @@ from sheet_music_worker.processor import (
 
 
 class FakeHomrEngine:
-    def __init__(self) -> None:
+    """Writes a one-rest page. With time signatures read, the page starts from the meter
+    passed in and ends in the one ``printed`` gives for it, if any."""
+
+    def __init__(self, printed: dict[str, tuple[int, int]] | None = None) -> None:
         self.calls: list[Path] = []
         self.image_sizes: list[tuple[int, int]] = []
         self.repairs: list[RepairSettings] = []
+        self.previous: list[tuple[int, int] | None] = []
+        self.printed = printed or {}
 
     def process_image(
-        self, image_path: Path, repairs: RepairSettings = RepairSettings()
+        self,
+        image_path: Path,
+        repairs: RepairSettings = RepairSettings(),
+        previous_time_signature: tuple[int, int] | None = None,
     ) -> tuple[Path, Path]:
         self.calls.append(image_path)
         self.repairs.append(repairs)
+        self.previous.append(previous_time_signature)
         with Image.open(image_path) as image:
             self.image_sizes.append(image.size)
+        page = image_path.stem.removesuffix(".omr")
+        meters: dict[str, object] = {}
+        if repairs.time_signatures:
+            ended_in = self.printed.get(page, previous_time_signature)
+            meters["time_signatures"] = {
+                "version": 1,
+                "carried_in": previous_time_signature and list(previous_time_signature),
+                "carried_out": ended_in and list(ended_in),
+                "tokens": [],
+                "unmatched_reads": [],
+            }
         music_xml = image_path.with_suffix(".musicxml")
         visual_sidecar = image_path.with_suffix(".homr.visual.json")
         music_xml.write_text(
@@ -78,6 +98,7 @@ class FakeHomrEngine:
                             "alignment_method": "none",
                         }
                     ],
+                    **meters,
                 }
             ),
             encoding="utf-8",
@@ -87,28 +108,39 @@ class FakeHomrEngine:
 
 class SecondPageFailureEngine(FakeHomrEngine):
     def process_image(
-        self, image_path: Path, repairs: RepairSettings = RepairSettings()
+        self,
+        image_path: Path,
+        repairs: RepairSettings = RepairSettings(),
+        previous_time_signature: tuple[int, int] | None = None,
     ) -> tuple[Path, Path]:
         if image_path.stem.removesuffix(".omr") == "0002":
             raise RuntimeError("deliberate page failure")
-        return super().process_image(image_path, repairs)
+        return super().process_image(image_path, repairs, previous_time_signature)
 
 
 class FirstPageNoMusicEngine(FakeHomrEngine):
     def process_image(
-        self, image_path: Path, repairs: RepairSettings = RepairSettings()
+        self,
+        image_path: Path,
+        repairs: RepairSettings = RepairSettings(),
+        previous_time_signature: tuple[int, int] | None = None,
     ) -> tuple[Path, Path]:
         if image_path.stem.removesuffix(".omr") == "0001":
             self.calls.append(image_path)
             raise NoMusicDetectedError("No staffs found")
-        return super().process_image(image_path, repairs)
+        return super().process_image(image_path, repairs, previous_time_signature)
 
 
 class EmptySidecarEngine(FakeHomrEngine):
     def process_image(
-        self, image_path: Path, repairs: RepairSettings = RepairSettings()
+        self,
+        image_path: Path,
+        repairs: RepairSettings = RepairSettings(),
+        previous_time_signature: tuple[int, int] | None = None,
     ) -> tuple[Path, Path]:
-        music_xml, visual_sidecar = super().process_image(image_path, repairs)
+        music_xml, visual_sidecar = super().process_image(
+            image_path, repairs, previous_time_signature
+        )
         visual_sidecar.write_text(
             json.dumps(
                 {
@@ -733,14 +765,35 @@ def test_pdf_processing_rasterizes_then_reuses_cache(tmp_path: Path) -> None:
 
 
 def test_repair_settings_are_read_from_the_request() -> None:
-    assert RepairSettings.from_params(None) == RepairSettings(shared_notehead_timing=True)
-    assert RepairSettings.from_params({}) == RepairSettings(shared_notehead_timing=True)
+    assert RepairSettings.from_params(None) == RepairSettings()
+    assert RepairSettings.from_params({}) == RepairSettings(
+        shared_notehead_timing=True, time_signatures=True, tuplets=True
+    )
     assert RepairSettings.from_params({"sharedNoteheadTiming": False}) == RepairSettings(
         shared_notehead_timing=False
     )
-    for invalid in ([], "off", {"sharedNoteheadTiming": "false"}, {"sharedNoteheadTimng": False}):
+    assert RepairSettings.from_params({"tuplets": False}) == RepairSettings(tuplets=False)
+    # Tuplets follow the time signatures when the request leaves them out.
+    assert RepairSettings.from_params({"timeSignatures": False}) == RepairSettings(
+        time_signatures=False, tuplets=False
+    )
+    for invalid in (
+        [],
+        "off",
+        {"sharedNoteheadTiming": "false"},
+        {"sharedNoteheadTimng": False},
+        {"timeSignatures": 0},
+        {"tuplets": None},
+        {"timeSignatures": False, "tuplets": True},
+    ):
         with pytest.raises(ValueError):
             RepairSettings.from_params(invalid)
+
+
+def test_the_tuplet_repair_needs_the_time_signatures() -> None:
+    with pytest.raises(ValueError):
+        RepairSettings(time_signatures=False)
+    RepairSettings(time_signatures=False, tuplets=False)
 
 
 def test_pdf_processing_recognizes_pages_again_when_the_repairs_change(tmp_path: Path) -> None:
@@ -766,9 +819,9 @@ def test_pdf_processing_recognizes_pages_again_when_the_repairs_change(tmp_path:
         return json.loads(manifest_path.read_text(encoding="utf-8"))["repairs"]
 
     assert process(RepairSettings()) == [False]
-    assert recorded_repairs() == {"sharedNoteheadTiming": True}
+    assert recorded_repairs() == {"sharedNoteheadTiming": True, "timeSignatures": True, "tuplets": True}
     assert process(off) == [False]
-    assert recorded_repairs() == {"sharedNoteheadTiming": False}
+    assert recorded_repairs() == {"sharedNoteheadTiming": False, "timeSignatures": True, "tuplets": True}
     assert process(off) == [True]
     assert process(RepairSettings()) == [False]
     assert engine.repairs == [RepairSettings(), off, RepairSettings()]
@@ -1028,6 +1081,151 @@ def test_failed_page_retry_removes_the_previous_merged_score(tmp_path: Path) -> 
     assert "documentMusicXml" not in manifest
 
 
+def three_page_pdf(tmp_path: Path) -> Path:
+    pdf_path = tmp_path / "Three Pages.pdf"
+    pages = [Image.new("RGB", (120, 80 + 10 * index), "white") for index in range(3)]
+    pages[0].save(pdf_path, "PDF", resolution=300, save_all=True, append_images=pages[1:])
+    return pdf_path
+
+
+def run(
+    engine: FakeHomrEngine,
+    pdf_path: Path,
+    tmp_path: Path,
+    repairs: RepairSettings = RepairSettings(),
+    force_page_index: int | None = None,
+) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    PdfProcessor(events.append, engine).process_pdf(  # type: ignore[arg-type]
+        job_id="job",
+        pdf_path=pdf_path,
+        cache_root=tmp_path / "cache",
+        cancel=threading.Event(),
+        repairs=repairs,
+        force_page_index=force_page_index,
+    )
+    return events
+
+
+def recognized(events: list[dict[str, Any]]) -> list[int]:
+    return [e["pageIndex"] for e in events if e.get("type") == "page_completed" and not e["cached"]]
+
+
+def manifest_pages(pdf_path: Path, tmp_path: Path) -> list[dict[str, Any]]:
+    path = tmp_path / "cache" / "pdf-cache" / sha256_file(pdf_path) / "manifest.json"
+    return json.loads(path.read_text(encoding="utf-8"))["pages"]
+
+
+def test_each_page_starts_from_the_meter_the_page_before_ended_in(tmp_path: Path) -> None:
+    pdf_path = three_page_pdf(tmp_path)
+    engine = FakeHomrEngine(printed={"0001": (3, 4)})
+    run(engine, pdf_path, tmp_path)
+    assert engine.previous == [None, (3, 4), (3, 4)]
+    pages = manifest_pages(pdf_path, tmp_path)
+    assert [(p["timeSignatureIn"], p["timeSignatureAtEnd"]) for p in pages] == [
+        (None, [3, 4]),
+        ([3, 4], [3, 4]),
+        ([3, 4], [3, 4]),
+    ]
+    # Opened again, every page is still from the meter it was recognized with.
+    assert recognized(run(engine, pdf_path, tmp_path)) == []
+
+
+def test_without_time_signatures_no_meter_is_passed_on(tmp_path: Path) -> None:
+    pdf_path = three_page_pdf(tmp_path)
+    engine = FakeHomrEngine(printed={"0001": (3, 4)})
+    run(engine, pdf_path, tmp_path, RepairSettings(time_signatures=False, tuplets=False))
+    assert engine.previous == [None, None, None]
+    assert [p["timeSignatureAtEnd"] for p in manifest_pages(pdf_path, tmp_path)] == [None] * 3
+
+
+class MiddlePageNoMusicEngine(FakeHomrEngine):
+    def process_image(
+        self,
+        image_path: Path,
+        repairs: RepairSettings = RepairSettings(),
+        previous_time_signature: tuple[int, int] | None = None,
+    ) -> tuple[Path, Path]:
+        if image_path.stem.removesuffix(".omr") == "0002":
+            self.previous.append(previous_time_signature)
+            raise NoMusicDetectedError("No staffs found")
+        return super().process_image(image_path, repairs, previous_time_signature)
+
+
+def test_a_page_without_music_passes_the_meter_on_and_a_failed_page_does_not(
+    tmp_path: Path,
+) -> None:
+    pdf_path = three_page_pdf(tmp_path)
+    engine = MiddlePageNoMusicEngine(printed={"0001": (3, 4)})
+    run(engine, pdf_path, tmp_path)
+    assert engine.previous == [None, (3, 4), (3, 4)]
+    # The cached page without music still passes it on.
+    assert recognized(run(engine, pdf_path, tmp_path)) == []
+    failing = SecondPageFailureEngine(printed={"0001": (3, 4)})
+    (tmp_path / "other").mkdir()
+    run(failing, three_page_pdf(tmp_path / "other"), tmp_path / "other")
+    assert failing.previous == [None, None]  # page 2 failed before recording; page 3 got none
+
+
+class FlakySecondPageEngine(FakeHomrEngine):
+    """Fails page 2 the first time it is recognized."""
+
+    def __init__(self, printed: dict[str, tuple[int, int]] | None = None) -> None:
+        super().__init__(printed)
+        self.failed = False
+
+    def process_image(
+        self,
+        image_path: Path,
+        repairs: RepairSettings = RepairSettings(),
+        previous_time_signature: tuple[int, int] | None = None,
+    ) -> tuple[Path, Path]:
+        if image_path.stem.removesuffix(".omr") == "0002" and not self.failed:
+            self.failed = True
+            raise RuntimeError("deliberate page failure")
+        return super().process_image(image_path, repairs, previous_time_signature)
+
+
+def test_a_retried_page_recognizes_the_pages_after_it_that_started_from_another_meter(
+    tmp_path: Path,
+) -> None:
+    pdf_path = three_page_pdf(tmp_path)
+    engine = FlakySecondPageEngine(printed={"0001": (3, 4)})
+    run(engine, pdf_path, tmp_path)
+    assert engine.previous == [None, None]  # page 3 started from nothing after the failure
+    events = run(engine, pdf_path, tmp_path, force_page_index=1)
+    assert recognized(events) == [1, 2]
+    assert engine.previous[-2:] == [(3, 4), (3, 4)]
+    cache_directory = tmp_path / "cache" / "pdf-cache" / sha256_file(pdf_path)
+    assert (cache_directory / "Three Pages.musicxml").is_file()
+    assert recognized(run(engine, pdf_path, tmp_path)) == []
+
+
+def test_a_retry_that_ends_in_the_same_meter_recognizes_only_its_page(tmp_path: Path) -> None:
+    pdf_path = three_page_pdf(tmp_path)
+    engine = FakeHomrEngine(printed={"0001": (3, 4)})
+    run(engine, pdf_path, tmp_path)
+    assert recognized(run(engine, pdf_path, tmp_path, force_page_index=1)) == [1]
+    assert recognized(run(engine, pdf_path, tmp_path, force_page_index=0)) == [0]
+
+
+def test_a_cached_page_from_another_meter_is_recognized_again(tmp_path: Path) -> None:
+    pdf_path = three_page_pdf(tmp_path)
+    engine = FakeHomrEngine(printed={"0001": (3, 4)})
+    run(engine, pdf_path, tmp_path)
+    cache_directory = tmp_path / "cache" / "pdf-cache" / sha256_file(pdf_path)
+    manifest_path = cache_directory / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["pages"][1]["timeSignatureIn"] = [2, 4]
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    merged = cache_directory / "Three Pages.musicxml"
+    merged.write_text("stale", encoding="utf-8")
+    events = run(engine, pdf_path, tmp_path)
+    assert recognized(events) == [1]
+    assert next(e for e in events if e["type"] == "job_started")["cacheStatus"] == "partial"
+    assert merged.read_text(encoding="utf-8") != "stale"
+
+
 def test_homr_engine_hands_the_repairs_to_the_musicxml_writer(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1035,10 +1233,17 @@ def test_homr_engine_hands_the_repairs_to_the_musicxml_writer(
 
     from sheet_music_worker.homr_engine import HomrEngine
 
-    written: list[bool] = []
+    written: list[tuple[bool, bool, bool, object]] = []
 
     def fake_process_image(image_path: str, config: object, xml_arguments: Any) -> Any:
-        written.append(xml_arguments.repair_shared_notehead_timing)
+        written.append(
+            (
+                xml_arguments.repair_shared_notehead_timing,
+                xml_arguments.read_time_signatures,
+                xml_arguments.repair_tuplets,
+                xml_arguments.time_signature_from_previous_page,
+            )
+        )
         music_xml = tmp_path / "page.musicxml"
         visual_sidecar = tmp_path / "page.homr.visual.json"
         music_xml.write_text("<score-partwise/>", encoding="utf-8")
@@ -1051,4 +1256,12 @@ def test_homr_engine_hands_the_repairs_to_the_musicxml_writer(
     monkeypatch.setattr(engine, "_config", object())
     engine.process_image(tmp_path / "page.png")
     engine.process_image(tmp_path / "page.png", RepairSettings(shared_notehead_timing=False))
-    assert written == [True, False]
+    engine.process_image(tmp_path / "page.png", RepairSettings(tuplets=False), (3, 4))
+    off = RepairSettings(time_signatures=False, tuplets=False)
+    engine.process_image(tmp_path / "page.png", off, (3, 4))
+    assert written == [
+        (True, True, True, None),
+        (False, True, True, None),
+        (True, True, False, (3, 4)),
+        (True, False, False, None),  # no meter is carried without time signatures
+    ]

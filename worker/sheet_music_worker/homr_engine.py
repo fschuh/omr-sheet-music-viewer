@@ -64,8 +64,13 @@ class HomrEngine:
         worker_log("HOMR initialization complete")
 
     def process_image(
-        self, image_path: Path, repairs: RepairSettings = RepairSettings()
+        self,
+        image_path: Path,
+        repairs: RepairSettings = RepairSettings(),
+        previous_time_signature: tuple[int, int] | None = None,
     ) -> tuple[Path, Path]:
+        """Recognize one page. ``previous_time_signature`` is the meter the score's page
+        before ended in, which the page starts from when time signatures are read."""
         self.initialize()
         from homr.main import process_image
         from homr.music_xml_generator import XmlGeneratorArguments
@@ -75,7 +80,12 @@ class HomrEngine:
 
         try:
             xml_arguments = XmlGeneratorArguments(
-                repair_shared_notehead_timing=repairs.shared_notehead_timing
+                repair_shared_notehead_timing=repairs.shared_notehead_timing,
+                read_time_signatures=repairs.time_signatures,
+                repair_tuplets=repairs.tuplets,
+                time_signature_from_previous_page=(
+                    previous_time_signature if repairs.time_signatures else None
+                ),
             )
             result = process_image(str(image_path), self._config, xml_arguments)
         except Exception as error:

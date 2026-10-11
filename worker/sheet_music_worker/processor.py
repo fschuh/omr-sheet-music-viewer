@@ -487,6 +487,55 @@ def page_is_reusable(page: dict[str, Any], cache_directory: Path) -> bool:
     return validate_skipped_page(page, cache_directory)
 
 
+Meter = tuple[int, int]
+
+
+def _meter(value: Any) -> Meter | None:
+    """A meter as homr's sidecar or the manifest records it, ``[beats, beat_type]``."""
+    if isinstance(value, (list, tuple)) and len(value) == 2 and all(
+        _is_integer(v) and v > 0 for v in value
+    ):
+        return int(value[0]), int(value[1])
+    return None
+
+
+def page_meters(visual_sidecar: dict[str, Any]) -> tuple[Meter | None, Meter | None]:
+    """The meter a page started from and the one it ended in, as homr recorded them; both
+    None when its time signatures were not read."""
+    block = visual_sidecar.get("time_signatures")
+    if not isinstance(block, dict):
+        return None, None
+    return _meter(block.get("carried_in")), _meter(block.get("carried_out"))
+
+
+def carried_past(page: dict[str, Any], carried: Meter | None) -> Meter | None:
+    """The meter the page after this one starts from: the one a recognized page ended in;
+    the one before a page without music; none after a page that failed or is pending."""
+    if page.get("status") == "complete":
+        return _meter(page.get("timeSignatureAtEnd"))
+    if page.get("status") == "skipped":
+        return carried
+    return None
+
+
+def reusable_pages(
+    pages: list[dict[str, Any]], cache_directory: Path, repairs: RepairSettings
+) -> list[bool]:
+    """Which cached pages can be used as they are. With time signatures read, a page is
+    only reusable if it was recognized from the meter the page before it ends in: a page
+    recognized again may end in another meter, and every page after it then starts from
+    the wrong one until it is recognized again too."""
+    result = []
+    carried: Meter | None = None
+    for page in pages:
+        reusable = page_is_reusable(page, cache_directory)
+        if reusable and page.get("status") == "complete" and repairs.time_signatures:
+            reusable = _meter(page.get("timeSignatureIn")) == carried
+        result.append(reusable)
+        carried = carried_past(page, carried)
+    return result
+
+
 @dataclass(frozen=True)
 class DocumentIdentity:
     pdf_sha256: str
@@ -542,9 +591,7 @@ class PdfProcessor:
                 f"{RASTER_DPI} DPI and passing HOMR {omr_input_description}"
             )
             manifest = self._load_manifest(manifest_path, identity, page_count, repairs)
-            reusable = sum(
-                1 for page in manifest["pages"] if page_is_reusable(page, cache_directory)
-            )
+            reusable = sum(reusable_pages(manifest["pages"], cache_directory, repairs))
             document_music_xml_path = (
                 cache_directory / pdf_path.with_suffix(".musicxml").name
             )
@@ -565,24 +612,43 @@ class PdfProcessor:
                 }
             )
 
-            indices = [force_page_index] if force_page_index is not None else list(range(page_count))
-            if any(index < 0 or index >= page_count for index in indices):
+            if force_page_index is not None and not 0 <= force_page_index < page_count:
                 raise ValueError("Page index is outside this PDF")
 
             completed = 0
             skipped = 0
             failed = 0
-            for page_index in indices:
+            # The meter the next page starts from, when time signatures are read.
+            carried: Meter | None = None
+            for page_index in range(page_count):
+                page_manifest = manifest["pages"][page_index]
+                starts_from = carried if repairs.time_signatures else None
+                reusable_page = page_is_reusable(page_manifest, cache_directory) and (
+                    page_manifest.get("status") == "skipped"
+                    or _meter(page_manifest.get("timeSignatureIn")) == starts_from
+                )
+                if force_page_index is not None and page_index != force_page_index:
+                    # A retry recognizes one page. The pages before it only pass their
+                    # meter on; after it, a page recognized from another meter than the
+                    # retried page now passes on is recognized again, until one is not.
+                    stale = (
+                        page_index > force_page_index
+                        and page_manifest.get("status") == "complete"
+                        and not reusable_page
+                    )
+                    if not stale:
+                        if page_index > force_page_index and page_manifest.get("status") != "skipped":
+                            break
+                        carried = carried_past(page_manifest, carried)
+                        continue
+
                 if cancel.is_set():
                     worker_log("Cancellation requested; stopping between pages")
                     self._emit({"type": "job_completed", "jobId": job_id, "status": "cancelled"})
                     return
 
-                page_manifest = manifest["pages"][page_index]
-                if (
-                    force_page_index is None
-                    and page_is_reusable(page_manifest, cache_directory)
-                ):
+                if force_page_index is None and reusable_page:
+                    carried = carried_past(page_manifest, carried)
                     if page_manifest.get("status") == "skipped":
                         skipped += 1
                         worker_log(
@@ -611,15 +677,17 @@ class PdfProcessor:
                     )
                     try:
                         generated_xml, generated_sidecar = self._homr.process_image(
-                            rendered["omr_path"], repairs
+                            rendered["omr_path"], repairs, starts_from
                         )
                         music_xml, visual_sidecar = self._promote_homr_artifacts(
                             rendered, generated_xml, generated_sidecar
                         )
                     finally:
                         self._cleanup_omr_intermediates(rendered)
-                    if len(read_visual_sidecar(visual_sidecar)["notes"]) == 0:
+                    sidecar = read_visual_sidecar(visual_sidecar)
+                    if len(sidecar["notes"]) == 0:
                         raise NoMusicDetectedError("No notes detected")
+                    started_from, ended_in = page_meters(sidecar)
                     page_manifest.clear()
                     page_manifest.update(
                         {
@@ -630,8 +698,11 @@ class PdfProcessor:
                             "image": self._relative(cache_directory, rendered["path"]),
                             "musicXml": self._relative(cache_directory, music_xml),
                             "visualSidecar": self._relative(cache_directory, visual_sidecar),
+                            "timeSignatureIn": started_from and list(started_from),
+                            "timeSignatureAtEnd": ended_in and list(ended_in),
                         }
                     )
+                    carried = ended_in
                     atomic_write_json(manifest_path, manifest)
                     completed += 1
                     elapsed = time.perf_counter() - page_started_at
@@ -662,6 +733,7 @@ class PdfProcessor:
                     atomic_write_json(manifest_path, manifest)
                     self._emit_page_skipped(job_id, page_index, page_manifest, False)
                 except Exception as error:  # A failed page must not prevent later pages.
+                    carried = None  # nor pass on a meter
                     failed += 1
                     elapsed = time.perf_counter() - page_started_at
                     worker_log(
@@ -682,9 +754,7 @@ class PdfProcessor:
                     )
 
             document_music_xml: Path | None = None
-            all_pages_resolved = all(
-                page_is_reusable(page, cache_directory) for page in manifest["pages"]
-            )
+            all_pages_resolved = all(reusable_pages(manifest["pages"], cache_directory, repairs))
             page_music_xml = [
                 cache_directory / page["musicXml"]
                 for page in manifest["pages"]
