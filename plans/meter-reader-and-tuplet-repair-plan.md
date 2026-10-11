@@ -3,7 +3,8 @@
 Date: 2026-10-09
 Status: steps 1 to 6 prototyped and measured in scratch copies (2026-10-10); step 7 (with the
 viewer toggles and the carry from step 8) implemented on `false_rest_detector` in homr and the
-viewer (2026-10-10); see "Step 7" in section 6. omr-evals is unchanged.
+viewer (2026-10-10); see "Step 7" in section 6. Step 8's homr and viewer parts are done; its
+omr-evals part is deferred, and omr-evals is unchanged.
 
 **Where things are (note added 2026-10-10, when this plan moved into the viewer repo).** The
 prototypes, scripts and run folders named in sections 4 and 6 (`proto2` to `proto9`,
@@ -174,6 +175,26 @@ bump.
 A plain single-page homr call keeps working unchanged. If page-by-page callers find the extra
 argument burdensome, upstream's multi-page `run_homr` loop could carry the meter internally
 instead.
+
+*Status of step 8 (2026-10-10):*
+
+- **Optional meter argument in homr: done in step 7.** It is
+  `XmlGeneratorArguments.time_signature_from_previous_page`, and the meter a page ends in is
+  `ProcessingResult.time_signature_at_end`. homr's own folder loop does not carry it, since a
+  folder of images is not necessarily one score.
+- **Viewer worker passing the meter: done in step 7**, with rules for cached, skipped, failed
+  and retried pages (see "Step 7" in section 6).
+- **omr-evals scheduling by score: deferred.** The homr options are opt-in, so omr-evals still
+  runs with them off, and its results are unchanged. This part is needed only once omr-evals
+  should measure the time-signature and tuplet repairs. Then it would have to:
+  - pass the two options;
+  - run each score's pages in order, longest score first;
+  - re-run a whole score when any page of it needs a run;
+  - pass no meter on from a failed page.
+
+  Without the score order every page after the first starts with no carried meter. Most
+  tuplet repairs depend on that meter (73% of those on the MuseScore set), so omr-evals would
+  understate the feature.
 
 The gated value repair stays unshipped. It may later merge into the step 5 gate, since both
 use the same bar check.
@@ -564,15 +585,20 @@ viewer toggles, on by default.
 - **Recall.** 19.1% of notes are still missed tuplets. The main remaining blockers are groups
   next to a lone short note (1,674) and staves that still don't add up after repair (about
   1,900 notes). The rest need other value repairs first.
-- **Shipping.** Step 3 is kept, so step 8 (an optional meter argument, the viewer passing it,
-  omr-evals scheduling by score) is part of shipping.
+- **Shipping (answered 2026-10-10, except omr-evals).** Step 3 is kept, so step 8 (an
+  optional meter argument, the viewer passing it, omr-evals scheduling by score) is part of
+  shipping.
+  - Steps 7 and 8 are done for homr and the viewer; the omr-evals part is deferred (see step
+    8's status in section 5).
   - The prototype touches upstream files in two more places than planned: the writer's
-    unprinted carried `<time>` and the dropped false tokens.
+    unprinted carried `<time>` and the dropped false tokens. In step 7 both are single-line
+    hooks into `timing_repairs`.
   - The gate lives in the prototype's `value_repairs.py`. It would move into a fork-only
-    module with tests for each rule.
+    module with tests for each rule. Done in step 7: `tuplet_repairs.py`.
   - Cost: about 3.5 s a page (15%). Most of it is an uncached staff-line lookup in the gate.
-    See "Cost per page" in section 6.
-  - **Viewer toggles (proposed 2026-10-10, not yet decided).** Two toggles under Settings,
+    See "Cost per page" in section 6. After step 7's cache it is about 1.5 s (8%).
+  - **Viewer toggles (proposed 2026-10-10; decided as proposed the same day).** The options are
+    opt-in in homr and the toggles are on by default in the viewer. Two toggles under Settings,
     Repairs, using the same path as "Note timing at shared noteheads". That path runs from
     the web app to Tauri `RepairSettings`, then the worker's `RepairSettings` and cache
     manifest, then homr's `XmlGeneratorArguments`.
@@ -590,14 +616,16 @@ viewer toggles, on by default.
     - The viewer worker already processes pages in order, one at a time. Each page would take
       `carried_out` from the previous page's sidecar, cached or not. Two cases still need
       rules: re-recognizing a single page whose meter changes, and passing the meter through
-      skipped pages that hold no music.
+      skipped pages that hold no music. Step 7 set both: a page without music passes the meter
+      on, and a retry re-recognizes the later pages whose starting meter changed.
 
 - **Locating the time signature (answered).** No segmentation mask holds the digits; the
   reader finds them in the ink. A token is tied to a read through the transformer's own
   coordinate for the token, carried to the page.
 - **How C and ¢ appear in homr's tokens (answered).** As `timeSignature/4` and
   `timeSignature/2`. The writer still writes them as numbers; writing the symbol (`<time
-  symbol="common">`) is a small step-7 item.
+  symbol="common">`) is a small step-7 item. It was not done in step 7 and is still open: the
+  sidecar records a read's `symbol`, but the MusicXML writes 4/4 and 2/2.
 - **Pending upstream merge.** Upstream has 62 commits not in the fork, including a writer
   rewritten on ElementTree and new voice positions (`upper2`, `lower2`). This is out of scope
   here, but it will conflict where our writer hooks sit, and the meter hook would land there
