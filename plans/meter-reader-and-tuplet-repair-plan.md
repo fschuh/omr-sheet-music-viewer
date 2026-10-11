@@ -568,7 +568,9 @@ viewer toggles, on by default.
   step itself takes 1.5 s, but most of its line fits are reused when the sidecar reads every
   note's value. CPU-only was not measured again.
 - **Commits.** homr: 156b207 (code, tests, sidecar docs) and d924ada (README). Viewer: 8e5bdc6
-  (worker and Tauri) and a542dca (web app). Nothing pushed; omr-evals unchanged.
+  (worker and Tauri) and a542dca (web app). Nothing pushed; omr-evals unchanged. Later: homr
+  fc300a0 writes common and cut time as symbols, and the viewer's cache revision went from 53
+  to 54 for it.
 
 ## 7. Open questions
 
@@ -624,8 +626,11 @@ viewer toggles, on by default.
   coordinate for the token, carried to the page.
 - **How C and ¢ appear in homr's tokens (answered).** As `timeSignature/4` and
   `timeSignature/2`. The writer still writes them as numbers; writing the symbol (`<time
-  symbol="common">`) is a small step-7 item. It was not done in step 7 and is still open: the
-  sidecar records a read's `symbol`, but the MusicXML writes 4/4 and 2/2.
+  symbol="common">`) is a small step-7 item. It was missed in step 7 and done afterwards
+  (2026-10-10): a token whose trusted read is common or cut time is written with
+  `symbol="common"` or `symbol="cut"`. On the 41 pages of the three sets where one was read,
+  that is the only change to the MusicXML. On the MuseScore set it matches every score that
+  prints a symbol (15 pages), and no such score was missed.
 - **Pending upstream merge.** Upstream has 62 commits not in the fork, including a writer
   rewritten on ElementTree and new voice positions (`upper2`, `lower2`). This is out of scope
   here, but it will conflict where our writer hooks sit, and the meter hook would land there
