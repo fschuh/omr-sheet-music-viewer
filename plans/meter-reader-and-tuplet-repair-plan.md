@@ -579,7 +579,8 @@ viewer toggles, on by default.
   the "0 wrong" holds for these sets. Only ground truth not yet used would show the true error
   rate.
 - **Rule 8's threshold** (even spacing, 1.6 and 2.2) costs about 640 right repairs for 4 wrong
-  ones. It was left untuned for the same reason.
+  ones. It was left untuned for the same reason. Taken up in
+  `plans/tuplet-gate-second-pass-plan.md` (2026-10-10), with held-out pieces for validation.
 - **The Nocturne bar (step 3).** With the true meter, `bar_placement.py` picks the other
   placement rule for a bar that is broken under both. This is the only staff-bar worse than
   the baseline. Options: leave the inferred bar length in charge of that choice when no rule
@@ -587,6 +588,7 @@ viewer toggles, on by default.
 - **Recall.** 19.1% of notes are still missed tuplets. The main remaining blockers are groups
   next to a lone short note (1,674) and staves that still don't add up after repair (about
   1,900 notes). The rest need other value repairs first.
+  Taken up in `plans/tuplet-gate-second-pass-plan.md` (2026-10-10).
 - **Shipping (answered 2026-10-10, except omr-evals).** Step 3 is kept, so step 8 (an
   optional meter argument, the viewer passing it, omr-evals scheduling by score) is part of
   shipping.
