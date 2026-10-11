@@ -86,6 +86,8 @@ interface SettingsPageProps {
   listenInputSource: ListenInputSource;
   debugPanelEnabled: boolean;
   sharedNoteheadTimingRepair: boolean;
+  timeSignatureRepair: boolean;
+  tupletRepair: boolean;
   listenMatcherProfileOverride: ListenMatcherProfileId | null;
   nativeAvailable: boolean;
   midiPorts: string[];
@@ -97,6 +99,8 @@ interface SettingsPageProps {
   onChangeListenInputSource: (inputSource: ListenInputSource) => void;
   onChangeDebugPanelEnabled: (enabled: boolean) => void;
   onChangeSharedNoteheadTimingRepair: (enabled: boolean) => void;
+  onChangeTimeSignatureRepair: (enabled: boolean) => void;
+  onChangeTupletRepair: (enabled: boolean) => void;
   onChangeListenMatcherProfileOverride: (profileId: ListenMatcherProfileId | null) => void;
   onBeginMidiCapture: (command: PlaybackCommand) => void;
   onCancelMidiCapture: () => void;
@@ -110,6 +114,8 @@ export function SettingsPage({
   listenInputSource,
   debugPanelEnabled,
   sharedNoteheadTimingRepair,
+  timeSignatureRepair,
+  tupletRepair,
   listenMatcherProfileOverride,
   nativeAvailable,
   midiPorts,
@@ -121,6 +127,8 @@ export function SettingsPage({
   onChangeListenInputSource,
   onChangeDebugPanelEnabled,
   onChangeSharedNoteheadTimingRepair,
+  onChangeTimeSignatureRepair,
+  onChangeTupletRepair,
   onChangeListenMatcherProfileOverride,
   onBeginMidiCapture,
   onCancelMidiCapture,
@@ -364,6 +372,41 @@ export function SettingsPage({
               Where two voices share one notehead, such as an eighth note on the first note
               of a 16th run, the notes after it start when the shorter note ends, as printed.
               Only applied where the bar then adds up to its time signature.
+            </small>
+          </span>
+        </label>
+        <label className="settings-toggle-row">
+          <input
+            type="checkbox"
+            aria-label="Time signatures from the page"
+            checked={timeSignatureRepair}
+            onChange={(event) => onChangeTimeSignatureRepair(event.target.checked)}
+          />
+          <span>
+            <strong>Time signatures from the page</strong>
+            <small>
+              Writes the time signature printed on the page instead of guessing it from the
+              bar lengths, which misread notes throw off, and carries it from page to page
+              where it is not printed again. A time signature the recognizer sees where none
+              is printed is left out.
+            </small>
+          </span>
+        </label>
+        <label className="settings-toggle-row">
+          <input
+            type="checkbox"
+            aria-label="Tuplets from beams and brackets"
+            checked={timeSignatureRepair && tupletRepair}
+            disabled={!timeSignatureRepair}
+            onChange={(event) => onChangeTupletRepair(event.target.checked)}
+          />
+          <span>
+            <strong>Tuplets from beams and brackets</strong>
+            <small>
+              Writes notes read as plain values as a triplet where a beam or a bracketed
+              number on the page shows one, such as three eighths under one beam in a beat.
+              Only applied where the bar then adds up to its time signature, so it needs the
+              time signatures from the page.
             </small>
           </span>
         </label>

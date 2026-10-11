@@ -67,9 +67,11 @@ export interface MidiInputsChangedEvent {
   error: string | null;
 }
 
-/** The homr repairs a score is recognized with. */
+/** The homr repairs a score is recognized with. Tuplets need the time signatures. */
 export interface RepairSettings {
   sharedNoteheadTiming: boolean;
+  timeSignatures: boolean;
+  tuplets: boolean;
 }
 
 export interface KeyboardRepeatTiming {

@@ -7,10 +7,17 @@ import { LISTEN_MATCHER_PROFILE_IDS } from "@fschuh/piano-transcription-engine";
 import {
   LISTEN_INPUT_SOURCE_STORAGE_KEY,
   SHARED_NOTEHEAD_TIMING_STORAGE_KEY,
+  TIME_SIGNATURE_REPAIR_STORAGE_KEY,
+  TUPLET_REPAIR_STORAGE_KEY,
   loadListenInputSource,
   loadSharedNoteheadTimingRepair,
+  loadTimeSignatureRepair,
+  loadTupletRepair,
+  repairSettings,
   saveListenInputSource,
   saveSharedNoteheadTimingRepair,
+  saveTimeSignatureRepair,
+  saveTupletRepair,
 } from "./preferences";
 
 test("renders every playback command with its default keyboard key and empty MIDI slot", () => {
@@ -21,6 +28,8 @@ test("renders every playback command with its default keyboard key and empty MID
       listenInputSource="microphone"
       debugPanelEnabled={false}
       sharedNoteheadTimingRepair
+      timeSignatureRepair
+      tupletRepair
       listenMatcherProfileOverride={null}
       nativeAvailable
       midiPorts={["Bluetooth MIDI bridge"]}
@@ -32,6 +41,8 @@ test("renders every playback command with its default keyboard key and empty MID
       onChangeListenInputSource={() => undefined}
       onChangeDebugPanelEnabled={() => undefined}
       onChangeSharedNoteheadTimingRepair={() => undefined}
+      onChangeTimeSignatureRepair={() => undefined}
+      onChangeTupletRepair={() => undefined}
       onChangeListenMatcherProfileOverride={() => undefined}
       onBeginMidiCapture={() => undefined}
       onCancelMidiCapture={() => undefined}
@@ -69,6 +80,8 @@ test("disables MIDI assignment when initialization fails", () => {
       listenInputSource="midi"
       debugPanelEnabled
       sharedNoteheadTimingRepair
+      timeSignatureRepair
+      tupletRepair
       listenMatcherProfileOverride={null}
       nativeAvailable
       midiPorts={[]}
@@ -80,6 +93,8 @@ test("disables MIDI assignment when initialization fails", () => {
       onChangeListenInputSource={() => undefined}
       onChangeDebugPanelEnabled={() => undefined}
       onChangeSharedNoteheadTimingRepair={() => undefined}
+      onChangeTimeSignatureRepair={() => undefined}
+      onChangeTupletRepair={() => undefined}
       onChangeListenMatcherProfileOverride={() => undefined}
       onBeginMidiCapture={() => undefined}
       onCancelMidiCapture={() => undefined}
@@ -103,6 +118,8 @@ function renderSettings(
       listenInputSource="microphone"
       debugPanelEnabled
       sharedNoteheadTimingRepair
+      timeSignatureRepair
+      tupletRepair
       listenMatcherProfileOverride={null}
       nativeAvailable
       midiPorts={[]}
@@ -114,6 +131,8 @@ function renderSettings(
       onChangeListenInputSource={() => undefined}
       onChangeDebugPanelEnabled={() => undefined}
       onChangeSharedNoteheadTimingRepair={() => undefined}
+      onChangeTimeSignatureRepair={() => undefined}
+      onChangeTupletRepair={() => undefined}
       onChangeListenMatcherProfileOverride={() => undefined}
       onBeginMidiCapture={() => undefined}
       onCancelMidiCapture={() => undefined}
@@ -230,6 +249,67 @@ test("the shared-notehead timing repair is on until it is switched off", () => {
     assert.equal(loadSharedNoteheadTimingRepair(), true);
     values.set(SHARED_NOTEHEAD_TIMING_STORAGE_KEY, "garbled");
     assert.equal(loadSharedNoteheadTimingRepair(), true);
+  } finally {
+    if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow);
+    else Reflect.deleteProperty(globalThis, "window");
+  }
+});
+
+test("the repairs card shows the time signature and tuplet toggles, on by default", () => {
+  const on = renderSettings();
+  assert.match(on, /aria-label="Time signatures from the page" checked=""/);
+  assert.match(on, /aria-label="Tuplets from beams and brackets" checked=""/);
+  assert.doesNotMatch(on, /aria-label="Tuplets from beams and brackets"[^>]*disabled/);
+  const tupletsOff = renderSettings({ tupletRepair: false });
+  assert.match(tupletsOff, /aria-label="Time signatures from the page" checked=""/);
+  assert.doesNotMatch(tupletsOff, /aria-label="Tuplets from beams and brackets" checked=""/);
+});
+
+test("without the time signatures the tuplet toggle is off and cannot be changed", () => {
+  const markup = renderSettings({ timeSignatureRepair: false, tupletRepair: true });
+  assert.doesNotMatch(markup, /aria-label="Time signatures from the page" checked=""/);
+  assert.match(markup, /aria-label="Tuplets from beams and brackets" disabled=""/);
+  assert.doesNotMatch(markup, /aria-label="Tuplets from beams and brackets"[^>]*checked/);
+});
+
+test("a score is opened with tuplets only where time signatures are read", () => {
+  assert.deepEqual(repairSettings(true, true, true), {
+    sharedNoteheadTiming: true,
+    timeSignatures: true,
+    tuplets: true,
+  });
+  assert.deepEqual(repairSettings(false, false, true), {
+    sharedNoteheadTiming: false,
+    timeSignatures: false,
+    tuplets: false,
+  });
+  assert.equal(repairSettings(true, true, false).tuplets, false);
+});
+
+test("the time signature and tuplet repairs are on until they are switched off", () => {
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  const values = new Map<string, string>();
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      localStorage: {
+        getItem: (key: string) => values.get(key) ?? null,
+        setItem: (key: string, value: string) => values.set(key, value),
+      },
+    },
+  });
+  try {
+    assert.equal(loadTimeSignatureRepair(), true);
+    assert.equal(loadTupletRepair(), true);
+    saveTimeSignatureRepair(false);
+    saveTupletRepair(false);
+    assert.equal(values.get(TIME_SIGNATURE_REPAIR_STORAGE_KEY), "false");
+    assert.equal(values.get(TUPLET_REPAIR_STORAGE_KEY), "false");
+    assert.equal(loadTimeSignatureRepair(), false);
+    assert.equal(loadTupletRepair(), false);
+    saveTupletRepair(true);
+    assert.equal(loadTupletRepair(), true);
+    assert.equal(loadTimeSignatureRepair(), false);
   } finally {
     if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow);
     else Reflect.deleteProperty(globalThis, "window");

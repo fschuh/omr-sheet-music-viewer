@@ -64,11 +64,16 @@ import {
   loadNoteHighwayEnabled,
   loadPlaybackPiano,
   loadSharedNoteheadTimingRepair,
+  loadTimeSignatureRepair,
+  loadTupletRepair,
+  repairSettings,
   saveDebugPanelEnabled,
   saveListenInputSource,
   saveNoteHighwayEnabled,
   savePlaybackPiano,
   saveSharedNoteheadTimingRepair,
+  saveTimeSignatureRepair,
+  saveTupletRepair,
 } from "./preferences";
 import { NoteHighway } from "./noteHighway/NoteHighway";
 import { pianoLayerForDynamic, type PianoId } from "./pianoRegistry";
@@ -254,6 +259,8 @@ export function App() {
   const [sharedNoteheadTimingRepair, setSharedNoteheadTimingRepair] = useState(
     loadSharedNoteheadTimingRepair,
   );
+  const [timeSignatureRepair, setTimeSignatureRepair] = useState(loadTimeSignatureRepair);
+  const [tupletRepair, setTupletRepair] = useState(loadTupletRepair);
   const [playbackPiano, setPlaybackPiano] = useState(loadPlaybackPiano);
   const [listenInputSource, setListenInputSource] = useState(loadListenInputSource);
   const listenInputSourceRef = useRef<ListenInputSource>(listenInputSource);
@@ -1701,7 +1708,10 @@ export function App() {
       setTempoMultiplier(1);
       pianoSampler.stop();
       setPlaybackState(initialPlaybackState);
-      const jobId = await openPdf(path, { sharedNoteheadTiming: sharedNoteheadTimingRepair });
+      const jobId = await openPdf(
+        path,
+        repairSettings(sharedNoteheadTimingRepair, timeSignatureRepair, tupletRepair),
+      );
       activeJobId.current = jobId;
       setDocument((current) =>
         current?.jobId === jobId
@@ -1876,6 +1886,8 @@ export function App() {
           listenInputSource={listenInputSource}
           debugPanelEnabled={debugPanelEnabled}
           sharedNoteheadTimingRepair={sharedNoteheadTimingRepair}
+          timeSignatureRepair={timeSignatureRepair}
+          tupletRepair={tupletRepair}
           listenMatcherProfileOverride={listenMatcherProfileOverride}
           nativeAvailable={nativeAvailable}
           midiPorts={midiPorts}
@@ -1901,6 +1913,14 @@ export function App() {
           onChangeSharedNoteheadTimingRepair={(enabled) => {
             setSharedNoteheadTimingRepair(enabled);
             saveSharedNoteheadTimingRepair(enabled);
+          }}
+          onChangeTimeSignatureRepair={(enabled) => {
+            setTimeSignatureRepair(enabled);
+            saveTimeSignatureRepair(enabled);
+          }}
+          onChangeTupletRepair={(enabled) => {
+            setTupletRepair(enabled);
+            saveTupletRepair(enabled);
           }}
           onChangeDebugPanelEnabled={(enabled) => {
             setDebugPanelEnabled(enabled);
