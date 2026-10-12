@@ -222,7 +222,7 @@ source:
 
 Opening:
 
-- One "Open score…" dialog with filters for PDF and MusicXML (`pdf`, `musicxml`, `xml`, `mxl`). The extension chooses the flow. The existing reset sequence in `handleOpenPdf` (stop playback, listen mode, and realtime; clear selection) moves into a shared function used by both flows.
+- A single "Open score…" dialog replaces the PDF-only one. Its default filter, "All supported scores", shows every supported type (`pdf`, `musicxml`, `xml`, `mxl`), with "PDF" and "MusicXML" filters as alternatives. The extension chooses the flow. `choose_pdf` becomes `choose_score` (and `choosePdf` becomes `chooseScore`), and later formats are added to the same dialog. The existing reset sequence in `handleOpenPdf` (stop playback, listen mode, and realtime; clear selection) moves into a shared function used by both flows.
 - PDFs continue through the worker exactly as today; each completed page also gets its `noteGeometry` from the adapter.
 - MusicXML calls `openMusicXmlScore(path)`, which reads the file through the native bridge, imports, lays out, and returns a complete `LoadedDocument` with status `"complete"`. A synthetic job ID keeps the existing stale-request guards working. Fingering prediction then runs through the module's fingering lifecycle (section 4.3).
 
@@ -392,4 +392,3 @@ Phase 1 changes only shared code and PDF behavior must stay identical, so it can
 - **Performance.** The largest corpus file is about 2.2 MB of MusicXML. Layout runs once per open and can move to a Web Worker; rendering is limited to visible pages.
 - **Licensing.** The viewer is AGPL-3.0 and MuseScore is GPL-3.0; GPL-3.0 section 13 permits combining the two, so MuseScore code may be ported with attribution. Leland is SIL OFL and ships with its license.
 - **Edited source files.** Content-hash keying orphans data when the file changes, and edits can change structural keys. Harmless for predictions; the matching fallback in section 3.8 is required before user overrides ship.
-- **Open decision:** whether a single "Open score…" dialog (proposed) or separate "Open PDF…" and "Open MusicXML…" entries suit the UI better.
