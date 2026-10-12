@@ -35,6 +35,11 @@ export interface RealtimeScoreNote {
   partId: string;
   voice: string;
   staff: number;
+  /**
+   * Played by the left hand: on a lower staff or under a bass clef, the same
+   * rule fingering prediction uses to pick a hand.
+   */
+  left: boolean;
   pitch: string;
   /** Semantic score dynamic; absent MusicXML markings are normalized to mp. */
   dynamic: MusicalDynamic;
@@ -117,6 +122,8 @@ export interface PerformanceNote {
   release: number;
   visual: VisualNoteTarget | null;
   fingeringMusicXmlId?: string | null;
+  /** Left-hand note (see RealtimeScoreNote.left); absent when the hand is unknown. */
+  left?: boolean;
 }
 
 export interface PerformanceOccurrence {
@@ -582,6 +589,8 @@ function parsePartMeasure(
   dynamicAtStart: MusicalDynamic,
   includeNavigation: boolean,
   voiceEventIndexes: Map<string, number>,
+  /** Clef sign per staff number, carried across measures of the part. */
+  clefs: Map<number, string>,
 ): {
   data: PartMeasureData;
   divisions: number;
@@ -613,6 +622,11 @@ function parsePartMeasure(
       if (value > 0) divisions = value;
       const key = elements(child, "key")[0];
       if (key) fifths = Math.trunc(finiteNumber(text(key, "fifths"), fifths));
+      for (const clef of elements(child, "clef")) {
+        const clefStaff = finiteNumber(clef.getAttribute("number"), 1);
+        const sign = text(clef, "sign")?.toUpperCase();
+        if (Number.isInteger(clefStaff) && clefStaff > 0 && sign) clefs.set(clefStaff, sign);
+      }
       continue;
     }
     if (child.localName === "backup" || child.nodeName.endsWith(":backup")) {
@@ -652,6 +666,7 @@ function parsePartMeasure(
             partId,
             voice,
             staff,
+            left: staff > 1 || clefs.get(staff) === "F",
             pitch: formatPitchName(step, octave, alter),
             dynamic,
             onset,
@@ -766,6 +781,7 @@ export function parseRealtimeMusicXml(musicXml: string): RealtimeScore {
     let fifths = 0;
     let dynamic: MusicalDynamic = "mp";
     const voiceEventIndexes = new Map<string, number>();
+    const clefs = new Map<number, string>();
     const parsed: PartMeasureData[] = [];
     elements(part, "measure").forEach((measure, measureIndex) => {
       const result = parsePartMeasure(
@@ -778,6 +794,7 @@ export function parseRealtimeMusicXml(musicXml: string): RealtimeScore {
         dynamic,
         true,
         voiceEventIndexes,
+        clefs,
       );
       divisions = result.divisions;
       pageNumber = result.pageNumber;
@@ -981,6 +998,7 @@ function performanceNote(
     release,
     visual: visualMap?.get(note.musicXmlId) ?? null,
     fingeringMusicXmlId,
+    left: note.left,
   };
 }
 
@@ -1582,6 +1600,12 @@ const browserClock: RealtimeClock = {
   clearInterval: (handle) => globalThis.clearInterval(handle as ReturnType<typeof setInterval>),
 };
 
+/** Which hands' notes the controller sounds; the master mute still silences both. */
+export interface AudibleHands {
+  left: boolean;
+  right: boolean;
+}
+
 export interface RealtimeControllerCallbacks {
   onFrame(frame: Omit<RealtimeFrame, "playhead">): void;
   onComplete(): void;
@@ -1595,6 +1619,7 @@ export class RealtimeController {
   private anchorTime = 0;
   private tempoMultiplier = 1;
   private muted = false;
+  private audibleHands: AudibleHands = { left: true, right: true };
   private timer: unknown = null;
   private soundingNotes = new Map<string, string>();
   private activeTimelineNotes = new Map<string, PerformanceNote>();
@@ -1673,8 +1698,9 @@ export class RealtimeController {
       return;
     }
     const activeNotes = this.activeNotesAt(this.offset);
+    const audibleNotes = activeNotes.filter((note) => this.isAudible(note));
     const desiredByPitch = new Map<string, Set<string>>();
-    for (const note of activeNotes) {
+    for (const note of audibleNotes) {
       const ids = desiredByPitch.get(note.pitch) ?? new Set<string>();
       ids.add(note.id);
       desiredByPitch.set(note.pitch, ids);
@@ -1695,7 +1721,7 @@ export class RealtimeController {
       for (const [pitch, desiredIds] of desiredByPitch) {
         const currentIds = currentByPitch.get(pitch);
         if (!currentIds || ![...desiredIds].some((id) => currentIds.has(id))) {
-          const desiredNote = activeNotes.find((note) => (
+          const desiredNote = audibleNotes.find((note) => (
             note.pitch === pitch && desiredIds.has(note.id)
           ));
           const dynamic = desiredNote?.dynamic ?? "mp";
@@ -1706,7 +1732,7 @@ export class RealtimeController {
       }
       if (releases.length > 0) this.sink.release(releases);
       for (const [dynamic, attacks] of attacksByDynamic) this.sink.attack(attacks, dynamic);
-      this.soundingNotes = new Map(activeNotes.map((note) => [note.id, note.pitch]));
+      this.soundingNotes = new Map(audibleNotes.map((note) => [note.id, note.pitch]));
     } else if (this.soundingNotes.size > 0) {
       this.silence();
     }
@@ -1781,6 +1807,18 @@ export class RealtimeController {
   setMuted(muted: boolean): void {
     this.muted = muted;
     this.publish();
+  }
+
+  /** Sounds only the chosen hands; notes of unknown hand follow either. */
+  setAudibleHands(hands: AudibleHands): void {
+    if (hands.left === this.audibleHands.left && hands.right === this.audibleHands.right) return;
+    this.audibleHands = { ...hands };
+    this.publish();
+  }
+
+  private isAudible(note: PerformanceNote): boolean {
+    if (note.left === undefined) return this.audibleHands.left || this.audibleHands.right;
+    return note.left ? this.audibleHands.left : this.audibleHands.right;
   }
 
   setTempoMultiplier(multiplier: number): void {

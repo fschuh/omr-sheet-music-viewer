@@ -311,6 +311,83 @@ test("renders realtime selector, transport states, tempo, and vertical playhead"
   assert.doesNotMatch(markup, /Realtime is not available/);
 });
 
+test("shows the 3D note highway toggle state in both playback modes", () => {
+  const markupFor = (mode: "realtime" | "note-by-note", enabled: boolean) => renderToStaticMarkup(
+    <DocumentViewer
+      documentKey="fixture"
+      pages={[page]}
+      selectedGroup={null}
+      highlightAllNotes={false}
+      showOriginalNoteheadContours={false}
+      showDetectedNoteheadContours={false}
+      showRefinedNoteheadContours={false}
+      showRawStemContours={false}
+      playbackActive={false}
+      playbackNoteSoundsEnabled
+      playbackAvailable
+      playbackMoment={null}
+      playbackMode={mode}
+      realtimeAvailable
+      noteHighwayEnabled={enabled}
+      listenFeedback={listenFeedback}
+      onPlaybackModeChange={() => undefined}
+      onNoteHighwayToggle={() => undefined}
+      onPlaybackCommand={() => undefined}
+      onSelectGroup={() => undefined}
+      onRetryPage={() => undefined}
+    />,
+  );
+
+  assert.match(
+    markupFor("realtime", true),
+    /class="note-highway-toggle active" aria-label="Hide 3D note highway" aria-pressed="true"/,
+  );
+  assert.match(
+    markupFor("realtime", false),
+    /class="note-highway-toggle" aria-label="Show 3D note highway" aria-pressed="false"/,
+  );
+  assert.match(
+    markupFor("note-by-note", true),
+    /class="note-highway-toggle active" aria-label="Hide 3D note highway" aria-pressed="true"/,
+  );
+});
+
+test("offers a practice-hand selector and a hand sound menu for one hand only", () => {
+  const markupFor = (hand: "both" | "left" | "right") => renderToStaticMarkup(
+    <DocumentViewer
+      documentKey="fixture"
+      pages={[page]}
+      selectedGroup={null}
+      highlightAllNotes={false}
+      showOriginalNoteheadContours={false}
+      showDetectedNoteheadContours={false}
+      showRefinedNoteheadContours={false}
+      showRawStemContours={false}
+      playbackActive
+      playbackNoteSoundsEnabled
+      playbackAvailable
+      playbackMoment={moment}
+      practiceHand={hand}
+      listenFeedback={listenFeedback}
+      onPlaybackModeChange={() => undefined}
+      onPracticeHandChange={() => undefined}
+      onPlaybackCommand={() => undefined}
+      onSelectGroup={() => undefined}
+      onRetryPage={() => undefined}
+    />,
+  );
+
+  const both = markupFor("both");
+  assert.match(both, /aria-label="Practice hand"/);
+  assert.match(both, /aria-label="Practice the left hand" aria-pressed="false"[^>]*>LH</);
+  assert.match(both, /aria-label="Play both hands" aria-pressed="true"[^>]*>Both</);
+  assert.match(both, /aria-label="Hand sound options"[^>]*disabled=""/);
+
+  const left = markupFor("left");
+  assert.match(left, /aria-label="Practice the left hand" aria-pressed="true"/);
+  assert.doesNotMatch(left, /aria-label="Hand sound options"[^>]*disabled=""/);
+});
+
 test("explains why realtime playback is disabled", () => {
   const markup = renderToStaticMarkup(
     <DocumentViewer

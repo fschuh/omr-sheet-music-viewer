@@ -567,6 +567,71 @@ test("controller releases and retriggers repeated tremolo pitches", () => {
   assert.deepEqual(attacks, [["C4"], ["C4"]]);
 });
 
+test("assigns hands by staff and by a bass clef on a single staff", () => {
+  const parsed = parseRealtimeMusicXml(score(`
+    <measure number="1">
+      <attributes><divisions>4</divisions><staves>2</staves></attributes>
+      <note id="treble"><pitch><step>C</step><octave>5</octave></pitch><duration>4</duration><voice>1</voice><staff>1</staff></note>
+      <backup><duration>4</duration></backup>
+      <note id="lower-staff"><pitch><step>C</step><octave>3</octave></pitch><duration>4</duration><voice>2</voice><staff>2</staff></note>
+    </measure>
+  `, `<part id="P2">
+    <measure number="1">
+      <attributes><divisions>4</divisions><clef><sign>F</sign><line>4</line></clef></attributes>
+      <note id="bass-clef"><pitch><step>C</step><octave>2</octave></pitch><duration>4</duration><voice>1</voice></note>
+    </measure>
+  </part>`));
+  const route = expandPerformanceRoute(parsed);
+  const hands = Object.fromEntries(route.notes.map((note) => [note.musicXmlId, note.left]));
+  assert.deepEqual(hands, { treble: false, "lower-staff": true, "bass-clef": true });
+});
+
+test("controller sounds only the chosen hands while still reporting every note", () => {
+  let now = 0;
+  let tick: (() => void) | null = null;
+  const attacks: string[][] = [];
+  const releases: string[][] = [];
+  const framed: string[][] = [];
+  const route: PerformanceRoute = {
+    occurrences: [],
+    notes: [
+      { id: "rh", musicXmlId: "rh", pitch: "C5", dynamic: "mp", onset: 0, release: 2, visual: null, left: false },
+      { id: "lh", musicXmlId: "lh", pitch: "C3", dynamic: "mp", onset: 0, release: 2, visual: null, left: true },
+    ],
+    events: [],
+    tempoSegments: [{ offset: 0, bpm: 60 }],
+    totalQuarters: 2,
+  };
+  const controller = new RealtimeController(
+    {
+      attack: (pitches) => attacks.push([...pitches]),
+      release: (pitches) => releases.push([...pitches]),
+      stop: () => undefined,
+    },
+    {
+      onFrame: (frame) => framed.push(frame.activeNotes.map((note) => note.pitch)),
+      onComplete: () => undefined,
+    },
+    {
+      now: () => now,
+      setInterval: (callback) => { tick = callback; return 1; },
+      clearInterval: () => { tick = null; },
+    },
+  );
+
+  controller.setAudibleHands({ left: true, right: false });
+  controller.play(route);
+  assert.deepEqual(attacks, [["C3"]]);
+  assert.deepEqual(framed.at(-1), ["C5", "C3"], "both hands still reach the display");
+
+  controller.setAudibleHands({ left: false, right: true });
+  assert.deepEqual(releases, [["C3"]]);
+  assert.deepEqual(attacks.at(-1), ["C5"]);
+  now = 0.5;
+  (tick as (() => void) | null)?.();
+  assert.equal(attacks.length, 2, "an unchanged choice does not retrigger");
+});
+
 test("controller pauses, resumes, changes tempo in place, and cancels sounding audio", () => {
   let now = 0;
   let tick: (() => void) | null = null;

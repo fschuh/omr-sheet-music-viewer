@@ -36,6 +36,14 @@ test("builds the complete 88-key piano range", () => {
   assert.equal(PIANO_KEYS.at(-1)?.name, "C8");
 });
 
+test("gives every key an approach overlay only under the note highway", () => {
+  const attached = renderToStaticMarkup(<PianoKeyboard notes={[]} highwayAttached />);
+  assert.equal(attached.match(/class="piano-key-approach"/g)?.length, 88);
+  assert.match(attached, /piano-keyboard-overlay highway-attached/);
+  const plain = renderToStaticMarkup(<PianoKeyboard notes={[]} />);
+  assert.doesNotMatch(plain, /piano-key-approach|highway-attached/);
+});
+
 test("highlights every distinct in-range playhead pitch and labels its key", () => {
   const markup = renderToStaticMarkup(
     <PianoKeyboard notes={[

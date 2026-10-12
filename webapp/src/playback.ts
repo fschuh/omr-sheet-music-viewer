@@ -36,12 +36,85 @@ export interface PlaybackMoment {
   dynamic: MusicalDynamic;
   keyboardNotes: PlaybackKeyboardNote[];
   center: [number, number];
+  /** Every note at this moment with its hand, so the moment can be narrowed to one hand. */
+  notes?: PlaybackMomentNote[];
 }
 
 export interface PlaybackKeyboardNote {
   pitch: string;
   finger?: number;
+  /** Left hand; absent when the hand is unknown. */
   left?: boolean;
+}
+
+export interface PlaybackMomentNote {
+  pitch: string;
+  /** Left hand, by the staff/clef rule fingering uses; absent when the score could not be read. */
+  left?: boolean;
+  startsAttack: boolean;
+  visualGroupId: string;
+}
+
+/** The hand being practised; "both" is ordinary playback. */
+export type PracticeHand = "both" | "left" | "right";
+
+/** Notes of unknown hand are never hidden, so a score without hand data still plays. */
+export function noteInPracticeHand(left: boolean | undefined, hand: PracticeHand): boolean {
+  return hand === "both" || left === undefined || left === (hand === "left");
+}
+
+/** A moment stays in a one-hand timeline only when that hand plays something new there. */
+export function momentHasPracticeHandAttack(
+  moment: { notes?: readonly Pick<PlaybackMomentNote, "left" | "startsAttack">[] },
+  hand: PracticeHand,
+): boolean {
+  if (hand === "both" || !moment.notes) return true;
+  return moment.notes.some((note) => note.startsAttack && noteInPracticeHand(note.left, hand));
+}
+
+/**
+ * The timeline narrowed to one hand: moments where that hand plays nothing new
+ * are skipped, and the rest keep only that hand's notes, noteheads and keys.
+ * Moment ids are unchanged, so a moment can be looked up in either timeline.
+ */
+export function timelineForPracticeHand(
+  timeline: PlaybackMoment[],
+  hand: PracticeHand,
+): PlaybackMoment[] {
+  if (hand === "both") return timeline;
+  return timeline.flatMap((moment) => {
+    if (!moment.notes) return [moment];
+    if (!momentHasPracticeHandAttack(moment, hand)) return [];
+    const notes = moment.notes.filter((note) => noteInPracticeHand(note.left, hand));
+    const groupIds = new Set(notes.map((note) => note.visualGroupId));
+    return [{
+      ...moment,
+      notes,
+      visualGroupIds: moment.visualGroupIds.filter((id) => groupIds.has(id)),
+      pitches: Array.from(new Set(
+        notes.filter((note) => note.startsAttack).map((note) => note.pitch),
+      )),
+      keyboardNotes: moment.keyboardNotes.filter((note) => noteInPracticeHand(note.left, hand)),
+    }];
+  });
+}
+
+/**
+ * The practice-timeline moment to stand on for a moment of the full timeline:
+ * itself when kept, otherwise the next kept moment, or the last one before it.
+ */
+export function snapMomentToTimeline(
+  fullTimeline: readonly PlaybackMoment[],
+  timeline: readonly PlaybackMoment[],
+  momentId: string,
+): string | null {
+  const kept = new Set(timeline.map((moment) => moment.id));
+  if (kept.has(momentId)) return momentId;
+  const index = fullTimeline.findIndex((moment) => moment.id === momentId);
+  if (index < 0) return timeline[0]?.id ?? null;
+  const after = fullTimeline.slice(index + 1).find((moment) => kept.has(moment.id));
+  if (after) return after.id;
+  return fullTimeline.slice(0, index).reverse().find((moment) => kept.has(moment.id))?.id ?? null;
 }
 
 const NO_PLAYBACK_GROUPS: readonly string[] = [];
@@ -112,6 +185,8 @@ interface PlaybackPitchNote {
   pitch: string;
   startsAttack: boolean;
   dynamic: MusicalDynamic;
+  left?: boolean;
+  visualGroupId: string;
 }
 
 export function playbackPitchForNote(note: VisualSidecarNote): string | null {
@@ -214,6 +289,7 @@ interface NoteByNoteScoreData {
   suppressedNoteIds: Set<string>;
   startsAttackByNoteId: Map<string, boolean>;
   dynamicByNoteId: Map<string, MusicalDynamic>;
+  leftByNoteId: Map<string, boolean>;
 }
 
 function noteForPage(
@@ -235,8 +311,9 @@ function noteByNoteScoreData(
   const suppressedNoteIds = new Set<string>();
   const startsAttackByNoteId = new Map<string, boolean>();
   const dynamicByNoteId = new Map<string, MusicalDynamic>();
+  const leftByNoteId = new Map<string, boolean>();
   if (!documentScore && !musicXml) {
-    return { suppressedNoteIds, startsAttackByNoteId, dynamicByNoteId };
+    return { suppressedNoteIds, startsAttackByNoteId, dynamicByNoteId, leftByNoteId };
   }
   try {
     const score = documentScore ?? parseRealtimeMusicXml(musicXml!);
@@ -249,6 +326,7 @@ function noteByNoteScoreData(
             documentScore !== null && documentScore !== undefined,
           ))
           .filter((note): note is RealtimeScoreNote => note !== null && !note.grace);
+        for (const note of eventNotes) leftByNoteId.set(note.musicXmlId, note.left);
         if (eventNotes.some(scoreNoteStartsAttack)) {
           // Record attack status for every tone in a partial-tie event so the
           // sidecar-defined chord can distinguish held and newly attacked notes.
@@ -268,30 +346,31 @@ function noteByNoteScoreData(
   } catch {
     // Note-by-note playback can still use the visual sidecar when score parsing fails.
   }
-  return { suppressedNoteIds, startsAttackByNoteId, dynamicByNoteId };
+  return { suppressedNoteIds, startsAttackByNoteId, dynamicByNoteId, leftByNoteId };
 }
 
 function playbackNotesForCluster(
   cluster: MomentCluster,
-  startsAttackByNoteId: ReadonlyMap<string, boolean>,
-  dynamicByNoteId: ReadonlyMap<string, MusicalDynamic>,
+  scoreData: NoteByNoteScoreData,
 ): PlaybackPitchNote[] {
   const result: PlaybackPitchNote[] = [];
   const seenIds = new Set<string>();
-  const add = (musicXmlId: string, pitch: string | null) => {
+  const add = (musicXmlId: string, pitch: string | null, visualGroupId: string) => {
     if (pitch === null || seenIds.has(musicXmlId)) return;
     seenIds.add(musicXmlId);
     result.push({
       musicXmlId,
       pitch,
-      startsAttack: startsAttackByNoteId.get(musicXmlId) ?? true,
-      dynamic: dynamicByNoteId.get(musicXmlId) ?? "mp",
+      startsAttack: scoreData.startsAttackByNoteId.get(musicXmlId) ?? true,
+      dynamic: scoreData.dynamicByNoteId.get(musicXmlId) ?? "mp",
+      left: scoreData.leftByNoteId.get(musicXmlId),
+      visualGroupId,
     });
   };
 
   for (const entry of cluster.groups) {
     for (const note of entry.notes) {
-      add(note.musicxml_id, playbackPitchForNote(note));
+      add(note.musicxml_id, playbackPitchForNote(note), entry.group.visual_group_id);
     }
   }
   return result;
@@ -335,11 +414,7 @@ export function buildPlaybackTimeline(
         suppressedNoteIds,
       );
       clusters.forEach((cluster, clusterIndex) => {
-        const momentNotes = playbackNotesForCluster(
-          cluster,
-          scoreData.startsAttackByNoteId,
-          scoreData.dynamicByNoteId,
-        );
+        const momentNotes = playbackNotesForCluster(cluster, scoreData);
         const visualGroupIds = cluster.groups
           .map((entry) => entry.group.visual_group_id)
           .sort((first, second) => first.localeCompare(second));
@@ -356,10 +431,16 @@ export function buildPlaybackTimeline(
           const predicted = predictedFingerings[
             `page-${musicPageNumber}-${note.musicXmlId}`
           ];
-          const key = `${note.pitch}:${predicted?.left ?? ""}:${predicted?.finger ?? ""}`;
+          // Fingering picks its hand by the same staff/clef rule, so the two agree.
+          const left = predicted?.left ?? note.left;
+          const key = `${note.pitch}:${left ?? ""}:${predicted?.finger ?? ""}`;
           if (seenKeyboardNotes.has(key)) continue;
           seenKeyboardNotes.add(key);
-          keyboardNotes.push({ pitch: note.pitch, ...predicted });
+          keyboardNotes.push({
+            pitch: note.pitch,
+            ...(left === undefined ? {} : { left }),
+            ...predicted,
+          });
         }
         const centerY =
           cluster.groups.reduce((total, entry) => total + entry.group.center[1], 0) /
@@ -378,6 +459,12 @@ export function buildPlaybackTimeline(
           dynamic: momentNotes.find((note) => note.startsAttack)?.dynamic ?? "mp",
           keyboardNotes,
           center: [cluster.x, centerY],
+          notes: momentNotes.map(({ pitch, left, startsAttack, visualGroupId }) => ({
+            pitch,
+            ...(left === undefined ? {} : { left }),
+            startsAttack,
+            visualGroupId,
+          })),
         });
       });
     }
@@ -406,6 +493,32 @@ export function seekPlaybackToGroup(
   );
   if (!moment || moment.id === state.currentMomentId) return state;
   return { ...state, currentMomentId: moment.id };
+}
+
+/**
+ * Seeks within a one-hand timeline. Selecting a notehead of the other hand, or
+ * of a skipped moment, lands on the practised hand's next moment instead.
+ */
+export function seekPracticePlaybackToGroup(
+  fullTimeline: PlaybackMoment[],
+  timeline: PlaybackMoment[],
+  state: PlaybackState,
+  selectedGroup: VisualGroupRef | null,
+): PlaybackState {
+  const direct = seekPlaybackToGroup(timeline, state, selectedGroup);
+  if (direct !== state || !state.active || !selectedGroup || fullTimeline === timeline) {
+    return direct;
+  }
+  const moment = fullTimeline.find(
+    (candidate) =>
+      candidate.pageIndex === selectedGroup.pageIndex &&
+      candidate.visualGroupIds.includes(selectedGroup.visualGroupId),
+  );
+  if (!moment) return state;
+  const momentId = snapMomentToTimeline(fullTimeline, timeline, moment.id);
+  return momentId && momentId !== state.currentMomentId
+    ? { ...state, currentMomentId: momentId }
+    : state;
 }
 
 function currentIndex(timeline: PlaybackMoment[], state: PlaybackState): number {
@@ -466,11 +579,16 @@ function commandDestination(
   return destination;
 }
 
+/**
+ * `timeline` is the one being stepped through (one hand's, when practising);
+ * `fullTimeline` lets a start position on a skipped moment snap onto it.
+ */
 export function runPlaybackCommand(
   timeline: PlaybackMoment[],
   state: PlaybackState,
   command: PlaybackCommand,
   selectedGroup: VisualGroupRef | null = null,
+  fullTimeline: PlaybackMoment[] = timeline,
 ): PlaybackState {
   if (command === "stopPlayback") {
     return state.active ? { ...state, active: false, currentMomentId: null } : state;
@@ -482,7 +600,7 @@ export function runPlaybackCommand(
     const next = timeline.length === 0
       ? { ...state, active: false, currentMomentId: null }
       : { ...state, active: true, currentMomentId: timeline[0].id };
-    return seekPlaybackToGroup(timeline, next, selectedGroup);
+    return seekPracticePlaybackToGroup(fullTimeline, timeline, next, selectedGroup);
   }
   if (command === "toggleNoteSounds") {
     return state.active ? { ...state, noteSoundsEnabled: !state.noteSoundsEnabled } : state;
