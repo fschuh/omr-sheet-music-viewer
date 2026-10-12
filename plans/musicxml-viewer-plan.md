@@ -5,7 +5,7 @@ Status: Proposed; implementation has not started.
 
 ## 1. Objective and scope
 
-Open a MusicXML file directly and view, select, navigate, and play it exactly as a recognized PDF, without running homr. The viewer already consumes MusicXML for playback and fingering, so the new work is concentrated in three places: loading the file, engraving it into pages, and storing per-score data next to (never inside) the original file.
+Open a MusicXML file directly and view, select, navigate, and play it exactly as a recognized PDF, without running homr. The viewer already consumes MusicXML for playback and fingering, so the new work is concentrated in four places: loading the file, engraving it into pages, a source-neutral note-geometry contract that both PDFs and MusicXML scores feed, and storing per-score data next to (never inside) the original file.
 
 Initial scope:
 
@@ -31,11 +31,11 @@ Paths in this document are relative to `sheet-music-viewer/`.
 | --- | --- | --- |
 | Opening a document | `App.tsx` `handleOpenPdf`, `native.ts` `openPdf`, `lib.rs` `open_pdf` | The open flow is PDF-only and starts a worker job. MusicXML needs a second, worker-free branch. |
 | Document state | `LoadedDocument` and `DocumentPage` in `types.ts` | Pages carry a raster `imageUrl`, a page `musicXml`, and a `visualSidecar`. There is no notion of the document's source kind. |
-| Page surface | `DocumentViewer.tsx` draws `<img src={page.imageUrl}>` with an SVG overlay in page pixel coordinates (`viewBox 0 0 width height`) | A MusicXML page can replace the image with an SVG in the same coordinate space and keep the overlay untouched. |
-| Note geometry | `page.visualSidecar` (`VisualSidecar`, version 3) | Selection, highlighting, note-by-note moments (`playback.ts`), realtime targets and systems (`realtime.ts` `buildRealtimeVisualMap`), note labels, and the note highway all read it. It is the contract the renderer must satisfy. |
-| Note identity | `musicxml_merge.py` rewrites every ID to `page-<n>-<id>`; `playback.ts` and `realtime.ts` look notes up with that prefix, where `n` counts pages that contain music | The renderer must produce the same page-scoped IDs, derived from where each note lands after layout. |
-| Coordinate scale | PDF pages are rasterized at 300 DPI (`RASTER_DPI` in `processor.py`); `realtime.ts` pads system bounds by fixed pixel amounts | Rendered pages should use 300-DPI page pixels so these constants behave the same. |
-| Sidecar value formats | `isGraceNote` in `playback.ts` reads homr duration strings (`note_16`, grace marked with `G`) | The geometry builder must write homr-compatible `duration` and `pitch` strings. |
+| Page surface | `DocumentViewer.tsx` draws `<img src={page.imageUrl}>` with an SVG overlay in page pixel coordinates (`viewBox 0 0 width height`) | A MusicXML page can replace the image with an SVG in the same coordinate space. |
+| Note geometry | `page.visualSidecar` (`VisualSidecar`, version 3), read directly by hit testing and highlighting (`DocumentViewer.tsx`), note-by-note moments (`playback.ts`), realtime targets and systems (`realtime.ts` `buildRealtimeVisualMap`), and note labels (`noteLabels.ts`); the note highway works from playback and realtime output | The sidecar is homr's recognition format: per page about a megabyte of traced outlines, most of it diagnostic. These consumers move to a small source-neutral contract (section 3.4); the sidecar stays PDF-only. |
+| What the consumers read | Notehead bounds (derived from fitted ellipses or traced outlines), group bounds, centers, system index, moment and chord IDs, the note-to-notehead link, pitch, grace flag (parsed from homr duration strings), measure, voice | This is the whole content of the new contract. Detected and refined outlines, raw stems, stem components, provenance, repair actions, match confidence, and alignment method are read only by Diagnostics and the note inspector. |
+| Note identity | homr numbers notes per page (`homr-note-17`); `musicxml_merge.py` prefixes them with the page (`page-1-homr-note-17`); `playback.ts` and `realtime.ts` add the same prefix when reading a sidecar, counting pages that contain music | The contract carries page-scoped viewer IDs directly, so consumers stop doing page arithmetic. MusicXML notes get structural keys (section 3.5). |
+| Coordinate scale | PDF pages are rasterized at 300 DPI (`RASTER_DPI` in `processor.py`); `realtime.ts` pads system bounds by fixed pixel amounts | Rendered pages use 300-DPI page pixels so these constants behave the same. |
 | Playback parsing | `parseRealtimeMusicXml` in `realtime.ts` (via `@xmldom/xmldom`) | It was written against homr output. Real-world MusicXML exercises more of it (see section 6). |
 | Fingerings | `fingering.ts` reads note `id` attributes and writes predictions into the merged MusicXML copy, replacing existing `<fingering>` elements | Arbitrary MusicXML usually lacks note IDs and often contains printed fingerings, so neither the keying nor the write-back can be reused as is (section 4.3). |
 | Native file access | `checked_cache_path` in `lib.rs` limits reads and writes to the app cache | Reading a user-chosen MusicXML file and writing the per-score data folder need new, separately checked commands. |
@@ -43,44 +43,56 @@ Paths in this document are relative to `sheet-music-viewer/`.
 
 ## 3. Architecture
 
-### 3.1 Module boundary
+### 3.1 Module boundaries
 
-All MusicXML-viewer code lives in its own folder, `webapp/src/musicxml/`, with a single public entry point, `webapp/src/musicxml/index.ts`. The rest of the application imports only from that entry point. Code inside the module may import the shared viewer contract (`types.ts`), the native bridge (`native.ts`), and the existing fingering predictor; it must not import `App.tsx`, `DocumentViewer.tsx`, or any PDF-specific code.
+All MusicXML-viewer code lives in its own folder, `webapp/src/musicxml/`, with a single public entry point, `webapp/src/musicxml/index.ts`. The rest of the application imports only from that entry point. Code inside the module may import the note-geometry contract (`noteGeometry.ts`), the shared document types (`types.ts`), the native bridge (`native.ts`), and the existing fingering predictor; it must not import `App.tsx`, `DocumentViewer.tsx`, the visual sidecar types, or any other PDF-specific code.
 
-The boundary is enforced, not just documented: a test fails when a file outside `webapp/src/musicxml/` imports a path inside it other than `index.ts`, and when a file inside it imports one of the forbidden application modules.
+The shared consumers (playback, realtime, note labels, hit testing) depend only on `noteGeometry.ts`, never on the visual sidecar.
+
+Both boundaries are enforced, not just documented: a test fails when a file outside `webapp/src/musicxml/` imports a path inside it other than `index.ts`, when a file inside it imports a forbidden module, and when a shared consumer imports the visual sidecar types.
 
 On the native side, MusicXML commands live in a new Rust module, `src-tauri/src/musicxml.rs`, registered from `lib.rs`. The Python worker is not involved.
 
 ### 3.2 Pipeline
 
 ```text
-user-chosen file
-   │  native: read, unzip .mxl, hash, ensure score-data folder
-   ▼
-import/      MusicXML text ──> ScoreModel (parts, staves, measures, voices, events)
-   │                           + stable note keys
-   ▼
-layout/      ScoreModel + PageFormat ──> LayoutModel (pages > systems > staves > measures
-   │                                     > positioned elements, in staff spaces)
-   ├──────────────────────────────┐
-   ▼                              ▼
-render/      LayoutModel page ──> SVG   geometry/   LayoutModel page ──> VisualSidecar
-   │                              │                 + page-scoped note IDs
-   └──────────────┬───────────────┘
-                  ▼
-document/    LoadedDocument for the existing viewer, playback, and fingering code
+PDF:       worker ──> page image + VisualSidecar ──> sidecarNoteGeometry.ts ──┐
+                                                                              │
+MusicXML:  user-chosen file                                                   │
+             │  native: read, unzip .mxl, hash, ensure score-data folder      │
+             ▼                                                                │
+           import/    MusicXML text ──> ScoreModel + structural note keys     │
+             ▼                                                                │
+           layout/    ScoreModel + PageFormat ──> LayoutModel                 │
+             │        (pages > systems > staves > measures > elements)        │
+             ├────────────────────────┐                                       │
+             ▼                        ▼                                       ▼
+           render/    page SVG      geometry/  page ──> PageNoteGeometry ──> shared consumers:
+                                                                             playback, realtime,
+                                                                             note highway, labels,
+                                                                             hit testing
 ```
 
 Each stage is a pure function of its inputs. Only `import/` touches XML; only `render/` touches React or SVG; only `scoreData/` touches the native bridge. Layout is deterministic: the same score and page format always produce the same pages, element positions, and note IDs. This makes every stage testable under `node --test` like the existing tests, and lets layout move into a Web Worker later without changes.
 
 ### 3.3 Module layout
 
+Shared files outside the module:
+
+```text
+webapp/src/
+├── noteGeometry.ts           source-neutral contract (section 3.4)
+└── sidecarNoteGeometry.ts    PDF adapter: VisualSidecar page -> PageNoteGeometry
+```
+
+The MusicXML module:
+
 ```text
 webapp/src/musicxml/
 ├── index.ts               public API: openMusicXmlScore(), MusicXmlPageSurface, types
 ├── import/
 │   ├── parseMusicXml.ts   XML text -> ScoreModel; score-timewise converted to partwise
-│   ├── noteKeys.ts        stable, layout-independent note keys
+│   ├── noteKeys.ts        structural note keys (section 3.5)
 │   └── importReport.ts    unsupported elements found while importing
 ├── model/
 │   ├── score.ts           ScoreModel types (engraving-oriented, separate from realtime.ts)
@@ -96,13 +108,13 @@ webapp/src/musicxml/
 │   ├── pages.ts           breaking systems into pages
 │   └── spanners.ts        ties, slurs, hairpins, pedal, ottava, tuplet brackets
 ├── render/
-│   ├── MusicXmlPageSurface.tsx   one page as SVG, page-pixel viewBox
+│   ├── MusicXmlPageSurface.tsx   one page as SVG, page-pixel viewBox, highlight classes
 │   ├── glyphs.ts          SMuFL glyph names, codepoints, and metadata lookups
 │   └── text.ts            titles, credits, directions; TextMeasurer interface
 ├── geometry/
-│   └── visualSidecar.ts   LayoutModel page -> VisualSidecar + page-scoped IDs
+│   └── pageNoteGeometry.ts   LayoutModel page -> PageNoteGeometry
 ├── document/
-│   └── loadedDocument.ts  ScoreModel + layout -> LoadedDocument and DocumentPage[]
+│   └── loadedDocument.ts  ScoreModel + layout -> LoadedDocument, viewer IDs
 ├── scoreData/
 │   ├── scoreData.ts       read/write manifest.json, fingerings.json via native.ts
 │   └── fingerings.ts      prediction lifecycle, key translation, source precedence
@@ -114,28 +126,91 @@ webapp/src/musicxml/
 
 Tests sit next to the files they test, as elsewhere in `webapp/src`.
 
-### 3.4 Viewer contract
+### 3.4 Note-geometry contract
 
-The renderer feeds the existing viewer by producing exactly what the PDF pipeline produces, so playback, selection, navigation, shortcuts, labels, and the note highway keep working without changes to their code.
+`noteGeometry.ts` defines what the shared consumers need to know about the notes on a page, independent of where the page came from. It starts as the minimum the current features read and grows when a feature needs more.
 
-For each rendered page, the `DocumentPage` carries:
+```ts
+type Bounds = [left: number, top: number, right: number, bottom: number];  // page pixels
 
-- `width` and `height` in 300-DPI page pixels (a Letter page is 2550 × 3300).
-- `visualSidecar` (version 3, `source_image_size` = page size):
-  - One `notes` entry per rendered note: page-local `musicxml_id`, part, measure, staff, voice, homr-format `pitch` and `duration` strings, `match_confidence` 1, `alignment_method` `"structural"`, and its `visual_group_id`.
-  - One `visual_groups` entry per notehead: exact notehead outline as `notehead_contours`, stem outline as `stem_contours`, `center`, `bbox`, `staff_group_index` = system index on the page, `staff_index`, `staff_position`, `chord_id` and `moment_id` from the score's time position, `visual_status` `"canonical"`, and a new provenance value `"engraved"`.
-- `musicXml` is left unset; `noteByNoteScoreData` already prefers the document score when one exists.
+interface PageNoteGeometry {
+  noteheads: NoteheadGeometry[];
+  notes: GeometryNote[];
+}
 
-The document carries `documentMusicXml`: an in-memory copy of the source in which every note has an `id` of the form `page-<n>-<local id>`, matching the page the note was laid out on. The original file is never modified.
+/** One selectable, highlightable notehead (a linked visual group for PDFs). */
+interface NoteheadGeometry {
+  id: string;                  // unique on the page
+  systemIndex: number;         // system on the page, top to bottom
+  staffIndex: number;
+  center: [number, number];
+  noteheadBounds: Bounds[];    // the notehead shapes, for hit testing, labels, playback placement
+  bounds: Bounds;              // notehead with stem, for hit-test fallback and system extents
+  chordId: string | null;
+  momentId: string | null;
+}
 
-Two kinds of note identity are kept apart:
+/** One score note, linked to the notehead that shows it. */
+interface GeometryNote {
+  id: string;                  // page-scoped viewer ID
+  noteheadId: string;
+  pitch: string | null;        // scientific pitch, e.g. "F#5"
+  grace: boolean;
+  measure: number;
+  voice: number;
+}
+```
 
-- The stable note key (`noteKeys.ts`) is independent of layout: the note's own `id` when present and unique, otherwise part ID, measure index, staff, voice, and position within the voice. Per-score data is stored by stable key.
-- The page-scoped viewer ID depends on layout and is what the existing code expects. The document adapter owns the two-way mapping, so a future change in page format or system breaking never invalidates stored data.
+Notes and noteheads are separate because one PDF notehead can be linked to more than one note (for example, a unison shared by two voices).
 
-A contract test checks, for every corpus score, that each note in `documentMusicXml` has exactly one sidecar note and one linked visual group on the page its ID names, and that every visual group's outline lies inside its page.
+`DocumentPage` gains `noteGeometry: PageNoteGeometry`. PDF pages also keep `visualSidecar`, which remains the source for the PDF highlight shapes, Diagnostics, and the note inspector's homr fields.
 
-### 3.5 Application integration
+PDF adapter (`sidecarNoteGeometry.ts`): converts linked, non-diagnostic visual groups and their notes, applies the page prefix to note IDs, and parses the grace flag from homr duration strings. Where today's consumers derive bounds from different shapes (hit testing from traced outlines; playback and labels from fitted ellipses when present), the adapter reproduces each consumer's current numbers exactly; unifying them would be a separate, deliberate behavior change. Moving the consumers onto the contract must not change PDF behavior; section 7 defines the test.
+
+MusicXML geometry (`geometry/pageNoteGeometry.ts`): built from the layout positions and glyph metadata, at a few numbers per notehead.
+
+Highlighting is a page-surface concern, not part of the contract. PDF pages keep drawing highlight shapes from the sidecar over the raster image. MusicXML pages own their drawing: `MusicXmlPageSurface` receives the selected and playing notehead IDs and gives the matching glyph groups (notehead, stem, flag, accidental, dots) a CSS class, so the highlight is exactly what is drawn.
+
+A contract test checks, for every corpus score, that every note in `documentMusicXml` appears exactly once in the note geometry of the page its ID names, that every note links to a notehead on that page, and that all bounds lie inside the page.
+
+### 3.5 Note identity
+
+Two kinds of note identity are kept apart.
+
+**Structural key**, stored in per-score data and independent of layout:
+
+```text
+P1-m12-s1-v1-t3_8-E5
+│  │   │  │  │    └ pitch as written (E5, Fs5 = F#5, Bb4, Fx5 = F double sharp)
+│  │   │  │  └ onset: 3/8 of a whole note after the start of the measure (t0 = downbeat)
+│  │   │  └ voice
+│  │   └ staff within the part (2 = left-hand staff of a piano)
+│  └ measure by position in the part, not the printed number
+└ part ID from the file
+```
+
+| Note | Key |
+| --- | --- |
+| Downbeat of measure 1, right hand | `P1-m1-s1-v1-t0-C5` |
+| C–E–G chord, beat 2 of 4/4, left hand | `P1-m3-s2-v1-t1_4-C3`, `P1-m3-s2-v1-t1_4-E3`, `P1-m3-s2-v1-t1_4-G3` |
+| Second voice on the same staff | `P1-m3-s1-v2-t1_4-A4` |
+| Grace note before beat 3 (`g1` = first grace note at that onset) | `P1-m3-s1-v1-t1_2-g1-D5` |
+| Same pitch twice at one onset in one voice | `P1-m3-s1-v1-t1_2-E5`, `P1-m3-s1-v1-t1_2-E5-2` |
+
+Rules:
+
+- Measures are counted by position because the MusicXML `number` attribute repeats or is missing in some exports (pickups, `X1` measures).
+- Onsets are reduced fractions of a whole note, computed from `divisions`, `backup`, and `forward`.
+- Keys use only letters, digits, `-`, and `_`, so every key is also a valid XML `id`; MusicXML declares `id` as an XML ID, which excludes `/`, `:`, and `#`.
+- `id` attributes already present in the file are ignored for keying, so every score uses one scheme.
+
+Page size, system breaks, and page breaks never change a key. Edits to the file can: a changed onset or pitch changes that note's key, and an inserted measure shifts the measure index of every later measure. Carrying data across such edits needs a matching step (section 3.8), not a different key.
+
+**Viewer ID**, in memory only and rebuilt after every layout: the page number followed by the structural key, `page-4-P1-m12-s1-v1-t3_8-E5`. It has the same `page-<n>-…` shape as PDF viewer IDs, and converting between the two forms only adds or strips the prefix.
+
+The document carries `documentMusicXml`, an in-memory copy of the source in which every note's `id` is its viewer ID. The original file is never modified. PDFs keep their homr-based IDs.
+
+### 3.6 Application integration
 
 `LoadedDocument` gains a discriminated source:
 
@@ -148,10 +223,10 @@ source:
 Opening:
 
 - One "Open score…" dialog with filters for PDF and MusicXML (`pdf`, `musicxml`, `xml`, `mxl`). The extension chooses the flow. The existing reset sequence in `handleOpenPdf` (stop playback, listen mode, and realtime; clear selection) moves into a shared function used by both flows.
-- PDFs continue through the worker exactly as today.
+- PDFs continue through the worker exactly as today; each completed page also gets its `noteGeometry` from the adapter.
 - MusicXML calls `openMusicXmlScore(path)`, which reads the file through the native bridge, imports, lays out, and returns a complete `LoadedDocument` with status `"complete"`. A synthetic job ID keeps the existing stale-request guards working. Fingering prediction then runs through the module's fingering lifecycle (section 4.3).
 
-Page surface: `DocumentPage` gains an optional `surface` field. When it holds a MusicXML page, `DocumentViewer` renders `MusicXmlPageSurface` in place of the `<img>`. The SVG overlay, pan, zoom, and hit testing are unchanged because they already work in page pixels. Pages outside the viewport render a sized placeholder, so long scores do not keep hundreds of SVG pages alive.
+Page surface: `DocumentPage` gains an optional `surface` field. When it holds a MusicXML page, `DocumentViewer` renders `MusicXmlPageSurface` in place of the `<img>` and the sidecar highlight layer. Pan, zoom, and hit testing are shared because they work in page pixels on the note geometry. Pages outside the viewport render a sized placeholder, so long scores do not keep hundreds of SVG pages alive.
 
 UI differences by source:
 
@@ -162,9 +237,9 @@ UI differences by source:
 | Open cache directory | Opens the PDF cache folder | Opens the score-data folder |
 | Open MusicXML | Opens the merged, recognized MusicXML | Opens the original file |
 | Navigation, shortcuts, selection, playback, listen mode, keyboard, note highway | Unchanged | Same behavior |
-| Note inspector | Includes homr fields (provenance, repairs, confidence) | Omits homr-only fields |
+| Note inspector | Includes homr fields (provenance, repairs, confidence) | Shows the structural key; omits homr-only fields |
 
-### 3.6 Native commands
+### 3.7 Native commands
 
 New commands in `src-tauri/src/musicxml.rs`:
 
@@ -176,7 +251,7 @@ New commands in `src-tauri/src/musicxml.rs`:
 
 `.mxl` reading uses the `zip` crate and hashing uses `sha2`. A root `.xml` file that is not `score-partwise` or `score-timewise` is rejected with a clear message. Rust tests cover the path checks and the container parsing; each check has a test that fails when the check is removed.
 
-### 3.7 Per-score data folder
+### 3.8 Per-score data folder
 
 ```text
 <app data dir>/musicxml-scores/<sha256 of the source file>/
@@ -189,8 +264,8 @@ New commands in `src-tauri/src/musicxml.rs`:
 Compared with the PDF cache:
 
 - It lives in the app data directory (on Linux `~/.local/share/…`), not the cache directory, because per-score customizations are user data and the cache can be cleared at any time.
-- It holds no copy of the score. All additions are overlays keyed by stable note keys.
-- Like the PDF cache, it is keyed by content hash, so renaming or moving the file keeps its data. Editing the file creates a new folder. That costs nothing while the folder holds only predictions, which are regenerated in seconds. Before user overrides ship, a fallback will match the last-seen path recorded in `manifest.json` and carry overrides across by stable note key.
+- It holds no copy of the score. All additions are overlays keyed by structural note keys.
+- Like the PDF cache, it is keyed by content hash, so renaming or moving the file keeps its data. Editing the file creates a new folder. That costs nothing while the folder holds only predictions, which are regenerated in seconds. Before user overrides ship, a fallback will find the previous folder by the last-seen path in `manifest.json` and carry overrides across by matching notes on measure content, onset, and pitch.
 
 `fingerings.json`:
 
@@ -199,7 +274,10 @@ Compared with the PDF cache:
   "schemaVersion": 1,
   "model": "lumikey-0.3.0-staff-hands-v1",
   "noteKeyScheme": 1,
-  "predicted": { "P1/m12/s1/v1/n3": { "finger": 3, "left": false } },
+  "predicted": {
+    "P1-m12-s1-v1-t3_8-E5": { "finger": 3, "left": false },
+    "P1-m12-s2-v1-t0-C3": { "finger": 5, "left": true }
+  },
   "overrides": {}
 }
 ```
@@ -210,7 +288,7 @@ Predictions are reused only when `model` and `noteKeyScheme` match; otherwise th
 
 ### 4.1 Import
 
-`parseMusicXml.ts` builds an engraving-oriented `ScoreModel`: part list and staff counts; per measure, the attributes (divisions, key, time, clefs, staff details), directions, barlines, repeats, endings, and print breaks; per staff and voice, a sequence of chords and rests with absolute time positions (resolving `backup` and `forward`), notes with pitch, notated type, dots, tuplet ratios, ties, accidentals, stem direction and beam information when encoded, notations, and printed fingerings.
+`parseMusicXml.ts` builds an engraving-oriented `ScoreModel`: part list and staff counts; per measure, the attributes (divisions, key, time, clefs, staff details), directions, barlines, repeats, endings, and print breaks; per staff and voice, a sequence of chords and rests with absolute time positions (resolving `backup` and `forward`), notes with pitch, notated type, dots, tuplet ratios, ties, accidentals, stem direction and beam information when encoded, notations, and printed fingerings. Each note receives its structural key here.
 
 Encoded layout hints (`default-x`, `default-y`, stem and beam directions, `<print>` breaks, `<defaults>` scaling and page layout) are kept in the model. Layout honors breaks and page format by default, matching MuseScore's import default, and computes everything else itself.
 
@@ -231,14 +309,14 @@ Layout follows MuseScore's approach and naming where practical, so its source ca
 
 Glyphs come from the Leland SMuFL font with its metadata JSON, which supplies the bounding boxes and stem anchors that layout needs. Text width comes from an injected `TextMeasurer`: a canvas-based measurer in the app and a deterministic one in tests.
 
-`render/` draws the `LayoutModel` as SVG and does not compute positions. Notehead and stem outlines for the sidecar come from the same glyph metadata and layout positions, so highlights align exactly with what is drawn.
+`render/` draws the `LayoutModel` as SVG and does not compute positions. Every glyph that belongs to a notehead (notehead, stem, flag, accidental, dots) is grouped under that notehead's ID so highlighting can address it. The note geometry is computed from the same layout positions and glyph metadata, so hit testing matches what is drawn.
 
 ### 4.3 Fingerings
 
 The PDF lifecycle writes predictions into a MusicXML copy. MusicXML scores use an overlay instead:
 
-1. On open, read `fingerings.json`. If `model` and `noteKeyScheme` match, translate predictions from stable keys to page-scoped IDs and set `predictedFingerings`.
-2. Otherwise run the existing predictor on the in-memory `documentMusicXml` (whose notes all have IDs), translate the result to stable keys, and write `fingerings.json`.
+1. On open, read `fingerings.json`. If `model` and `noteKeyScheme` match, convert the structural keys to viewer IDs and set `predictedFingerings`.
+2. Otherwise run the existing predictor on the in-memory `documentMusicXml` (whose notes all have viewer IDs), strip the page prefixes, and write `fingerings.json`.
 3. Printed fingerings from the source are engraved as part of the score and are never overwritten. Where a note has a printed fingering, the keyboard shows the printed finger. A user override (later) takes precedence over both.
 
 The prediction call is factored so that both lifecycles share it. The PDF lifecycle itself does not change in this work.
@@ -268,7 +346,7 @@ An element without layout support is listed in the import report. Where it carri
 Playback uses `documentMusicXml` through `parseRealtimeMusicXml`, so most behavior carries over. The corpus will exercise cases homr output rarely contains; each is checked against the source score and fixed in `realtime.ts` and `playback.ts` with a test:
 
 - Multiple voices per staff with `backup` and `forward`.
-- Grace notes with real MusicXML `<grace>` elements; the sidecar duration string marks them as homr does.
+- Grace notes with real MusicXML `<grace>` elements; the note geometry's `grace` flag replaces the homr duration-string check for MusicXML pages.
 - Tuplets via `time-modification`, repeats with voltas, and `sound` tempo changes.
 - Scores with more than one part. Hand assignment uses the existing staff/clef rule within a keyboard part; fingering prediction runs only on keyboard parts.
 
@@ -277,13 +355,16 @@ Any change to shared playback code is checked against PDFs as well, so behavior 
 ## 7. Testing and verification
 
 - Unit tests for each stage, run by `npm test`.
+- Note-geometry adapter tests with small sidecar fixtures, including notes sharing a notehead, diagnostic groups (excluded), groups with and without fitted ellipses, and pages without music (page numbering).
+- PDF parity check for the consumer switch: a script under `tools/` records, for every cached PDF, the note-by-note playback moments, realtime targets and system bounds, note label placements, and hit-test results at a grid of points. It runs once on the code before the switch and again after; the outputs must be identical. The same check is repeated whenever shared consumer code changes later.
 - Contract tests from section 3.4, run on every corpus score.
-- Module-boundary test from section 3.1.
-- Native tests for every path and format check in section 3.6.
+- Note-key tests: keys are unchanged by different page formats and break settings; chords, voices, grace notes, and duplicate pitches get distinct keys; every key is a valid XML ID.
+- Boundary tests from section 3.1.
+- Native tests for every path and format check in section 3.7.
 
 Corpus:
 
-- `../omr-evals/cases/ground-truth/musescore/`: 26 MuseScore-exported `.mxl` files, each with the PDF MuseScore engraved from it (MuseScore 1.1 to 4.2, mostly 3.6). These are the primary visual references; the older PDFs differ in house style, so MuseScore 4 renderings (below) are the reference for current appearance. They include encoded system and page breaks, multiple voices, tuplets, grace notes, slurs, pedal markings, and printed fingerings (for example, 96 in the Nocturne Op. 9 No. 2).
+- `../omr-evals/cases/ground-truth/musescore/`: 26 MuseScore-exported `.mxl` files, each with the PDF MuseScore engraved from it (MuseScore 1.1 to 4.2, mostly 3.6). These are the primary visual references; the older PDFs differ in house style, so MuseScore 4 renderings (below) are the reference for current appearance. They include encoded system and page breaks, multiple voices, tuplets, grace notes, slurs, pedal markings, and printed fingerings (for example, 96 in the Nocturne Op. 9 No. 2). Their PDFs, run through homr, also exercise the parity check.
 - `../omr-evals/cases/ground-truth/ninsheetmusic/mus/`: MusicXML exported from the source `.mus` files (2 so far, more as the export proceeds), for scores not written in MuseScore.
 
 Visual comparison: a script under `tools/` renders each corpus score with the new renderer and places each page beside the reference PDF page, or beside a rendering from the locally installed MuseScore 4 (`mscore4portable -o page.png score.mxl`). Pages are reviewed by eye; there is no pixel-equality target, because small spacing differences are acceptable while missing or misplaced symbols are not.
@@ -292,20 +373,23 @@ Visual comparison: a script under `tools/` renders each corpus score with the ne
 
 | Phase | Deliverable | Exit criteria |
 | --- | --- | --- |
-| 1. Skeleton | Module folder, boundary test, native open command for `.musicxml`/`.xml`/`.mxl`, score-data folder, `source` on `LoadedDocument`, UI gating | A corpus file opens and shows blank pages of the right size; Diagnostics hidden; PDFs unchanged. |
-| 2. Notes on staves | Import, page format, segments, chords, stems, simple beams, spacing, encoded breaks, SVG rendering, sidecar builder | All corpus scores render notes and rests on correct staves with correct pitches; contract tests pass; selection and highlighting work. |
-| 3. Playback parity | Page-scoped IDs, document adapter, playback fixes from section 6 | Note-by-note and realtime playback, navigation, shortcuts, keyboard, and note highway behave as for PDFs on every corpus score. |
-| 4. Fingerings | Overlay lifecycle, source precedence | Predictions persist across reopenings and survive moving the file; printed fingerings are never replaced. |
-| 5. Section 5.1 complete | Remaining required notation | Side-by-side review of every corpus page shows no missing or misplaced required symbols. |
-| 6. Section 5.2 | Second-stage notation | Same review for the second-stage symbols. |
+| 1. Note-geometry contract | `noteGeometry.ts`, PDF adapter, shared consumers switched from the sidecar, consumer boundary test | PDF parity check identical on every cached PDF; all existing tests pass. |
+| 2. Skeleton | Module folder, module boundary test, native open command for `.musicxml`/`.xml`/`.mxl`, score-data folder, `source` on `LoadedDocument`, UI gating | A corpus file opens and shows blank pages of the right size; Diagnostics hidden; PDFs unchanged. |
+| 3. Notes on staves | Import with structural keys, page format, segments, chords, stems, simple beams, spacing, encoded breaks, SVG rendering with highlight classes, note geometry | All corpus scores render notes and rests on correct staves with correct pitches; contract tests pass; selection and highlighting work. |
+| 4. Playback parity | Viewer IDs, document adapter, playback fixes from section 6 | Note-by-note and realtime playback, navigation, shortcuts, keyboard, and note highway behave as for PDFs on every corpus score. |
+| 5. Fingerings | Overlay lifecycle, source precedence | Predictions persist across reopenings and survive moving the file; printed fingerings are never replaced. |
+| 6. Section 5.1 complete | Remaining required notation | Side-by-side review of every corpus page shows no missing or misplaced required symbols. |
+| 7. Section 5.2 | Second-stage notation | Same review for the second-stage symbols. |
 
-Each phase is a separate reviewable commit series on the `musicxml` branch.
+Phase 1 changes only shared code and PDF behavior must stay identical, so it can be reviewed and merged on its own. Each phase is a separate reviewable commit series on the `musicxml` branch.
 
 ## 9. Risks and open questions
 
-- **Page-scoped IDs.** The existing code identifies notes by page. The adapter hides this behind stable keys, but a later cleanup could give the viewer contract a document-level ID and remove the page coupling for both sources.
+- **Consumer switch.** Phase 1 touches code every PDF depends on. The parity check guards it; any difference it finds is either fixed in the adapter or, if intended, reported and approved as a behavior change.
+- **Contract growth.** The note-geometry contract holds only what current features read. A new feature that needs more (for example, staff line positions for fingering placement) extends the contract and both producers.
+- **Page-scoped viewer IDs.** Consumers still identify notes by page. Structural keys keep stored data independent of layout, but a later cleanup could give the contract document-level IDs and remove the page coupling for both sources.
 - **Layout effort.** Engraving quality is the largest cost. Following MuseScore stage by stage limits the design risk; the corpus review keeps quality measurable.
 - **Performance.** The largest corpus file is about 2.2 MB of MusicXML. Layout runs once per open and can move to a Web Worker; rendering is limited to visible pages.
 - **Licensing.** The viewer is AGPL-3.0 and MuseScore is GPL-3.0; GPL-3.0 section 13 permits combining the two, so MuseScore code may be ported with attribution. Leland is SIL OFL and ships with its license.
-- **Edited source files.** Content-hash keying orphans data when the file changes. Harmless for predictions; the path fallback in section 3.7 is required before user overrides ship.
+- **Edited source files.** Content-hash keying orphans data when the file changes, and edits can change structural keys. Harmless for predictions; the matching fallback in section 3.8 is required before user overrides ship.
 - **Open decision:** whether a single "Open score…" dialog (proposed) or separate "Open PDF…" and "Open MusicXML…" entries suit the UI better.
