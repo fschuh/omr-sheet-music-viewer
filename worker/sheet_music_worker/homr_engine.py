@@ -86,6 +86,7 @@ class HomrEngine:
                 time_signature_from_previous_page=(
                     previous_time_signature if repairs.time_signatures else None
                 ),
+                guess_meter_per_section=True,
             )
             result = process_image(str(image_path), self._config, xml_arguments)
         except Exception as error:

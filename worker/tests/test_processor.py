@@ -1233,7 +1233,7 @@ def test_homr_engine_hands_the_repairs_to_the_musicxml_writer(
 
     from sheet_music_worker.homr_engine import HomrEngine
 
-    written: list[tuple[bool, bool, bool, object]] = []
+    written: list[tuple[bool, bool, bool, object, bool]] = []
 
     def fake_process_image(image_path: str, config: object, xml_arguments: Any) -> Any:
         written.append(
@@ -1242,6 +1242,7 @@ def test_homr_engine_hands_the_repairs_to_the_musicxml_writer(
                 xml_arguments.read_time_signatures,
                 xml_arguments.repair_tuplets,
                 xml_arguments.time_signature_from_previous_page,
+                xml_arguments.guess_meter_per_section,
             )
         )
         music_xml = tmp_path / "page.musicxml"
@@ -1259,9 +1260,11 @@ def test_homr_engine_hands_the_repairs_to_the_musicxml_writer(
     engine.process_image(tmp_path / "page.png", RepairSettings(tuplets=False), (3, 4))
     off = RepairSettings(time_signatures=False, tuplets=False)
     engine.process_image(tmp_path / "page.png", off, (3, 4))
+    # The meter is guessed per section whatever the repairs: homr guesses one for the page
+    # unless asked.
     assert written == [
-        (True, True, True, None),
-        (False, True, True, None),
-        (True, True, False, (3, 4)),
-        (True, False, False, None),  # no meter is carried without time signatures
+        (True, True, True, None, True),
+        (False, True, True, None, True),
+        (True, True, False, (3, 4), True),
+        (True, False, False, None, True),  # no meter is carried without time signatures
     ]
