@@ -256,6 +256,54 @@ function visualGroupBBox(group: VisualGroup): VisualBBox {
   return [group.center[0] - 6, group.center[1] - 6, group.center[0] + 6, group.center[1] + 6];
 }
 
+export interface PlaybackMomentExtents {
+  /** Every linked notehead of the moment's system, in page pixels. */
+  system: VisualBBox;
+  momentLeft: number;
+  momentRight: number;
+  /** The moment's noteheads together with their pitch labels. */
+  contentLeft: number;
+  contentRight: number;
+}
+
+export function playbackMomentExtents(
+  page: DocumentPage,
+  moment: PlaybackMoment,
+): PlaybackMomentExtents | null {
+  const sidecar = page.visualSidecar;
+  if (!sidecar) return null;
+  const staffGroups = sidecar.visual_groups.filter(
+    (group) =>
+      group.staff_group_index === moment.staffGroupIndex &&
+      isLinkedVisualGroup(group),
+  );
+  const momentIds = new Set(moment.visualGroupIds);
+  const momentGroups = staffGroups.filter((group) => momentIds.has(group.visual_group_id));
+  if (staffGroups.length === 0 || momentGroups.length === 0) return null;
+
+  const staffBoxes = staffGroups.map(visualGroupBBox);
+  const momentBoxes = momentGroups.map(visualGroupBBox);
+  const momentLabels = layoutNoteLabels(sidecar, momentIds, page.width, page.height);
+  return {
+    system: [
+      Math.min(...staffBoxes.map((box) => box[0])),
+      Math.min(...staffBoxes.map((box) => box[1])),
+      Math.max(...staffBoxes.map((box) => box[2])),
+      Math.max(...staffBoxes.map((box) => box[3])),
+    ],
+    momentLeft: Math.min(...momentBoxes.map((box) => box[0])),
+    momentRight: Math.max(...momentBoxes.map((box) => box[2])),
+    contentLeft: Math.min(
+      ...momentBoxes.map((box) => box[0]),
+      ...momentLabels.map((label) => label.x),
+    ),
+    contentRight: Math.max(
+      ...momentBoxes.map((box) => box[2]),
+      ...momentLabels.map((label) => label.x + label.width),
+    ),
+  };
+}
+
 export function shouldScrollPlaybackHorizontally(
   momentLeft: number,
   momentRight: number,
@@ -1043,47 +1091,25 @@ export function DocumentViewer({
     if (!playbackActive || !playbackMoment) return;
     const stage = stageRef.current;
     const page = pages.find((candidate) => candidate.index === playbackMoment.pageIndex);
-    const sidecar = page?.visualSidecar;
     const rect = stage?.getBoundingClientRect();
-    if (!stage || !page || !sidecar || !rect) return;
-
-    const staffGroups = sidecar.visual_groups.filter(
-      (group) =>
-        group.staff_group_index === playbackMoment.staffGroupIndex &&
-        isLinkedVisualGroup(group),
-    );
-    const momentIds = new Set(playbackMoment.visualGroupIds);
-    const momentGroups = staffGroups.filter((group) => momentIds.has(group.visual_group_id));
-    if (staffGroups.length === 0 || momentGroups.length === 0) return;
+    if (!stage || !page || !rect) return;
+    const extents = playbackMomentExtents(page, playbackMoment);
+    if (!extents) return;
 
     const pageTop = pages
       .filter((candidate) => candidate.index < page.index)
       .reduce((total, candidate) => total + candidate.height + PAGE_GAP, 0);
     const pageLeft = (layout.width - page.width) / 2;
-    const staffBoxes = staffGroups.map(visualGroupBBox);
-    const momentBoxes = momentGroups.map(visualGroupBBox);
-    const momentLabels = layoutNoteLabels(
-      sidecar,
-      momentIds,
-      page.width,
-      page.height,
-    );
     const verticalPadding = Math.max(18, page.height * 0.018);
     const horizontalPadding = Math.max(18, page.width * 0.02);
-    const staffTop = pageTop + Math.min(...staffBoxes.map((box) => box[1])) - verticalPadding;
-    const staffBottom = pageTop + Math.max(...staffBoxes.map((box) => box[3])) + verticalPadding;
-    const staffLeft = pageLeft + Math.min(...staffBoxes.map((box) => box[0])) - horizontalPadding;
-    const staffRight = pageLeft + Math.max(...staffBoxes.map((box) => box[2])) + horizontalPadding;
-    const momentLeft = pageLeft + Math.min(...momentBoxes.map((box) => box[0]));
-    const momentRight = pageLeft + Math.max(...momentBoxes.map((box) => box[2]));
-    const momentContentLeft = pageLeft + Math.min(
-      ...momentBoxes.map((box) => box[0]),
-      ...momentLabels.map((label) => label.x),
-    );
-    const momentContentRight = pageLeft + Math.max(
-      ...momentBoxes.map((box) => box[2]),
-      ...momentLabels.map((label) => label.x + label.width),
-    );
+    const staffTop = pageTop + extents.system[1] - verticalPadding;
+    const staffBottom = pageTop + extents.system[3] + verticalPadding;
+    const staffLeft = pageLeft + extents.system[0] - horizontalPadding;
+    const staffRight = pageLeft + extents.system[2] + horizontalPadding;
+    const momentLeft = pageLeft + extents.momentLeft;
+    const momentRight = pageLeft + extents.momentRight;
+    const momentContentLeft = pageLeft + extents.contentLeft;
+    const momentContentRight = pageLeft + extents.contentRight;
     const current = transformRef.current;
     const safeTop = rect.height * 0.12;
     const keyboardHeight = Math.min(210, Math.max(150, window.innerHeight * 0.24));

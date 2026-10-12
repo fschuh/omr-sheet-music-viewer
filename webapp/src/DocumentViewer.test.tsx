@@ -7,6 +7,7 @@ import {
   constrainViewportTransform,
   DocumentViewer,
   hitTest,
+  playbackMomentExtents,
   shouldScrollPlaybackHorizontally,
   validTempoPercentage,
 } from "./DocumentViewer";
@@ -604,6 +605,24 @@ test("keeps a document smaller than the viewport fully on screen", () => {
     ),
     { scale: 1, x: 0, y: 750 },
   );
+});
+
+test("measures the playing moment against every notehead of its system", () => {
+  const extents = playbackMomentExtents(page, { ...moment, visualGroupIds: ["treble"] });
+  assert.ok(extents);
+  assert.deepEqual(extents.system, [290, 342, 312, 528]);
+  assert.equal(extents.momentLeft, 290);
+  assert.equal(extents.momentRight, 310);
+  // The pitch label sits beside the notehead, so the content reaches past it.
+  assert.ok(extents.contentLeft <= extents.momentLeft);
+  assert.ok(extents.contentRight >= extents.momentRight);
+  assert.ok(extents.contentRight - extents.contentLeft > extents.momentRight - extents.momentLeft);
+});
+
+test("has no extents for a moment outside any recognized system", () => {
+  assert.equal(playbackMomentExtents(page, { ...moment, staffGroupIndex: 5 }), null);
+  assert.equal(playbackMomentExtents(page, { ...moment, visualGroupIds: ["missing"] }), null);
+  assert.equal(playbackMomentExtents({ ...page, visualSidecar: undefined }, moment), null);
 });
 
 test("does not scroll horizontally when the approached staff edge is already visible", () => {
