@@ -516,3 +516,17 @@ test("articulations on one side stack outward, and an ornament can be placed bel
   assert.ok(accent.y < staccato.y);
   assert.ok(glyphs(page, "ornamentMordent")[0].y > noteheadY(page, "G5"));
 });
+
+test("a tie joins two spellings of one sound, and the second shows its accidental", () => {
+  const [page] = pages(treble([
+    note("Db5", 4, { type: "quarter", tie: "start", extra: notations('<tied type="start"/>') }) +
+      note("C#5", 4, { type: "quarter", tie: "stop", extra: notations('<tied type="stop"/>') }) +
+      note("D5", 4, { type: "quarter", tie: "start", extra: notations('<tied type="start"/>') }) +
+      note("D5", 4, { type: "quarter", tie: "stop", extra: notations('<tied type="stop"/>') }),
+  ]));
+  assert.equal(paths(page).length, 2);
+  const accidentals = page.chords.map((chord) =>
+    chord.notes[0].items.filter((item) => item.kind === "glyph" && item.glyph.startsWith("accidental")).map((item) => (item as Glyph).glyph));
+  // The flat, the sharp of the new spelling, the natural the flat calls for, and nothing on the tied D.
+  assert.deepEqual(accidentals, [["accidentalFlat"], ["accidentalSharp"], ["accidentalNatural"], []]);
+});

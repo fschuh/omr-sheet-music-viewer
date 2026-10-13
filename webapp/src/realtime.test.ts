@@ -83,6 +83,25 @@ test("defaults missing MusicXML dynamics to mp and carries explicit dynamics for
   ]);
 });
 
+test("a tie between two spellings of one sound plays once", () => {
+  const spelled = (id: string, step: string, alter: number, tie: string) =>
+    `<note id="${id}"><pitch><step>${step}</step><alter>${alter}</alter><octave>5</octave></pitch>` +
+    `<duration>4</duration><tie type="${tie}"/><voice>1</voice><type>quarter</type>` +
+    `<notations><tied type="${tie}"/></notations></note>`;
+  const parsed = parseRealtimeMusicXml(score(`
+    <measure number="1">
+      <attributes><divisions>4</divisions></attributes>
+      ${spelled("d-flat", "D", -1, "start")}
+      ${spelled("c-sharp", "C", 1, "stop")}
+    </measure>
+  `));
+
+  const route = expandPerformanceRoute(parsed);
+
+  assert.deepEqual(route.notes.map((note) => note.musicXmlId), ["d-flat"]);
+  assert.equal(route.notes[0].release, 2);
+});
+
 test("sustains contiguous same-pitch slur endpoints as a realtime tie", () => {
   const parsed = parseRealtimeMusicXml(score(`
     <measure number="1">

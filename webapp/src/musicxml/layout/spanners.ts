@@ -6,6 +6,7 @@ import type { NoteModel, Placement, TupletStart } from "../model/score";
 import { isUpperVoice, type ChordShape } from "./chords";
 import type { PreparedChord } from "./measureContent";
 import { systemChords, type PlacedSystem } from "./pages";
+import { soundingPitch } from "./staffPosition";
 
 const TIE_MID_THICKNESS = ENGRAVING_DEFAULTS.tieMidpointThickness;
 const TIE_GAP = 0.12;
@@ -105,8 +106,8 @@ export function systemMusicStart(system: PlacedSystem): number {
 }
 
 /**
- * Ties, joining each note that starts a tie to the next note of the same pitch in its part
- * that ends one. A tie across a system break is drawn in two halves.
+ * Ties, joining each note that starts a tie to the next note of the same sound in its part,
+ * under any spelling, that ends one. A tie across a system break is drawn in two halves.
  */
 export function layoutTies(
   systems: PlacedSystem[],
@@ -124,7 +125,8 @@ export function layoutTies(
       for (const note of chord.model.notes) {
         const place = places.get(note);
         if (!place) continue;
-        const key = `${chord.part}|${note.step}|${note.alter}|${note.octave}`;
+        // A tie joins one sound, which a respelling (D♭5 to C♯5) does not change.
+        const key = `${chord.part}|${soundingPitch(note)}`;
         const start = note.tieStop ? open.get(key) : undefined;
         if (start) {
           open.delete(key);

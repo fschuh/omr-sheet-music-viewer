@@ -11,8 +11,8 @@ import {
   ZERO,
   type Fraction,
 } from "../model/fraction";
-import type { ChordModel, EndingMark, KeyChange, ScoreModel, TimeChange } from "../model/score";
-import { clefsEqual, keyAlterations, TREBLE_CLEF, type Clef } from "./staffPosition";
+import type { ChordModel, EndingMark, KeyChange, NoteModel, ScoreModel, TimeChange } from "../model/score";
+import { clefsEqual, keyAlterations, soundingPitch, TREBLE_CLEF, type Clef } from "./staffPosition";
 
 export interface StaffRef {
   part: number;
@@ -142,11 +142,44 @@ function timeOrder(first: ChordModel, second: ChordModel): number {
 }
 
 /**
+ * Notes a tie reaches under another spelling, such as C♯5 tied from D♭5. A tie joins the
+ * next note of its part with the same sound.
+ */
+function respelledTieStops(score: ScoreModel): Set<NoteModel> {
+  const respelled = new Set<NoteModel>();
+  for (const part of score.parts) {
+    const open = new Map<number, NoteModel>();
+    for (const measure of part.measures) {
+      for (const chord of [...measure.chords].sort(timeOrder)) {
+        if (chord.grace) continue;
+        for (const note of chord.notes) {
+          if (note.unpitched) continue;
+          const sound = soundingPitch(note);
+          const start = note.tieStop ? open.get(sound) : undefined;
+          if (start) {
+            open.delete(sound);
+            if (start.step !== note.step || start.octave !== note.octave) respelled.add(note);
+          }
+          if (note.tieStart) open.set(sound, note);
+        }
+      }
+    }
+  }
+  return respelled;
+}
+
+/**
  * Accidentals as engraved: a note shows one when its alteration differs from what the key
  * and earlier notes on its staff line in the measure imply, or when the file prints one.
- * A tied note continues its accidental and shows none unless the file prints one.
+ * A tied note continues its accidental and shows none unless the file prints one, or the
+ * tie reaches it under another spelling.
  */
-function decideAccidentals(chords: PreparedChord[], fifths: number, keyChanges: KeyChange[]): void {
+function decideAccidentals(
+  chords: PreparedChord[],
+  fifths: number,
+  keyChanges: KeyChange[],
+  respelled: Set<NoteModel>,
+): void {
   let key = keyAlterations(fifths);
   const measureAlterations = new Map<string, number>();
   const pendingKeys = [...keyChanges].sort((a, b) => compare(a.onset, b.onset));
@@ -160,7 +193,7 @@ function decideAccidentals(chords: PreparedChord[], fifths: number, keyChanges: 
       const implied = measureAlterations.get(line) ?? key.get(note.step) ?? 0;
       measureAlterations.set(line, note.alter);
       if (note.accidental) return ACCIDENTAL_GLYPHS[note.accidental] ?? alterGlyph(note.alter);
-      if (note.tieStop || note.alter === implied) return null;
+      if ((note.tieStop && !respelled.has(note)) || note.alter === implied) return null;
       return alterGlyph(note.alter);
     });
   }
@@ -180,6 +213,7 @@ export function prepareScore(score: ScoreModel): PreparedScore {
   });
   const clefs: Clef[] = staves.map(() => TREBLE_CLEF);
   const fifths: number[] = staves.map(() => 0);
+  const respelled = respelledTieStops(score);
   let time = DEFAULT_TIME;
 
   const measures = score.measures.map((shared, measureIndex): PreparedMeasure => {
@@ -265,6 +299,7 @@ export function prepareScore(score: ScoreModel): PreparedScore {
         score.parts[staves[staff].part].measures[measureIndex].keys.filter(
           (change) => compare(change.onset, ZERO) > 0 && (change.staff === null || change.staff === staves[staff].staffNumber),
         ),
+        respelled,
       );
     });
 

@@ -29,6 +29,13 @@ export function clefLineY(clef: Clef): number {
   return 5 - clef.line;
 }
 
+const STEP_SEMITONES: Record<string, number> = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+
+/** The pitch a note sounds as a MIDI number: D♭5 and C♯5 are the same sound. */
+export function soundingPitch(note: { step: string; alter: number; octave: number }): number {
+  return (note.octave + 1) * 12 + (STEP_SEMITONES[note.step] ?? 0) + note.alter;
+}
+
 export function staffPosition(clef: Clef, step: string, octave: number): number {
   return clefLineY(clef) * 2 - (diatonic(step, octave) - clefReference(clef));
 }

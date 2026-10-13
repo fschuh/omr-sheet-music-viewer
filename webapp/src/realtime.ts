@@ -358,6 +358,19 @@ function pitchSemitone(step: string, octave: number, alter: number): number {
   return (octave + 1) * 12 + (PITCH_STEP_SEMITONES[step.toUpperCase()] ?? 0) + alter;
 }
 
+/**
+ * What a pitch name from `formatPitchName` sounds as, so that enharmonic spellings such as
+ * D♭5 and C♯5 compare equal; a name it cannot read stands for itself.
+ */
+function soundingPitch(pitch: string): string {
+  const match = /^([A-G])([♯♭]*|\(([-+]?[\d.]+)\))(-?\d+)$/.exec(pitch);
+  if (!match) return pitch;
+  const alter = match[3] !== undefined
+    ? Number(match[3])
+    : [...match[2]].reduce((total, symbol) => total + (symbol === "♯" ? 1 : -1), 0);
+  return String(pitchSemitone(match[1], Number(match[4]), alter));
+}
+
 function accidentalAlter(value: string | null): number | null {
   switch (value?.trim().toLowerCase()) {
     case "sharp": return 1;
@@ -1528,7 +1541,8 @@ export function expandPerformanceRoute(
   const activeTies = new Map<string, RouteScoreNote>();
   for (const note of rawNotes.sort((left, right) => left.onset - right.onset || left.release - right.release)) {
     const tieOwner = note.inferredTieGroup ?? `voice:${note.voice}`;
-    const tieKey = `${note.partId}:${note.staff}:${tieOwner}:${note.pitch}`;
+    // A tie may join two spellings of one sound, such as D♭5 to C♯5.
+    const tieKey = `${note.partId}:${note.staff}:${tieOwner}:${soundingPitch(note.pitch)}`;
     const tied = note.tieStop ? activeTies.get(tieKey) : undefined;
     if (tied) {
       tied.release = Math.max(tied.release, note.release);
