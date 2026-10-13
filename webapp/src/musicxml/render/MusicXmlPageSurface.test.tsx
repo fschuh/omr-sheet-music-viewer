@@ -6,6 +6,7 @@ import { MusicXmlPageSurface } from "./MusicXmlPageSurface";
 
 const page: LayoutPage = {
   index: 0,
+  firstMeasure: 0,
   width: 1000,
   height: 1400,
   staffSpace: 20,

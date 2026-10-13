@@ -72,7 +72,12 @@ import {
   savePlaybackPiano,
 } from "./preferences";
 import { NoteHighway } from "./noteHighway/NoteHighway";
-import { diagnosticsAvailable, documentFolder, documentNoteGeometry } from "./documentSource";
+import {
+  diagnosticsAvailable,
+  documentFolder,
+  documentNoteGeometry,
+  documentNoteScoreFacts,
+} from "./documentSource";
 import {
   isMusicXmlPath,
   openMusicXmlScore,
@@ -124,7 +129,6 @@ import type {
   VisualSidecarNote,
 } from "./types";
 import { isLinkedVisualGroup, isSelectableVisualGroup } from "./types";
-import { pdfNoteScoreFacts } from "./sidecarNoteGeometry";
 
 interface WorkerLogEntry {
   id: number;
@@ -324,8 +328,8 @@ export function App() {
     [document?.pages, document?.source.kind],
   );
   const noteFacts = useMemo(
-    () => pdfNoteScoreFacts(document?.pages ?? [], realtimeModel.score),
-    [document?.pages, realtimeModel.score],
+    () => documentNoteScoreFacts(document?.source.kind, document?.pages ?? [], realtimeModel.score),
+    [document?.pages, document?.source.kind, realtimeModel.score],
   );
   const fullPlaybackTimeline = useMemo(
     () => buildPlaybackTimeline(noteGeometry, noteFacts, document?.predictedFingerings),

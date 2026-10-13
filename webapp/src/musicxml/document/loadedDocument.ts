@@ -12,12 +12,14 @@ export function musicXmlLoadedDocument(
   jobId: string,
   file: ScoreFileInfo,
   layout: LayoutModel,
+  documentMusicXml: string,
 ): LoadedDocument {
   return {
     jobId,
     name: file.name,
     pageCount: layout.pages.length,
     source: { kind: "musicxml", sourcePath: file.path, scoreDataPath: file.scoreDataPath },
+    documentMusicXml,
     status: "complete",
     pages: layout.pages.map((page) => ({
       index: page.index,

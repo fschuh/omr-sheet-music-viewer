@@ -35,8 +35,10 @@ const file = {
 test("a score file opens as a complete document of engraved pages", () => {
   const document = musicXmlScoreDocument("musicxml-1", file);
   const { width, height } = pageFormat(parseMusicXml(musicXml).defaults);
+  const { documentMusicXml, ...rest } = document;
+  assert.ok(documentMusicXml?.includes('id="page-2-P1-m2-s1-v1-t0-D5"'));
   assert.deepEqual(
-    { ...document, pages: document.pages.map(({ surface, ...page }) => ({ ...page, surface: surface?.index })) },
+    { ...rest, pages: document.pages.map(({ surface, ...page }) => ({ ...page, surface: surface?.index })) },
     {
       jobId: "musicxml-1",
       name: "etude.mxl",

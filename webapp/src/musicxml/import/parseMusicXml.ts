@@ -116,7 +116,7 @@ const BEAM_VALUES = new Set<string>(["begin", "continue", "end", "forward hook",
 const CLEF_SIGNS = new Set<string>(["G", "F", "C", "percussion", "TAB", "none"]);
 
 /** One part's measures as elements: a partwise part, or its pieces of a timewise score. */
-interface PartSource {
+export interface PartSource {
   id: string;
   measures: { number: string; content: Element }[];
 }
@@ -207,7 +207,11 @@ function parseNotePitch(note: Element): Pick<NoteModel, "step" | "alter" | "octa
  * One part's measure: attributes, chords with exact onsets, barlines and print hints.
  * Chords get their keys later, once the whole part is read.
  */
-function parsePartMeasure(content: Element, state: MeasureState): ParsedPartMeasure {
+function parsePartMeasure(
+  content: Element,
+  state: MeasureState,
+  noteElements: Map<NoteModel, Element>,
+): ParsedPartMeasure {
   const measure: PartMeasureModel = { clefs: [], keys: [], times: [], chords: [], barlines: [] };
   let position = ZERO;
   let furthest = ZERO;
@@ -298,6 +302,7 @@ function parsePartMeasure(content: Element, state: MeasureState): ParsedPartMeas
               tieStop: tieTypes.includes("stop"),
             }
           : null;
+        if (note) noteElements.set(note, element);
         if (isChordContinuation && previousChord) {
           if (note) previousChord.notes.push(note);
           break;
@@ -386,15 +391,15 @@ function mergeSystemLayout(target: SystemLayout, source: SystemLayout | null): S
   };
 }
 
-function parseScore(root: Element): ScoreModel {
+function parseScore(root: Element, sources: PartSource[], noteElements: Map<NoteModel, Element>): ScoreModel {
   const names = partNames(root);
   const measures: MeasureModel[] = [];
-  const parts: PartModel[] = partSources(root).map((source) => {
+  const parts: PartModel[] = sources.map((source) => {
     const state: MeasureState = { divisions: 1, staffCount: 1 };
     const partMeasures: PartMeasureModel[] = [];
     source.measures.forEach((entry, position) => {
       const parsed = entry
-        ? parsePartMeasure(entry.content, state)
+        ? parsePartMeasure(entry.content, state, noteElements)
         : { measure: { clefs: [], keys: [], times: [], chords: [], barlines: [] }, duration: ZERO, newPage: false, newSystem: false, systemLayout: null, staffDistance: null };
       partMeasures.push(parsed.measure);
       const shared = (measures[position] ??= {
@@ -428,7 +433,20 @@ function parseScore(root: Element): ScoreModel {
   return { defaults: parseDefaults(root), parts, measures };
 }
 
+/** A score as imported, with the parsed XML that `documentMusicXml` writes viewer IDs into. */
+export interface ImportedScore {
+  score: ScoreModel;
+  root: Element;
+  parts: PartSource[];
+  /** Each note's `<note>` element, by note key. */
+  noteElements: Map<string, Element>;
+}
+
 export function parseMusicXml(text: string): ScoreModel {
+  return importMusicXml(text).score;
+}
+
+export function importMusicXml(text: string): ImportedScore {
   const errors: string[] = [];
   const document = new DOMParser({
     errorHandler: {
@@ -444,5 +462,9 @@ export function parseMusicXml(text: string): ScoreModel {
   if (root.localName !== "score-partwise" && root.localName !== "score-timewise") {
     throw new MusicXmlImportError("The file is not a MusicXML score");
   }
-  return parseScore(root);
+  const parts = partSources(root);
+  const elementsByNote = new Map<NoteModel, Element>();
+  const score = parseScore(root, parts, elementsByNote);
+  const noteElements = new Map([...elementsByNote].map(([note, element]) => [note.key, element]));
+  return { score, root, parts, noteElements };
 }

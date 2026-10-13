@@ -51,6 +51,8 @@ export interface LayoutChord {
 
 export interface LayoutPage {
   index: number;
+  /** The measure the page starts with, by position. */
+  firstMeasure: number;
   width: number;
   height: number;
   staffSpace: number;

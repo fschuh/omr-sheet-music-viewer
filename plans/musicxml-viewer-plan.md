@@ -1,7 +1,7 @@
 # MusicXML viewer plan
 
 Date: 2026-10-12  
-Status: In progress; phases 1 to 3 are implemented.
+Status: In progress; phases 1 to 4 are implemented.
 
 ## 1. Objective and scope
 
@@ -332,7 +332,7 @@ An element without layout support is listed in the import report. Where it carri
 
 ## 6. Playback adaptation
 
-Playback uses `documentMusicXml` through `parseRealtimeMusicXml`, so most behavior carries over. The corpus will exercise cases homr output rarely contains; each is checked against the source score and fixed in `realtime.ts` and `playback.ts` with a test:
+Playback uses `documentMusicXml` through `parseRealtimeMusicXml`, so most behavior carries over. `import/documentMusicXml.ts` writes it from the parsed source: each note's `id` is its viewer ID (IDs the file brings are dropped), the page breaks are the viewer's pages (realtime page navigation moves by them), and a timewise score becomes partwise. Note facts come from it through `documentNoteScoreFacts` in `documentSource.ts`. The corpus will exercise cases homr output rarely contains; each is checked against the source score and fixed in `realtime.ts` and `playback.ts` with a test:
 
 - Multiple voices per staff with `backup` and `forward`.
 - Grace notes with real MusicXML `<grace>` elements; the note geometry's `grace` flag replaces the homr duration-string check for MusicXML pages.
@@ -340,6 +340,8 @@ Playback uses `documentMusicXml` through `parseRealtimeMusicXml`, so most behavi
 - Scores with more than one part. Hand assignment uses the existing staff/clef rule within a keyboard part; fingering prediction runs only on keyboard parts.
 
 Any change to shared playback code is checked against PDFs as well, so behavior for recognized PDFs does not change unless the change is intended.
+
+Realtime routes are compared with MuseScore 4's MIDI export of each corpus score (`mscore4portable -o score.mid score.mxl`): notes starting within 25 ms form chords, the two chord sequences are aligned by their pitches, and the time from each aligned chord to the next is compared. Phase 4 fixed three differences in shared playback code, each with a test: an ending the file leaves open now closes at the next start-repeat (Für Elise played its B section once); a D.C. or D.S. in a measure that ends a repeat is taken once the repeat is played out (the Moonlight Sonata's second movement skipped its trio's repeat); and `<cue/>` notes, silent by definition, no longer sound (a Nocturne's cadenza). Deliberate differences: where a file puts several tempo marks at one place, the last applies, as the printed metronome mark of Mozart's K. 545 II asks, while MuseScore takes the first; and D.C. and D.S. marks are followed, which MuseScore's MIDI export skips. Grace notes, ornaments, arpeggios and fermatas sound in MuseScore and not here, for PDFs and MusicXML alike.
 
 ## 7. Testing and verification
 
@@ -371,6 +373,8 @@ Visual comparison: `npm run musicxml:render -- <output-dir> <scores>` renders ea
 | 7. Section 5.2 | Second-stage notation | Same review for the second-stage symbols. |
 
 Phase 1 changes only shared code and PDF behavior must stay identical, so it can be reviewed and merged on its own. Each phase is a separate reviewable commit series on the `musicxml` branch.
+
+Phase 4 result: every corpus score plays from its document MusicXML. The corpus check confirms that each realtime note is a note on the pages with a visual target, in a measure on the same page; that note-by-note playback attacks every note that starts a sound exactly once, in score order; and that the realtime route expands. Against MuseScore 4's MIDI export (24 scores; MuseScore could not export the other two), more than 98% of the steps between aligned chords agree within 20 ms in 22 scores. The other two read tempo marks differently: Mozart's K. 545 II through the tempo choice described in section 6, and a Nocturne file that encodes its rubato as 526 hidden tempo changes, where 95.6% of the steps agree and the rest fall in measures dense with them.
 
 Phase 3 result: all 28 corpus scores keep the note-geometry contract and lay out in 12 to 290 ms each. Page counts match the encoded layout, except where a system or page overflows: the Fantaisie-Impromptu's MuseScore 1.3 export ends with a page whose encoded margins leave room for one measure, so its last measure moves to a ninth page, as it does in MuseScore 4. Side-by-side review of Für Elise, the Nocturne Op. 9 No. 2, the Invention No. 13, the Etude Op. 25 No. 11, the Moonlight Sonata's third movement, the Turkish March and two scores without encoded layout shows notes, rests, accidentals, stems, beams, clefs, keys and time signatures where the reference has them. Gaps seen there, for later phases: ottava lines (notes under an 8va sit an octave high on ledger lines), cross-staff beams, rests moving clear of other voices' notes, repeat dots and voltas, MuseScore's measure numbering (printed numbers come from the file), and titles, ties, slurs, tuplets, dynamics and pedal marks. Pages outside the viewport are not yet replaced by placeholders.
 

@@ -752,7 +752,7 @@ test("a MusicXML page draws its engraved surface in place of an image", () => {
     status: "complete",
     width: 2480,
     height: 3508,
-    surface: { index: 0, width: 2480, height: 3508, staffSpace: 20, items: [], chords: [] },
+    surface: { index: 0, firstMeasure: 0, width: 2480, height: 3508, staffSpace: 20, items: [], chords: [] },
   }]);
   assert.match(engraved, /<svg class="musicxml-page" viewBox="0 0 2480 3508"/);
   assert.doesNotMatch(engraved, /<img/);
@@ -770,6 +770,7 @@ test("a selected MusicXML note is coloured on its page and labelled by the overl
     height: 1400,
     surface: {
       index: 0,
+      firstMeasure: 0,
       width: 1000,
       height: 1400,
       staffSpace: 20,

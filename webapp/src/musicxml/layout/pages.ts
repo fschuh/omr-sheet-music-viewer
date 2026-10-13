@@ -350,6 +350,7 @@ function drawPage(index: number, systems: PlacedSystem[], context: DrawContext):
   });
   return {
     index,
+    firstMeasure: systems[0].plan.measures[0],
     width: context.format.width,
     height: context.format.height,
     staffSpace: sp,

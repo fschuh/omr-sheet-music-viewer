@@ -1,7 +1,9 @@
 // What the app shows for each kind of document source.
 import { musicXmlNoteGeometry } from "./musicxml";
 import type { PageNoteGeometry } from "./noteGeometry";
-import { pdfNoteGeometry } from "./sidecarNoteGeometry";
+import { emptyNoteScoreFacts, noteScoreFacts, type NoteScoreFacts } from "./playback";
+import type { RealtimeScore } from "./realtime";
+import { pdfNoteGeometry, pdfNoteScoreFacts } from "./sidecarNoteGeometry";
 import type { DocumentPage, DocumentSource, LoadedDocument } from "./types";
 
 /** Note geometry from the engraved pages of a MusicXML score, or from the recognized pages of a PDF. */
@@ -10,6 +12,19 @@ export function documentNoteGeometry(
   pages: readonly DocumentPage[],
 ): PageNoteGeometry[] {
   return kind === "musicxml" ? musicXmlNoteGeometry(pages) : pdfNoteGeometry(pages);
+}
+
+/**
+ * What playback needs to know about each note from the score: a MusicXML score's document
+ * MusicXML says it all; a PDF falls back to its pages' MusicXML until the merge exists.
+ */
+export function documentNoteScoreFacts(
+  kind: DocumentSource["kind"] | undefined,
+  pages: readonly DocumentPage[],
+  documentScore: RealtimeScore | null,
+): NoteScoreFacts {
+  if (kind === "musicxml") return documentScore ? noteScoreFacts(documentScore) : emptyNoteScoreFacts();
+  return pdfNoteScoreFacts(pages, documentScore);
 }
 
 /**

@@ -2,8 +2,9 @@
 import type { PageNoteGeometry } from "../noteGeometry";
 import type { DocumentPage, LoadedDocument } from "../types";
 import { musicXmlLoadedDocument } from "./document/loadedDocument";
-import { pageNoteGeometry } from "./geometry/pageNoteGeometry";
-import { parseMusicXml } from "./import/parseMusicXml";
+import { pageNoteGeometry, viewerIds } from "./geometry/pageNoteGeometry";
+import { documentMusicXml } from "./import/documentMusicXml";
+import { importMusicXml } from "./import/parseMusicXml";
 import { pageFormat } from "./layout/pageFormat";
 import { layoutScore } from "./layout/pages";
 import { readScoreFile, type MusicXmlScoreFile } from "./scoreData/scoreData";
@@ -22,8 +23,10 @@ export function isMusicXmlPath(path: string): boolean {
 
 /** Imports and lays out a score file that has been read. */
 export function musicXmlScoreDocument(jobId: string, file: MusicXmlScoreFile): LoadedDocument {
-  const score = parseMusicXml(file.musicXml);
-  return musicXmlLoadedDocument(jobId, file, layoutScore(score, pageFormat(score.defaults)));
+  const imported = importMusicXml(file.musicXml);
+  const layout = layoutScore(imported.score, pageFormat(imported.score.defaults));
+  const pageStarts = new Map(layout.pages.slice(1).map((page) => [page.firstMeasure, page.index + 1]));
+  return musicXmlLoadedDocument(jobId, file, layout, documentMusicXml(imported, viewerIds(layout), pageStarts));
 }
 
 /** Reads, imports and lays out a MusicXML score file. */
