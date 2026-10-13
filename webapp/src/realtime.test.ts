@@ -736,3 +736,81 @@ test("controller pauses, resumes, changes tempo in place, and cancels sounding a
   assert.equal(completions, 1);
   assert.equal(tick, null);
 });
+
+function sounding(xml: string): string[] {
+  const route = expandPerformanceRoute(parseRealtimeMusicXml(xml));
+  return route.notes.map((note) => `${note.pitch}@${+note.onset.toFixed(4)}-${+note.release.toFixed(4)}`);
+}
+
+const graceNote = (id: string, step: string, type: string, slash = false, chord = false) =>
+  `<note id="${id}"><grace${slash ? ' slash="yes"' : ""}/>${chord ? "<chord/>" : ""}<pitch><step>${step}</step><octave>5</octave></pitch><voice>1</voice><type>${type}</type></note>`;
+
+test("an acciaccatura plays on the beat for a 64th note and delays its main note", () => {
+  assert.deepEqual(sounding(score(`
+    <measure number="1"><attributes><divisions>4</divisions></attributes>
+      ${graceNote("g", "D", "eighth", true)}${quarter("c", "C", 5)}</measure>`)), ["D5@0-0.0625", "C5@0.0625-1"]);
+});
+
+test("a single appoggiatura takes its written length, up to half its main note", () => {
+  const half = `<note id="c"><pitch><step>C</step><octave>5</octave></pitch><duration>8</duration><voice>1</voice><type>half</type></note>`;
+  assert.deepEqual(sounding(score(`
+    <measure number="1"><attributes><divisions>4</divisions></attributes>${graceNote("g", "D", "eighth")}${half}</measure>`)),
+    ["D5@0-0.5", "C5@0.5-2"]);
+  assert.deepEqual(sounding(score(`
+    <measure number="1"><attributes><divisions>4</divisions></attributes>${graceNote("g", "D", "half")}${quarter("c", "C", 5)}</measure>`)),
+    ["D5@0-0.5", "C5@0.5-1"]);
+});
+
+test("a run of grace notes shares a 64th note each, and a grace chord sounds together", () => {
+  assert.deepEqual(sounding(score(`
+    <measure number="1"><attributes><divisions>4</divisions></attributes>
+      ${graceNote("g1", "E", "16th")}${graceNote("g2", "D", "16th")}${graceNote("g2b", "F", "16th", false, true)}${quarter("c", "C", 5)}</measure>`)),
+    ["E5@0-0.0625", "D5@0.0625-0.125", "F5@0.0625-0.125", "C5@0.125-1"]);
+});
+
+test("a rolled chord enters lowest first, at most 60 ms apart, across both staves", () => {
+  const rolled = (id: string, step: string, octave: number, staff: number, chord: boolean, direction = "") =>
+    `<note id="${id}">${chord ? "<chord/>" : ""}<pitch><step>${step}</step><octave>${octave}</octave></pitch><duration>4</duration><voice>${staff}</voice><type>quarter</type><staff>${staff}</staff><notations><arpeggiate${direction}/></notations></note>`;
+  // At 120 bpm, 60 ms is 0.12 of a quarter note.
+  assert.deepEqual(sounding(score(`
+    <measure number="1"><attributes><divisions>4</divisions><staves>2</staves></attributes><direction><sound tempo="120"/></direction>
+      ${rolled("e", "E", 4, 1, false)}${rolled("g", "G", 4, 1, true)}<backup><duration>4</duration></backup>${rolled("c", "C", 3, 2, false)}</measure>`)),
+    ["C3@0-1", "E4@0.12-1", "G4@0.24-1"]);
+  assert.deepEqual(sounding(score(`
+    <measure number="1"><attributes><divisions>4</divisions></attributes><direction><sound tempo="120"/></direction>
+      ${rolled("e", "E", 4, 1, false, ' direction="down"')}${rolled("g", "G", 4, 1, true, ' direction="down"')}</measure>`)),
+    ["G4@0-1", "E4@0.12-1"]);
+});
+
+test("a fermata holds until the next onset anywhere, twice as long, or by its shape", () => {
+  const held = (shape: string) => parseRealtimeMusicXml(score(`
+    <measure number="1"><attributes><divisions>4</divisions></attributes><direction><sound tempo="60"/></direction>
+      <note id="a"><pitch><step>C</step><octave>5</octave></pitch><duration>8</duration><voice>1</voice><type>half</type><notations><fermata>${shape}</fermata></notations></note>
+      ${quarter("b", "D", 5)}
+      <backup><duration>12</duration></backup>
+      ${quarter("low", "C", 3).replace("<voice>1</voice>", "<voice>2</voice>")}
+      <note id="rest"><rest/><duration>8</duration><voice>2</voice></note>
+    </measure>`));
+  const normal = held("");
+  assert.deepEqual(normal.measures[0].fermatas, [{ onset: 0, end: 1, stretch: 2 }]);
+  const route = expandPerformanceRoute(normal);
+  assert.deepEqual(route.tempoSegments, [{ offset: 0, bpm: 30 }, { offset: 1, bpm: 60 }]);
+  assert.equal(scoreOffsetToSeconds(route, 2), 3);
+  assert.equal(held("square").measures[0].fermatas[0].stretch, 3);
+  assert.equal(held("angled").measures[0].fermatas[0].stretch, 1.5);
+  // A fermata on a rest holds too.
+  const rest = parseRealtimeMusicXml(score(`
+    <measure number="1"><attributes><divisions>4</divisions></attributes>${quarter("a")}<note id="r"><rest/><duration>4</duration><voice>1</voice><notations><fermata/></notations></note>${quarter("b")}</measure>`));
+  assert.deepEqual(rest.measures[0].fermatas, [{ onset: 1, end: 2, stretch: 2 }]);
+});
+
+test("mordents play two 32nd notes with the neighbour above or below, then the main note", () => {
+  const ornament = (name: string, accidental = "") =>
+    `<note id="m"><pitch><step>C</step><octave>5</octave></pitch><duration>4</duration><voice>1</voice><type>quarter</type><notations><ornaments><${name}/>${accidental}</ornaments></notations></note>`;
+  assert.deepEqual(sounding(score(`<measure number="1"><attributes><divisions>4</divisions></attributes>${ornament("inverted-mordent")}</measure>`)),
+    ["C5@0-0.125", "D5@0.125-0.25", "C5@0.25-1"]);
+  assert.deepEqual(sounding(score(`<measure number="1"><attributes><divisions>4</divisions><key><fifths>-1</fifths></key></attributes>${ornament("mordent")}</measure>`)),
+    ["C5@0-0.125", "B♭4@0.125-0.25", "C5@0.25-1"]);
+  assert.deepEqual(sounding(score(`<measure number="1"><attributes><divisions>4</divisions></attributes>${ornament("mordent", "<accidental-mark>flat</accidental-mark>")}</measure>`)),
+    ["C5@0-0.125", "B♭4@0.125-0.25", "C5@0.25-1"]);
+});

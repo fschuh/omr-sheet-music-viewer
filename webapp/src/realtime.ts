@@ -25,6 +25,19 @@ export interface RealtimeTrill {
   accelerate: boolean;
 }
 
+/** A mordent: the main note, a quick neighbour above (inverted) or below, then the main note. */
+export interface RealtimeMordent {
+  auxiliaryPitch: string;
+}
+
+/** A rolled chord: notes sharing a part, onset and number roll together. */
+export interface RealtimeArpeggio {
+  number: string;
+  direction: "up" | "down";
+  /** The note's height in semitones, which orders the roll. */
+  semitone: number;
+}
+
 export interface RealtimeScoreNote {
   musicXmlId: string;
   partId: string;
@@ -41,6 +54,12 @@ export interface RealtimeScoreNote {
   onset: number;
   duration: number;
   grace: boolean;
+  /** A grace note's place in the run of grace notes before its main note, from 1; 0 otherwise. */
+  graceOrder: number;
+  /** A grace note with a slash: an acciaccatura. */
+  graceSlash: boolean;
+  /** A grace note's written length in quarter notes; 0 for other notes. */
+  graceQuarters: number;
   /** A cue note: shown, but silent, as MusicXML defines `<cue/>`. */
   cue: boolean;
   tieStart: boolean;
@@ -48,6 +67,8 @@ export interface RealtimeScoreNote {
   inferredTieGroup: string | null;
   tremolo: RealtimeTremolo | null;
   trill: RealtimeTrill | null;
+  mordent: RealtimeMordent | null;
+  arpeggio: RealtimeArpeggio | null;
 }
 
 export function scoreNoteStartsAttack(note: RealtimeScoreNote): boolean {
@@ -82,6 +103,14 @@ export interface NavigationSound {
   timeOnly: ReadonlySet<number> | null;
 }
 
+/** A fermata holds the music from its onset to the next onset anywhere in the score. */
+export interface RealtimeFermata {
+  onset: number;
+  end: number;
+  /** How many times longer the held span lasts. */
+  stretch: number;
+}
+
 export interface StructuralMeasure {
   index: number;
   number: string;
@@ -94,6 +123,7 @@ export interface StructuralMeasure {
   backwardRepeat: RepeatMark | null;
   endingNumbers: ReadonlySet<number>;
   sounds: NavigationSound[];
+  fermatas: RealtimeFermata[];
 }
 
 export interface RealtimeScore {
@@ -400,6 +430,67 @@ function parseTrill(
   };
 }
 
+function parseMordent(
+  note: Element,
+  step: string,
+  octave: number,
+  alter: number,
+  fifths: number,
+): RealtimeMordent | null {
+  const upper = descendants(note, "inverted-mordent")[0];
+  const element = upper ?? descendants(note, "mordent")[0];
+  if (!element) return null;
+  const ornaments = descendants(note, "ornaments")
+    .find((candidate) => descendants(candidate, element.localName).includes(element));
+  const accidental = accidentalAlter(
+    ornaments ? descendants(ornaments, "accidental-mark")[0]?.textContent ?? null : null,
+  );
+  if (upper) return { auxiliaryPitch: trillAdjacentPitch(step, octave, alter, 1, fifths, null, accidental) };
+  const below = adjacentDiatonicPitch(step, octave, -1, fifths);
+  if (accidental !== null) below.alter = accidental;
+  return { auxiliaryPitch: formatPitchName(below.step, below.octave, below.alter) };
+}
+
+function parseArpeggio(note: Element, semitone: number): RealtimeArpeggio | null {
+  const element = descendants(note, "arpeggiate")[0];
+  if (!element) return null;
+  return {
+    number: element.getAttribute("number") || "1",
+    direction: element.getAttribute("direction") === "down" ? "down" : "up",
+    semitone,
+  };
+}
+
+/** MuseScore's default holds, by MusicXML fermata shape. */
+const FERMATA_STRETCH: Readonly<Record<string, number>> = {
+  "": 2,
+  normal: 2,
+  angled: 1.5,
+  "half-curve": 1.5,
+  "double-angled": 1.25,
+  square: 3,
+  "double-dot": 3,
+  "double-square": 4,
+};
+
+function fermataStretch(note: Element): number | null {
+  const element = descendants(note, "fermata")[0];
+  if (!element) return null;
+  return FERMATA_STRETCH[element.textContent?.trim() ?? ""] ?? 2;
+}
+
+const TYPE_QUARTERS: Readonly<Record<string, number>> = {
+  maxima: 32, long: 16, breve: 8, whole: 4, half: 2, quarter: 1, eighth: 0.5,
+  "16th": 0.25, "32nd": 0.125, "64th": 0.0625, "128th": 0.03125, "256th": 0.015625,
+};
+
+/** A note's written length in quarters, from its type and dots; an eighth when it has no type. */
+function notatedQuarters(note: Element): number {
+  const base = TYPE_QUARTERS[text(note, "type")?.toLowerCase() ?? ""] ?? 0.5;
+  const dots = elements(note, "dot").length;
+  return base * (2 - 1 / 2 ** dots);
+}
+
 function parseTremolo(note: Element): RealtimeTremolo | null {
   const element = descendants(note, "tremolo")[0];
   if (!element) return null;
@@ -466,6 +557,9 @@ interface PartMeasureData {
   pageNumber: number;
   duration: number;
   notes: ParsedScoreNote[];
+  /** Where notes and rests start, for the end of a fermata's hold. */
+  eventOnsets: number[];
+  fermatas: { onset: number; stretch: number }[];
   tempos: RealtimeTempoChange[];
   forwardRepeat: boolean;
   backwardRepeat: RepeatMark | null;
@@ -603,6 +697,10 @@ function parsePartMeasure(
   let furthest = 0;
   let chordOnset = 0;
   const notes: ParsedScoreNote[] = [];
+  const eventOnsets: number[] = [];
+  const fermatas: { onset: number; stretch: number }[] = [];
+  /** Grace chords seen since each voice's last main note. */
+  const graceRuns = new Map<string, number>();
   const tempos: RealtimeTempoChange[] = [];
   const sounds: NavigationSound[] = [];
   let soundIndex = 0;
@@ -648,6 +746,17 @@ function parsePartMeasure(
         ? Math.max(0, nextVoiceEventIndex - 1)
         : nextVoiceEventIndex;
       if (!isChord) voiceEventIndexes.set(voiceKey, nextVoiceEventIndex + 1);
+      const grace = first(child, "grace") !== null;
+      const graceOrder = grace
+        ? (isChord ? graceRuns.get(voice) ?? 1 : (graceRuns.get(voice) ?? 0) + 1)
+        : 0;
+      if (grace) graceRuns.set(voice, graceOrder);
+      else {
+        graceRuns.delete(voice);
+        eventOnsets.push(onset);
+        const stretch = fermataStretch(child);
+        if (stretch !== null) fermatas.push({ onset, stretch });
+      }
       const pitchElement = first(child, "pitch");
       if (pitchElement) {
         const step = text(pitchElement, "step");
@@ -668,7 +777,10 @@ function parsePartMeasure(
             dynamic,
             onset,
             duration,
-            grace: first(child, "grace") !== null,
+            grace,
+            graceOrder,
+            graceSlash: grace && yes(first(child, "grace")!.getAttribute("slash")),
+            graceQuarters: grace ? notatedQuarters(child) : 0,
             cue: first(child, "cue") !== null,
             tieStart: tieTypes.has("start"),
             tieStop: tieTypes.has("stop"),
@@ -682,6 +794,8 @@ function parsePartMeasure(
               .map((slur) => slur.getAttribute("number") ?? "1"),
             tremolo: parseTremolo(child),
             trill: parseTrill(child, step, octaveNumber, alter, fifths),
+            mordent: parseMordent(child, step, octaveNumber, alter, fifths),
+            arpeggio: parseArpeggio(child, pitchSemitone(step, octaveNumber, alter)),
           });
         }
       }
@@ -746,6 +860,8 @@ function parsePartMeasure(
       pageNumber,
       duration: furthest,
       notes,
+      eventOnsets,
+      fermatas,
       tempos,
       forwardRepeat,
       backwardRepeat,
@@ -828,6 +944,15 @@ export function parseRealtimeMusicXml(musicXml: string): RealtimeScore {
           String(sound.timeOnly ? [...sound.timeOnly] : ""),
       ) === soundIndex);
     const measureNotes = available.flatMap((measure) => measure.notes);
+    const measureDuration = Math.max(0, ...available.map((measure) => measure.duration));
+    // A fermata holds until the next onset in any part, or the end of the measure.
+    const onsets = [...new Set(available.flatMap((measure) => measure.eventOnsets))].sort((a, b) => a - b);
+    const fermatas = new Map<number, RealtimeFermata>();
+    for (const { onset, stretch } of available.flatMap((measure) => measure.fermatas)) {
+      const end = onsets.find((candidate) => candidate > onset + 1e-9) ?? measureDuration;
+      const existing = fermatas.get(onset);
+      if (end > onset && (!existing || existing.stretch < stretch)) fermatas.set(onset, { onset, end, stretch });
+    }
     measures.push({
       index,
       number: navigation?.number ?? available[0]?.number ?? String(index + 1),
@@ -845,6 +970,7 @@ export function parseRealtimeMusicXml(musicXml: string): RealtimeScore {
       backwardRepeat: available.find((measure) => measure.backwardRepeat)?.backwardRepeat ?? null,
       endingNumbers: new Set(activeEnding),
       sounds: measureSounds,
+      fermatas: [...fermatas.values()].sort((a, b) => a.onset - b.onset),
     });
     if (available.some((measure) => measure.endingStops)) activeEnding = new Set<number>();
   }
@@ -961,6 +1087,8 @@ interface TremoloGroup {
 const DEFAULT_UNMEASURED_TREMOLO_QUARTERS = 0.125;
 const MIN_TREMOLO_INTERVAL_QUARTERS = 1 / 32;
 const DEFAULT_TRILL_INTERVAL_QUARTERS = 0.125;
+/** MuseScore's mordent: two 32nd notes, then the main note. */
+const MORDENT_NOTE_QUARTERS = 0.125;
 
 function tremoloInterval(tremolo: RealtimeTremolo): number {
   if (tremolo.type === "unmeasured" || tremolo.marks === 0) {
@@ -1090,6 +1218,13 @@ function expandOrnamentNotes(
     }
   };
 
+  const addMordent = (note: RouteScoreNote, mordent: RealtimeMordent) => {
+    const step = Math.min(MORDENT_NOTE_QUARTERS, Math.max(0, note.release - note.onset) / 3);
+    addNote(note, note.onset, note.onset + step);
+    addNote(note, note.onset + step, note.onset + 2 * step, mordent.auxiliaryPitch);
+    addNote(note, note.onset + 2 * step, note.release);
+  };
+
   for (const groups of lanes.values()) {
     for (let index = 0; index < groups.length; index += 1) {
       const group = groups[index];
@@ -1109,6 +1244,7 @@ function expandOrnamentNotes(
       }
       for (const note of group.notes) {
         if (note.trill) addTrill(note, note.trill);
+        else if (note.mordent) addMordent(note, note.mordent);
         else addNote(note, note.onset, note.release);
       }
     }
@@ -1116,6 +1252,118 @@ function expandOrnamentNotes(
   return result.sort((left, right) =>
     left.onset - right.onset || left.release - right.release || left.id.localeCompare(right.id),
   );
+}
+
+/** The tempo in force at `offset`, from segments sorted by offset. */
+function bpmAtOffset(segments: readonly TempoSegment[], offset: number): number {
+  let bpm = segments[0]?.bpm ?? 120;
+  for (const segment of segments) {
+    if (segment.offset > offset + 1e-9) break;
+    bpm = segment.bpm;
+  }
+  return bpm;
+}
+
+interface FermataSpan {
+  start: number;
+  end: number;
+  stretch: number;
+}
+
+/**
+ * Tempo segments with fermatas: where several tempos share an offset the last applies,
+ * and a fermata divides the tempo by its stretch until its span ends.
+ */
+function heldTempoSegments(tempos: TempoSegment[], spans: FermataSpan[]): TempoSegment[] {
+  const base = [...tempos]
+    .sort((left, right) => left.offset - right.offset)
+    .filter((tempo, index, all) => index === all.length - 1 || all[index + 1].offset !== tempo.offset);
+  const offsets = [...new Set([...base.map((tempo) => tempo.offset), ...spans.flatMap((span) => [span.start, span.end])])]
+    .sort((left, right) => left - right);
+  return offsets
+    .map((offset) => {
+      const bpm = bpmAtOffset(base, offset);
+      const stretch = Math.max(1, ...spans
+        .filter((span) => span.start <= offset + 1e-9 && offset < span.end - 1e-9)
+        .map((span) => span.stretch));
+      return { offset, bpm: bpm / stretch };
+    })
+    .filter((tempo, index, all) => index === 0 || tempo.bpm !== all[index - 1].bpm);
+}
+
+/** MuseScore's shortest acciaccatura: a 64th note, in quarters. */
+const ACCIACCATURA_QUARTERS = 1 / 16;
+
+/**
+ * Grace notes play on the beat and delay their main note, as in MuseScore: a single
+ * appoggiatura takes up to half the main note; acciaccaturas, and runs of several grace
+ * notes, take up to a 64th note each, and never more than half the main note. Either way
+ * no more than their written lengths, shortened in proportion.
+ */
+function placeGraceNotes(notes: RouteScoreNote[]): void {
+  const lanes = new Map<string, RouteScoreNote[]>();
+  for (const note of notes) {
+    const key = `${note.partId}|${note.voice}|${note.onset}`;
+    lanes.set(key, [...(lanes.get(key) ?? []), note]);
+  }
+  for (const lane of lanes.values()) {
+    const graces = lane.filter((note) => note.grace);
+    if (graces.length === 0) continue;
+    const principal = lane.filter((note) => !note.grace);
+    const onset = graces[0].onset;
+    const chords = [...new Set(graces.map((note) => note.graceOrder))].sort((a, b) => a - b)
+      .map((order) => graces.filter((note) => note.graceOrder === order));
+    const written = chords.map((chord) => Math.max(...chord.map((note) => note.graceQuarters)));
+    const totalWritten = written.reduce((total, value) => total + value, 0);
+    const principalLength = principal.length
+      ? Math.min(...principal.map((note) => note.release - note.onset))
+      : Infinity;
+    const appoggiatura = chords.length === 1 && !chords[0].some((note) => note.graceSlash);
+    const available = appoggiatura
+      ? principalLength / 2
+      : Math.min(chords.length * ACCIACCATURA_QUARTERS, principalLength / 2);
+    const actual = Math.min(available, totalWritten);
+    let cursor = onset;
+    chords.forEach((chord, index) => {
+      const length = totalWritten > 0 ? written[index] * (actual / totalWritten) : 0;
+      for (const note of chord) {
+        note.onset = cursor;
+        note.release = cursor + length;
+      }
+      cursor += length;
+    });
+    for (const note of principal) note.onset += actual;
+  }
+}
+
+/** MuseScore's longest step between the notes of a rolled chord: 60 ms. */
+const MAX_ROLL_STEP_SECONDS = 0.06;
+
+/**
+ * Rolled chords, as in MuseScore: notes sharing a part, onset and arpeggio number enter
+ * one at a time, lowest first (highest first when rolled down), in steps of the chord's
+ * length divided by its notes, at most 60 ms; each still ends with the chord.
+ */
+function rollArpeggios(notes: RouteScoreNote[], bpmAt: (offset: number) => number): void {
+  const rolls = new Map<string, RouteScoreNote[]>();
+  for (const note of notes) {
+    if (!note.arpeggio || note.grace) continue;
+    const key = `${note.partId}|${note.onset}|${note.arpeggio.number}`;
+    rolls.set(key, [...(rolls.get(key) ?? []), note]);
+  }
+  for (const roll of rolls.values()) {
+    if (roll.length < 2) continue;
+    const onset = roll[0].onset;
+    const length = Math.min(...roll.map((note) => note.release - note.onset));
+    const maxStep = MAX_ROLL_STEP_SECONDS * bpmAt(onset) / 60;
+    const step = Math.min(length / roll.length, maxStep);
+    const down = roll[0].arpeggio!.direction === "down";
+    const ordered = [...roll].sort((left, right) =>
+      (left.arpeggio!.semitone - right.arpeggio!.semitone) * (down ? -1 : 1));
+    ordered.forEach((note, index) => {
+      note.onset = onset + step * index;
+    });
+  }
 }
 
 export function expandPerformanceRoute(
@@ -1148,6 +1396,7 @@ export function expandPerformanceRoute(
   const occurrences: PerformanceOccurrence[] = [];
   const rawNotes: RouteScoreNote[] = [];
   const rawTempos: TempoSegment[] = [{ offset: 0, bpm: effectiveTempoBefore(score, startMeasure, startOffset) }];
+  const fermataSpans: FermataSpan[] = [];
   let index = startMeasure;
   let scoreOffset = 0;
   let jumped = false;
@@ -1200,7 +1449,8 @@ export function expandPerformanceRoute(
       occurrences.push(occurrence);
       for (const note of measure.notes) {
         if (note.cue) continue;
-        if (note.onset + note.duration <= localStart || note.onset < localStart) continue;
+        // Notes before the start are skipped; grace notes on it, which last no time, still play.
+        if (note.onset < localStart) continue;
         rawNotes.push({
           ...note,
           onset: scoreOffset + note.onset - localStart,
@@ -1211,6 +1461,15 @@ export function expandPerformanceRoute(
       for (const tempo of measure.tempos) {
         if (tempo.onset >= localStart) {
           rawTempos.push({ offset: scoreOffset + tempo.onset - localStart, bpm: tempo.bpm });
+        }
+      }
+      for (const fermata of measure.fermatas) {
+        if (fermata.onset >= localStart) {
+          fermataSpans.push({
+            start: scoreOffset + fermata.onset - localStart,
+            end: scoreOffset + fermata.end - localStart,
+            stretch: fermata.stretch,
+          });
         }
       }
       scoreOffset += duration;
@@ -1282,14 +1541,13 @@ export function expandPerformanceRoute(
   const playheadNotes = sustainedNotes.map((note, index) =>
     performanceNote(note, note.onset, note.release, index, options.visualMap),
   );
-  const performanceNotes = expandOrnamentNotes(sustainedNotes, options.visualMap);
-
-  const sortedTempos = rawTempos
-    .sort((left, right) => left.offset - right.offset)
-    .filter((tempo, index, all) =>
-      index === all.length - 1 || all[index + 1].offset !== tempo.offset,
-    )
-    .filter((tempo, index, all) => index === 0 || tempo.bpm !== all[index - 1].bpm);
+  const sortedTempos = heldTempoSegments(rawTempos, fermataSpans);
+  const bpmAt = (offset: number) => bpmAtOffset(sortedTempos, offset);
+  // The playhead keeps the written times; what sounds is shaped by grace notes and rolls.
+  const sounding = sustainedNotes.map((note) => ({ ...note }));
+  placeGraceNotes(sounding);
+  rollArpeggios(sounding, bpmAt);
+  const performanceNotes = expandOrnamentNotes(sounding, options.visualMap);
   const eventsByOnset = new Map<number, PerformanceEvent>();
   for (const note of performanceNotes) {
     const event = eventsByOnset.get(note.onset);
