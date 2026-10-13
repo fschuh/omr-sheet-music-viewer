@@ -19,7 +19,18 @@ export type Drawable =
   | { kind: "line"; x1: number; y1: number; x2: number; y2: number; width: number }
   /** A filled polygon, such as a beam: x, y pairs. */
   | { kind: "polygon"; points: number[] }
-  | { kind: "text"; text: string; x: number; y: number; size: number; anchor: "start" | "middle" | "end" };
+  /** A filled outline as SVG path data, such as a tie. */
+  | { kind: "path"; d: string }
+  /** One line of text at its baseline; `runs`, when given, style its parts and replace `text`. */
+  | { kind: "text"; text: string; runs?: TextRun[]; x: number; y: number; size: number; anchor: "start" | "middle" | "end" };
+
+export interface TextRun {
+  text: string;
+  /** In page pixels; the line's size when absent. */
+  size?: number;
+  italic?: boolean;
+  bold?: boolean;
+}
 
 /** A drawn note, with what is drawn for it alone. */
 export interface LayoutNote {

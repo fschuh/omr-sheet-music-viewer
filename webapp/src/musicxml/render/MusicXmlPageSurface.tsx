@@ -7,7 +7,7 @@ const LELAND_URL = new URL("../fonts/Leland.otf", import.meta.url).href;
 const PAGE_STYLE =
   `@font-face{font-family:"Leland";src:url("${LELAND_URL}") format("opentype");font-display:block}` +
   ".musicxml-page{color:#000}.musicxml-page line{stroke:currentColor}" +
-  ".musicxml-page polygon,.musicxml-page text{fill:currentColor}" +
+  ".musicxml-page polygon,.musicxml-page path,.musicxml-page text{fill:currentColor}" +
   '.mx-glyph{font-family:"Leland"}.mx-text{font-family:Georgia,"Times New Roman",serif}' +
   ".mx-selected{color:#de3619}.mx-playback{color:#13a98d}";
 /** SMuFL fonts are scaled so one em is four staff spaces. */
@@ -31,10 +31,23 @@ function draw(item: Drawable, staffSpace: number, key: number): ReactElement {
       return <line key={key} x1={item.x1} y1={item.y1} x2={item.x2} y2={item.y2} strokeWidth={item.width} />;
     case "polygon":
       return <polygon key={key} points={item.points.join(" ")} />;
+    case "path":
+      return <path key={key} d={item.d} />;
     case "text":
       return (
         <text key={key} className="mx-text" x={item.x} y={item.y} fontSize={item.size} textAnchor={item.anchor}>
-          {item.text}
+          {item.runs
+            ? item.runs.map((run, index) => (
+                <tspan
+                  key={index}
+                  fontSize={run.size}
+                  fontStyle={run.italic ? "italic" : undefined}
+                  fontWeight={run.bold ? "bold" : undefined}
+                >
+                  {run.text}
+                </tspan>
+              ))
+            : item.text}
         </text>
       );
   }

@@ -67,6 +67,12 @@ function itemBounds(item: Drawable): [number, number, number, number] {
       return [item.x, item.y, item.x, item.y];
     case "line":
       return [Math.min(item.x1, item.x2), Math.min(item.y1, item.y2), Math.max(item.x1, item.x2), Math.max(item.y1, item.y2)];
+    case "path": {
+      const values = (item.d.match(/-?\d+(\.\d+)?/g) ?? []).map(Number);
+      const xs = values.filter((_, index) => index % 2 === 0);
+      const ys = values.filter((_, index) => index % 2 === 1);
+      return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+    }
     case "polygon": {
       const xs = item.points.filter((_, index) => index % 2 === 0);
       const ys = item.points.filter((_, index) => index % 2 === 1);

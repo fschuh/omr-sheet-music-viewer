@@ -85,6 +85,16 @@ export function keyAlterations(fifths: number): Map<string, number> {
   return result;
 }
 
+/**
+ * The naturals a key change prints before the new key: for every accidental of the old key
+ * the new one does not keep, at the old accidental's place.
+ */
+export function keyCancellation(clef: Clef, oldFifths: number, newFifths: number): { glyph: GlyphName; position: number }[] {
+  const old = keySignature(clef, oldFifths);
+  const keep = Math.sign(oldFifths) === Math.sign(newFifths) ? Math.min(Math.abs(newFifths), old.length) : 0;
+  return old.slice(keep).map(({ position }) => ({ glyph: "accidentalNatural", position }));
+}
+
 /** A key signature's accidentals with their staff positions, in drawing order. */
 export function keySignature(clef: Clef, fifths: number): { glyph: GlyphName; position: number }[] {
   // Other clefs use the treble pattern moved to where their B4 sits, within an octave.

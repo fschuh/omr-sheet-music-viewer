@@ -31,7 +31,7 @@ function spacings(measures: string[]): MeasureSpacing[] {
       }
     }
   }
-  return prepared.measures.map((value) => measureSpacing(prepared, value, shapes));
+  return prepared.measures.map((value, index) => measureSpacing(prepared, value, shapes, prepared.measures[index + 1]));
 }
 
 const quarters = note("C5", 4, { type: "quarter" }).repeat(4);

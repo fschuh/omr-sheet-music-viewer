@@ -15,6 +15,8 @@ import type {
   ChordModel,
   ClefChange,
   ClefSign,
+  CreditModel,
+  CreditRun,
   KeyChange,
   MeasureModel,
   NoteModel,
@@ -25,6 +27,7 @@ import type {
   ScoreModel,
   SystemLayout,
   TimeChange,
+  TupletStart,
 } from "../model/score";
 import { chordKey, NoteKeyAllocator, pitchToken } from "./noteKeys";
 
@@ -181,6 +184,35 @@ function parseBeams(note: Element): (BeamValue | null)[] {
   return beams;
 }
 
+function parseTuplets(note: Element): { tupletStarts: TupletStart[]; tupletStops: string[] } {
+  const tupletStarts: TupletStart[] = [];
+  const tupletStops: string[] = [];
+  const modification = childElement(note, "time-modification");
+  for (const notations of childElements(note, "notations")) {
+    for (const tuplet of childElements(notations, "tuplet")) {
+      const number = attribute(tuplet, "number") ?? "1";
+      if (attribute(tuplet, "type") === "stop") {
+        tupletStops.push(number);
+        continue;
+      }
+      const bracket = attribute(tuplet, "bracket");
+      const show = attribute(tuplet, "show-number");
+      const placement = attribute(tuplet, "placement");
+      const actual = childNumber(childElement(tuplet, "tuplet-actual"), "tuplet-number") ?? childNumber(modification, "actual-notes") ?? 3;
+      const normal = childNumber(childElement(tuplet, "tuplet-normal"), "tuplet-number") ?? childNumber(modification, "normal-notes") ?? 2;
+      tupletStarts.push({
+        number,
+        bracket: bracket === "yes" ? true : bracket === "no" ? false : null,
+        showNumber: show === "both" || show === "none" ? show : "actual",
+        placement: placement === "above" || placement === "below" ? placement : null,
+        actual,
+        normal,
+      });
+    }
+  }
+  return { tupletStarts, tupletStops };
+}
+
 function parseNotePitch(note: Element): Pick<NoteModel, "step" | "alter" | "octave" | "unpitched"> | null {
   const pitch = childElement(note, "pitch");
   if (pitch) {
@@ -281,10 +313,16 @@ function parsePartMeasure(
       case "barline": {
         const location = attribute(element, "location") ?? "right";
         const repeat = attribute(childElement(element, "repeat"), "direction");
+        const ending = childElement(element, "ending");
+        const endingType = attribute(ending, "type");
+        const endingNumber = attribute(ending, "number") ?? "1";
         measure.barlines.push({
           location: (location === "left" || location === "middle" ? location : "right") as BarlineModel["location"],
-          style: childText(element, "bar-style") ?? "regular",
+          style: childText(element, "bar-style") ?? (repeat === "forward" ? "heavy-light" : repeat === "backward" ? "light-heavy" : "regular"),
           repeat: repeat === "forward" || repeat === "backward" ? repeat : null,
+          ending: ending && (endingType === "start" || endingType === "stop" || endingType === "discontinue")
+            ? { number: endingNumber, type: endingType, text: ending.textContent?.trim() || `${endingNumber.split(",")[0].trim()}.` }
+            : null,
         });
         break;
       }
@@ -298,6 +336,7 @@ function parsePartMeasure(
               key: "",
               ...pitch,
               accidental: childText(element, "accidental") ?? null,
+              accidentalParentheses: attribute(childElement(element, "accidental"), "parentheses") === "yes",
               tieStart: tieTypes.includes("start"),
               tieStop: tieTypes.includes("stop"),
             }
@@ -305,6 +344,9 @@ function parsePartMeasure(
         if (note) noteElements.set(note, element);
         if (isChordContinuation && previousChord) {
           if (note) previousChord.notes.push(note);
+          const tuplets = parseTuplets(element);
+          previousChord.tupletStarts.push(...tuplets.tupletStarts);
+          previousChord.tupletStops.push(...tuplets.tupletStops);
           break;
         }
         const type = childText(element, "type");
@@ -329,6 +371,7 @@ function parsePartMeasure(
           printed: attribute(element, "print-object") !== "no",
           stem: stem === "up" || stem === "down" || stem === "none" || stem === "double" ? stem : null,
           beams: parseBeams(element),
+          ...parseTuplets(element),
           notes: note && !rest ? [note] : [],
         };
         measure.chords.push(chord);
@@ -391,6 +434,57 @@ function mergeSystemLayout(target: SystemLayout, source: SystemLayout | null): S
   };
 }
 
+/** MusicXML's default text size, in points. */
+const DEFAULT_FONT_SIZE = 10;
+
+function parseCredits(root: Element): CreditModel[] {
+  return childElements(root, "credit").flatMap((credit): CreditModel[] => {
+    const words = childElements(credit, "credit-words");
+    if (words.length === 0) return [];
+    const first = words[0];
+    const x = Number(attribute(first, "default-x") ?? NaN);
+    const y = Number(attribute(first, "default-y") ?? NaN);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return [];
+    const align = attribute(first, "halign") ?? attribute(first, "justify") ?? "left";
+    const valign = attribute(first, "valign") ?? "baseline";
+    let previous: CreditRun | null = null;
+    const runs = words.map((word): CreditRun => {
+      const size = Number(attribute(word, "font-size") ?? NaN);
+      const style = attribute(word, "font-style");
+      const weight = attribute(word, "font-weight");
+      const run: CreditRun = {
+        text: word.textContent ?? "",
+        fontSize: Number.isFinite(size) && size > 0 ? size : previous?.fontSize ?? DEFAULT_FONT_SIZE,
+        italic: style ? style === "italic" : previous?.italic ?? false,
+        bold: weight ? weight === "bold" : previous?.bold ?? false,
+      };
+      previous = run;
+      return run;
+    });
+    return [{
+      page: Number(attribute(credit, "page") ?? 1) || 1,
+      x,
+      y,
+      align: align === "center" || align === "right" ? align : "left",
+      valign: valign === "top" || valign === "middle" || valign === "bottom" ? valign : "baseline",
+      runs,
+    }];
+  });
+}
+
+function parseTitles(root: Element): ScoreModel["titles"] {
+  const work = childElement(root, "work");
+  const composer = childElements(childElement(root, "identification") ?? root, "creator")
+    .find((creator) => attribute(creator, "type") === "composer");
+  const workTitle = childText(work, "work-title") ?? null;
+  const movementTitle = childText(root, "movement-title") ?? null;
+  return {
+    title: (workTitle ?? movementTitle)?.replace(/^"(.*)"$/, "$1") ?? null,
+    subtitle: workTitle && movementTitle && movementTitle !== workTitle ? movementTitle : null,
+    composer: composer?.textContent?.trim() || null,
+  };
+}
+
 function parseScore(root: Element, sources: PartSource[], noteElements: Map<NoteModel, Element>): ScoreModel {
   const names = partNames(root);
   const measures: MeasureModel[] = [];
@@ -430,7 +524,7 @@ function parseScore(root: Element, sources: PartSource[], noteElements: Map<Note
       part.measures.push({ clefs: [], keys: [], times: [], chords: [], barlines: [] });
     }
   }
-  return { defaults: parseDefaults(root), parts, measures };
+  return { defaults: parseDefaults(root), credits: parseCredits(root), titles: parseTitles(root), parts, measures };
 }
 
 /** A score as imported, with the parsed XML that `documentMusicXml` writes viewer IDs into. */

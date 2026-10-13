@@ -10,7 +10,7 @@ import {
   ZERO,
   type Fraction,
 } from "../model/fraction";
-import type { ChordModel, KeyChange, ScoreModel, TimeChange } from "../model/score";
+import type { ChordModel, EndingMark, KeyChange, ScoreModel, TimeChange } from "../model/score";
 import { clefsEqual, keyAlterations, TREBLE_CLEF, type Clef } from "./staffPosition";
 
 export interface StaffRef {
@@ -60,11 +60,20 @@ export interface PreparedMeasure {
   fifths: number[];
   /** Key signatures printed at the start, per staff; null where the key does not change. */
   keyChanges: (number | null)[];
+  /** The key before the measure, per staff, which a key change cancels. */
+  previousFifths: number[];
   /** Clef changes printed at the start of the measure. */
   startClefChanges: ClefDisplay[];
   segments: Segment[];
   /** The right barline's style. */
   barStyle: string;
+  /** The measure starts with a start-repeat barline. */
+  startRepeat: boolean;
+  /** The measure ends with an end-repeat barline. */
+  endRepeat: boolean;
+  /** A volta starting at this measure, and how one ending here ends. */
+  endingStart: EndingMark | null;
+  endingEnd: "stop" | "discontinue" | null;
 }
 
 export interface PreparedScore {
@@ -160,6 +169,7 @@ export function prepareScore(score: ScoreModel): PreparedScore {
   const measures = score.measures.map((shared, measureIndex): PreparedMeasure => {
     const startClefs = [...clefs];
     const startFifths = [...fifths];
+    const previousFifths = [...fifths];
     const keyChanges: (number | null)[] = staves.map(() => null);
     const startClefChanges: ClefDisplay[] = [];
     const clefsAtOnset: { staff: number; onset: Fraction; clef: Clef }[] = [];
@@ -265,10 +275,10 @@ export function prepareScore(score: ScoreModel): PreparedScore {
     }
     for (const { onset, display } of segmentClefs) segmentAt(onset).clefChanges.push(display);
 
-    const barStyle =
-      score.parts
-        .flatMap((part) => part.measures[measureIndex].barlines)
-        .find((barline) => barline.location === "right")?.style ?? "regular";
+    const barlines = score.parts.flatMap((part) => part.measures[measureIndex].barlines);
+    const right = barlines.filter((barline) => barline.location === "right");
+    const barStyle = right.find((barline) => barline.style !== "regular")?.style ?? right[0]?.style ?? "regular";
+    const endings = barlines.flatMap((barline) => (barline.ending ? [barline.ending] : []));
 
     return {
       index: measureIndex,
@@ -279,9 +289,14 @@ export function prepareScore(score: ScoreModel): PreparedScore {
       clefs: startClefs,
       fifths: startFifths,
       keyChanges,
+      previousFifths,
       startClefChanges,
       segments,
       barStyle,
+      startRepeat: barlines.some((barline) => barline.location === "left" && barline.repeat === "forward"),
+      endRepeat: right.some((barline) => barline.repeat === "backward"),
+      endingStart: endings.find((ending) => ending.type === "start") ?? null,
+      endingEnd: endings.find((ending) => ending.type !== "start")?.type as "stop" | "discontinue" | undefined ?? null,
     };
   });
   return { staves, partStaves, measures };

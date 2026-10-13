@@ -31,7 +31,8 @@ export interface NoteShape {
   x: number;
   y: number;
   head: GlyphName;
-  accidental: { glyph: GlyphName; x: number; y: number } | null;
+  /** `x` is where the accidental glyph starts; parentheses, if any, sit either side. */
+  accidental: { glyph: GlyphName; x: number; y: number; parentheses: boolean } | null;
 }
 
 export interface StemShape {
@@ -162,9 +163,17 @@ function placeNoteheads(positions: number[], up: boolean): Placed[] {
 }
 
 /** Accidentals stack in columns leftward, top to bottom, wherever they do not overlap. */
+const PAREN_LEFT = glyphWidth("accidentalParensLeft");
+const PAREN_RIGHT = glyphWidth("accidentalParensRight");
+
+function accidentalWidth(glyph: GlyphName, parentheses: boolean): number {
+  return glyphWidth(glyph) + (parentheses ? PAREN_LEFT + PAREN_RIGHT : 0);
+}
+
 function placeAccidentals(
   notes: NoteShape[],
   glyphs: (GlyphName | null)[],
+  parentheses: boolean[],
   rightEdge: number,
   scale: number,
 ): void {
@@ -185,14 +194,16 @@ function placeAccidentals(
     }
     column.spans.push(span);
     column.members.push(note);
-    column.width = Math.max(column.width, glyphWidth(glyph) * scale);
-    note.accidental = { glyph, x: 0, y: note.y };
+    const parens = parentheses[note.index] ?? false;
+    column.width = Math.max(column.width, accidentalWidth(glyph, parens) * scale);
+    note.accidental = { glyph, x: 0, y: note.y, parentheses: parens };
   }
   let right = rightEdge;
   for (const column of columns) {
     for (const note of column.members) {
       const glyph = note.accidental!.glyph;
-      note.accidental!.x = right - glyphBox(glyph).right * scale;
+      const closing = note.accidental!.parentheses ? PAREN_RIGHT * scale : 0;
+      note.accidental!.x = right - closing - glyphBox(glyph).right * scale;
     }
     right -= column.width + ACCIDENTAL_DISTANCE * scale;
   }
@@ -252,7 +263,13 @@ export function layoutChord(
   }));
 
   const leftmostHead = Math.min(...notes.map((note) => note.x));
-  placeAccidentals(notes, chord.accidentals, leftmostHead - ACCIDENTAL_NOTE_DISTANCE * scale, scale);
+  placeAccidentals(
+    notes,
+    chord.accidentals,
+    chord.model.notes.map((note) => note.accidentalParentheses),
+    leftmostHead - ACCIDENTAL_NOTE_DISTANCE * scale,
+    scale,
+  );
 
   const ledgers: ChordShape["ledgers"] = [];
   const minPosition = Math.min(...positions);
@@ -315,7 +332,8 @@ export function layoutChord(
 
   const accidentalLeft = Math.min(
     leftmostHead,
-    ...notes.filter((note) => note.accidental).map((note) => note.accidental!.x),
+    ...notes.filter((note) => note.accidental).map((note) =>
+      note.accidental!.x - (note.accidental!.parentheses ? PAREN_LEFT * scale : 0)),
   );
   const flagRight = flag && stem ? stem.x + glyphBox(flag).right * scale : -Infinity;
   const ledgerLeft = Math.min(leftmostHead, ...ledgers.map((ledger) => ledger.x1));
@@ -339,4 +357,32 @@ export function layoutChord(
     top: Math.min(...ys.map((y) => y - 0.5), stem ? Math.min(stem.yStart, stem.yEnd) : Infinity),
     bottom: Math.max(...ys.map((y) => y + 0.5), stem ? Math.max(stem.yStart, stem.yEnd) : -Infinity),
   };
+}
+
+const REST_CLEARANCE = 0.25;
+
+/**
+ * Rests of voices sharing a staff move clear of the other voices' notes at the same moment,
+ * a whole staff space at a time: an upper voice's rest upward, a lower voice's downward.
+ * Rests the file places itself stay where they are.
+ */
+export function avoidRestCollisions(chords: PreparedChord[], shapes: Map<PreparedChord, ChordShape>): void {
+  for (const rest of chords) {
+    const shape = shapes.get(rest);
+    if (!shape?.rest || !rest.sharedStaff || rest.model.restPosition || rest.model.measureRest) continue;
+    const others = chords.filter((chord) =>
+      chord !== rest && chord.staff === rest.staff && chord.model.voice !== rest.model.voice && chord.model.notes.length > 0);
+    const ys = others.flatMap((chord) => shapes.get(chord)!.notes.map((note) => note.y));
+    if (ys.length === 0) continue;
+    const up = isUpperVoice(rest.model.voice);
+    const overlap = up
+      ? shape.bottom - (Math.min(...ys) - 0.5 - REST_CLEARANCE)
+      : (Math.max(...ys) + 0.5 + REST_CLEARANCE) - shape.top;
+    if (overlap <= 0) continue;
+    const shift = Math.ceil(overlap) * (up ? -1 : 1);
+    shape.rest.y += shift;
+    shape.top += shift;
+    shape.bottom += shift;
+    for (const dot of shape.dots) dot.y += shift;
+  }
 }

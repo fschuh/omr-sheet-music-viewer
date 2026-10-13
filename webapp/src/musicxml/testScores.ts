@@ -16,6 +16,8 @@ export interface NoteOptions {
   /** Where a rest sits, as a pitch such as "E4". */
   restAt?: string;
   measureRest?: boolean;
+  /** Raw MusicXML appended inside the note, such as `<notations>…</notations>`. */
+  extra?: string;
 }
 
 function pitchParts(pitch: string): { step: string; alter: number; octave: number } {
@@ -54,6 +56,7 @@ export function note(pitch: string | null, duration: number, options: NoteOption
   if (options.stem) parts.push(`<stem>${options.stem}</stem>`);
   parts.push(`<staff>${options.staff ?? 1}</staff>`);
   (options.beams ?? []).forEach((value, index) => parts.push(`<beam number="${index + 1}">${value}</beam>`));
+  if (options.extra) parts.push(options.extra);
   return `<note>${parts.join("")}</note>`;
 }
 
@@ -81,6 +84,11 @@ export function attributes(options: AttributeOptions): string {
     parts.push(`<clef number="${index + 1}"><sign>${sign}</sign><line>${line}</line></clef>`);
   });
   return `<attributes>${parts.join("")}</attributes>`;
+}
+
+/** A barline, such as `barline("right", "<repeat direction=\"backward\"/>")`. */
+export function barline(location: "left" | "right", content: string): string {
+  return `<barline location="${location}">${content}</barline>`;
 }
 
 export function measure(content: string, print = ""): string {

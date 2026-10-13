@@ -66,6 +66,20 @@ const CODEPOINTS = {
   timeSigCutCommon: 0xe08b,
   augmentationDot: 0xe1e7,
   brace: 0xe000,
+  tuplet0: 0xe880,
+  tuplet1: 0xe881,
+  tuplet2: 0xe882,
+  tuplet3: 0xe883,
+  tuplet4: 0xe884,
+  tuplet5: 0xe885,
+  tuplet6: 0xe886,
+  tuplet7: 0xe887,
+  tuplet8: 0xe888,
+  tuplet9: 0xe889,
+  tupletColon: 0xe88a,
+  repeatDots: 0xe043,
+  accidentalParensLeft: 0xe26a,
+  accidentalParensRight: 0xe26b,
 } as const;
 
 export type GlyphName = keyof typeof CODEPOINTS;

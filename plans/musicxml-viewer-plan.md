@@ -1,7 +1,7 @@
 # MusicXML viewer plan
 
 Date: 2026-10-12  
-Status: In progress; phases 1 to 5 are implemented.
+Status: In progress; phases 1 to 6 are implemented.
 
 ## 1. Objective and scope
 
@@ -114,8 +114,9 @@ webapp/src/musicxml/
 │   ├── beams.ts           beam groups, stem directions, beam lines and stem ends
 │   ├── horizontal.ts      duration-based springs, minimum widths, justification and squeezing
 │   ├── systems.ts         breaking measures into systems (honoring encoded breaks)
-│   ├── pages.ts           staff and system distances, breaking systems into pages, drawing
-│   └── spanners.ts        later: ties, slurs, hairpins, pedal, ottava, tuplet brackets
+│   ├── pages.ts           staff and system distances, breaking systems into pages
+│   ├── drawing.ts         placed systems to drawables: staves, headers, barlines, chords, credits
+│   └── spanners.ts        ties, tuplets and voltas; later slurs, hairpins, pedal, ottava
 ├── render/
 │   ├── MusicXmlPageSurface.tsx   one page as SVG, page-pixel viewBox, highlight classes
 │   └── text.ts            later: titles, credits, directions; TextMeasurer interface
@@ -373,6 +374,8 @@ Visual comparison: `npm run musicxml:render -- <output-dir> <scores>` renders ea
 | 7. Section 5.2 | Second-stage notation | Same review for the second-stage symbols. |
 
 Phase 1 changes only shared code and PDF behavior must stay identical, so it can be reviewed and merged on its own. Each phase is a separate reviewable commit series on the `musicxml` branch.
+
+Phase 6 result: ties (bowing away from their stems, upper notes of a chord up and lower down, split across system breaks), tuplet numbers and brackets (a bracket when the file asks or the notes are not beamed together), start and end repeat signs with their dots, voltas (closed at a start repeat when the file leaves them open, continued across system breaks), credits at the file's positions with their styles, a title block for files without credits, rests moved clear of other voices' notes, key-change naturals, courtesy accidentals in parentheses, and courtesy key and time signatures at system ends. Side-by-side review of the corpus shows the section 5.1 symbols where the reference has them; what remains different is second-stage notation (section 5.2: ottava lines, slurs, dynamics, articulations, pedal, tempo text, arpeggio signs, ornaments, fermatas) and spacing, where MuseScore's reference PDFs, mostly from MuseScore 3.6, pack measures more tightly. Measure numbers come from the file's `number` attributes, which MuseScore 4 also shows when importing these files.
 
 Phase 5 result: predictions are stored by structural key and reused on the next opening without running the model; with a stand-in model on the Turkish March and the Nocturne Op. 9 No. 2 (1,425 and 1,238 notes, 69 and 61 kB of `fingerings.json`), the second opening restores identical fingerings, and all 70 and 85 printed fingerings stay as printed. Because the folder is named by the file's content, moving or renaming the file keeps its fingerings.
 

@@ -5,6 +5,10 @@ import type { Fraction } from "./fraction";
 
 export interface ScoreModel {
   defaults: ScoreDefaults;
+  /** Text the file places on its pages, such as the title and composer. */
+  credits: CreditModel[];
+  /** Titles from `<work>`, `<movement-title>` and `<identification>`, for scores without credits. */
+  titles: { title: string | null; subtitle: string | null; composer: string | null };
   parts: PartModel[];
   /** The score's measures by position, with what applies to all parts. */
   measures: MeasureModel[];
@@ -36,6 +40,24 @@ export interface SystemLayout {
   systemDistance: number | null;
   /** From the top page margin to the top of the page's first system. */
   topSystemDistance: number | null;
+}
+
+export interface CreditRun {
+  text: string;
+  /** In points. */
+  fontSize: number;
+  italic: boolean;
+  bold: boolean;
+}
+
+export interface CreditModel {
+  page: number;
+  /** In tenths from the page's bottom left. */
+  x: number;
+  y: number;
+  align: "left" | "center" | "right";
+  valign: "top" | "middle" | "bottom" | "baseline";
+  runs: CreditRun[];
 }
 
 export interface MeasureModel {
@@ -96,6 +118,15 @@ export interface BarlineModel {
   location: "left" | "right" | "middle";
   style: string;
   repeat: "forward" | "backward" | null;
+  ending: EndingMark | null;
+}
+
+/** A volta's start or end, as a barline marks it. */
+export interface EndingMark {
+  number: string;
+  type: "start" | "stop" | "discontinue";
+  /** The printed text, such as "1."; the number followed by a dot when the file gives none. */
+  text: string;
 }
 
 export type NoteType =
@@ -138,9 +169,22 @@ export interface ChordModel {
   /** False for chords the file marks as not printed; they still sound. */
   printed: boolean;
   stem: "up" | "down" | "none" | "double" | null;
+  /** Tuplets starting at this chord, and the numbers of those ending at it. */
+  tupletStarts: TupletStart[];
+  tupletStops: string[];
   /** Beam values by level: index 0 is the eighth-note beam. */
   beams: (BeamValue | null)[];
   notes: NoteModel[];
+}
+
+export interface TupletStart {
+  number: string;
+  /** Null when the file leaves it to the engraver. */
+  bracket: boolean | null;
+  showNumber: "actual" | "both" | "none";
+  placement: "above" | "below" | null;
+  actual: number;
+  normal: number;
 }
 
 export interface NoteModel {
@@ -153,6 +197,8 @@ export interface NoteModel {
   unpitched: boolean;
   /** The accidental the file prints, by MusicXML name; null when it prints none. */
   accidental: string | null;
+  /** The printed accidental is a courtesy one, in parentheses. */
+  accidentalParentheses: boolean;
   tieStart: boolean;
   tieStop: boolean;
 }

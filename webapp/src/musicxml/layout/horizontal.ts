@@ -11,7 +11,7 @@ import type { TimeChange } from "../model/score";
 import type { PreparedChord, PreparedMeasure, PreparedScore, Segment } from "./measureContent";
 import { shortestAt } from "./measureContent";
 import type { ChordShape } from "./chords";
-import { clefGlyph, keySignature, type Clef } from "./staffPosition";
+import { clefGlyph, keyCancellation, keySignature, type Clef } from "./staffPosition";
 
 const MEASURE_SPACING = 1.5;
 const MIN_NOTE_DISTANCE = 0.35;
@@ -30,6 +30,11 @@ const KEY_ACCIDENTAL_GAP = 0.1;
 export const BARLINE_WIDTH = 0.18;
 export const THICK_BARLINE_WIDTH = 0.55;
 export const BARLINE_SEPARATION = 0.37;
+export const REPEAT_DOTS_WIDTH = glyphWidth("repeatDots");
+/** A start-repeat sign: thick line, thin line, dots. */
+export const START_REPEAT_WIDTH =
+  THICK_BARLINE_WIDTH + BARLINE_SEPARATION + BARLINE_WIDTH + BARLINE_SEPARATION + REPEAT_DOTS_WIDTH;
+export const START_REPEAT_HEADER_DISTANCE = 1.0;
 
 /** A width made of symbols, which never shrink, and padding between them, which can. */
 export interface Gap {
@@ -72,8 +77,8 @@ function segmentStretch(segment: Segment): number {
   return durationStretch(shortest) * (toNumber(segment.duration) / toNumber(shortest));
 }
 
-export function keySignatureWidth(clef: Clef, fifths: number): number {
-  return keySignature(clef, fifths).reduce(
+export function keySignatureWidth(clef: Clef, fifths: number, previousFifths = 0): number {
+  return [...keyCancellation(clef, previousFifths, fifths), ...keySignature(clef, fifths)].reduce(
     (total, { glyph }) => total + glyphWidth(glyph) + KEY_ACCIDENTAL_GAP,
     0,
   );
@@ -154,6 +159,24 @@ export interface MeasureSpacing {
   springs: Spring[];
   extents: SegmentExtent[];
   barlineWidth: number;
+  /** Courtesy key and time signatures after the barline, when the measure ends a system. */
+  courtesyWidth: number;
+}
+
+const COURTESY_DISTANCE = 0.5;
+
+/**
+ * The key and time signatures that announce, at the end of a system, the changes the next
+ * system starts with: the key cancelled and the new key, then the new time.
+ */
+export function courtesyWidth(next: PreparedMeasure | undefined): number {
+  if (!next) return 0;
+  let width = 0;
+  const keys = next.keyChanges.flatMap((fifths, staff) =>
+    fifths === null ? [] : [keySignatureWidth(next.clefs[staff], fifths, next.previousFifths[staff])]);
+  if (keys.some((value) => value > 0)) width += COURTESY_DISTANCE + Math.max(...keys);
+  if (next.timeChange && next.index > 0) width += COURTESY_DISTANCE + timeSignatureWidth(next.timeChange);
+  return width > 0 ? width + COURTESY_DISTANCE : 0;
 }
 
 /** The clef, key and time at the start of a system beginning with this measure. */
@@ -184,31 +207,47 @@ export function startChangesWidth(measure: PreparedMeasure): Gap {
   const clefs = measure.startClefChanges.map((change) => clefWidth(change.clef, true));
   if (clefs.length) add(Math.max(...clefs));
   const keys = measure.keyChanges.flatMap((fifths, staff) =>
-    fifths === null ? [] : [keySignatureWidth(measure.clefs[staff], fifths)],
+    fifths === null ? [] : [keySignatureWidth(measure.clefs[staff], fifths, measure.previousFifths[staff])],
   );
   if (keys.some((value) => value > 0)) add(Math.max(...keys));
   if (measure.timeChange && measure.index > 0) add(timeSignatureWidth(measure.timeChange));
   return width;
 }
 
-export function barlineWidth(style: string): number {
-  if (style === "light-heavy") return BARLINE_WIDTH + BARLINE_SEPARATION + THICK_BARLINE_WIDTH;
-  if (style === "light-light") return BARLINE_WIDTH * 2 + BARLINE_SEPARATION;
-  return BARLINE_WIDTH;
+/** A measure's right barline, with an end-repeat's dots before it. */
+export function barlineWidth(style: string, endRepeat = false): number {
+  const dots = endRepeat ? REPEAT_DOTS_WIDTH + BARLINE_SEPARATION : 0;
+  if (style === "light-heavy") return dots + BARLINE_WIDTH + BARLINE_SEPARATION + THICK_BARLINE_WIDTH;
+  if (style === "light-light") return dots + BARLINE_WIDTH * 2 + BARLINE_SEPARATION;
+  return dots + BARLINE_WIDTH;
+}
+
+/**
+ * Where a start-repeat sign goes: after the start of measure changes, or, with none, over the
+ * previous measure's barline, which its thick line covers.
+ */
+export function startRepeatOffset(measure: PreparedMeasure): number {
+  const changes = startChangesWidth(measure);
+  return changes.hard > 0 ? changes.hard + changes.padding : -BARLINE_WIDTH;
 }
 
 export function measureSpacing(
   score: PreparedScore,
   measure: PreparedMeasure,
   shapes: Map<PreparedChord, ChordShape>,
+  next?: PreparedMeasure,
 ): MeasureSpacing {
   const staffCount = score.staves.length;
   const extents = measure.segments.map((segment) => segmentExtent(segment, staffCount, shapes));
   const firstLeft = Math.max(0, ...extents[0].left);
   const showTime = measure.index === 0 || measure.timeChange !== null;
   const changes = startChangesWidth(measure);
+  if (measure.startRepeat) {
+    changes.hard = startRepeatOffset(measure) + START_REPEAT_WIDTH;
+  }
   const systemStart: Gap = {
-    hard: headerWidth(score, measure) + firstLeft,
+    hard: headerWidth(score, measure) + firstLeft +
+      (measure.startRepeat ? START_REPEAT_HEADER_DISTANCE + START_REPEAT_WIDTH : 0),
     padding: showTime ? HEADER_TIME_NOTE_DISTANCE : HEADER_NOTE_DISTANCE,
   };
   const inside: Gap = firstLeft > 0
@@ -230,7 +269,8 @@ export function measureSpacing(
     start: { systemStart, inside },
     springs,
     extents,
-    barlineWidth: barlineWidth(measure.barStyle),
+    barlineWidth: barlineWidth(measure.barStyle, measure.endRepeat),
+    courtesyWidth: courtesyWidth(next),
   };
 }
 
@@ -241,7 +281,8 @@ export function systemWidth(spacings: MeasureSpacing[], spacing: Spacing): numbe
       total +
       gapWidth(index === 0 ? measure.start.systemStart : measure.start.inside, spacing.squeeze) +
       measure.springs.reduce((sum, spring) => sum + springWidth(spring, spacing), 0) +
-      measure.barlineWidth,
+      measure.barlineWidth +
+      (index === spacings.length - 1 ? measure.courtesyWidth : 0),
     0,
   );
 }
