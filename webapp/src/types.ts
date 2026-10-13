@@ -60,12 +60,62 @@ export interface RawStemContour {
   bbox: VisualPoint[];
 }
 
+export type RestStatus = "supported" | "unsupported" | "unverified";
+
+/** One MusicXML rest and whether rest-shaped ink on the page backs it. */
+export interface SidecarRest {
+  rest_id: string;
+  part: number;
+  measure: number;
+  musicxml_staff_number: number;
+  voice: number;
+  /** The transformer's token, e.g. "rest_8", or "note_16" for a note read without pitch. */
+  duration: string;
+  status: RestStatus;
+  reason: string;
+  staff_group_index: number | null;
+  staff_index: number | null;
+  /** The matched ink when supported, otherwise where the transformer placed the rest. */
+  center: VisualPoint | null;
+  /** The staff's five line heights at the rest, top to bottom. */
+  staff_lines: number[];
+  /** One staff space in page pixels. */
+  unit_size: number | null;
+  /** The transformer gave no position; it was placed between neighbouring symbols. */
+  position_estimated?: boolean;
+}
+
+export interface RestVerification {
+  version: 1;
+  rests: SidecarRest[];
+}
+
+export type NoteValueStatus = "agrees" | "disagrees" | "unknown";
+
+/** One linked MusicXML note's value as printed on the page, against the recognized one. */
+export interface SidecarNoteValue {
+  musicxml_id: string;
+  /** "whole", "half", "quarter", "eighth", "16th" or "32nd"; null when not read. */
+  printed: string | null;
+  /** Whether an augmentation dot is printed; null when not read. */
+  dotted: boolean | null;
+  status: NoteValueStatus;
+  reason: string;
+}
+
+export interface NoteValueVerification {
+  version: 1;
+  notes: SidecarNoteValue[];
+}
+
 export interface VisualSidecar {
   version: 3;
   source_image_size: [number, number];
   raw_stem_contours?: RawStemContour[];
   notes: VisualSidecarNote[];
   visual_groups: VisualGroup[];
+  rest_verification?: RestVerification;
+  note_value_verification?: NoteValueVerification;
 }
 
 export function isLinkedVisualGroup(group: VisualGroup): boolean {

@@ -18,6 +18,7 @@ from sheet_music_worker import WORKER_VERSION
 from sheet_music_worker.homr_engine import HomrEngine, NoMusicDetectedError
 from sheet_music_worker.logging import worker_log
 from sheet_music_worker.musicxml_merge import merge_musicxml_pages
+from sheet_music_worker.repairs import RepairSettings
 
 RASTER_DPI = 300
 # Set this to True to pre-resize PDF rasters before handing them to HOMR.
@@ -27,7 +28,7 @@ OMR_TARGET_WIDTH = 1920
 OMR_RESAMPLING_FILTER = Image.Resampling.HAMMING
 OMR_RESAMPLING = OMR_RESAMPLING_FILTER.name
 MANIFEST_SCHEMA_VERSION = 1
-VISUAL_SIDECAR_CACHE_REVISION = 45
+VISUAL_SIDECAR_CACHE_REVISION = 57
 
 VISUAL_STATUSES = {"canonical", "fallback", "diagnostic"}
 VISUAL_PROVENANCES = {
@@ -36,6 +37,9 @@ VISUAL_PROVENANCES = {
     "merged_fragments",
     "transformer_recovered",
 }
+REST_STATUSES = {"supported", "unsupported", "unverified"}
+NOTE_VALUE_STATUSES = {"agrees", "disagrees", "unknown"}
+PRINTED_NOTE_VALUES = {"whole", "half", "quarter", "eighth", "16th", "32nd"}
 ALIGNMENT_METHODS = {
     "structural",
     "stem_repair",
@@ -242,7 +246,94 @@ def read_visual_sidecar(path: Path) -> dict[str, Any]:
         note = notes_by_id.get(musicxml_id)
         if note is None or note.get("visual_group_id") != visual_group_id:
             raise ValueError("Visual sidecar inverse links disagree")
+
+    if "rest_verification" in sidecar:
+        # Rest verification is optional diagnostics: a malformed block must not cost the
+        # page its note links, so it is dropped with the reason instead of rejecting.
+        error = rest_verification_error(sidecar["rest_verification"], set(notes_by_id))
+        if error is not None:
+            worker_log(f"Ignoring the visual sidecar's rest verification: {error}")
+            del sidecar["rest_verification"]
+    if "note_value_verification" in sidecar:
+        # Likewise optional: printed note values only mark notes for inspection.
+        error = note_value_verification_error(
+            sidecar["note_value_verification"], set(notes_by_id)
+        )
+        if error is not None:
+            worker_log(f"Ignoring the visual sidecar's note value verification: {error}")
+            del sidecar["note_value_verification"]
     return sidecar
+
+
+def _is_optional(value: Any, check: Callable[[Any], bool]) -> bool:
+    return value is None or check(value)
+
+
+def rest_verification_error(block: Any, note_ids: set[str]) -> str | None:
+    """Why a sidecar's rest verification block is unusable, or None when it is valid."""
+    if not isinstance(block, dict) or block.get("version") != 1:
+        return "rest verification v1 is required"
+    rests = block.get("rests")
+    if not isinstance(rests, list):
+        return "rest verification has no rest list"
+    rest_ids: set[str] = set()
+    for rest in rests:
+        if (
+            not isinstance(rest, dict)
+            or not isinstance(rest.get("rest_id"), str)
+            or not rest["rest_id"]
+            or rest.get("status") not in REST_STATUSES
+            or not isinstance(rest.get("reason"), str)
+            or not isinstance(rest.get("duration"), str)
+            or not all(
+                _is_integer(rest.get(key))
+                for key in ("part", "measure", "musicxml_staff_number", "voice")
+            )
+            or not all(
+                _is_optional(rest.get(key), lambda value: _is_integer(value) and value >= 0)
+                for key in ("staff_group_index", "staff_index")
+            )
+            or not _is_optional(rest.get("center"), _is_point)
+            or not isinstance(rest.get("staff_lines"), list)
+            or not all(_is_number(value) for value in rest["staff_lines"])
+            or not _is_optional(rest.get("unit_size"), lambda value: _is_number(value) and value > 0)
+            or not isinstance(rest.get("position_estimated", False), bool)
+        ):
+            return "rest verification has an invalid rest record"
+        if rest["rest_id"] in rest_ids or rest["rest_id"] in note_ids:
+            return "rest verification IDs must be unique and distinct from note IDs"
+        rest_ids.add(rest["rest_id"])
+        if rest["status"] == "unsupported" and (
+            rest["center"] is None or rest["unit_size"] is None or len(rest["staff_lines"]) != 5
+        ):
+            return "an unsupported rest needs a position, staff lines and a staff space"
+    return None
+
+
+def note_value_verification_error(block: Any, note_ids: set[str]) -> str | None:
+    """Why a sidecar's note value verification block is unusable, or None when valid."""
+    if not isinstance(block, dict) or block.get("version") != 1:
+        return "note value verification v1 is required"
+    readings = block.get("notes")
+    if not isinstance(readings, list):
+        return "note value verification has no note list"
+    seen: set[str] = set()
+    for reading in readings:
+        if (
+            not isinstance(reading, dict)
+            or not isinstance(reading.get("musicxml_id"), str)
+            or reading.get("status") not in NOTE_VALUE_STATUSES
+            or not isinstance(reading.get("reason"), str)
+            or not _is_optional(reading.get("printed"), lambda value: value in PRINTED_NOTE_VALUES)
+            or not _is_optional(reading.get("dotted"), lambda value: isinstance(value, bool))
+        ):
+            return "note value verification has an invalid note record"
+        if reading["musicxml_id"] not in note_ids or reading["musicxml_id"] in seen:
+            return "note value verification must name each linked note at most once"
+        seen.add(reading["musicxml_id"])
+        if reading["status"] != "unknown" and reading["printed"] is None:
+            return "a compared note needs its printed value"
+    return None
 
 
 def _scale_point(point: list[float], scale_x: float, scale_y: float) -> list[float]:
@@ -336,6 +427,28 @@ def scale_visual_sidecar(
                 for contour in contours
             ]
 
+    rest_verification = sidecar.get("rest_verification")
+    if isinstance(rest_verification, dict):
+        for rest in rest_verification.get("rests", []):
+            center = rest.get("center")
+            if isinstance(center, list) and len(center) == 2:
+                rest["center"] = _scale_point(center, scale_x, scale_y)
+            rest["staff_lines"] = [
+                round(float(y) * scale_y, 3) for y in rest.get("staff_lines", [])
+            ]
+            if _is_number(rest.get("unit_size")):
+                rest["unit_size"] = round(float(rest["unit_size"]) * scale_y, 3)
+
+    tempo_marks = sidecar.get("tempo_marks")
+    if isinstance(tempo_marks, dict):
+        for mark in tempo_marks.get("marks", []):
+            box = mark.get("box")
+            if isinstance(box, list) and len(box) == 4 and all(_is_number(v) for v in box):
+                mark["box"] = [
+                    *_scale_point(box[:2], scale_x, scale_y),
+                    *_scale_point(box[2:], scale_x, scale_y),
+                ]
+
     sidecar["source_image_size"] = [target_width, target_height]
     return sidecar
 
@@ -374,6 +487,55 @@ def page_is_reusable(page: dict[str, Any], cache_directory: Path) -> bool:
     return validate_skipped_page(page, cache_directory)
 
 
+Meter = tuple[int, int]
+
+
+def _meter(value: Any) -> Meter | None:
+    """A meter as homr's sidecar or the manifest records it, ``[beats, beat_type]``."""
+    if isinstance(value, (list, tuple)) and len(value) == 2 and all(
+        _is_integer(v) and v > 0 for v in value
+    ):
+        return int(value[0]), int(value[1])
+    return None
+
+
+def page_meters(visual_sidecar: dict[str, Any]) -> tuple[Meter | None, Meter | None]:
+    """The meter a page started from and the one it ended in, as homr recorded them; both
+    None when its time signatures were not read."""
+    block = visual_sidecar.get("time_signatures")
+    if not isinstance(block, dict):
+        return None, None
+    return _meter(block.get("carried_in")), _meter(block.get("carried_out"))
+
+
+def carried_past(page: dict[str, Any], carried: Meter | None) -> Meter | None:
+    """The meter the page after this one starts from: the one a recognized page ended in;
+    the one before a page without music; none after a page that failed or is pending."""
+    if page.get("status") == "complete":
+        return _meter(page.get("timeSignatureAtEnd"))
+    if page.get("status") == "skipped":
+        return carried
+    return None
+
+
+def reusable_pages(
+    pages: list[dict[str, Any]], cache_directory: Path, repairs: RepairSettings
+) -> list[bool]:
+    """Which cached pages can be used as they are. With time signatures read, a page is
+    only reusable if it was recognized from the meter the page before it ends in: a page
+    recognized again may end in another meter, and every page after it then starts from
+    the wrong one until it is recognized again too."""
+    result = []
+    carried: Meter | None = None
+    for page in pages:
+        reusable = page_is_reusable(page, cache_directory)
+        if reusable and page.get("status") == "complete" and repairs.time_signatures:
+            reusable = _meter(page.get("timeSignatureIn")) == carried
+        result.append(reusable)
+        carried = carried_past(page, carried)
+    return result
+
+
 @dataclass(frozen=True)
 class DocumentIdentity:
     pdf_sha256: str
@@ -399,6 +561,7 @@ class PdfProcessor:
         cache_root: Path,
         cancel: threading.Event,
         force_page_index: int | None = None,
+        repairs: RepairSettings = RepairSettings(),
     ) -> None:
         if not pdf_path.is_file() or pdf_path.suffix.lower() != ".pdf":
             raise ValueError(f"PDF does not exist: {pdf_path}")
@@ -427,10 +590,8 @@ class PdfProcessor:
                 f"Opened {pdf_path.name}: {page_count} page(s), rendering display images at "
                 f"{RASTER_DPI} DPI and passing HOMR {omr_input_description}"
             )
-            manifest = self._load_manifest(manifest_path, identity, page_count)
-            reusable = sum(
-                1 for page in manifest["pages"] if page_is_reusable(page, cache_directory)
-            )
+            manifest = self._load_manifest(manifest_path, identity, page_count, repairs)
+            reusable = sum(reusable_pages(manifest["pages"], cache_directory, repairs))
             document_music_xml_path = (
                 cache_directory / pdf_path.with_suffix(".musicxml").name
             )
@@ -451,24 +612,43 @@ class PdfProcessor:
                 }
             )
 
-            indices = [force_page_index] if force_page_index is not None else list(range(page_count))
-            if any(index < 0 or index >= page_count for index in indices):
+            if force_page_index is not None and not 0 <= force_page_index < page_count:
                 raise ValueError("Page index is outside this PDF")
 
             completed = 0
             skipped = 0
             failed = 0
-            for page_index in indices:
+            # The meter the next page starts from, when time signatures are read.
+            carried: Meter | None = None
+            for page_index in range(page_count):
+                page_manifest = manifest["pages"][page_index]
+                starts_from = carried if repairs.time_signatures else None
+                reusable_page = page_is_reusable(page_manifest, cache_directory) and (
+                    page_manifest.get("status") == "skipped"
+                    or _meter(page_manifest.get("timeSignatureIn")) == starts_from
+                )
+                if force_page_index is not None and page_index != force_page_index:
+                    # A retry recognizes one page. The pages before it only pass their
+                    # meter on; after it, a page recognized from another meter than the
+                    # retried page now passes on is recognized again, until one is not.
+                    stale = (
+                        page_index > force_page_index
+                        and page_manifest.get("status") == "complete"
+                        and not reusable_page
+                    )
+                    if not stale:
+                        if page_index > force_page_index and page_manifest.get("status") != "skipped":
+                            break
+                        carried = carried_past(page_manifest, carried)
+                        continue
+
                 if cancel.is_set():
                     worker_log("Cancellation requested; stopping between pages")
                     self._emit({"type": "job_completed", "jobId": job_id, "status": "cancelled"})
                     return
 
-                page_manifest = manifest["pages"][page_index]
-                if (
-                    force_page_index is None
-                    and page_is_reusable(page_manifest, cache_directory)
-                ):
+                if force_page_index is None and reusable_page:
+                    carried = carried_past(page_manifest, carried)
                     if page_manifest.get("status") == "skipped":
                         skipped += 1
                         worker_log(
@@ -497,15 +677,17 @@ class PdfProcessor:
                     )
                     try:
                         generated_xml, generated_sidecar = self._homr.process_image(
-                            rendered["omr_path"]
+                            rendered["omr_path"], repairs, starts_from
                         )
                         music_xml, visual_sidecar = self._promote_homr_artifacts(
                             rendered, generated_xml, generated_sidecar
                         )
                     finally:
                         self._cleanup_omr_intermediates(rendered)
-                    if len(read_visual_sidecar(visual_sidecar)["notes"]) == 0:
+                    sidecar = read_visual_sidecar(visual_sidecar)
+                    if len(sidecar["notes"]) == 0:
                         raise NoMusicDetectedError("No notes detected")
+                    started_from, ended_in = page_meters(sidecar)
                     page_manifest.clear()
                     page_manifest.update(
                         {
@@ -516,8 +698,11 @@ class PdfProcessor:
                             "image": self._relative(cache_directory, rendered["path"]),
                             "musicXml": self._relative(cache_directory, music_xml),
                             "visualSidecar": self._relative(cache_directory, visual_sidecar),
+                            "timeSignatureIn": started_from and list(started_from),
+                            "timeSignatureAtEnd": ended_in and list(ended_in),
                         }
                     )
+                    carried = ended_in
                     atomic_write_json(manifest_path, manifest)
                     completed += 1
                     elapsed = time.perf_counter() - page_started_at
@@ -548,6 +733,7 @@ class PdfProcessor:
                     atomic_write_json(manifest_path, manifest)
                     self._emit_page_skipped(job_id, page_index, page_manifest, False)
                 except Exception as error:  # A failed page must not prevent later pages.
+                    carried = None  # nor pass on a meter
                     failed += 1
                     elapsed = time.perf_counter() - page_started_at
                     worker_log(
@@ -568,9 +754,7 @@ class PdfProcessor:
                     )
 
             document_music_xml: Path | None = None
-            all_pages_resolved = all(
-                page_is_reusable(page, cache_directory) for page in manifest["pages"]
-            )
+            all_pages_resolved = all(reusable_pages(manifest["pages"], cache_directory, repairs))
             page_music_xml = [
                 cache_directory / page["musicXml"]
                 for page in manifest["pages"]
@@ -620,7 +804,11 @@ class PdfProcessor:
             document.close()
 
     def _load_manifest(
-        self, path: Path, identity: DocumentIdentity, page_count: int
+        self,
+        path: Path,
+        identity: DocumentIdentity,
+        page_count: int,
+        repairs: RepairSettings,
     ) -> dict[str, Any]:
         expected = {
             "schemaVersion": MANIFEST_SCHEMA_VERSION,
@@ -640,6 +828,7 @@ class PdfProcessor:
                 "targetWidth": OMR_TARGET_WIDTH if DOWNSAMPLE_OMR_INPUT else None,
                 "resampling": OMR_RESAMPLING if DOWNSAMPLE_OMR_INPUT else None,
             },
+            "repairs": repairs.to_manifest(),
         }
         if path.is_file():
             try:

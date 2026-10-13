@@ -1,6 +1,8 @@
 import { memo, useEffect, useId, useMemo, useRef, useState } from "react";
 import { layoutNoteLabels, selectedGroupIds } from "./noteLabels";
 import { playbackGroupIdsForPage } from "./playback";
+import { valueMismatchGroupIds } from "./noteValues";
+import { restGlyph } from "./restGlyphs";
 import type { PlaybackCommand, PlaybackMoment, PracticeHand } from "./playback";
 import type { PlaybackMode, PlaybackStatus, RealtimePlayhead } from "./realtime";
 import type { ListenModeFeedback } from "./noteRecognizer";
@@ -37,6 +39,7 @@ const PRACTICE_HAND_OPTIONS: ReadonlyArray<{
   { hand: "both", label: "Both", description: "Play both hands" },
   { hand: "right", label: "RH", description: "Practice the right hand" },
 ];
+const NO_GROUP_IDS: ReadonlySet<string> = new Set();
 
 function FitWidthIcon() {
   return (
@@ -95,6 +98,10 @@ interface DocumentViewerProps {
   showRefinedNoteheadContours: boolean;
   showRawStemContours: boolean;
   showDiagnosticVisualGroups?: boolean;
+  /** Draw ghosts of the rests that have no rest-shaped ink on the page. */
+  showUnsupportedRests?: boolean;
+  /** Halo the notes whose printed value disagrees with the recognized one. */
+  showValueMismatches?: boolean;
   playbackActive: boolean;
   playbackNoteSoundsEnabled: boolean;
   playbackAvailable: boolean;
@@ -292,6 +299,8 @@ interface PageOverlayProps {
   showRefinedNoteheadContours: boolean;
   showRawStemContours: boolean;
   showDiagnosticVisualGroups: boolean;
+  showUnsupportedRests: boolean;
+  showValueMismatches: boolean;
   playbackActive: boolean;
   playbackGroupIds: readonly string[];
   realtimePlayhead?: RealtimePlayhead | null;
@@ -302,6 +311,8 @@ interface VisualGroupLayerProps {
   group: VisualGroup;
   selected: boolean;
   playback: boolean;
+  /** The page prints a different value than was recognized for this note. */
+  valueMismatch?: boolean;
   showOriginalNoteheadContours: boolean;
   showDetectedNoteheadContours: boolean;
   showRefinedNoteheadContours: boolean;
@@ -312,6 +323,7 @@ const VisualGroupLayer = memo(function VisualGroupLayer({
   group,
   selected,
   playback,
+  valueMismatch = false,
   showOriginalNoteheadContours,
   showDetectedNoteheadContours,
   showRefinedNoteheadContours,
@@ -324,8 +336,9 @@ const VisualGroupLayer = memo(function VisualGroupLayer({
       data-visual-group-id={group.visual_group_id}
       data-visual-status={group.visual_status}
       data-diagnostic-highlight={
-        group.visual_status === "diagnostic" ? "halo" : undefined
+        group.visual_status === "diagnostic" || valueMismatch ? "halo" : undefined
       }
+      data-value-mismatch={valueMismatch ? "true" : undefined}
       data-playback-selected={playback ? "true" : undefined}
     >
       {fittedNoteheads && !showOriginalNoteheadContours
@@ -385,11 +398,32 @@ const PageOverlay = memo(function PageOverlay({
   showRefinedNoteheadContours,
   showRawStemContours,
   showDiagnosticVisualGroups,
+  showUnsupportedRests,
+  showValueMismatches,
   playbackActive,
   playbackGroupIds,
   realtimePlayhead,
   realtimePlayheadEnabled = false,
 }: PageOverlayProps) {
+  const valueMismatchIds = useMemo(
+    () =>
+      showValueMismatches && page.visualSidecar
+        ? valueMismatchGroupIds(page.visualSidecar)
+        : NO_GROUP_IDS,
+    [page.visualSidecar, showValueMismatches],
+  );
+  const ghostRests = useMemo(
+    () =>
+      showUnsupportedRests
+        ? (page.visualSidecar?.rest_verification?.rests ?? [])
+            .filter((rest) => rest.status === "unsupported")
+            .flatMap((rest) => {
+              const glyph = restGlyph(rest);
+              return glyph ? [{ rest, glyph }] : [];
+            })
+        : [],
+    [page.visualSidecar, showUnsupportedRests],
+  );
   const selectedIds = useMemo(
     () => {
       if (playbackActive) return new Set(playbackGroupIds);
@@ -448,6 +482,7 @@ const PageOverlay = memo(function PageOverlay({
           group={group}
           selected={!playbackActive && selectedIds.has(group.visual_group_id)}
           playback={false}
+          valueMismatch={valueMismatchIds.has(group.visual_group_id)}
           showOriginalNoteheadContours={showOriginalNoteheadContours}
           showDetectedNoteheadContours={showDetectedNoteheadContours}
           showRefinedNoteheadContours={showRefinedNoteheadContours}
@@ -462,6 +497,7 @@ const PageOverlay = memo(function PageOverlay({
       showRefinedNoteheadContours,
       visualSelectionKey,
       showDiagnosticVisualGroups,
+      valueMismatchIds,
     ]);
   const playbackGroupLayers = useMemo(() => {
     if (!playbackActive) return [];
@@ -519,6 +555,22 @@ const PageOverlay = memo(function PageOverlay({
           ))
         : null}
       {visualGroupLayers}
+      {ghostRests.length > 0 ? (
+        <g className="ghost-rests">
+          {ghostRests.map(({ rest, glyph }) => (
+            <g
+              key={rest.rest_id}
+              className={`ghost-rest${rest.position_estimated ? " estimated" : ""}`}
+              data-rest-id={rest.rest_id}
+              data-rest-reason={rest.reason}
+              data-rest-kind={glyph.kind}
+            >
+              {glyph.fills ? <path className="ghost-rest-fill" d={glyph.fills} /> : null}
+              {glyph.strokes ? <path className="ghost-rest-stroke" d={glyph.strokes} /> : null}
+            </g>
+          ))}
+        </g>
+      ) : null}
       {playbackGroupLayers}
       <g className="note-label-connectors">
         {noteLabels.map((label) => (
@@ -574,6 +626,8 @@ export function DocumentViewer({
   showRefinedNoteheadContours,
   showRawStemContours,
   showDiagnosticVisualGroups = false,
+  showUnsupportedRests = false,
+  showValueMismatches = false,
   playbackActive,
   playbackNoteSoundsEnabled,
   playbackAvailable,
@@ -1478,6 +1532,8 @@ export function DocumentViewer({
                 showRefinedNoteheadContours={showRefinedNoteheadContours}
                 showRawStemContours={showRawStemContours}
                 showDiagnosticVisualGroups={showDiagnosticVisualGroups}
+                showUnsupportedRests={showUnsupportedRests}
+                showValueMismatches={showValueMismatches}
               />
               {page.status !== "complete" ? (
                 <div className="page-placeholder">

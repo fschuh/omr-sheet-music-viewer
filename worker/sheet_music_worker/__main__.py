@@ -10,6 +10,7 @@ from typing import Any, TextIO
 
 from sheet_music_worker import PROTOCOL_VERSION, WORKER_VERSION
 from sheet_music_worker.processor import PdfProcessor
+from sheet_music_worker.repairs import RepairSettings
 
 
 class WorkerServer:
@@ -73,6 +74,7 @@ class WorkerServer:
                 "job_id": job_id,
                 "pdf_path": Path(params["pdfPath"]),
                 "cache_root": Path(params["cacheRoot"]),
+                "repairs": RepairSettings.from_params(params.get("repairs")),
             }
             self._jobs[job_id] = details
             self._start(details)
