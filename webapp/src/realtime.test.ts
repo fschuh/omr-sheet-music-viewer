@@ -12,6 +12,7 @@ import {
   type RealtimeAudioSink,
   type RealtimeClock,
 } from "./realtime";
+import { noteScoreFacts } from "./playback";
 import { pdfNoteGeometry } from "./sidecarNoteGeometry";
 import type { DocumentPage, VisualSidecar } from "./types";
 
@@ -429,6 +430,48 @@ test("expands repeat counts and first/second endings", () => {
   assert.deepEqual(
     expandPerformanceRoute(parsed, { startMeasureIndex: 2 }).occurrences.map((occurrence) => occurrence.measureNumber),
     ["3"],
+  );
+});
+
+test("cue notes are shown but silent", () => {
+  const parsed = parseRealtimeMusicXml(score(`
+    <measure number="1"><attributes><divisions>4</divisions></attributes>
+      ${quarter("page-1-played")}
+      <note id="page-1-cue"><cue/><pitch><step>D</step><octave>4</octave></pitch><duration>4</duration><voice>1</voice><type>quarter</type></note>
+      ${quarter("page-1-after", "E")}
+    </measure>
+  `));
+  const [cue] = parsed.measures[0].notes.filter((note) => note.cue);
+  assert.equal(cue.musicXmlId, "page-1-cue");
+  assert.equal(cue.onset, 1);
+  assert.deepEqual(expandPerformanceRoute(parsed).notes.map((note) => note.musicXmlId), ["page-1-played", "page-1-after"]);
+  assert.deepEqual([...noteScoreFacts(parsed).suppressedNoteIds], ["page-1-cue"]);
+});
+
+test("a start-repeat closes an ending the file leaves open", () => {
+  const parsed = parseRealtimeMusicXml(score(`
+    <measure number="1"><attributes><divisions>4</divisions></attributes>${quarter("a")}</measure>
+    <measure number="2"><barline location="left"><ending number="1" type="start"/></barline>${quarter("b")}<barline location="right"><ending number="1" type="stop"/><repeat direction="backward"/></barline></measure>
+    <measure number="3"><barline location="left"><ending number="2" type="start"/></barline>${quarter("c")}</measure>
+    <measure number="4"><barline location="left"><repeat direction="forward"/></barline>${quarter("d")}</measure>
+    <measure number="5">${quarter("e")}<barline location="right"><repeat direction="backward"/></barline></measure>
+  `));
+  assert.deepEqual(parsed.measures.map((measure) => [...measure.endingNumbers]), [[], [1], [2], [], []]);
+  assert.deepEqual(
+    expandPerformanceRoute(parsed).occurrences.map((occurrence) => occurrence.measureNumber),
+    ["1", "2", "1", "3", "4", "5", "4", "5"],
+  );
+});
+
+test("a D.C. in a measure that ends a repeat waits until the repeat is played out", () => {
+  const parsed = parseRealtimeMusicXml(score(`
+    <measure number="1"><attributes><divisions>4</divisions></attributes>${quarter("a")}<sound fine="yes"/></measure>
+    <measure number="2"><barline location="left"><repeat direction="forward"/></barline>${quarter("b")}</measure>
+    <measure number="3">${quarter("c")}<sound dacapo="yes"/><barline location="right"><repeat direction="backward"/></barline></measure>
+  `));
+  assert.deepEqual(
+    expandPerformanceRoute(parsed).occurrences.map((occurrence) => occurrence.measureNumber),
+    ["1", "2", "3", "2", "3", "1"],
   );
 });
 

@@ -41,6 +41,8 @@ export interface RealtimeScoreNote {
   onset: number;
   duration: number;
   grace: boolean;
+  /** A cue note: shown, but silent, as MusicXML defines `<cue/>`. */
+  cue: boolean;
   tieStart: boolean;
   tieStop: boolean;
   inferredTieGroup: string | null;
@@ -49,7 +51,7 @@ export interface RealtimeScoreNote {
 }
 
 export function scoreNoteStartsAttack(note: RealtimeScoreNote): boolean {
-  return !note.grace && !note.tieStop;
+  return !note.grace && !note.cue && !note.tieStop;
 }
 
 export interface RealtimeTempoChange {
@@ -667,6 +669,7 @@ function parsePartMeasure(
             onset,
             duration,
             grace: first(child, "grace") !== null,
+            cue: first(child, "cue") !== null,
             tieStart: tieTypes.has("start"),
             tieStop: tieTypes.has("stop"),
             inferredTieGroup: null,
@@ -808,6 +811,8 @@ export function parseRealtimeMusicXml(musicXml: string): RealtimeScore {
     const available = partMeasures.flatMap((part) => part[index] ? [part[index]] : []);
     const navigation = partMeasures[0][index];
     const endingStart = available.find((measure) => measure.endingStarts)?.endingStarts;
+    // An ending never runs past a start-repeat, even when the file does not close it.
+    if (available.some((measure) => measure.forwardRepeat)) activeEnding = new Set<number>();
     if (endingStart) activeEnding = new Set(endingStart);
     const measureSounds = available
       .flatMap((measure) => measure.sounds)
@@ -1194,6 +1199,7 @@ export function expandPerformanceRoute(
       };
       occurrences.push(occurrence);
       for (const note of measure.notes) {
+        if (note.cue) continue;
         if (note.onset + note.duration <= localStart || note.onset < localStart) continue;
         rawNotes.push({
           ...note,
@@ -1213,6 +1219,8 @@ export function expandPerformanceRoute(
     let navigationTarget: number | null = null;
     if (include) {
       const soundTime = repeat?.pass ?? visit;
+      // A D.C. or D.S. in a measure that ends a repeat is taken once the repeat is played out.
+      const jumpTime = pairEnding && measure.backwardRepeat ? measure.backwardRepeat.times : 1;
       for (const sound of measure.sounds) {
         if (sound.fine && jumped && soundEligible(sound, soundTime, soundTime)) {
           navigationTarget = score.measures.length;
@@ -1222,14 +1230,14 @@ export function expandPerformanceRoute(
           navigationTarget = findSign(score.measures, "coda", sound.tocoda, index);
           break;
         }
-        if (sound.dacapo && !usedJumps.has(sound.id) && soundEligible(sound, soundTime, 1)) {
+        if (sound.dacapo && !usedJumps.has(sound.id) && soundEligible(sound, soundTime, jumpTime)) {
           usedJumps.add(sound.id);
           jumped = true;
           activeRepeats.length = 0;
           navigationTarget = 0;
           break;
         }
-        if (sound.dalsegno && !usedJumps.has(sound.id) && soundEligible(sound, soundTime, 1)) {
+        if (sound.dalsegno && !usedJumps.has(sound.id) && soundEligible(sound, soundTime, jumpTime)) {
           usedJumps.add(sound.id);
           jumped = true;
           activeRepeats.length = 0;
