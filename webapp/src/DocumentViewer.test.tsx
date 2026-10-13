@@ -17,6 +17,7 @@ import {
   type ListenModeFeedback,
 } from "./noteRecognizer";
 import type { PlaybackMoment } from "./playback";
+import { documentNoteGeometry } from "./documentSource";
 import { pdfNoteGeometry, sidecarNoteGeometry } from "./sidecarNoteGeometry";
 import type { DocumentPage, VisualGroup, VisualSidecar } from "./types";
 
@@ -751,7 +752,7 @@ test("a MusicXML page draws its engraved surface in place of an image", () => {
     status: "complete",
     width: 2480,
     height: 3508,
-    surface: { index: 0, width: 2480, height: 3508 },
+    surface: { index: 0, width: 2480, height: 3508, staffSpace: 20, items: [], chords: [] },
   }]);
   assert.match(engraved, /<svg class="musicxml-page" viewBox="0 0 2480 3508"/);
   assert.doesNotMatch(engraved, /<img/);
@@ -759,4 +760,61 @@ test("a MusicXML page draws its engraved surface in place of an image", () => {
   const recognized = renderPages([{ ...page, imageUrl: "page-1.png" }]);
   assert.match(recognized, /<img src="page-1.png"/);
   assert.doesNotMatch(recognized, /musicxml-page/);
+});
+
+test("a selected MusicXML note is coloured on its page and labelled by the overlay", () => {
+  const engraved: DocumentPage = {
+    index: 0,
+    status: "complete",
+    width: 1000,
+    height: 1400,
+    surface: {
+      index: 0,
+      width: 1000,
+      height: 1400,
+      staffSpace: 20,
+      items: [],
+      chords: [{
+        id: "P1-m1-s1-v1-t0",
+        systemIndex: 0,
+        momentId: "m1-t0",
+        items: [],
+        stemBounds: null,
+        notes: ["C5", "E5"].map((pitch, index) => ({
+          key: `P1-m1-s1-v1-t0-${pitch}`,
+          pitch,
+          grace: false,
+          measure: 1,
+          center: [213, 230 - index * 20] as [number, number],
+          headBounds: [200, 220 - index * 20, 226, 240 - index * 20] as [number, number, number, number],
+          items: [],
+        })),
+      }],
+    },
+  };
+  const markup = renderToStaticMarkup(
+    <DocumentViewer
+      documentKey="fixture"
+      pages={[engraved]}
+      noteGeometry={documentNoteGeometry("musicxml", [engraved])}
+      selectedGroup={{ pageIndex: 0, visualGroupId: "P1-m1-s1-v1-t0-C5" }}
+      highlightAllNotes={false}
+      showOriginalNoteheadContours={false}
+      showDetectedNoteheadContours={false}
+      showRefinedNoteheadContours={false}
+      showRawStemContours={false}
+      playbackActive={false}
+      playbackNoteSoundsEnabled
+      playbackAvailable={false}
+      playbackMoment={null}
+      listenFeedback={listenFeedback}
+      onPlaybackCommand={() => undefined}
+      onSelectGroup={() => undefined}
+      onRetryPage={() => undefined}
+    />,
+  );
+  // Selecting one note of a chord selects the chord.
+  assert.match(markup, /class="mx-note mx-selected" data-notehead="P1-m1-s1-v1-t0-C5"/);
+  assert.match(markup, /class="mx-note mx-selected" data-notehead="P1-m1-s1-v1-t0-E5"/);
+  assert.match(markup, /class="note-label" data-musicxml-id="page-1-P1-m1-s1-v1-t0-C5"/);
 });

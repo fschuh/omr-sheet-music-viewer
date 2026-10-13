@@ -1,21 +1,158 @@
 // What the engraver knows about a score, independent of how it is laid out. It holds
-// only what layout reads so far and grows with each notation it supports.
+// only what layout reads so far and grows with each notation it supports. Times are
+// fractions of a whole note; MusicXML lengths stay in tenths of a staff space.
+import type { Fraction } from "./fraction";
 
 export interface ScoreModel {
   defaults: ScoreDefaults;
-  /** The score's measures by position, across all parts. */
+  parts: PartModel[];
+  /** The score's measures by position, with what applies to all parts. */
   measures: MeasureModel[];
 }
 
-/** Layout hints from `<defaults>`. MusicXML lengths are in tenths of a staff space. */
+/** Layout hints from `<defaults>`, in tenths. */
 export interface ScoreDefaults {
   /** `millimeters` millimetres correspond to `tenths` tenths. */
   scaling: { millimeters: number; tenths: number } | null;
-  /** In tenths. */
   pageSize: { width: number; height: number } | null;
+  pageMargins: Margins | null;
+  systemLayout: SystemLayout;
+  /** The distance between staves of a system, from the bottom of one to the top of the next. */
+  staffDistance: number | null;
+}
+
+export interface Margins {
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+}
+
+/** In tenths; null where the file says nothing. */
+export interface SystemLayout {
+  leftMargin: number | null;
+  rightMargin: number | null;
+  /** From the bottom of one system to the top of the next. */
+  systemDistance: number | null;
+  /** From the top page margin to the top of the page's first system. */
+  topSystemDistance: number | null;
 }
 
 export interface MeasureModel {
-  /** A part asks for a page break before this measure. */
+  /** The printed number, which can repeat or be missing; layout counts by position. */
+  number: string;
+  /** Some part asks for a page break before this measure. */
   newPage: boolean;
+  /** Some part asks for a system break before this measure. */
+  newSystem: boolean;
+  /** Layout a `<print>` element asks for from this measure on. */
+  systemLayout: SystemLayout;
+  staffDistance: number | null;
+  /** The measure's length: the furthest any part's content reaches. */
+  duration: Fraction;
+}
+
+export interface PartModel {
+  id: string;
+  name: string;
+  staffCount: number;
+  measures: PartMeasureModel[];
+}
+
+export interface PartMeasureModel {
+  clefs: ClefChange[];
+  keys: KeyChange[];
+  times: TimeChange[];
+  chords: ChordModel[];
+  barlines: BarlineModel[];
+}
+
+export type ClefSign = "G" | "F" | "C" | "percussion" | "TAB" | "none";
+
+export interface ClefChange {
+  onset: Fraction;
+  staff: number;
+  sign: ClefSign;
+  /** Staff line the clef marks, counted from the bottom. */
+  line: number;
+  octaveChange: number;
+}
+
+export interface KeyChange {
+  onset: Fraction;
+  /** Null when the key applies to every staff of the part. */
+  staff: number | null;
+  fifths: number;
+}
+
+export interface TimeChange {
+  onset: Fraction;
+  beats: string;
+  beatType: string;
+  symbol: "normal" | "common" | "cut" | "single-number" | "none";
+}
+
+export interface BarlineModel {
+  location: "left" | "right" | "middle";
+  style: string;
+  repeat: "forward" | "backward" | null;
+}
+
+export type NoteType =
+  | "maxima"
+  | "long"
+  | "breve"
+  | "whole"
+  | "half"
+  | "quarter"
+  | "eighth"
+  | "16th"
+  | "32nd"
+  | "64th"
+  | "128th"
+  | "256th"
+  | "512th"
+  | "1024th";
+
+export type BeamValue = "begin" | "continue" | "end" | "forward hook" | "backward hook";
+
+/** The notes, or the rest, one voice has at one onset on one staff. */
+export interface ChordModel {
+  /** Unique in the score; the note keys of its notes without the pitch. */
+  id: string;
+  staff: number;
+  voice: string;
+  onset: Fraction;
+  /** Zero for grace notes. */
+  duration: Fraction;
+  /** The notated type; null when the file gives none. */
+  type: NoteType | null;
+  dots: number;
+  rest: boolean;
+  /** A rest that fills its measure. */
+  measureRest: boolean;
+  /** Where the file places a rest, as a pitch on the staff. */
+  restPosition: { step: string; octave: number } | null;
+  grace: { slash: boolean } | null;
+  cue: boolean;
+  /** False for chords the file marks as not printed; they still sound. */
+  printed: boolean;
+  stem: "up" | "down" | "none" | "double" | null;
+  /** Beam values by level: index 0 is the eighth-note beam. */
+  beams: (BeamValue | null)[];
+  notes: NoteModel[];
+}
+
+export interface NoteModel {
+  /** The structural note key (section 3.5 of the plan). */
+  key: string;
+  step: string;
+  alter: number;
+  octave: number;
+  /** An unpitched note, placed by its display step and octave. */
+  unpitched: boolean;
+  /** The accidental the file prints, by MusicXML name; null when it prints none. */
+  accidental: string | null;
+  tieStart: boolean;
+  tieStop: boolean;
 }

@@ -1,7 +1,7 @@
 # MusicXML viewer plan
 
 Date: 2026-10-12  
-Status: In progress; phases 1 and 2 are implemented.
+Status: In progress; phases 1 to 3 are implemented.
 
 ## 1. Objective and scope
 
@@ -88,46 +88,48 @@ webapp/src/
 └── documentSource.ts         what the app shows for each document source (section 3.6)
 ```
 
-The MusicXML module:
+The MusicXML module (files marked `later` arrive with the phase that needs them):
 
 ```text
 webapp/src/musicxml/
-├── index.ts               public API: openMusicXmlScore(), MusicXmlPageSurface, types
+├── index.ts               public API: openMusicXmlScore(), musicXmlNoteGeometry(), MusicXmlPageSurface, types
 ├── import/
-│   ├── parseMusicXml.ts   XML text -> ScoreModel; score-timewise converted to partwise
+│   ├── parseMusicXml.ts   XML text -> ScoreModel; score-timewise read like partwise
 │   ├── noteKeys.ts        structural note keys (section 3.5)
-│   └── importReport.ts    unsupported elements found while importing
+│   └── importReport.ts    later: unsupported elements found while importing
 ├── model/
+│   ├── fraction.ts        exact onsets and durations, as fractions of a whole note
 │   ├── score.ts           ScoreModel types (engraving-oriented, separate from realtime.ts)
-│   └── layout.ts          LayoutModel types
+│   └── layout.ts          LayoutModel types: pages of drawables, chords and notes in page pixels
+├── fonts/
+│   ├── smufl.ts           SMuFL glyph names, codepoints, bounding boxes and anchors, for layout and render
+│   ├── Leland.otf                 SMuFL music font (SIL OFL), MuseScore's default
+│   ├── leland_metadata.json       glyph bounding boxes, anchors, engraving defaults
+│   └── LICENSE-OFL.txt
 ├── layout/
 │   ├── pageFormat.ts      page size, margins, staff space from <defaults> or defaults
-│   ├── measureContent.ts  per-measure segments: clefs, key/time, chords, rests, barlines
-│   ├── chords.ts          noteheads, seconds, accidentals, dots, ledger lines
-│   ├── stems.ts / beams.ts
-│   ├── horizontal.ts      duration-based spacing of segments within a measure
+│   ├── staffPosition.ts   pitches on the staff by clef, clef glyphs, key signature positions
+│   ├── measureContent.ts  staves of all parts, clef/key/time in force, printed accidentals, segments
+│   ├── chords.ts          noteheads, seconds, accidentals, dots, ledger lines, stems, flags, rests
+│   ├── beams.ts           beam groups, stem directions, beam lines and stem ends
+│   ├── horizontal.ts      duration-based springs, minimum widths, justification and squeezing
 │   ├── systems.ts         breaking measures into systems (honoring encoded breaks)
-│   ├── vertical.ts        staff and system distances, skylines for collisions
-│   ├── pages.ts           breaking systems into pages
-│   └── spanners.ts        ties, slurs, hairpins, pedal, ottava, tuplet brackets
+│   ├── pages.ts           staff and system distances, breaking systems into pages, drawing
+│   └── spanners.ts        later: ties, slurs, hairpins, pedal, ottava, tuplet brackets
 ├── render/
 │   ├── MusicXmlPageSurface.tsx   one page as SVG, page-pixel viewBox, highlight classes
-│   ├── glyphs.ts          SMuFL glyph names, codepoints, and metadata lookups
-│   └── text.ts            titles, credits, directions; TextMeasurer interface
+│   └── text.ts            later: titles, credits, directions; TextMeasurer interface
 ├── geometry/
 │   └── pageNoteGeometry.ts   LayoutModel page -> PageNoteGeometry
 ├── document/
-│   └── loadedDocument.ts  ScoreModel + layout -> LoadedDocument, viewer IDs
+│   └── loadedDocument.ts  layout -> LoadedDocument
 ├── scoreData/
-│   ├── scoreData.ts       read/write manifest.json, fingerings.json via native.ts
-│   └── fingerings.ts      prediction lifecycle, key translation, source precedence
-└── fonts/
-    ├── Leland.otf                 SMuFL music font (SIL OFL), MuseScore's default
-    ├── leland_metadata.json       glyph bounding boxes, anchors, engraving defaults
-    └── LICENSE-OFL.txt
+│   ├── scoreData.ts       reads the score file and opens its data folder via native.ts
+│   └── fingerings.ts      later: prediction lifecycle, key translation, source precedence
+└── testScores.ts          builders for small MusicXML scores in tests
 ```
 
-Tests sit next to the files they test, as elsewhere in `webapp/src`.
+Tests sit next to the files they test, as elsewhere in `webapp/src`; `npm test` finds and runs every `*.test.ts(x)` under `src` (`tools/run-tests.mjs`).
 
 ### 3.4 Note-geometry contract
 
@@ -144,7 +146,7 @@ PDF adapter (`sidecarNoteGeometry.ts`): converts linked, non-diagnostic visual g
 
 MusicXML geometry (`geometry/pageNoteGeometry.ts`): built from the layout positions and glyph metadata, at a few numbers per notehead.
 
-Highlighting is a page-surface concern, not part of the contract. PDF pages keep drawing highlight shapes from the sidecar over the raster image. MusicXML pages own their drawing: `MusicXmlPageSurface` receives the selected and playing notehead IDs and gives the matching glyph groups (notehead, stem, flag, accidental, dots) a CSS class, so the highlight is exactly what is drawn.
+Highlighting is a page-surface concern, not part of the contract. PDF pages keep drawing highlight shapes from the sidecar over the raster image. MusicXML pages own their drawing: `MusicXmlPageSurface` receives the highlighted notehead IDs (from `pageHighlightIds` in `DocumentViewer.tsx`, the same selection the overlay uses) and colours each highlighted note's notehead, accidental and dots, and its chord's stem and flag, so the highlight is exactly what is drawn. Pitch labels and the realtime playhead come from the shared overlay, which needs only note geometry.
 
 A contract test checks, for every corpus score, that every note in `documentMusicXml` appears exactly once in the note geometry of the page its ID names, that every note links to a notehead on that page, and that all bounds lie inside the page.
 
@@ -288,6 +290,14 @@ Layout follows MuseScore's approach and naming where practical, so its source ca
 
 Glyphs come from the Leland SMuFL font with its metadata JSON, which supplies the bounding boxes and stem anchors that layout needs. Text width comes from an injected `TextMeasurer`: a canvas-based measurer in the app and a deterministic one in tests.
 
+What phase 3 implements of these steps:
+
+- Spacing follows MuseScore 4's `HorizontalSpacing`: a segment's natural width is 3.5 staff spaces for a quarter note, multiplied by 1.5 for every doubling of its duration. Each gap is a spring with a minimum made of the symbols it separates plus padding (0.35 sp between notes, 1.25 sp from barline to note, 1.5 sp from note to barline). A system is justified by the one spring force that fills its width; when even the minimum is too wide, the padding shrinks toward a quarter of itself, as in MuseScore's `squeezeSystemToFit`.
+- A score with encoded system breaks keeps them and breaks earlier only when a system does not fit even squeezed; otherwise measures fill a system while it fits at four fifths of the natural spacing. A last system less than 30% full keeps its natural spacing (MuseScore's `lastSystemFillLimit`).
+- Staff distances, system distances and the first system's distance on a page come from the file when it encodes them; otherwise MuseScore's defaults (6.5, 8.5 and 7 sp) grow until the content of neighbouring staves keeps 1 sp apart. A system that does not fit on the page starts a new one.
+- Accidentals are printed where the key and earlier notes on the same staff line in the measure do not imply the note's alteration, and wherever the file prints one; a note tied over continues its accidental.
+- Stem directions come from the file; otherwise a beam group's notes decide together, voices sharing a staff keep to their side, grace notes point up, and a lone chord follows its note furthest from the middle line. Beams slant with their outer notes by at most one staff space, stay flat over an inner peak, keep every stem at least 3.25 sp plus the extra beams long, and reach the middle line.
+
 `render/` draws the `LayoutModel` as SVG and does not compute positions. Every glyph that belongs to a notehead (notehead, stem, flag, accidental, dots) is grouped under that notehead's ID so highlighting can address it. The note geometry is computed from the same layout positions and glyph metadata, so hit testing matches what is drawn.
 
 ### 4.3 Fingerings
@@ -336,7 +346,7 @@ Any change to shared playback code is checked against PDFs as well, so behavior 
 - Unit tests for each stage, run by `npm test`.
 - Note-geometry adapter tests with small sidecar fixtures, including notes sharing a notehead, diagnostic groups (excluded), groups with and without fitted ellipses, and pages without music (page numbering).
 - PDF parity check for shared consumer code (`webapp/tools/note-geometry-parity`, `npm run parity:note-geometry`): records, for every recognized PDF page in the given pdf-cache folders, the note-by-note playback timelines (from the merged document and from page MusicXML), realtime targets, selections, pitch labels, hit tests on a grid and around every hit boundary, and playback scroll extents. A recording before and after a change must agree; numbers that differ by at most 1e-6 px are reported separately as rounding. The harness file maps the consumers' current APIs onto the recorded format and is the only part that changes with them. The check is repeated whenever shared consumer code changes.
-- Contract tests from section 3.4, run on every corpus score.
+- Contract tests from section 3.4: unit tests on built scores, and `npm run musicxml:check -- <scores>` on every corpus score.
 - Note-key tests: keys are unchanged by different page formats and break settings; chords, voices, grace notes, and duplicate pitches get distinct keys; every key is a valid XML ID.
 - Boundary tests from section 3.1.
 - Native tests for every path and format check in section 3.7.
@@ -346,7 +356,7 @@ Corpus:
 - `../omr-evals/cases/ground-truth/musescore/`: 26 MuseScore-exported `.mxl` files, each with the PDF MuseScore engraved from it (MuseScore 1.1 to 4.2, mostly 3.6). These are the primary visual references; the older PDFs differ in house style, so MuseScore 4 renderings (below) are the reference for current appearance. They include encoded system and page breaks, multiple voices, tuplets, grace notes, slurs, pedal markings, and printed fingerings (for example, 96 in the Nocturne Op. 9 No. 2). Their PDFs, run through homr, also exercise the parity check.
 - `../omr-evals/cases/ground-truth/ninsheetmusic/mus/`: MusicXML exported from the source `.mus` files (2 so far, more as the export proceeds), for scores not written in MuseScore.
 
-Visual comparison: a script under `tools/` renders each corpus score with the new renderer and places each page beside the reference PDF page, or beside a rendering from the locally installed MuseScore 4 (`mscore4portable -o page.png score.mxl`). Pages are reviewed by eye; there is no pixel-equality target, because small spacing differences are acceptable while missing or misplaced symbols are not.
+Visual comparison: `npm run musicxml:render -- <output-dir> <scores>` renders each corpus score with the new renderer, one PNG per page through headless Chrome, to place beside the reference PDF page or a rendering from the locally installed MuseScore 4 (`mscore4portable -o page.pdf score.mxl`). Pages are reviewed by eye; there is no pixel-equality target, because small spacing differences are acceptable while missing or misplaced symbols are not.
 
 ## 8. Phases
 
@@ -361,6 +371,8 @@ Visual comparison: a script under `tools/` renders each corpus score with the ne
 | 7. Section 5.2 | Second-stage notation | Same review for the second-stage symbols. |
 
 Phase 1 changes only shared code and PDF behavior must stay identical, so it can be reviewed and merged on its own. Each phase is a separate reviewable commit series on the `musicxml` branch.
+
+Phase 3 result: all 28 corpus scores keep the note-geometry contract and lay out in 12 to 290 ms each. Page counts match the encoded layout, except where a system or page overflows: the Fantaisie-Impromptu's MuseScore 1.3 export ends with a page whose encoded margins leave room for one measure, so its last measure moves to a ninth page, as it does in MuseScore 4. Side-by-side review of Für Elise, the Nocturne Op. 9 No. 2, the Invention No. 13, the Etude Op. 25 No. 11, the Moonlight Sonata's third movement, the Turkish March and two scores without encoded layout shows notes, rests, accidentals, stems, beams, clefs, keys and time signatures where the reference has them. Gaps seen there, for later phases: ottava lines (notes under an 8va sit an octave high on ledger lines), cross-staff beams, rests moving clear of other voices' notes, repeat dots and voltas, MuseScore's measure numbering (printed numbers come from the file), and titles, ties, slurs, tuplets, dynamics and pedal marks. Pages outside the viewport are not yet replaced by placeholders.
 
 Phase 2 result: all 28 corpus files open (26 `.mxl`, 2 `.musicxml`). Page sizes match the reference PDFs within 2 px (0.2 mm), except one score whose file asks for Letter while its MuseScore 2 PDF is A4; MuseScore 4 also uses Letter. Until phase 3 breaks pages by content, a page holds everything up to the next encoded page break. This gives the reference page count for 24 of the 26 MuseScore scores; two MuseScore 1.3 exports encode a page break before their last measure that their PDFs do not show, and scores without encoded breaks open as one page.
 

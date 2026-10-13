@@ -1,5 +1,16 @@
 // What the app shows for each kind of document source.
-import type { LoadedDocument } from "./types";
+import { musicXmlNoteGeometry } from "./musicxml";
+import type { PageNoteGeometry } from "./noteGeometry";
+import { pdfNoteGeometry } from "./sidecarNoteGeometry";
+import type { DocumentPage, DocumentSource, LoadedDocument } from "./types";
+
+/** Note geometry from the engraved pages of a MusicXML score, or from the recognized pages of a PDF. */
+export function documentNoteGeometry(
+  kind: DocumentSource["kind"] | undefined,
+  pages: readonly DocumentPage[],
+): PageNoteGeometry[] {
+  return kind === "musicxml" ? musicXmlNoteGeometry(pages) : pdfNoteGeometry(pages);
+}
 
 /**
  * Diagnostics, worker logs and the debug overlays describe homr's recognition of a PDF,

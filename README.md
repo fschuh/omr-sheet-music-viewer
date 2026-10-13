@@ -25,8 +25,10 @@ for an application when no association exists.
 
 **Open score** also accepts MusicXML files (`.musicxml`, `.xml`, and compressed
 `.mxl`), which open directly without recognition. The MusicXML viewer is under
-development: it shows the score's pages at the page size the file asks for, but
-does not draw notation yet. A MusicXML file is never modified; anything the app
+development: it engraves notes, rests, accidentals, stems, beams, clefs, key and
+time signatures, keeping the page format and breaks the file asks for, and notes
+can be selected as on a PDF. Ties, slurs, dynamics, titles and other markings are
+not drawn yet. A MusicXML file is never modified; anything the app
 stores for it goes into a folder of its own under the app's data directory
 (`musicxml-scores/<SHA-256 of the file>/`), which **Open score data folder**
 shows. Diagnostics describe PDF recognition and are hidden for MusicXML scores.

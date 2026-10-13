@@ -9,7 +9,7 @@ import {
   type PageNoteGeometry,
 } from "./noteGeometry";
 import { diagnosticNoteheads } from "./sidecarNoteGeometry";
-import { MusicXmlPageSurface } from "./musicxml";
+import { MusicXmlPageSurface, type MusicXmlPage } from "./musicxml";
 import { playbackGroupIdsForPage } from "./playback";
 import type { PlaybackCommand, PlaybackMoment, PracticeHand } from "./playback";
 import type { PlaybackMode, PlaybackStatus, RealtimePlayhead } from "./realtime";
@@ -191,6 +191,23 @@ export function pageDiagnosticNoteheads(
   return showDiagnosticVisualGroups && page.visualSidecar
     ? diagnosticNoteheads(page.visualSidecar)
     : [];
+}
+
+/**
+ * The noteheads a page highlights: during playback, the ones sounding; otherwise the
+ * selection, with its chord, or every notehead when all are highlighted.
+ */
+export function pageHighlightIds(
+  geometry: PageNoteGeometry | undefined,
+  selected: VisualGroupRef | null,
+  pageIndex: number,
+  highlightAll: boolean,
+  diagnostics: readonly NoteheadGeometry[],
+  playbackActive: boolean,
+  playbackGroupIds: readonly string[],
+): Set<string> {
+  if (playbackActive) return new Set(playbackGroupIds);
+  return selectedNoteheadIds(geometry, selected, pageIndex, highlightAll, diagnostics);
 }
 
 /**
@@ -396,10 +413,15 @@ const PageOverlay = memo(function PageOverlay({
     [page, showDiagnosticVisualGroups],
   );
   const selectedIds = useMemo(
-    () => {
-      if (playbackActive) return new Set(playbackGroupIds);
-      return selectedNoteheadIds(geometry, selected, page.index, highlightAll, diagnosticGroups);
-    },
+    () => pageHighlightIds(
+      geometry,
+      selected,
+      page.index,
+      highlightAll,
+      diagnosticGroups,
+      playbackActive,
+      playbackGroupIds,
+    ),
     [
       diagnosticGroups,
       geometry,
@@ -481,7 +503,8 @@ const PageOverlay = memo(function PageOverlay({
     showRefinedNoteheadContours,
     visualGroupsById,
   ]);
-  if (!page.visualSidecar) return null;
+  // Pages without note geometry or a sidecar have nothing to overlay.
+  if (!page.visualSidecar && !geometry) return null;
   const sidecar = page.visualSidecar;
   return (
     <svg
@@ -501,7 +524,7 @@ const PageOverlay = memo(function PageOverlay({
           style={{ display: realtimePlayhead?.pageIndex === page.index ? undefined : "none" }}
         />
       ) : null}
-      {showRawStemContours
+      {showRawStemContours && sidecar
         ? sidecar.raw_stem_contours?.map((stem, index) => (
             <polyline
               key={`raw-stem-${stem.debug_id}-${index}`}
@@ -553,6 +576,35 @@ const PageOverlay = memo(function PageOverlay({
         ))}
       </g>
     </svg>
+  );
+});
+
+/** An engraved MusicXML page, coloured where the overlay would highlight a PDF page. */
+const EngravedPage = memo(function EngravedPage({
+  surface,
+  geometry,
+  selected,
+  highlightAll,
+  playbackActive,
+  playbackGroupIds,
+}: {
+  surface: MusicXmlPage;
+  geometry: PageNoteGeometry | undefined;
+  selected: VisualGroupRef | null;
+  highlightAll: boolean;
+  playbackActive: boolean;
+  playbackGroupIds: readonly string[];
+}) {
+  const highlighted = useMemo(
+    () => pageHighlightIds(geometry, selected, surface.index, highlightAll, [], playbackActive, playbackGroupIds),
+    [geometry, highlightAll, playbackActive, playbackGroupIds, selected, surface.index],
+  );
+  return (
+    <MusicXmlPageSurface
+      page={surface}
+      highlighted={highlighted}
+      highlightKind={playbackActive ? "playback" : "selected"}
+    />
   );
 });
 
@@ -1434,7 +1486,18 @@ export function DocumentViewer({
             >
               <span className="page-number">{page.index + 1}</span>
               {page.surface ? (
-                <MusicXmlPageSurface page={page.surface} />
+                <EngravedPage
+                  surface={page.surface}
+                  geometry={geometryByPage.get(page.index)}
+                  selected={selectedGroup}
+                  highlightAll={highlightAllNotes}
+                  playbackActive={playbackActive}
+                  playbackGroupIds={
+                    realtimeGroupIdsByPage
+                      ? realtimeGroupIdsByPage[page.index] ?? NO_REALTIME_GROUPS
+                      : playbackGroupIdsForPage(playbackMoment, page.index)
+                  }
+                />
               ) : page.imageUrl ? (
                 <img src={page.imageUrl} alt={`Sheet music page ${page.index + 1}`} draggable={false} />
               ) : null}

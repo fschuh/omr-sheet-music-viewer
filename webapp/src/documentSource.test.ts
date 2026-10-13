@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { diagnosticsAvailable, documentFolder } from "./documentSource";
-import type { DocumentSource, LoadedDocument } from "./types";
+import { diagnosticsAvailable, documentFolder, documentNoteGeometry } from "./documentSource";
+import type { DocumentPage, DocumentSource, LoadedDocument } from "./types";
 
 function loaded(source: DocumentSource): LoadedDocument {
   return { jobId: "job", name: "score", pageCount: 0, source, status: "complete", pages: [] };
@@ -38,4 +38,27 @@ test("the folder button opens the PDF cache or the score data folder", () => {
     documentFolder(loaded({ kind: "musicxml", sourcePath: "/scores/a.musicxml" })).path,
     undefined,
   );
+});
+
+test("note geometry comes from engraved pages for MusicXML and from the sidecar for PDFs", () => {
+  const engraved: DocumentPage = {
+    index: 0,
+    status: "complete",
+    width: 100,
+    height: 100,
+    surface: {
+      index: 0, width: 100, height: 100, staffSpace: 10, items: [],
+      chords: [{
+        id: "P1-m1-s1-v1-t0", systemIndex: 0, momentId: "m1-t0", items: [], stemBounds: null,
+        notes: [{ key: "P1-m1-s1-v1-t0-C5", pitch: "C5", grace: false, measure: 1, center: [5, 5], headBounds: [0, 0, 10, 10], items: [] }],
+      }],
+    },
+  };
+  assert.deepEqual(
+    documentNoteGeometry("musicxml", [engraved]).map((page) => page.notes.map((value) => value.id)),
+    [["page-1-P1-m1-s1-v1-t0-C5"]],
+  );
+  // A PDF reads only recognized pages, so an engraved surface contributes nothing there.
+  assert.deepEqual(documentNoteGeometry("pdf", [engraved]), []);
+  assert.deepEqual(documentNoteGeometry(undefined, []), []);
 });
