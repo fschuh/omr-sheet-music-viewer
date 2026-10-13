@@ -511,6 +511,39 @@ def test_pdf_processing_rasterizes_then_reuses_cache(tmp_path: Path) -> None:
     assert merged_music_xml.read_text(encoding="utf-8") == annotated_music_xml
 
 
+def test_pdf_processing_writes_compact_json_and_reuses_indented_caches(tmp_path: Path) -> None:
+    pdf_path = tmp_path / "score.pdf"
+    Image.new("RGB", (120, 80), "white").save(pdf_path, "PDF", resolution=300)
+    engine = FakeHomrEngine()
+
+    def process() -> list[dict[str, object]]:
+        events: list[dict[str, object]] = []
+        PdfProcessor(events.append, engine).process_pdf(  # type: ignore[arg-type]
+            job_id="job",
+            pdf_path=pdf_path,
+            cache_root=tmp_path / "cache",
+            cancel=threading.Event(),
+        )
+        return events
+
+    process()
+    cache_directory = tmp_path / "cache" / "pdf-cache" / sha256_file(pdf_path)
+    manifest_path = cache_directory / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    sidecar_path = cache_directory / manifest["pages"][0]["visualSidecar"]
+    for path in (manifest_path, sidecar_path):
+        text = path.read_text(encoding="utf-8")
+        assert text == json.dumps(json.loads(text), separators=(",", ":"))
+
+    # Caches written indented by earlier versions hold the same data and stay valid.
+    for path in (manifest_path, sidecar_path):
+        indented = json.dumps(json.loads(path.read_text(encoding="utf-8")), indent=2)
+        path.write_text(indented, encoding="utf-8")
+    cached = [event for event in process() if event.get("type") == "page_completed"]
+    assert len(engine.calls) == 1
+    assert [event["cached"] for event in cached] == [True]
+
+
 def test_pdf_processing_invalidates_an_older_sidecar_cache_revision(tmp_path: Path) -> None:
     pdf_path = tmp_path / "score.pdf"
     Image.new("RGB", (120, 80), "white").save(pdf_path, "PDF", resolution=300)

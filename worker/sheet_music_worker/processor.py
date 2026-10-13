@@ -100,7 +100,8 @@ def sha256_file(path: Path) -> str:
 
 def atomic_write_json(path: Path, value: dict[str, Any]) -> None:
     temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(value, indent=2), encoding="utf-8")
+    # Compact: indenting a visual sidecar's outline points makes it about three times larger.
+    temporary.write_text(json.dumps(value, separators=(",", ":")), encoding="utf-8")
     os.replace(temporary, path)
 
 
