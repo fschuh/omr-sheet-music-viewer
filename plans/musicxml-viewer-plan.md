@@ -1,7 +1,7 @@
 # MusicXML viewer plan
 
 Date: 2026-10-12  
-Status: In progress; phases 1 to 6 are implemented.
+Status: Phases 1 to 7 are implemented.
 
 ## 1. Objective and scope
 
@@ -116,10 +116,12 @@ webapp/src/musicxml/
 │   ├── systems.ts         breaking measures into systems (honoring encoded breaks)
 │   ├── pages.ts           staff and system distances, breaking systems into pages
 │   ├── drawing.ts         placed systems to drawables: staves, headers, barlines, chords, credits
-│   └── spanners.ts        ties, tuplets and voltas; later slurs, hairpins, pedal, ottava
+│   ├── spanners.ts        ties, slurs, tuplets and voltas
+│   ├── directions.ts      ottava lines, dynamics, hairpins, words, metronome marks, pedal, symbols
+│   └── marks.ts           articulations, fermatas, ornaments and trill lines, printed fingerings, arpeggios, tremolos
 ├── render/
 │   ├── MusicXmlPageSurface.tsx   one page as SVG, page-pixel viewBox, highlight classes
-│   └── text.ts            later: titles, credits, directions; TextMeasurer interface
+│   └── text.ts            later: a TextMeasurer to replace the text width estimates of credits and directions
 ├── geometry/
 │   └── pageNoteGeometry.ts   LayoutModel page -> PageNoteGeometry
 ├── document/
@@ -374,6 +376,8 @@ Visual comparison: `npm run musicxml:render -- <output-dir> <scores>` renders ea
 | 7. Section 5.2 | Second-stage notation | Same review for the second-stage symbols. |
 
 Phase 1 changes only shared code and PDF behavior must stay identical, so it can be reviewed and merged on its own. Each phase is a separate reviewable commit series on the `musicxml` branch.
+
+Phase 7 result: slurs (placed by the file, else below only when every stem points up; from noteheads or stem ends, rising to clear the notes they pass over; split across system breaks; a stop closes the open slur of its own voice first, because files reuse slur numbers in other voices), dynamics in the font's letters, hairpins (partly open where a system breaks them), words, metronome marks, pedal marks (Ped. with a bracket and change notches, or Ped. and a release star), ottava lines (notes under them written an octave away, still sounding at their pitch), segno, coda and other SMuFL-named direction symbols, articulations opposite the stem and in a staff space, fermatas by shape, ornaments, trill lines, printed fingerings (stacked by note, a finger change in a row), arpeggio signs (one sign across a part's staves per arpeggio number, with room left of the chord) and single tremolos. Directions stack clear of each other and of the chord marks, and one that would have to move into a staff slides along its line instead. Side-by-side review of the corpus shows these symbols where the reference has them. Remaining differences follow the files: MuseScore 1.x exports carry the original's hidden playback marks (rubato tempo changes, dynamics) as visible ones; a trill sign the Turkish March places below the staff is moved above only by its `relative-y` offset, which is not read; the Nocturne Op. 9 No. 2 file has trill-line stops but no starts; and credits keep the line breaks their text contains (the Moonlight Sonata's "3rd Movement" spans three lines). Element offsets (`default-x`, `relative-y` and the like) are not read; MuseScore's autoplace-like stacking places marks instead.
 
 Phase 6 result: ties (bowing away from their stems, upper notes of a chord up and lower down, split across system breaks), tuplet numbers and brackets (a bracket when the file asks or the notes are not beamed together), start and end repeat signs with their dots, voltas (closed at a start repeat when the file leaves them open, continued across system breaks), credits at the file's positions with their styles, a title block for files without credits, rests moved clear of other voices' notes, key-change naturals, courtesy accidentals in parentheses, and courtesy key and time signatures at system ends. Side-by-side review of the corpus shows the section 5.1 symbols where the reference has them; what remains different is second-stage notation (section 5.2: ottava lines, slurs, dynamics, articulations, pedal, tempo text, arpeggio signs, ornaments, fermatas) and spacing, where MuseScore's reference PDFs, mostly from MuseScore 3.6, pack measures more tightly. Measure numbers come from the file's `number` attributes, which MuseScore 4 also shows when importing these files.
 

@@ -23,6 +23,8 @@ const ACCIDENTAL_DISTANCE = 0.22;
 const DOT_NOTE_DISTANCE = 0.5;
 const DOT_DOT_DISTANCE = 0.65;
 const MIDDLE_LINE = 2;
+/** Room an arpeggio sign takes left of its chord. */
+export const ARPEGGIO_WIDTH = 0.9;
 
 export interface NoteShape {
   /** Index into the chord's notes. */
@@ -251,7 +253,8 @@ export function layoutChord(
   const headBox = glyphBox(head);
   const headWidth = (headBox.right - headBox.left) * scale;
   const stemmed = hasStem(type) && model.stem !== "none";
-  const positions = model.notes.map((note) => staffPosition(chord.clef, note.step, note.octave));
+  // Under an ottava line notes are written an octave or two from where they sound.
+  const positions = model.notes.map((note) => staffPosition(chord.clef, note.step, note.octave + chord.octaveShift));
   const shift = stemmed ? headWidth - STEM_WIDTH * scale : headWidth;
   const notes: NoteShape[] = placeNoteheads(positions, up || !stemmed).map(({ index, position, displaced }) => ({
     index,
@@ -347,7 +350,8 @@ export function layoutChord(
     flag,
     dots,
     ledgers,
-    left: -Math.min(accidentalLeft, ledgerLeft),
+    // An arpeggio sign stands left of everything else.
+    left: -Math.min(accidentalLeft, ledgerLeft) + (model.arpeggiate ? ARPEGGIO_WIDTH : 0),
     right: Math.max(
       headsRight,
       ledgerRight,

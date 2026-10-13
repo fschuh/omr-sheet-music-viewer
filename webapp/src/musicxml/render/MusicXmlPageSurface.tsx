@@ -19,16 +19,32 @@ function draw(item: Drawable, staffSpace: number, key: number): ReactElement {
   switch (item.kind) {
     case "glyph": {
       const fontSize = EM_PER_STAFF_SPACE * staffSpace * item.scale;
-      return item.scaleY === undefined ? (
-        <text key={key} className="mx-glyph" x={item.x} y={item.y} fontSize={fontSize}>{glyphText(item.glyph)}</text>
-      ) : (
-        <text key={key} className="mx-glyph" fontSize={fontSize} transform={`translate(${item.x} ${item.y}) scale(1 ${item.scaleY})`}>
+      if (item.scaleY === undefined && item.rotate === undefined) {
+        return <text key={key} className="mx-glyph" x={item.x} y={item.y} fontSize={fontSize}>{glyphText(item.glyph)}</text>;
+      }
+      const transform = [
+        `translate(${item.x} ${item.y})`,
+        item.rotate === undefined ? null : `rotate(${item.rotate})`,
+        item.scaleY === undefined ? null : `scale(1 ${item.scaleY})`,
+      ].filter(Boolean).join(" ");
+      return (
+        <text key={key} className="mx-glyph" fontSize={fontSize} transform={transform}>
           {glyphText(item.glyph)}
         </text>
       );
     }
     case "line":
-      return <line key={key} x1={item.x1} y1={item.y1} x2={item.x2} y2={item.y2} strokeWidth={item.width} />;
+      return (
+        <line
+          key={key}
+          x1={item.x1}
+          y1={item.y1}
+          x2={item.x2}
+          y2={item.y2}
+          strokeWidth={item.width}
+          strokeDasharray={item.dash?.join(" ")}
+        />
+      );
     case "polygon":
       return <polygon key={key} points={item.points.join(" ")} />;
     case "path":

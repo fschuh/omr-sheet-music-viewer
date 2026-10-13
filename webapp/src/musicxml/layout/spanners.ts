@@ -2,7 +2,7 @@
 // Lengths are staff spaces; drawables come out in page pixels.
 import { ENGRAVING_DEFAULTS, glyphBox, type GlyphName } from "../fonts/smufl";
 import type { Drawable } from "../model/layout";
-import type { NoteModel, TupletStart } from "../model/score";
+import type { NoteModel, Placement, TupletStart } from "../model/score";
 import { isUpperVoice, type ChordShape } from "./chords";
 import type { PreparedChord } from "./measureContent";
 import { systemChords, type PlacedSystem } from "./pages";
@@ -72,11 +72,23 @@ export function notePlaces(
   return places;
 }
 
-/** A filled crescent from (x1, y1) to (x2, y2), bowing up or down, in page pixels. */
-export function curvePath(x1: number, y1: number, x2: number, y2: number, up: boolean, sp: number): Drawable {
+/**
+ * A filled crescent from (x1, y1) to (x2, y2), bowing up or down, in page pixels. `control`
+ * is how far the control points sit off the chord; the curve's peak is three quarters of it.
+ */
+export function curvePath(
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  up: boolean,
+  sp: number,
+  options: { control?: number; thickness?: number } = {},
+): Drawable {
   const length = Math.abs(x2 - x1);
-  const height = Math.min(1.5, Math.max(0.5, 0.35 + length * 0.08)) * (up ? -1 : 1);
-  const inner = height - TIE_MID_THICKNESS * Math.sign(height);
+  const control = options.control ?? Math.min(1.5, Math.max(0.5, 0.35 + length * 0.08));
+  const height = control * (up ? -1 : 1);
+  const inner = height - (options.thickness ?? TIE_MID_THICKNESS) * Math.sign(height);
   const c1 = x1 + (x2 - x1) / 4;
   const c2 = x2 - (x2 - x1) / 4;
   const p = (value: number) => +(value * sp).toFixed(2);
@@ -88,7 +100,7 @@ export function curvePath(x1: number, y1: number, x2: number, y2: number, up: bo
 }
 
 /** Where a system's music starts, after its header: ties continued from before begin here. */
-function systemMusicStart(system: PlacedSystem): number {
+export function systemMusicStart(system: PlacedSystem): number {
   return system.measures[0].segmentX[0] - 1.5;
 }
 
@@ -138,12 +150,156 @@ const TUPLET_BRACKET_HOOK = 0.6;
 const TUPLET_NUMBER_GAP = 0.3;
 const TUPLET_BRACKET_THICKNESS = ENGRAVING_DEFAULTS.tupletBracketThickness;
 
+const SLUR_THICKNESS = ENGRAVING_DEFAULTS.slurMidpointThickness;
+const SLUR_NOTE_GAP = 0.5;
+const SLUR_STEM_GAP = 0.3;
+const SLUR_CLEARANCE = 0.6;
+const SLUR_MAX_CONTROL = 5;
+
+interface SlurStart {
+  system: PlacedSystem;
+  chord: PreparedChord;
+  placement: Placement;
+}
+
+/** Whether a slur bows upward: the file's placement, else below only when every stem points up. */
+function slurUp(start: PreparedChord, end: PreparedChord, shapes: Map<PreparedChord, ChordShape>, placement: Placement): boolean {
+  if (placement) return placement === "above";
+  if (start.sharedStaff) return isUpperVoice(start.model.voice);
+  const stemsUp = [start, end].map((chord) => {
+    const shape = shapes.get(chord)!;
+    if (shape.stem) return shape.stem.up;
+    const positions = shape.notes.map((note) => note.position);
+    return positions.length > 0 && positions.reduce((sum, value) => sum + value, 0) / positions.length >= MIDDLE_POSITION;
+  });
+  return !stemsUp.every(Boolean);
+}
+
+/** Where a slur meets a chord: past the stem's end when the stem points the slur's way, else past the notehead. */
+function slurAnchor(system: PlacedSystem, chord: PreparedChord, shape: ChordShape, up: boolean): { x: number; y: number } {
+  const x = system.chords.get(chord)!;
+  const staffTop = system.top + system.staffTops[chord.staff];
+  const extent = chordExtent(system, chord, shape);
+  if (shape.stem && shape.stem.up === up) {
+    return { x: x + shape.stem.x, y: staffTop + shape.stem.yEnd + (up ? -SLUR_STEM_GAP : SLUR_STEM_GAP) };
+  }
+  const ys = shape.notes.map((note) => staffTop + note.y);
+  const y = up
+    ? (ys.length ? Math.min(...ys) : extent.top) - SLUR_NOTE_GAP
+    : (ys.length ? Math.max(...ys) : extent.bottom) + SLUR_NOTE_GAP;
+  return { x: (extent.left + extent.right) / 2, y };
+}
+
+/**
+ * One piece of a slur within a system. The curve rises with its length, and further, or
+ * its ends move out, so that it clears every chord of the part's staves it passes over.
+ */
+function slurPiece(
+  system: PlacedSystem,
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  up: boolean,
+  over: { chord: PreparedChord; shape: ChordShape }[],
+  sp: number,
+): Drawable {
+  const length = Math.max(0.1, to.x - from.x);
+  const sign = up ? -1 : 1;
+  let control = Math.min(2.5, Math.max(0.8, 0.6 + length * 0.1));
+  const intrusions: { t: number; depth: number }[] = [];
+  for (const { chord, shape } of over) {
+    const extent = chordExtent(system, chord, shape);
+    for (const x of [extent.left, extent.right]) {
+      const t = (x - from.x) / length;
+      if (t <= 0.02 || t >= 0.98) continue;
+      const line = from.y + t * (to.y - from.y);
+      // How far the chord reaches past the straight line between the slur's ends.
+      const depth = up ? line - extent.top : extent.bottom - line;
+      intrusions.push({ t, depth: depth + SLUR_CLEARANCE });
+    }
+  }
+  for (const { t, depth } of intrusions) control = Math.max(control, Math.min(SLUR_MAX_CONTROL, depth / (3 * t * (1 - t))));
+  const lift = Math.max(0, ...intrusions.map(({ t, depth }) => depth - 3 * t * (1 - t) * control));
+  return curvePath(from.x, from.y + sign * lift, to.x, to.y + sign * lift, up, sp, { control, thickness: SLUR_THICKNESS });
+}
+
+/**
+ * Slurs, joining each start to the next stop with the same number in its part. A slur
+ * across system breaks is drawn in pieces: to the end of its first system, across any
+ * systems between, and from the start of its last.
+ */
+export function layoutSlurs(
+  systems: PlacedSystem[],
+  shapes: Map<PreparedChord, ChordShape>,
+  sp: number,
+): Map<PlacedSystem, Drawable[]> {
+  const result = new Map<PlacedSystem, Drawable[]>();
+  const add = (system: PlacedSystem, item: Drawable) => result.set(system, [...(result.get(system) ?? []), item]);
+  const ordered = systems.map((system) =>
+    systemChords(system)
+      .filter((chord) => chord.model.printed)
+      .sort((a, b) => system.chords.get(a)! - system.chords.get(b)!),
+  );
+  const chordsOver = (system: PlacedSystem, part: number, staves: Set<number>, left: number, right: number) =>
+    ordered[systems.indexOf(system)]
+      .filter((chord) => chord.part === part && staves.has(chord.staff))
+      .filter((chord) => {
+        const x = system.chords.get(chord)!;
+        return x > left && x < right;
+      })
+      .map((chord) => ({ chord, shape: shapes.get(chord)! }));
+  // Files reuse a number in other voices while a slur is open, so a stop closes the open
+  // start of its own voice first, then of its own staff, then the latest.
+  const open = new Map<string, SlurStart[]>();
+  const close = (key: string, chord: PreparedChord): SlurStart | undefined => {
+    const starts = [...(open.get(key) ?? [])].reverse();
+    const match =
+      starts.find((start) => start.chord.staff === chord.staff && start.chord.model.voice === chord.model.voice) ??
+      starts.find((start) => start.chord.staff === chord.staff) ??
+      starts[0];
+    if (match) open.set(key, open.get(key)!.filter((start) => start !== match));
+    return match;
+  };
+  systems.forEach((system, systemIndex) => {
+    for (const chord of ordered[systemIndex]) {
+      for (const mark of chord.model.slurs) {
+        if (mark.type !== "stop") continue;
+        const start = close(`${chord.part}|${mark.number}`, chord);
+        if (!start) continue;
+        const up = slurUp(start.chord, chord, shapes, start.placement);
+        const staves = new Set([start.chord.staff, chord.staff]);
+        const from = slurAnchor(start.system, start.chord, shapes.get(start.chord)!, up);
+        const to = slurAnchor(system, chord, shapes.get(chord)!, up);
+        if (start.system === system) {
+          add(system, slurPiece(system, from, to, up, chordsOver(system, chord.part, staves, from.x, to.x), sp));
+          continue;
+        }
+        const first = start.system;
+        add(first, slurPiece(first, from, { x: first.right - 0.3, y: from.y }, up, chordsOver(first, chord.part, staves, from.x, first.right), sp));
+        for (const middle of systems.slice(systems.indexOf(first) + 1, systemIndex)) {
+          const staffTop = middle.top + middle.staffTops[start.chord.staff];
+          const y = up ? staffTop - 1 : staffTop + 5;
+          const left = systemMusicStart(middle);
+          add(middle, slurPiece(middle, { x: left, y }, { x: middle.right - 0.3, y }, up, chordsOver(middle, chord.part, staves, left, middle.right), sp));
+        }
+        const left = systemMusicStart(system);
+        add(system, slurPiece(system, { x: left, y: to.y }, to, up, chordsOver(system, chord.part, staves, left, to.x), sp));
+      }
+      for (const mark of chord.model.slurs) {
+        if (mark.type !== "start") continue;
+        const key = `${chord.part}|${mark.number}`;
+        open.set(key, [...(open.get(key) ?? []), { system, chord, placement: mark.placement }]);
+      }
+    }
+  });
+  return result;
+}
+
 function tupletDigits(value: number): GlyphName[] {
   return [...String(value)].map((digit) => `tuplet${digit}` as GlyphName);
 }
 
 /** A chord's extent on the page, with its stem and beam. */
-function chordExtent(system: PlacedSystem, chord: PreparedChord, shape: ChordShape) {
+export function chordExtent(system: PlacedSystem, chord: PreparedChord, shape: ChordShape) {
   const x = system.chords.get(chord)!;
   const staffTop = system.top + system.staffTops[chord.staff];
   const xs = shape.rest

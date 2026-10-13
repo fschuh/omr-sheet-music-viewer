@@ -7,6 +7,7 @@ import {
   fraction,
   minFraction,
   subtract,
+  toNumber,
   ZERO,
   type Fraction,
 } from "../model/fraction";
@@ -30,6 +31,20 @@ export interface PreparedChord {
   accidentals: (GlyphName | null)[];
   /** More than one voice uses the staff in this measure. */
   sharedStaff: boolean;
+  /** Octaves the chord is written away from its pitch under an ottava line: -1 under an 8va. */
+  octaveShift: number;
+}
+
+/** An ottava line: from its start to its stop on one staff, in whole notes from the score's start. */
+export interface OctaveSpan {
+  staff: number;
+  start: number;
+  stop: number;
+  /** The written shift: -1 for 8va, 1 for 8vb, -2 and 2 for 15ma and 15mb. */
+  shift: number;
+  /** Where the line starts and stops, by measure and onset. */
+  startAt: { measureIndex: number; onset: Fraction };
+  stopAt: { measureIndex: number; onset: Fraction } | null;
 }
 
 export interface ClefDisplay {
@@ -81,6 +96,7 @@ export interface PreparedScore {
   /** For each part, its staves' indexes. */
   partStaves: number[][];
   measures: PreparedMeasure[];
+  ottavas: OctaveSpan[];
 }
 
 const DEFAULT_TIME: TimeChange = { onset: ZERO, beats: "4", beatType: "4", symbol: "normal" };
@@ -212,6 +228,7 @@ export function prepareScore(score: ScoreModel): PreparedScore {
           clef: TREBLE_CLEF,
           accidentals: [],
           sharedStaff: false,
+          octaveShift: 0,
         });
       }
     });
@@ -299,7 +316,66 @@ export function prepareScore(score: ScoreModel): PreparedScore {
       endingEnd: endings.find((ending) => ending.type !== "start")?.type as "stop" | "discontinue" | undefined ?? null,
     };
   });
-  return { staves, partStaves, measures };
+  const ottavas = octaveSpans(score, partStaves, measures);
+  let start = 0;
+  for (const measure of measures) {
+    for (const segment of measure.segments) {
+      for (const chord of [...segment.graces, ...segment.chords]) {
+        const time = start + toNumber(chord.model.onset);
+        const span = ottavas.find((candidate) =>
+          candidate.staff === chord.staff && candidate.start <= time + 1e-9 && time < candidate.stop - 1e-9);
+        chord.octaveShift = span?.shift ?? 0;
+      }
+    }
+    start += toNumber(measure.duration);
+  }
+  return { staves, partStaves, measures, ottavas };
+}
+
+/** Ottava lines, from each octave-shift direction to the stop with its number on its staff. */
+function octaveSpans(score: ScoreModel, partStaves: number[][], measures: PreparedMeasure[]): OctaveSpan[] {
+  const starts: number[] = [];
+  let total = 0;
+  for (const measure of measures) {
+    starts.push(total);
+    total += toNumber(measure.duration);
+  }
+  const spans: OctaveSpan[] = [];
+  score.parts.forEach((part, partIndex) => {
+    const open = new Map<string, OctaveSpan>();
+    part.measures.forEach((measure, measureIndex) => {
+      for (const direction of [...measure.directions].sort((a, b) => compare(a.onset, b.onset))) {
+        const staff = partStaves[partIndex][direction.staff - 1];
+        if (staff === undefined) continue;
+        for (const item of direction.items) {
+          if (item.kind !== "octave-shift") continue;
+          const key = `${staff}|${item.number}`;
+          const time = (starts[measureIndex] ?? 0) + toNumber(direction.onset);
+          if (item.type === "stop") {
+            const span = open.get(key);
+            if (span) {
+              span.stop = time;
+              span.stopAt = { measureIndex, onset: direction.onset };
+              open.delete(key);
+            }
+            continue;
+          }
+          const octaves = item.size >= 15 ? 2 : 1;
+          const span: OctaveSpan = {
+            staff,
+            start: time,
+            stop: Infinity,
+            shift: item.type === "down" ? -octaves : octaves,
+            startAt: { measureIndex, onset: direction.onset },
+            stopAt: null,
+          };
+          open.set(key, span);
+          spans.push(span);
+        }
+      }
+    });
+  });
+  return spans;
 }
 
 /** The shortest chord or rest that starts at a segment; the segment's own length if none does. */

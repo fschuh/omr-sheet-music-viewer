@@ -55,7 +55,7 @@ function upForPositions(positions: number[]): boolean {
 }
 
 function positions(chord: PreparedChord): number[] {
-  return chord.model.notes.map((note) => staffPosition(chord.clef, note.step, note.octave));
+  return chord.model.notes.map((note) => staffPosition(chord.clef, note.step, note.octave + chord.octaveShift));
 }
 
 /**

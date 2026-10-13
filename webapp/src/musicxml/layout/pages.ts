@@ -5,10 +5,12 @@ import type { LayoutModel, PageFormat } from "../model/layout";
 import type { ScoreModel } from "../model/score";
 import { beamGroups, layoutBeam, stemDirections, type BeamDrawing, type BeamGroup, type PlacedChord } from "./beams";
 import { avoidRestCollisions, layoutChord, type ChordShape } from "./chords";
+import { layoutDirections } from "./directions";
 import { drawPage, titleBlock } from "./drawing";
 import { gapWidth, graceOffsets, measureSpacing, springWidth, type MeasureSpacing } from "./horizontal";
 import { prepareScore, type PreparedChord, type PreparedScore } from "./measureContent";
-import { layoutTies, layoutTuplets, layoutVoltas, mergeSpanners, notePlaces } from "./spanners";
+import { layoutMarks } from "./marks";
+import { layoutSlurs, layoutTies, layoutTuplets, layoutVoltas, mergeSpanners, notePlaces } from "./spanners";
 import { breakSystems, type SystemPlan } from "./systems";
 
 /** MuseScore's staffDistance and akkoladeDistance, from the bottom of one staff to the top of the next. */
@@ -241,10 +243,14 @@ export function layoutScore(score: ScoreModel, format: PageFormat): LayoutModel 
   });
 
   const places = notePlaces(systems, shapes);
+  const marks = layoutMarks(systems, shapes, sp);
   const spanners = mergeSpanners(
     layoutTies(systems, places, sp),
+    layoutSlurs(systems, shapes, sp),
     layoutTuplets(systems, shapes, sp),
     layoutVoltas(systems, shapes, sp),
+    marks.drawables,
+    layoutDirections(score, prepared, systems, shapes, sp, marks.boxes),
   );
   const pages = pagesOfSystems.map((pageSystems, pageIndex) =>
     drawPage(pageIndex, pageSystems, { score, prepared, shapes, format, sp, firstSystem: systems[0], spanners }),

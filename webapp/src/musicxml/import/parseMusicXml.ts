@@ -17,6 +17,8 @@ import type {
   ClefSign,
   CreditModel,
   CreditRun,
+  DirectionItem,
+  Placement,
   KeyChange,
   MeasureModel,
   NoteModel,
@@ -213,6 +215,175 @@ function parseTuplets(note: Element): { tupletStarts: TupletStart[]; tupletStops
   return { tupletStarts, tupletStops };
 }
 
+function placementOf(element: Element | undefined): Placement {
+  const value = attribute(element, "placement");
+  return value === "above" || value === "below" ? value : null;
+}
+
+const ARTICULATIONS = new Set(["staccato", "accent", "tenuto", "staccatissimo", "strong-accent", "detached-legato", "spiccato"]);
+const ORNAMENTS = new Set(["trill-mark", "mordent", "inverted-mordent", "turn", "inverted-turn"]);
+
+type ChordMarks = Pick<ChordModel, "slurs" | "articulations" | "fermata" | "ornaments" | "wavyLines" | "arpeggiate" | "tremolo">;
+
+/** Slurs, articulations, fermatas, ornaments, arpeggios and tremolos a note's notations carry. */
+function parseChordMarks(note: Element): ChordMarks {
+  const marks: ChordMarks = {
+    slurs: [], articulations: [], fermata: null, ornaments: [], wavyLines: [], arpeggiate: null, tremolo: null,
+  };
+  for (const notations of childElements(note, "notations")) {
+    if (attribute(notations, "print-object") === "no") continue;
+    for (const slur of childElements(notations, "slur")) {
+      const type = attribute(slur, "type");
+      if (type === "start" || type === "stop" || type === "continue") {
+        marks.slurs.push({ type, number: attribute(slur, "number") ?? "1", placement: placementOf(slur) });
+      }
+    }
+    for (const group of childElements(notations, "articulations")) {
+      for (const articulation of childElements(group)) {
+        if (ARTICULATIONS.has(articulation.localName)) {
+          marks.articulations.push({ name: articulation.localName, placement: placementOf(articulation) });
+        }
+      }
+    }
+    const fermata = childElement(notations, "fermata");
+    if (fermata) marks.fermata = { inverted: attribute(fermata, "type") === "inverted", shape: fermata.textContent?.trim() ?? "" };
+    for (const group of childElements(notations, "ornaments")) {
+      for (const ornament of childElements(group)) {
+        if (ORNAMENTS.has(ornament.localName)) {
+          marks.ornaments.push({ name: ornament.localName as ChordMarks["ornaments"][number]["name"], placement: placementOf(ornament) });
+        }
+        if (ornament.localName === "wavy-line") {
+          const type = attribute(ornament, "type");
+          if (type === "start" || type === "stop" || type === "continue") {
+            marks.wavyLines.push({ type, number: attribute(ornament, "number") ?? "1" });
+          }
+        }
+        if (ornament.localName === "tremolo") {
+          const type = attribute(ornament, "type");
+          marks.tremolo = {
+            type: type === "start" || type === "stop" || type === "unmeasured" ? type : "single",
+            marks: Math.max(0, Math.min(8, Number(ornament.textContent?.trim() || 3) || 0)),
+          };
+        }
+      }
+    }
+    const arpeggiate = childElement(notations, "arpeggiate");
+    if (arpeggiate) {
+      const direction = attribute(arpeggiate, "direction");
+      marks.arpeggiate = {
+        direction: direction === "up" || direction === "down" ? direction : null,
+        number: attribute(arpeggiate, "number") ?? "1",
+      };
+    }
+  }
+  return marks;
+}
+
+function mergeChordMarks(target: ChordModel, marks: ChordMarks): void {
+  target.slurs.push(...marks.slurs);
+  for (const articulation of marks.articulations) {
+    if (!target.articulations.some((value) => value.name === articulation.name)) target.articulations.push(articulation);
+  }
+  target.fermata ??= marks.fermata;
+  for (const ornament of marks.ornaments) {
+    if (!target.ornaments.some((value) => value.name === ornament.name)) target.ornaments.push(ornament);
+  }
+  target.wavyLines.push(...marks.wavyLines);
+  target.arpeggiate ??= marks.arpeggiate;
+  target.tremolo ??= marks.tremolo;
+}
+
+function parseFingerings(note: Element): NoteModel["fingerings"] {
+  return childElements(note, "notations").flatMap((notations) =>
+    childElements(notations, "technical").flatMap((technical) =>
+      childElements(technical, "fingering")
+        .filter((fingering) => attribute(fingering, "print-object") !== "no" && fingering.textContent?.trim())
+        .map((fingering) => ({ text: fingering.textContent!.trim(), placement: placementOf(fingering) }))));
+}
+
+/** A direction's printed items; items marked not to print, such as hidden tempos, are left out. */
+function parseDirectionItems(direction: Element): DirectionItem[] {
+  const items: DirectionItem[] = [];
+  for (const type of childElements(direction, "direction-type")) {
+    for (const element of childElements(type)) {
+      if (attribute(element, "print-object") === "no") continue;
+      switch (element.localName) {
+        case "dynamics": {
+          const marks = childElements(element).map((mark) => mark.localName === "other-dynamics" ? mark.textContent?.trim() ?? "" : mark.localName);
+          if (marks.length) items.push({ kind: "dynamics", text: marks.join("") });
+          break;
+        }
+        case "wedge": {
+          const wedge = attribute(element, "type");
+          if (wedge === "crescendo" || wedge === "diminuendo" || wedge === "stop") {
+            items.push({ kind: "wedge", type: wedge, number: attribute(element, "number") ?? "1" });
+          }
+          break;
+        }
+        case "words": {
+          const text = element.textContent?.trim();
+          const size = Number(attribute(element, "font-size") ?? NaN);
+          if (text) {
+            items.push({
+              kind: "words",
+              text,
+              italic: attribute(element, "font-style") === "italic",
+              bold: attribute(element, "font-weight") === "bold",
+              size: Number.isFinite(size) && size > 0 ? size : null,
+            });
+          }
+          break;
+        }
+        case "metronome": {
+          const perMinute = childText(element, "per-minute");
+          const beatUnit = childText(element, "beat-unit");
+          if (perMinute && beatUnit) {
+            items.push({
+              kind: "metronome",
+              beatUnit,
+              dots: childElements(element, "beat-unit-dot").length,
+              perMinute,
+              parentheses: attribute(element, "parentheses") === "yes",
+            });
+          }
+          break;
+        }
+        case "pedal": {
+          const pedal = attribute(element, "type");
+          if (pedal === "start" || pedal === "stop" || pedal === "change") {
+            items.push({ kind: "pedal", type: pedal, line: attribute(element, "line") === "yes" });
+          }
+          break;
+        }
+        case "octave-shift": {
+          const shift = attribute(element, "type");
+          if (shift === "up" || shift === "down" || shift === "stop") {
+            items.push({
+              kind: "octave-shift",
+              type: shift,
+              size: Number(attribute(element, "size") ?? 8) || 8,
+              number: attribute(element, "number") ?? "1",
+            });
+          }
+          break;
+        }
+        case "segno":
+        case "coda":
+          items.push({ kind: "symbol", smufl: element.localName });
+          break;
+        case "other-direction": {
+          const smufl = attribute(element, "smufl");
+          if (smufl) items.push({ kind: "symbol", smufl });
+          break;
+        }
+        default:
+          break;
+      }
+    }
+  }
+  return items;
+}
+
 function parseNotePitch(note: Element): Pick<NoteModel, "step" | "alter" | "octave" | "unpitched"> | null {
   const pitch = childElement(note, "pitch");
   if (pitch) {
@@ -244,7 +415,7 @@ function parsePartMeasure(
   state: MeasureState,
   noteElements: Map<NoteModel, Element>,
 ): ParsedPartMeasure {
-  const measure: PartMeasureModel = { clefs: [], keys: [], times: [], chords: [], barlines: [] };
+  const measure: PartMeasureModel = { clefs: [], keys: [], times: [], chords: [], barlines: [], directions: [] };
   let position = ZERO;
   let furthest = ZERO;
   let newPage = false;
@@ -301,6 +472,21 @@ function parsePartMeasure(
         furthest = maxFraction(furthest, position);
         previousChord = null;
         break;
+      case "direction": {
+        if (attribute(element, "print-object") === "no") break;
+        const items = parseDirectionItems(element);
+        if (items.length === 0) break;
+        const offset = childNumber(element, "offset") ?? 0;
+        let onset = add(position, fraction(Math.round(offset), state.divisions * 4));
+        if (compare(onset, ZERO) < 0) onset = ZERO;
+        measure.directions.push({
+          onset,
+          staff: Math.max(1, Math.round(childNumber(element, "staff") ?? 1)),
+          placement: placementOf(element),
+          items,
+        });
+        break;
+      }
       case "print": {
         if (attribute(element, "new-page") === "yes") newPage = true;
         if (attribute(element, "new-system") === "yes") newSystem = true;
@@ -337,6 +523,7 @@ function parsePartMeasure(
               ...pitch,
               accidental: childText(element, "accidental") ?? null,
               accidentalParentheses: attribute(childElement(element, "accidental"), "parentheses") === "yes",
+              fingerings: parseFingerings(element),
               tieStart: tieTypes.includes("start"),
               tieStop: tieTypes.includes("stop"),
             }
@@ -347,6 +534,7 @@ function parsePartMeasure(
           const tuplets = parseTuplets(element);
           previousChord.tupletStarts.push(...tuplets.tupletStarts);
           previousChord.tupletStops.push(...tuplets.tupletStops);
+          mergeChordMarks(previousChord, parseChordMarks(element));
           break;
         }
         const type = childText(element, "type");
@@ -372,6 +560,7 @@ function parsePartMeasure(
           stem: stem === "up" || stem === "down" || stem === "none" || stem === "double" ? stem : null,
           beams: parseBeams(element),
           ...parseTuplets(element),
+          ...parseChordMarks(element),
           notes: note && !rest ? [note] : [],
         };
         measure.chords.push(chord);
@@ -494,7 +683,7 @@ function parseScore(root: Element, sources: PartSource[], noteElements: Map<Note
     source.measures.forEach((entry, position) => {
       const parsed = entry
         ? parsePartMeasure(entry.content, state, noteElements)
-        : { measure: { clefs: [], keys: [], times: [], chords: [], barlines: [] }, duration: ZERO, newPage: false, newSystem: false, systemLayout: null, staffDistance: null };
+        : { measure: { clefs: [], keys: [], times: [], chords: [], barlines: [], directions: [] }, duration: ZERO, newPage: false, newSystem: false, systemLayout: null, staffDistance: null };
       partMeasures.push(parsed.measure);
       const shared = (measures[position] ??= {
         number: entry?.number ?? String(position + 1),
@@ -521,7 +710,7 @@ function parseScore(root: Element, sources: PartSource[], noteElements: Map<Note
   // Every part has every measure, so layout can index them by position.
   for (const part of parts) {
     while (part.measures.length < measures.length) {
-      part.measures.push({ clefs: [], keys: [], times: [], chords: [], barlines: [] });
+      part.measures.push({ clefs: [], keys: [], times: [], chords: [], barlines: [], directions: [] });
     }
   }
   return { defaults: parseDefaults(root), credits: parseCredits(root), titles: parseTitles(root), parts, measures };

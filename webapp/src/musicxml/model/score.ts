@@ -87,7 +87,28 @@ export interface PartMeasureModel {
   times: TimeChange[];
   chords: ChordModel[];
   barlines: BarlineModel[];
+  directions: DirectionModel[];
 }
+
+export type Placement = "above" | "below" | null;
+
+/** A printed direction: what `<direction-type>` holds, at an onset on a staff. */
+export interface DirectionModel {
+  onset: Fraction;
+  staff: number;
+  placement: Placement;
+  items: DirectionItem[];
+}
+
+export type DirectionItem =
+  | { kind: "dynamics"; text: string }
+  | { kind: "wedge"; type: "crescendo" | "diminuendo" | "stop"; number: string }
+  | { kind: "words"; text: string; italic: boolean; bold: boolean; size: number | null }
+  | { kind: "metronome"; beatUnit: string; dots: number; perMinute: string; parentheses: boolean }
+  | { kind: "pedal"; type: "start" | "stop" | "change"; line: boolean }
+  | { kind: "octave-shift"; type: "up" | "down" | "stop"; size: number; number: string }
+  /** A symbol named by its SMuFL glyph, from `<other-direction smufl="…">`. */
+  | { kind: "symbol"; smufl: string };
 
 export type ClefSign = "G" | "F" | "C" | "percussion" | "TAB" | "none";
 
@@ -172,9 +193,23 @@ export interface ChordModel {
   /** Tuplets starting at this chord, and the numbers of those ending at it. */
   tupletStarts: TupletStart[];
   tupletStops: string[];
+  slurs: SlurMark[];
+  /** Articulations by MusicXML name, such as "staccato" or "strong-accent". */
+  articulations: { name: string; placement: Placement }[];
+  fermata: { inverted: boolean; shape: string } | null;
+  ornaments: { name: "trill-mark" | "mordent" | "inverted-mordent" | "turn" | "inverted-turn"; placement: Placement }[];
+  wavyLines: { type: "start" | "stop" | "continue"; number: string }[];
+  arpeggiate: { direction: "up" | "down" | null; number: string } | null;
+  tremolo: { type: "single" | "start" | "stop" | "unmeasured"; marks: number } | null;
   /** Beam values by level: index 0 is the eighth-note beam. */
   beams: (BeamValue | null)[];
   notes: NoteModel[];
+}
+
+export interface SlurMark {
+  type: "start" | "stop" | "continue";
+  number: string;
+  placement: Placement;
 }
 
 export interface TupletStart {
@@ -199,6 +234,8 @@ export interface NoteModel {
   accidental: string | null;
   /** The printed accidental is a courtesy one, in parentheses. */
   accidentalParentheses: boolean;
+  /** Fingerings the score prints for the note, such as "3" or "1-2". */
+  fingerings: { text: string; placement: Placement }[];
   tieStart: boolean;
   tieStop: boolean;
 }

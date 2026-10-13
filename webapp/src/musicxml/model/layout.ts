@@ -15,8 +15,9 @@ export type Bounds = [left: number, top: number, right: number, bottom: number];
 
 export type Drawable =
   /** A font glyph with its origin at (x, y), at `scale` times the staff's size. */
-  | { kind: "glyph"; glyph: GlyphName; x: number; y: number; scale: number; scaleY?: number }
-  | { kind: "line"; x1: number; y1: number; x2: number; y2: number; width: number }
+  | { kind: "glyph"; glyph: GlyphName; x: number; y: number; scale: number; scaleY?: number; rotate?: number }
+  /** `dash` gives dash and gap lengths for a dashed line, such as an ottava's. */
+  | { kind: "line"; x1: number; y1: number; x2: number; y2: number; width: number; dash?: [number, number] }
   /** A filled polygon, such as a beam: x, y pairs. */
   | { kind: "polygon"; points: number[] }
   /** A filled outline as SVG path data, such as a tie. */
