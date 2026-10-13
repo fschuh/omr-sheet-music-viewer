@@ -72,6 +72,13 @@ import {
   savePlaybackPiano,
 } from "./preferences";
 import { NoteHighway } from "./noteHighway/NoteHighway";
+import { diagnosticsAvailable, documentFolder } from "./documentSource";
+import {
+  isMusicXmlPath,
+  openMusicXmlScore,
+  showScoreDataFolder,
+  showScoreSource,
+} from "./musicxml";
 import {
   useNoteByNoteHighwaySource,
   useRealtimeHighwaySource,
@@ -79,7 +86,7 @@ import {
 import { pianoLayerForDynamic, type PianoId } from "./pianoRegistry";
 import {
   cancelJob,
-  choosePdf,
+  chooseScore,
   getKeyboardRepeatTiming,
   getWorkerLogPath,
   loadPageArtifacts,
@@ -168,9 +175,13 @@ function replacePage(
 }
 
 function statusLabel(document: LoadedDocument): string {
+  const { source } = document;
+  if (source.kind === "musicxml") {
+    return document.status === "opening" ? "Opening MusicXML…" : "MusicXML score";
+  }
   if (document.status === "opening") return "Opening PDF…";
   if (document.status === "processing") {
-    return document.cacheStatus === "complete" ? "Loading cached recognition…" : "Recognizing score…";
+    return source.cacheStatus === "complete" ? "Loading cached recognition…" : "Recognizing score…";
   }
   if (document.status === "partial") return "Finished with page errors";
   if (document.status === "cancelled") return "Cancelled — completed pages were cached";
@@ -178,7 +189,7 @@ function statusLabel(document: LoadedDocument): string {
   if (document.fingeringStatus === "pending") return "Loading piano fingerings…";
   if (document.fingeringStatus === "predicting") return "Predicting piano fingerings…";
   if (document.fingeringStatus === "failed") return "Recognition complete · fingerings unavailable";
-  return document.cacheStatus === "complete" ? "Loaded from cache" : "Recognition complete";
+  return source.cacheStatus === "complete" ? "Loaded from cache" : "Recognition complete";
 }
 
 function isEditableKeyboardTarget(target: EventTarget | null): boolean {
@@ -1448,8 +1459,7 @@ export function App() {
             return {
               ...current,
               name: event.documentName,
-              cacheStatus: event.cacheStatus,
-              cachePath: event.cachePath,
+              source: { kind: "pdf", cacheStatus: event.cacheStatus, cachePath: event.cachePath },
               documentMusicXmlPath: undefined,
               documentMusicXml: undefined,
               fingeringStatus: undefined,
@@ -1477,8 +1487,7 @@ export function App() {
             jobId: event.jobId,
             name: event.documentName,
             pageCount: event.pageCount,
-            cacheStatus: event.cacheStatus,
-            cachePath: event.cachePath,
+            source: { kind: "pdf", cacheStatus: event.cacheStatus, cachePath: event.cachePath },
             status: "processing",
             pages: pendingPages(event.pageCount),
           };
@@ -1691,6 +1700,7 @@ export function App() {
     }
   }, [showWorkerLogs, workerLogs]);
 
+  const diagnosticsShown = debugPanelEnabled && diagnosticsAvailable(document);
   const selectedPage = selectedGroup
     ? document?.pages.find((page) => page.index === selectedGroup.pageIndex)
     : undefined;
@@ -1700,7 +1710,7 @@ export function App() {
           group.visual_group_id === selectedGroup.visualGroupId &&
           isSelectableVisualGroup(
             group,
-            debugPanelEnabled && showDiagnosticVisualGroups,
+            diagnosticsShown && showDiagnosticVisualGroups,
           ),
       )
     : undefined;
@@ -1766,41 +1776,73 @@ export function App() {
     };
   }, [document]);
 
-  async function handleOpenPdf() {
+  /** Stops everything that belongs to the current document before another one opens. */
+  function resetForNewDocument() {
+    setSelectedGroup(null);
+    setHighlightAllNotes(false);
+    stopListenMode();
+    playbackStateRef.current = initialPlaybackState;
+    realtimeStartGenerationRef.current += 1;
+    realtimeControllerRef.current?.stop();
+    realtimeRouteRef.current = null;
+    realtimeLatestFrameRef.current = null;
+    realtimeRenderSignatureRef.current = "";
+    setRealtimeStatus("inactive");
+    setRealtimeFrame(null);
+    setPlaybackMode("note-by-note");
+    setTempoMultiplier(1);
+    pianoSampler.stop();
+    setPlaybackState(initialPlaybackState);
+  }
+
+  async function openPdfDocument(path: string) {
+    const jobId = await openPdf(path);
+    activeJobId.current = jobId;
+    setDocument((current) =>
+      current?.jobId === jobId
+        ? current
+        : {
+            jobId,
+            name: fileName(path),
+            pageCount: 0,
+            source: { kind: "pdf", cacheStatus: "miss" },
+            status: "opening",
+            pages: [],
+          },
+    );
+  }
+
+  async function openMusicXmlDocument(path: string) {
+    // MusicXML needs no worker job; the ID only keeps the stale-request guards working.
+    const jobId = `musicxml-${crypto.randomUUID()}`;
+    activeJobId.current = jobId;
+    fingeringRequestRef.current = null;
+    setDocument({
+      jobId,
+      name: fileName(path),
+      pageCount: 0,
+      source: { kind: "musicxml", sourcePath: path },
+      status: "opening",
+      pages: [],
+    });
+    try {
+      const opened = await openMusicXmlScore(path, jobId);
+      if (activeJobId.current === jobId) setDocument(opened);
+    } catch (openError) {
+      if (activeJobId.current === jobId) setDocument(null);
+      throw openError;
+    }
+  }
+
+  async function handleOpenScore() {
     if (!nativeAvailable) return;
     setError(null);
     try {
-      const path = await choosePdf();
+      const path = await chooseScore();
       if (!path) return;
-      setSelectedGroup(null);
-      setHighlightAllNotes(false);
-      stopListenMode();
-      playbackStateRef.current = initialPlaybackState;
-      realtimeStartGenerationRef.current += 1;
-      realtimeControllerRef.current?.stop();
-      realtimeRouteRef.current = null;
-      realtimeLatestFrameRef.current = null;
-      realtimeRenderSignatureRef.current = "";
-      setRealtimeStatus("inactive");
-      setRealtimeFrame(null);
-      setPlaybackMode("note-by-note");
-      setTempoMultiplier(1);
-      pianoSampler.stop();
-      setPlaybackState(initialPlaybackState);
-      const jobId = await openPdf(path);
-      activeJobId.current = jobId;
-      setDocument((current) =>
-        current?.jobId === jobId
-          ? current
-          : {
-              jobId,
-              name: fileName(path),
-              pageCount: 0,
-              cacheStatus: "miss",
-              status: "opening",
-              pages: [],
-            },
-      );
+      resetForNewDocument();
+      if (isMusicXmlPath(path)) await openMusicXmlDocument(path);
+      else await openPdfDocument(path);
     } catch (openError) {
       setError(openError instanceof Error ? openError.message : String(openError));
     }
@@ -1815,20 +1857,24 @@ export function App() {
     }
   }
 
-  async function handleOpenCacheDirectory() {
-    if (!document?.cachePath) return;
+  async function handleOpenDocumentFolder() {
+    if (!document) return;
+    const folder = documentFolder(document);
+    if (!folder.path) return;
     try {
-      await openCacheDirectory(document.cachePath);
+      if (folder.kind === "score-data") await showScoreDataFolder(folder.path);
+      else await openCacheDirectory(folder.path);
     } catch (openError) {
       setError(openError instanceof Error ? openError.message : String(openError));
     }
   }
 
   async function handleOpenMusicXml() {
-    if (!document?.documentMusicXmlPath) return;
+    if (!document) return;
     setError(null);
     try {
-      await openMusicXml(document.documentMusicXmlPath);
+      if (document.source.kind === "musicxml") await showScoreSource(document.source.sourcePath);
+      else if (document.documentMusicXmlPath) await openMusicXml(document.documentMusicXmlPath);
     } catch (openError) {
       setError(openError instanceof Error ? openError.message : String(openError));
     }
@@ -1887,7 +1933,7 @@ export function App() {
       <header className="topbar">
         <div className="document-heading">
           <h1>OMR Sheet Music Viewer</h1>
-          <p>{activePage === "settings" ? "Playback preferences" : document ? document.name : workerInfo ?? "Open a PDF score to begin"}</p>
+          <p>{activePage === "settings" ? "Playback preferences" : document ? document.name : workerInfo ?? "Open a score to begin"}</p>
         </div>
         {activePage === "viewer" && document ? (
           <div className="job-summary" aria-live="polite">
@@ -1903,7 +1949,16 @@ export function App() {
         <div className="actions">
           {activePage === "viewer" ? (
             <>
-          {document ? (
+          {document?.source.kind === "musicxml" ? (
+            <button
+              type="button"
+              title={`Open ${fileName(document.source.sourcePath)} with the system default application`}
+              disabled={document.status === "opening"}
+              onClick={handleOpenMusicXml}
+            >
+              Open MusicXML
+            </button>
+          ) : document ? (
             <button
               type="button"
               title={
@@ -1928,16 +1983,16 @@ export function App() {
           {document ? (
             <button
               type="button"
-              title={document.cachePath ?? "The cache folder is available after the PDF is opened"}
-              disabled={!document.cachePath}
-              onClick={handleOpenCacheDirectory}
+              title={documentFolder(document).title}
+              disabled={!documentFolder(document).path}
+              onClick={handleOpenDocumentFolder}
             >
-              Open cache folder
+              {documentFolder(document).label}
             </button>
           ) : null}
           {busy ? <button type="button" onClick={handleCancel}>Cancel</button> : null}
-          <button type="button" className="primary-button" onClick={handleOpenPdf} disabled={!nativeAvailable || busy}>
-            Open PDF
+          <button type="button" className="primary-button" onClick={handleOpenScore} disabled={!nativeAvailable || busy}>
+            Open score
           </button>
             </>
           ) : null}
@@ -2028,7 +2083,7 @@ export function App() {
       ) : null}
 
       <section
-        className={`workspace${debugPanelEnabled ? "" : " debug-panel-hidden"}${
+        className={`workspace${diagnosticsShown ? "" : " debug-panel-hidden"}${
           noteHighwayVisible ? " note-highway-active" : ""
         }`}
       >
@@ -2045,7 +2100,7 @@ export function App() {
               showRefinedNoteheadContours={showRefinedNoteheadContours}
               showRawStemContours={showRawStemContours}
               showDiagnosticVisualGroups={
-                debugPanelEnabled && showDiagnosticVisualGroups
+                diagnosticsShown && showDiagnosticVisualGroups
               }
               playbackActive={playbackActive}
               playbackNoteSoundsEnabled={
@@ -2095,7 +2150,7 @@ export function App() {
               onSelectGroup={handleSelectGroup}
               onRetryPage={handleRetryPage}
             />
-            {debugPanelEnabled ? <aside className="inspector" aria-label="Debug panel">
+            {diagnosticsShown ? <aside className="inspector" aria-label="Debug panel">
               <h2>Diagnostics</h2>
               <button
                 type="button"
@@ -2227,20 +2282,27 @@ export function App() {
               <>
                 <span className="spinner large" />
                 <h2>Opening {document.name}</h2>
-                <p>Fingerprinting the PDF and checking its recognition cache.</p>
+                <p>
+                  {document.source.kind === "musicxml"
+                    ? "Reading the score."
+                    : "Fingerprinting the PDF and checking its recognition cache."}
+                </p>
               </>
             ) : (
               <>
                 <div className="empty-score-icon" aria-hidden="true">♪</div>
-                <h2>Open a PDF score</h2>
-                <p>Pages are recognized locally with HOMR and become interactive as soon as they are ready.</p>
-                <button type="button" className="primary-button" onClick={handleOpenPdf} disabled={!nativeAvailable}>Choose PDF</button>
+                <h2>Open a score</h2>
+                <p>
+                  MusicXML scores open directly. PDF pages are recognized locally with HOMR and
+                  become interactive as soon as they are ready.
+                </p>
+                <button type="button" className="primary-button" onClick={handleOpenScore} disabled={!nativeAvailable}>Choose score</button>
               </>
             )}
           </div>
         )}
       </section>
-      {showWorkerLogs ? (
+      {showWorkerLogs && diagnosticsShown ? (
         <section className="worker-console" aria-label="Python worker logs">
           <header>
             <div>

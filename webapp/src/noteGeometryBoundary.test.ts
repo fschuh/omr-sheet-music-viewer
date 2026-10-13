@@ -1,32 +1,11 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { imports, SIDECAR_NAMES } from "./importScan";
 
 // The code every score source shares reads note geometry only. homr's visual sidecar
 // reaches it solely through the PDF adapter, so a MusicXML page can feed it unchanged.
 const SHARED_CONSUMERS = ["noteGeometry.ts", "playback.ts", "realtime.ts", "noteLabels.ts"];
-const SIDECAR_NAMES = [
-  "VisualSidecar",
-  "VisualSidecarNote",
-  "VisualGroup",
-  "NoteheadEllipse",
-  "RawStemContour",
-  "isLinkedVisualGroup",
-  "isSelectableVisualGroup",
-];
-
-/** Every `import ... from "<specifier>"` in `source`, with the names it brings in. */
-function imports(source: string): { specifier: string; names: string[] }[] {
-  return [...source.matchAll(/import\s+(?:type\s+)?([\s\S]*?)\s+from\s+["']([^"']+)["']/g)].map(
-    ([, clause, specifier]) => ({
-      specifier,
-      names: clause
-        .replace(/[{}]/g, " ")
-        .split(/[\s,]+/)
-        .filter((name) => name && name !== "type" && name !== "as"),
-    }),
-  );
-}
 
 function sidecarDependencies(source: string): string[] {
   return imports(source).flatMap(({ specifier, names }) => {

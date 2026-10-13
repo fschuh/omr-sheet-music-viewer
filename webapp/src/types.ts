@@ -1,3 +1,5 @@
+import type { MusicXmlPage } from "./musicxml";
+
 export type VisualPoint = [number, number];
 export type VisualBBox = [number, number, number, number];
 
@@ -110,7 +112,10 @@ export interface DocumentPage {
   status: DocumentPageStatus;
   width: number;
   height: number;
+  /** A recognized PDF page's raster image. */
   imageUrl?: string;
+  /** An engraved MusicXML page, drawn by the MusicXML module in place of an image. */
+  surface?: MusicXmlPage;
   musicXml?: string;
   visualSidecar?: VisualSidecar;
   artifacts?: PageArtifacts;
@@ -121,12 +126,27 @@ export interface DocumentPage {
 export type JobStatus = "opening" | "processing" | "complete" | "partial" | "cancelled" | "failed";
 export type FingeringStatus = "pending" | "predicting" | "ready" | "failed";
 
+/** Where a document came from, and what belongs only to that kind of source. */
+export type DocumentSource =
+  | {
+      kind: "pdf";
+      cacheStatus: "miss" | "partial" | "complete";
+      /** The PDF's recognition cache, known once the worker starts the job. */
+      cachePath?: string;
+    }
+  | {
+      kind: "musicxml";
+      /** The opened file, which the viewer never modifies. */
+      sourcePath: string;
+      /** The per-score data folder, known once the file has been read. */
+      scoreDataPath?: string;
+    };
+
 export interface LoadedDocument {
   jobId: string;
   name: string;
   pageCount: number;
-  cacheStatus: "miss" | "partial" | "complete";
-  cachePath?: string;
+  source: DocumentSource;
   documentMusicXmlPath?: string;
   /** Parsed document-level playback always uses the merged, page-scoped MusicXML. */
   documentMusicXml?: string;

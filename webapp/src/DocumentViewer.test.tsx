@@ -723,3 +723,40 @@ test("restores a supplied viewport transform after remounting", () => {
   assert.match(markup, />175%<\/span>/);
   assert.match(markup, /translate3d\(-320px, -640px, 0\) scale\(1.75\)/);
 });
+
+test("a MusicXML page draws its engraved surface in place of an image", () => {
+  const renderPages = (pages: DocumentPage[]) => renderToStaticMarkup(
+    <DocumentViewer
+      documentKey="fixture"
+      pages={pages}
+      noteGeometry={[]}
+      selectedGroup={null}
+      highlightAllNotes={false}
+      showOriginalNoteheadContours={false}
+      showDetectedNoteheadContours={false}
+      showRefinedNoteheadContours={false}
+      showRawStemContours={false}
+      playbackActive={false}
+      playbackNoteSoundsEnabled
+      playbackAvailable={false}
+      playbackMoment={null}
+      listenFeedback={listenFeedback}
+      onPlaybackCommand={() => undefined}
+      onSelectGroup={() => undefined}
+      onRetryPage={() => undefined}
+    />,
+  );
+  const engraved = renderPages([{
+    index: 0,
+    status: "complete",
+    width: 2480,
+    height: 3508,
+    surface: { index: 0, width: 2480, height: 3508 },
+  }]);
+  assert.match(engraved, /<svg class="musicxml-page" viewBox="0 0 2480 3508"/);
+  assert.doesNotMatch(engraved, /<img/);
+
+  const recognized = renderPages([{ ...page, imageUrl: "page-1.png" }]);
+  assert.match(recognized, /<img src="page-1.png"/);
+  assert.doesNotMatch(recognized, /musicxml-page/);
+});

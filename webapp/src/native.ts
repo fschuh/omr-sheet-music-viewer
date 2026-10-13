@@ -76,8 +76,9 @@ export function nativeViewerAvailable(): boolean {
   return isTauri();
 }
 
-export async function choosePdf(): Promise<string | null> {
-  return invoke<string | null>("choose_pdf");
+/** Asks for a PDF or MusicXML file to open. */
+export async function chooseScore(): Promise<string | null> {
+  return invoke<string | null>("choose_score");
 }
 
 export async function openPdf(path: string): Promise<string> {
@@ -110,6 +111,31 @@ export async function openCacheDirectory(path: string): Promise<void> {
 
 export async function openMusicXml(path: string): Promise<void> {
   return invoke("open_music_xml", { path });
+}
+
+export interface MusicXmlScoreFile {
+  /** The file's resolved path. */
+  path: string;
+  name: string;
+  /** The score's XML; for a compressed `.mxl` file, the score inside it. */
+  musicXml: string;
+  sourceSha256: string;
+  sourceByteLength: number;
+  scoreDataPath: string;
+}
+
+/** Reads a MusicXML score and prepares its data folder. The file itself is never written. */
+export async function readMusicXmlScoreFile(path: string): Promise<MusicXmlScoreFile> {
+  return invoke<MusicXmlScoreFile>("open_music_xml_score", { path });
+}
+
+/** Opens a score file opened in this session with the system's default application. */
+export async function openScoreSource(path: string): Promise<void> {
+  return invoke("open_score_source", { path });
+}
+
+export async function openScoreDataDirectory(path: string): Promise<void> {
+  return invoke("open_score_data_directory", { path });
 }
 
 export async function loadPageArtifacts(artifacts: PageArtifacts): Promise<PageArtifactData> {

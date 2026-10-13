@@ -9,6 +9,7 @@ import {
   type PageNoteGeometry,
 } from "./noteGeometry";
 import { diagnosticNoteheads } from "./sidecarNoteGeometry";
+import { MusicXmlPageSurface } from "./musicxml";
 import { playbackGroupIdsForPage } from "./playback";
 import type { PlaybackCommand, PlaybackMoment, PracticeHand } from "./playback";
 import type { PlaybackMode, PlaybackStatus, RealtimePlayhead } from "./realtime";
@@ -1432,7 +1433,11 @@ export function DocumentViewer({
               style={{ width, height, marginBottom: pagePosition === displayPages.length - 1 ? 0 : PAGE_GAP }}
             >
               <span className="page-number">{page.index + 1}</span>
-              {page.imageUrl ? <img src={page.imageUrl} alt={`Sheet music page ${page.index + 1}`} draggable={false} /> : null}
+              {page.surface ? (
+                <MusicXmlPageSurface page={page.surface} />
+              ) : page.imageUrl ? (
+                <img src={page.imageUrl} alt={`Sheet music page ${page.index + 1}`} draggable={false} />
+              ) : null}
               <PageOverlay
                 page={page}
                 geometry={geometryByPage.get(page.index)}

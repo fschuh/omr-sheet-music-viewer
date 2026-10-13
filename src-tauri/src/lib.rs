@@ -24,6 +24,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
 };
 
+mod musicxml;
+
 const PROTOCOL_VERSION: u8 = 1;
 const DEFAULT_KEYBOARD_REPEAT_DELAY_MS: u32 = 400;
 const DEFAULT_KEYBOARD_REPEAT_INTERVAL_MS: u32 = 75;
@@ -553,10 +555,13 @@ struct PageArtifactData {
 }
 
 #[tauri::command]
-async fn choose_pdf() -> Option<String> {
+async fn choose_score() -> Option<String> {
     tauri::async_runtime::spawn_blocking(|| {
         rfd::FileDialog::new()
-            .add_filter("PDF document", &["pdf"])
+            .set_title("Open score")
+            .add_filter("All supported scores", &["pdf", "musicxml", "xml", "mxl"])
+            .add_filter("PDF", &["pdf"])
+            .add_filter("MusicXML", &["musicxml", "xml", "mxl"])
             .pick_file()
             .map(|path| path.to_string_lossy().into_owned())
     })
@@ -802,6 +807,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(WorkerSupervisor::default())
         .manage(MidiInputManager::default())
+        .manage(musicxml::OpenedScores::default())
         .setup(|app| {
             let cache_root = app.path().app_cache_dir()?;
             fs::create_dir_all(cache_root)?;
@@ -812,8 +818,11 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            choose_pdf,
+            choose_score,
             open_pdf,
+            musicxml::open_music_xml_score,
+            musicxml::open_score_source,
+            musicxml::open_score_data_directory,
             cancel_job,
             retry_page,
             load_page_artifacts,

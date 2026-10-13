@@ -1,7 +1,7 @@
 # MusicXML viewer plan
 
 Date: 2026-10-12  
-Status: Proposed; implementation has not started.
+Status: In progress; phases 1 and 2 are implemented.
 
 ## 1. Objective and scope
 
@@ -49,7 +49,9 @@ All MusicXML-viewer code lives in its own folder, `webapp/src/musicxml/`, with a
 
 The shared consumers (playback, realtime, note labels, hit testing) depend only on `noteGeometry.ts`, never on the visual sidecar.
 
-Both boundaries are enforced, not just documented: a test fails when a file outside `webapp/src/musicxml/` imports a path inside it other than `index.ts`, when a file inside it imports a forbidden module, and when a shared consumer imports the visual sidecar types.
+Inside the module, each stage owns one kind of dependency: only `render/` imports React, only `import/` reads XML (`@xmldom/xmldom`), and only `scoreData/` uses the native bridge. No other package is used.
+
+All of these boundaries are enforced, not just documented: `musicxmlBoundary.test.ts` fails when a file outside `webapp/src/musicxml/` imports a path inside it other than `index.ts`, when a file inside it imports a shared file or package it is not allowed, and when it imports the visual sidecar types; `noteGeometryBoundary.test.ts` fails when a shared consumer depends on the visual sidecar.
 
 On the native side, MusicXML commands live in a new Rust module, `src-tauri/src/musicxml.rs`, registered from `lib.rs`. The Python worker is not involved.
 
@@ -82,7 +84,8 @@ Shared files outside the module:
 ```text
 webapp/src/
 ├── noteGeometry.ts           source-neutral contract (section 3.4)
-└── sidecarNoteGeometry.ts    PDF adapter: VisualSidecar page -> PageNoteGeometry
+├── sidecarNoteGeometry.ts    PDF adapter: VisualSidecar page -> PageNoteGeometry
+└── documentSource.ts         what the app shows for each document source (section 3.6)
 ```
 
 The MusicXML module:
@@ -188,25 +191,27 @@ The document carries `documentMusicXml`, an in-memory copy of the source in whic
 
 ```ts
 source:
-  | { kind: "pdf"; cachePath?: string }
-  | { kind: "musicxml"; sourcePath: string; scoreDataPath: string; importReport: ImportReport };
+  | { kind: "pdf"; cacheStatus: "miss" | "partial" | "complete"; cachePath?: string }
+  | { kind: "musicxml"; sourcePath: string; scoreDataPath?: string };
 ```
+
+The PDF-only `cacheStatus` and `cachePath` moved from `LoadedDocument` into the PDF source. `scoreDataPath` is unset only while the file is being read. The import report (section 4.1) joins the MusicXML source when import reports unsupported elements.
 
 Opening:
 
 - A single "Open score…" dialog replaces the PDF-only one. Its default filter, "All supported scores", shows every supported type (`pdf`, `musicxml`, `xml`, `mxl`), with "PDF" and "MusicXML" filters as alternatives. The extension chooses the flow. `choose_pdf` becomes `choose_score` (and `choosePdf` becomes `chooseScore`), and later formats are added to the same dialog. The existing reset sequence in `handleOpenPdf` (stop playback, listen mode, and realtime; clear selection) moves into a shared function used by both flows.
 - PDFs continue through the worker exactly as today; their note geometry comes from the adapter.
-- MusicXML calls `openMusicXmlScore(path)`, which reads the file through the native bridge, imports, lays out, and returns a complete `LoadedDocument` with status `"complete"`. A synthetic job ID keeps the existing stale-request guards working. Fingering prediction then runs through the module's fingering lifecycle (section 4.3).
+- MusicXML calls `openMusicXmlScore(path, jobId)`, which reads the file through the native bridge, imports, lays out, and returns a complete `LoadedDocument` with status `"complete"`. A synthetic job ID keeps the existing stale-request guards working. Fingering prediction then runs through the module's fingering lifecycle (section 4.3).
 
-Page surface: `DocumentPage` gains an optional `surface` field. When it holds a MusicXML page, `DocumentViewer` renders `MusicXmlPageSurface` in place of the `<img>` and the sidecar highlight layer. Pan, zoom, and hit testing are shared because they work in page pixels on the note geometry. Pages outside the viewport render a sized placeholder, so long scores do not keep hundreds of SVG pages alive.
+Page surface: `DocumentPage` gains an optional `surface` field. When it holds a MusicXML page, `DocumentViewer` renders `MusicXmlPageSurface` in place of the `<img>`; MusicXML pages have no sidecar, so the sidecar highlight layer draws nothing on them. Pan, zoom, and hit testing are shared because they work in page pixels on the note geometry. Pages outside the viewport render a sized placeholder, so long scores do not keep hundreds of SVG pages alive.
 
 UI differences by source:
 
 | Element | PDF | MusicXML |
 | --- | --- | --- |
-| Diagnostics panel, HOMR log, diagnostic visual groups | Shown when enabled | Hidden |
+| Diagnostics panel, worker logs, debug overlays, diagnostic visual groups | Shown when enabled | Hidden (`diagnosticsAvailable` in `documentSource.ts`) |
 | Retry page, page processing status | Shown | Hidden (every page is complete) |
-| Open cache directory | Opens the PDF cache folder | Opens the score-data folder |
+| Folder button | "Open cache folder": the PDF cache folder | "Open score data folder": the score-data folder |
 | Open MusicXML | Opens the merged, recognized MusicXML | Opens the original file |
 | Navigation, shortcuts, selection, playback, listen mode, keyboard, note highway | Unchanged | Same behavior |
 | Note inspector | Includes homr fields (provenance, repairs, confidence) | Shows the structural key; omits homr-only fields |
@@ -217,11 +222,13 @@ New commands in `src-tauri/src/musicxml.rs`:
 
 | Command | Behavior |
 | --- | --- |
-| `open_music_xml_score(path)` | Accepts only an existing `.musicxml`, `.xml`, or `.mxl` file. For `.mxl`, reads `META-INF/container.xml` and returns the first root file. Returns the XML text, the source SHA-256 and size, and the score-data folder path, creating the folder and updating its `manifest.json`. |
-| `read_score_data(folder, name)` / `write_score_data(folder, name, contents)` | Read or atomically write a JSON file in a score-data folder. The folder must resolve inside `<app data>/musicxml-scores/` and the name must be one of an allowed set. |
-| `open_score_data_directory(folder)` | Opens the folder in the system file manager, with the same check. |
+| `choose_score()` | The "Open score" dialog (section 3.6). |
+| `open_music_xml_score(path)` | Accepts only an existing `.musicxml`, `.xml`, or `.mxl` file. For `.mxl`, reads `META-INF/container.xml` and returns the first root file. Decodes UTF-8 and, with a byte-order mark, UTF-16. Rejects a score whose XML exceeds 64 MB, and XML whose root is not `score-partwise` or `score-timewise`. Returns the XML text, the source SHA-256 and size, and the score-data folder path, creating the folder and updating its `manifest.json`. Remembers the file as opened in this session. |
+| `open_score_source(path)` | Opens the original file with the system's default application ("Open MusicXML"). Only files opened in this session are accepted, so the webview cannot open arbitrary files. |
+| `open_score_data_directory(folder)` | Opens a score-data folder in the system file manager. The folder must be an existing directory directly inside `<app data>/musicxml-scores/`, named by a lowercase SHA-256. |
+| `read_score_data(folder, name)` / `write_score_data(folder, name, contents)` | Added with fingerings (phase 5): read or atomically write a JSON file in a score-data folder, with the same folder check and an allowed set of names. |
 
-`.mxl` reading uses the `zip` crate and hashing uses `sha2`. A root `.xml` file that is not `score-partwise` or `score-timewise` is rejected with a clear message. Rust tests cover the path checks and the container parsing; each check has a test that fails when the check is removed.
+`.mxl` reading uses the `zip` crate (deflate only), XML scanning `quick-xml`, and hashing `sha2`. Rust tests cover the format, size, container, path, and opened-file checks; each check has a test that fails when the check is removed.
 
 ### 3.8 Per-score data folder
 
@@ -270,7 +277,7 @@ Elements outside the supported set are listed in the import report with counts a
 
 Layout follows MuseScore's approach and naming where practical, so its source can be consulted stage by stage:
 
-1. Units are staff spaces (MuseScore's spatium). Page pixels come from the page format: millimetres from `<scaling>` and `<page-layout>`, else Letter or A4 with MuseScore 4's default 1.75 mm staff space, converted at 300 DPI.
+1. Units are staff spaces (MuseScore's spatium). Page pixels come from the page format: millimetres from `<scaling>` and `<page-layout>`, else a Letter page and MuseScore 4's default 1.75 mm staff space, converted at 300 DPI. A page size without `<scaling>` is read with the default staff space.
 2. Each measure is divided into time-ordered segments (clef, key, time, chord/rest, barline), as in MuseScore's `Segment` list.
 3. Chord layout places noteheads (including seconds on the opposite side of the stem), accidentals in non-colliding columns, augmentation dots, ledger lines, and stems, with stem directions from the voice and the staff middle line.
 4. Beams are grouped from encoded `<beam>` elements, else from the time signature's beat groups; slope and stem lengths follow MuseScore's beam rules.
@@ -354,6 +361,8 @@ Visual comparison: a script under `tools/` renders each corpus score with the ne
 | 7. Section 5.2 | Second-stage notation | Same review for the second-stage symbols. |
 
 Phase 1 changes only shared code and PDF behavior must stay identical, so it can be reviewed and merged on its own. Each phase is a separate reviewable commit series on the `musicxml` branch.
+
+Phase 2 result: all 28 corpus files open (26 `.mxl`, 2 `.musicxml`). Page sizes match the reference PDFs within 2 px (0.2 mm), except one score whose file asks for Letter while its MuseScore 2 PDF is A4; MuseScore 4 also uses Letter. Until phase 3 breaks pages by content, a page holds everything up to the next encoded page break. This gives the reference page count for 24 of the 26 MuseScore scores; two MuseScore 1.3 exports encode a page break before their last measure that their PDFs do not show, and scores without encoded breaks open as one page.
 
 ## 9. Risks and open questions
 

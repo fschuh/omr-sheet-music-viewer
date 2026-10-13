@@ -23,6 +23,14 @@ After the merged file is ready, **Open MusicXML** delegates it to the operating
 system. The configured default application opens it, or the system can prompt
 for an application when no association exists.
 
+**Open score** also accepts MusicXML files (`.musicxml`, `.xml`, and compressed
+`.mxl`), which open directly without recognition. The MusicXML viewer is under
+development: it shows the score's pages at the page size the file asks for, but
+does not draw notation yet. A MusicXML file is never modified; anything the app
+stores for it goes into a folder of its own under the app's data directory
+(`musicxml-scores/<SHA-256 of the file>/`), which **Open score data folder**
+shows. Diagnostics describe PDF recognition and are hidden for MusicXML scores.
+
 Playback commands can be triggered from the viewer toolbar, customizable
 keyboard shortcuts, or optional MIDI messages. Open **Settings** to reassign a
 shortcut: select a keyboard cell and press a key combination, or select a MIDI

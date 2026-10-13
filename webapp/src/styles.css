@@ -1062,6 +1062,7 @@ button:disabled {
 }
 
 .document-page img,
+.document-page .musicxml-page,
 .document-page .overlay {
   height: 100%;
   left: 0;
@@ -1070,7 +1071,8 @@ button:disabled {
   width: 100%;
 }
 
-.document-page img {
+.document-page img,
+.document-page .musicxml-page {
   display: block;
   pointer-events: none;
 }
