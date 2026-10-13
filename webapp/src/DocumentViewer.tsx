@@ -1,5 +1,14 @@
 import { memo, useEffect, useId, useMemo, useRef, useState } from "react";
-import { layoutNoteLabels, selectedGroupIds } from "./noteLabels";
+import { layoutNoteLabels } from "./noteLabels";
+import {
+  hitTestNoteheads,
+  noteGeometryByPage,
+  selectedNoteheadIds,
+  type Bounds,
+  type NoteheadGeometry,
+  type PageNoteGeometry,
+} from "./noteGeometry";
+import { diagnosticNoteheads } from "./sidecarNoteGeometry";
 import { playbackGroupIdsForPage } from "./playback";
 import type { PlaybackCommand, PlaybackMoment, PracticeHand } from "./playback";
 import type { PlaybackMode, PlaybackStatus, RealtimePlayhead } from "./realtime";
@@ -9,11 +18,9 @@ import { midiToPitchName } from "./piano";
 import type {
   DocumentPage,
   ViewportTransform,
-  VisualBBox,
   VisualGroup,
   VisualGroupRef,
   VisualPoint,
-  VisualSidecar,
 } from "./types";
 import { isLinkedVisualGroup, isSelectableVisualGroup } from "./types";
 
@@ -88,6 +95,8 @@ export function committedTempoPercentage(value: string): number | null {
 interface DocumentViewerProps {
   documentKey: string;
   pages: DocumentPage[];
+  /** Note geometry of every page with music, whatever its source. */
+  noteGeometry: readonly PageNoteGeometry[];
   selectedGroup: VisualGroupRef | null;
   highlightAllNotes: boolean;
   showOriginalNoteheadContours: boolean;
@@ -161,75 +170,6 @@ export function constrainViewportTransform(
   };
 }
 
-function hasBBox(group: VisualGroup): group is VisualGroup & { bbox: VisualBBox } {
-  return group.bbox.length === 4;
-}
-
-function pointInBBox(point: VisualPoint, group: VisualGroup): boolean {
-  if (!hasBBox(group)) return false;
-  const [x, y] = point;
-  return x >= group.bbox[0] && x <= group.bbox[2] && y >= group.bbox[1] && y <= group.bbox[3];
-}
-
-function contourBBox(points: VisualPoint[]): VisualBBox | null {
-  if (points.length === 0) return null;
-  let left = points[0][0];
-  let top = points[0][1];
-  let right = left;
-  let bottom = top;
-  for (const [x, y] of points) {
-    left = Math.min(left, x);
-    top = Math.min(top, y);
-    right = Math.max(right, x);
-    bottom = Math.max(bottom, y);
-  }
-  return [left, top, right, bottom];
-}
-
-function pointInNotehead(point: VisualPoint, group: VisualGroup, padding = 3): boolean {
-  return group.notehead_contours.some((contour) => {
-    const bbox = contourBBox(contour);
-    return (
-      bbox !== null &&
-      point[0] >= bbox[0] - padding &&
-      point[0] <= bbox[2] + padding &&
-      point[1] >= bbox[1] - padding &&
-      point[1] <= bbox[3] + padding
-    );
-  });
-}
-
-export function hitTest(
-  sidecar: VisualSidecar,
-  point: VisualPoint,
-  includeDiagnosticGroups = false,
-): VisualGroup | null {
-  const eligibleGroups = sidecar.visual_groups.filter((group) =>
-    isSelectableVisualGroup(group, includeDiagnosticGroups),
-  );
-  const noteheads = eligibleGroups.filter((group) => pointInNotehead(point, group));
-  const candidates = noteheads.length
-    ? noteheads
-    : eligibleGroups.filter((group) => pointInBBox(point, group));
-  return (
-    candidates.sort(
-      (first, second) => {
-        if (
-          includeDiagnosticGroups &&
-          first.visual_status !== second.visual_status
-        ) {
-          if (first.visual_status === "diagnostic") return -1;
-          if (second.visual_status === "diagnostic") return 1;
-        }
-        return (
-          Math.hypot(point[0] - first.center[0], point[1] - first.center[1]) -
-          Math.hypot(point[0] - second.center[0], point[1] - second.center[1])
-        );
-      },
-    )[0] ?? null
-  );
-}
-
 function pointerDistance(first: PointerState, second: PointerState): number {
   return Math.hypot(first.x - second.x, first.y - second.y);
 }
@@ -242,23 +182,35 @@ function pointsToSvg(points: VisualPoint[]): string {
   return points.map(([x, y]) => `${x},${y}`).join(" ");
 }
 
-function visualGroupBBox(group: VisualGroup): VisualBBox {
-  if (hasBBox(group)) return group.bbox;
-  const ellipses = group.notehead_ellipses ?? [];
-  if (ellipses.length > 0) {
-    return [
-      Math.min(...ellipses.map((ellipse) => ellipse.center[0] - ellipse.rx)),
-      Math.min(...ellipses.map((ellipse) => ellipse.center[1] - ellipse.ry)),
-      Math.max(...ellipses.map((ellipse) => ellipse.center[0] + ellipse.rx)),
-      Math.max(...ellipses.map((ellipse) => ellipse.center[1] + ellipse.ry)),
-    ];
-  }
-  return [group.center[0] - 6, group.center[1] - 6, group.center[0] + 6, group.center[1] + 6];
+/** Diagnostic visual groups of a PDF page, while Diagnostics shows them. */
+export function pageDiagnosticNoteheads(
+  page: DocumentPage,
+  showDiagnosticVisualGroups: boolean,
+): NoteheadGeometry[] {
+  return showDiagnosticVisualGroups && page.visualSidecar
+    ? diagnosticNoteheads(page.visualSidecar)
+    : [];
+}
+
+/**
+ * The notehead a click at `point` selects. Diagnostic groups shown by Diagnostics are
+ * candidates too, and win where they overlap notes, since they are shown to be inspected.
+ */
+export function noteheadAt(
+  geometry: PageNoteGeometry,
+  diagnostics: readonly NoteheadGeometry[],
+  point: VisualPoint,
+): NoteheadGeometry | null {
+  return hitTestNoteheads(
+    [...geometry.noteheads, ...diagnostics],
+    point,
+    diagnostics.length ? new Set(diagnostics.map((notehead) => notehead.id)) : undefined,
+  );
 }
 
 export interface PlaybackMomentExtents {
-  /** Every linked notehead of the moment's system, in page pixels. */
-  system: VisualBBox;
+  /** Every notehead of the moment's system, in page pixels. */
+  system: Bounds;
   momentLeft: number;
   momentRight: number;
   /** The moment's noteheads together with their pitch labels. */
@@ -267,29 +219,27 @@ export interface PlaybackMomentExtents {
 }
 
 export function playbackMomentExtents(
-  page: DocumentPage,
+  geometry: PageNoteGeometry | undefined,
+  page: Pick<DocumentPage, "width" | "height">,
   moment: PlaybackMoment,
 ): PlaybackMomentExtents | null {
-  const sidecar = page.visualSidecar;
-  if (!sidecar) return null;
-  const staffGroups = sidecar.visual_groups.filter(
-    (group) =>
-      group.staff_group_index === moment.staffGroupIndex &&
-      isLinkedVisualGroup(group),
+  if (!geometry) return null;
+  const systemNoteheads = geometry.noteheads.filter(
+    (notehead) => notehead.systemIndex === moment.staffGroupIndex,
   );
   const momentIds = new Set(moment.visualGroupIds);
-  const momentGroups = staffGroups.filter((group) => momentIds.has(group.visual_group_id));
-  if (staffGroups.length === 0 || momentGroups.length === 0) return null;
+  const momentNoteheads = systemNoteheads.filter((notehead) => momentIds.has(notehead.id));
+  if (systemNoteheads.length === 0 || momentNoteheads.length === 0) return null;
 
-  const staffBoxes = staffGroups.map(visualGroupBBox);
-  const momentBoxes = momentGroups.map(visualGroupBBox);
-  const momentLabels = layoutNoteLabels(sidecar, momentIds, page.width, page.height);
+  const systemBoxes = systemNoteheads.map((notehead) => notehead.bounds);
+  const momentBoxes = momentNoteheads.map((notehead) => notehead.bounds);
+  const momentLabels = layoutNoteLabels(geometry, momentIds, page.width, page.height);
   return {
     system: [
-      Math.min(...staffBoxes.map((box) => box[0])),
-      Math.min(...staffBoxes.map((box) => box[1])),
-      Math.max(...staffBoxes.map((box) => box[2])),
-      Math.max(...staffBoxes.map((box) => box[3])),
+      Math.min(...systemBoxes.map((box) => box[0])),
+      Math.min(...systemBoxes.map((box) => box[1])),
+      Math.max(...systemBoxes.map((box) => box[2])),
+      Math.max(...systemBoxes.map((box) => box[3])),
     ],
     momentLeft: Math.min(...momentBoxes.map((box) => box[0])),
     momentRight: Math.max(...momentBoxes.map((box) => box[2])),
@@ -333,6 +283,7 @@ export function centeredPlaybackX(
 
 interface PageOverlayProps {
   page: DocumentPage;
+  geometry: PageNoteGeometry | undefined;
   selected: VisualGroupRef | null;
   highlightAll: boolean;
   showOriginalNoteheadContours: boolean;
@@ -426,6 +377,7 @@ const VisualGroupLayer = memo(function VisualGroupLayer({
 
 const PageOverlay = memo(function PageOverlay({
   page,
+  geometry,
   selected,
   highlightAll,
   showOriginalNoteheadContours,
@@ -438,40 +390,31 @@ const PageOverlay = memo(function PageOverlay({
   realtimePlayhead,
   realtimePlayheadEnabled = false,
 }: PageOverlayProps) {
+  const diagnosticGroups = useMemo(
+    () => pageDiagnosticNoteheads(page, showDiagnosticVisualGroups),
+    [page, showDiagnosticVisualGroups],
+  );
   const selectedIds = useMemo(
     () => {
       if (playbackActive) return new Set(playbackGroupIds);
-      return page.visualSidecar
-        ? selectedGroupIds(
-            page.visualSidecar,
-            selected,
-            page.index,
-            highlightAll,
-            showDiagnosticVisualGroups,
-          )
-        : new Set<string>();
+      return selectedNoteheadIds(geometry, selected, page.index, highlightAll, diagnosticGroups);
     },
     [
+      diagnosticGroups,
+      geometry,
       highlightAll,
       page.index,
-      page.visualSidecar,
       playbackActive,
       playbackGroupIds,
       selected,
-      showDiagnosticVisualGroups,
     ],
   );
   const noteLabels = useMemo(
     () =>
-      page.visualSidecar
-        ? layoutNoteLabels(
-            page.visualSidecar,
-            selectedIds,
-            page.width,
-            page.height,
-          )
+      geometry
+        ? layoutNoteLabels(geometry, selectedIds, page.width, page.height)
         : [],
-    [page.height, page.visualSidecar, page.width, selectedIds],
+    [geometry, page.height, page.width, selectedIds],
   );
   const visualGroupsById = useMemo(
     () => new Map(
@@ -615,6 +558,7 @@ const PageOverlay = memo(function PageOverlay({
 export function DocumentViewer({
   documentKey,
   pages: documentPages,
+  noteGeometry,
   selectedGroup,
   highlightAllNotes,
   showOriginalNoteheadContours,
@@ -698,6 +642,7 @@ export function DocumentViewer({
     () => documentPages.filter((page) => page.status !== "skipped"),
     [documentPages],
   );
+  const geometryByPage = useMemo(() => noteGeometryByPage(noteGeometry), [noteGeometry]);
   const firstSizedPage = pages.find(
     (page) => page.status === "loading" || page.status === "complete",
   );
@@ -1050,7 +995,8 @@ export function DocumentViewer({
 
   function selectAt(clientX: number, clientY: number) {
     for (const page of pages) {
-      if (!page.visualSidecar) continue;
+      const geometry = geometryByPage.get(page.index);
+      if (!geometry) continue;
       const element = pageRefs.current.get(page.index);
       const rect = element?.getBoundingClientRect();
       if (!rect || clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) {
@@ -1060,13 +1006,13 @@ export function DocumentViewer({
         ((clientX - rect.left) / rect.width) * page.width,
         ((clientY - rect.top) / rect.height) * page.height,
       ];
-      const group = hitTest(
-        page.visualSidecar,
+      const notehead = noteheadAt(
+        geometry,
+        pageDiagnosticNoteheads(page, showDiagnosticVisualGroups),
         point,
-        showDiagnosticVisualGroups,
       );
       onSelectGroup(
-        group ? { pageIndex: page.index, visualGroupId: group.visual_group_id } : null,
+        notehead ? { pageIndex: page.index, visualGroupId: notehead.id } : null,
       );
       return;
     }
@@ -1093,7 +1039,7 @@ export function DocumentViewer({
     const page = pages.find((candidate) => candidate.index === playbackMoment.pageIndex);
     const rect = stage?.getBoundingClientRect();
     if (!stage || !page || !rect) return;
-    const extents = playbackMomentExtents(page, playbackMoment);
+    const extents = playbackMomentExtents(geometryByPage.get(page.index), page, playbackMoment);
     if (!extents) return;
 
     const pageTop = pages
@@ -1148,7 +1094,7 @@ export function DocumentViewer({
     if (Math.abs(x - current.x) > 0.5 || Math.abs(y - current.y) > 0.5) {
       commitTransform({ ...current, x, y });
     }
-  }, [layout.width, noteHighwayVisible, pages, playbackActive, playbackMoment]);
+  }, [geometryByPage, layout.width, noteHighwayVisible, pages, playbackActive, playbackMoment]);
 
   return (
     <div className="viewer">
@@ -1489,6 +1435,7 @@ export function DocumentViewer({
               {page.imageUrl ? <img src={page.imageUrl} alt={`Sheet music page ${page.index + 1}`} draggable={false} /> : null}
               <PageOverlay
                 page={page}
+                geometry={geometryByPage.get(page.index)}
                 selected={selectedGroup}
                 highlightAll={highlightAllNotes}
                 playbackActive={playbackActive}

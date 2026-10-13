@@ -117,6 +117,7 @@ import type {
   VisualSidecarNote,
 } from "./types";
 import { isLinkedVisualGroup, isSelectableVisualGroup } from "./types";
+import { pdfNoteGeometry, pdfNoteScoreFacts } from "./sidecarNoteGeometry";
 
 interface WorkerLogEntry {
   id: number;
@@ -307,13 +308,17 @@ export function App() {
       };
     }
   }, [document?.documentMusicXml]);
+  const noteGeometry = useMemo(
+    () => pdfNoteGeometry(document?.pages ?? []),
+    [document?.pages],
+  );
+  const noteFacts = useMemo(
+    () => pdfNoteScoreFacts(document?.pages ?? [], realtimeModel.score),
+    [document?.pages, realtimeModel.score],
+  );
   const fullPlaybackTimeline = useMemo(
-    () => buildPlaybackTimeline(
-      document?.pages ?? [],
-      document?.predictedFingerings,
-      realtimeModel.score,
-    ),
-    [document?.pages, document?.predictedFingerings, realtimeModel.score],
+    () => buildPlaybackTimeline(noteGeometry, noteFacts, document?.predictedFingerings),
+    [document?.predictedFingerings, noteFacts, noteGeometry],
   );
   // Practice-hand settings are per session and start from ordinary playback.
   const [practiceHand, setPracticeHand] = useState<PracticeHand>("both");
@@ -326,8 +331,8 @@ export function App() {
     [fullPlaybackTimeline, practiceHand],
   );
   const realtimeVisualMap = useMemo(
-    () => buildRealtimeVisualMap(document?.pages ?? []),
-    [document?.pages],
+    () => buildRealtimeVisualMap(noteGeometry),
+    [noteGeometry],
   );
   const realtimeOpeningBpm = realtimeModel.score?.measures[0]?.tempos
     .filter((tempo) => tempo.onset <= 0)
@@ -2032,6 +2037,7 @@ export function App() {
             <DocumentViewer
               documentKey={document.jobId}
               pages={document.pages}
+              noteGeometry={noteGeometry}
               selectedGroup={selectedGroup}
               highlightAllNotes={highlightAllNotes}
               showOriginalNoteheadContours={showOriginalNoteheadContours}

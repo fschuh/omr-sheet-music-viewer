@@ -1,12 +1,4 @@
-import type {
-  VisualBBox,
-  VisualGroup,
-  VisualGroupRef,
-  VisualPoint,
-  VisualSidecar,
-  VisualSidecarNote,
-} from "./types";
-import { isLinkedVisualGroup } from "./types";
+import type { GeometryNote, NoteheadGeometry, PageNoteGeometry, Point } from "./noteGeometry";
 
 const MIN_FONT_SIZE = 34;
 const MAX_FONT_SIZE = 50;
@@ -25,7 +17,7 @@ interface NoteLabelRequest {
   visualGroupId: string;
   text: string;
   anchorBounds: Bounds;
-  anchor: VisualPoint;
+  anchor: Point;
 }
 
 export interface NoteLabelLayout extends Bounds {
@@ -34,38 +26,8 @@ export interface NoteLabelLayout extends Bounds {
   visualGroupId: string;
   text: string;
   fontSize: number;
-  anchor: VisualPoint;
-  connector: VisualPoint;
-}
-
-export function selectedGroupIds(
-  sidecar: VisualSidecar,
-  selected: VisualGroupRef | null,
-  pageIndex: number,
-  highlightAll: boolean,
-  includeDiagnosticGroups = false,
-): Set<string> {
-  const eligibleGroups = sidecar.visual_groups.filter(isLinkedVisualGroup);
-  if (highlightAll) return new Set(eligibleGroups.map((group) => group.visual_group_id));
-  if (!selected || selected.pageIndex !== pageIndex) return new Set();
-  const group = sidecar.visual_groups.find(
-    (candidate) => candidate.visual_group_id === selected.visualGroupId,
-  );
-  if (!group) return new Set();
-
-  if (includeDiagnosticGroups && group.visual_status === "diagnostic") {
-    return new Set([group.visual_group_id]);
-  }
-  if (!isLinkedVisualGroup(group)) return new Set();
-  const result = new Set([group.visual_group_id]);
-  if (group.chord_id !== null) {
-    for (const candidate of eligibleGroups) {
-      if (candidate.chord_id === group.chord_id) {
-        result.add(candidate.visual_group_id);
-      }
-    }
-  }
-  return result;
+  anchor: Point;
+  connector: Point;
 }
 
 function clamp(value: number, minimum: number, maximum: number): number {
@@ -81,56 +43,9 @@ function median(values: number[]): number {
     : sorted[midpoint];
 }
 
-function boundsFromPoints(points: VisualPoint[]): Bounds | null {
-  if (points.length === 0) return null;
-  let left = points[0][0];
-  let top = points[0][1];
-  let right = left;
-  let bottom = top;
-  for (const [x, y] of points) {
-    left = Math.min(left, x);
-    top = Math.min(top, y);
-    right = Math.max(right, x);
-    bottom = Math.max(bottom, y);
-  }
+function noteheadBounds(notehead: NoteheadGeometry): Bounds {
+  const [left, top, right, bottom] = notehead.noteheadBounds;
   return { x: left, y: top, width: right - left, height: bottom - top };
-}
-
-function unionBounds(bounds: Bounds[]): Bounds | null {
-  if (bounds.length === 0) return null;
-  const left = Math.min(...bounds.map((value) => value.x));
-  const top = Math.min(...bounds.map((value) => value.y));
-  const right = Math.max(...bounds.map((value) => value.x + value.width));
-  const bottom = Math.max(...bounds.map((value) => value.y + value.height));
-  return { x: left, y: top, width: right - left, height: bottom - top };
-}
-
-export function noteheadBounds(group: VisualGroup): Bounds {
-  const ellipseBounds = (group.notehead_ellipses ?? []).map((ellipse) => {
-    const angle = (ellipse.angle * Math.PI) / 180;
-    const halfWidth = Math.sqrt(
-      (ellipse.rx * Math.cos(angle)) ** 2 + (ellipse.ry * Math.sin(angle)) ** 2,
-    );
-    const halfHeight = Math.sqrt(
-      (ellipse.rx * Math.sin(angle)) ** 2 + (ellipse.ry * Math.cos(angle)) ** 2,
-    );
-    return {
-      x: ellipse.center[0] - halfWidth,
-      y: ellipse.center[1] - halfHeight,
-      width: halfWidth * 2,
-      height: halfHeight * 2,
-    };
-  });
-  const contourBounds = group.notehead_contours
-    .map(boundsFromPoints)
-    .filter((value): value is Bounds => value !== null);
-  const noteheads = unionBounds(ellipseBounds.length > 0 ? ellipseBounds : contourBounds);
-  if (noteheads) return noteheads;
-  if (group.bbox.length === 4) {
-    const [left, top, right, bottom] = group.bbox as VisualBBox;
-    return { x: left, y: top, width: right - left, height: bottom - top };
-  }
-  return { x: group.center[0] - 5, y: group.center[1] - 5, width: 10, height: 10 };
 }
 
 function accidentalSymbols(alter: number): string {
@@ -234,7 +149,7 @@ function candidateBoxes(request: NoteLabelRequest, width: number, height: number
   return result;
 }
 
-function connectorPoint(anchor: VisualPoint, box: Bounds): VisualPoint {
+function connectorPoint(anchor: Point, box: Bounds): Point {
   return [
     clamp(anchor[0], box.x, box.x + box.width),
     clamp(anchor[1], box.y, box.y + box.height),
@@ -305,7 +220,7 @@ function gridLayout(
   const rows = Math.floor((pageHeight - margin * 2) / cellHeight);
   if (columns * rows < requests.length) return null;
 
-  const slots: VisualPoint[] = [];
+  const slots: Point[] = [];
   for (let row = 0; row < rows; row += 1) {
     for (let column = 0; column < columns; column += 1) {
       slots.push([
@@ -342,56 +257,53 @@ function gridLayout(
   return labels;
 }
 
-interface SidecarLayoutData {
-  groups: Map<string, VisualGroup>;
-  notes: Map<string, VisualSidecarNote>;
+interface PageLayoutData {
+  noteheads: Map<string, NoteheadGeometry>;
+  notes: Map<string, GeometryNote>;
   bounds: Map<string, Bounds>;
   noteheadHeights: number[];
   obstacles: Bounds[];
 }
 
-const sidecarLayoutCache = new WeakMap<VisualSidecar, SidecarLayoutData>();
+const pageLayoutCache = new WeakMap<PageNoteGeometry, PageLayoutData>();
 
-function sidecarLayoutData(sidecar: VisualSidecar): SidecarLayoutData {
-  const cached = sidecarLayoutCache.get(sidecar);
+function pageLayoutData(geometry: PageNoteGeometry): PageLayoutData {
+  const cached = pageLayoutCache.get(geometry);
   if (cached) return cached;
-  const eligibleGroups = sidecar.visual_groups.filter(isLinkedVisualGroup);
-  const groups = new Map(eligibleGroups.map((group) => [group.visual_group_id, group]));
-  const notes = new Map<string, VisualSidecarNote>();
-  for (const note of sidecar.notes) {
-    if (!note.visual_group_id) continue;
-    notes.set(note.visual_group_id, note);
-  }
+  const noteheads = new Map(geometry.noteheads.map((notehead) => [notehead.id, notehead]));
+  // A notehead shared by several notes is labelled with the last of them.
+  const notes = new Map<string, GeometryNote>();
+  for (const note of geometry.notes) notes.set(note.noteheadId, note);
   const bounds = new Map<string, Bounds>();
   const noteheadHeights: number[] = [];
   const obstacles: Bounds[] = [];
-  for (const group of eligibleGroups) {
-    const groupBounds = noteheadBounds(group);
-    bounds.set(group.visual_group_id, groupBounds);
-    noteheadHeights.push(groupBounds.height);
-    obstacles.push(groupBounds);
+  for (const notehead of geometry.noteheads) {
+    const value = noteheadBounds(notehead);
+    bounds.set(notehead.id, value);
+    noteheadHeights.push(value.height);
+    obstacles.push(value);
   }
-  const result = { groups, notes, bounds, noteheadHeights, obstacles };
-  sidecarLayoutCache.set(sidecar, result);
+  const result = { noteheads, notes, bounds, noteheadHeights, obstacles };
+  pageLayoutCache.set(geometry, result);
   return result;
 }
 
-function labelRequests(sidecar: VisualSidecar, selectedIds: Set<string>): NoteLabelRequest[] {
-  const layoutData = sidecarLayoutData(sidecar);
+function labelRequests(geometry: PageNoteGeometry, selectedIds: Set<string>): NoteLabelRequest[] {
+  const layoutData = pageLayoutData(geometry);
   const requests: NoteLabelRequest[] = [];
-  const seenMusicXmlIds = new Set<string>();
+  const seenNoteIds = new Set<string>();
 
-  for (const visualGroupId of selectedIds) {
-    const group = layoutData.groups.get(visualGroupId);
-    if (!group) continue;
-    const bounds = layoutData.bounds.get(visualGroupId) ?? noteheadBounds(group);
-    const anchor: VisualPoint = [bounds.x + bounds.width / 2, bounds.y + bounds.height / 2];
-    const note = layoutData.notes.get(group.visual_group_id);
-    if (!note?.pitch || seenMusicXmlIds.has(note.musicxml_id)) continue;
-    seenMusicXmlIds.add(note.musicxml_id);
+  for (const noteheadId of selectedIds) {
+    const notehead = layoutData.noteheads.get(noteheadId);
+    if (!notehead) continue;
+    const bounds = layoutData.bounds.get(noteheadId) ?? noteheadBounds(notehead);
+    const anchor: Point = [bounds.x + bounds.width / 2, bounds.y + bounds.height / 2];
+    const note = layoutData.notes.get(notehead.id);
+    if (!note?.pitch || seenNoteIds.has(note.id)) continue;
+    seenNoteIds.add(note.id);
     requests.push({
-      musicXmlId: note.musicxml_id,
-      visualGroupId: group.visual_group_id,
+      musicXmlId: note.id,
+      visualGroupId: notehead.id,
       text: formatStoredPitch(note.pitch),
       anchorBounds: bounds,
       anchor,
@@ -407,14 +319,14 @@ function labelRequests(sidecar: VisualSidecar, selectedIds: Set<string>): NoteLa
 }
 
 export function layoutNoteLabels(
-  sidecar: VisualSidecar,
+  geometry: PageNoteGeometry,
   selectedIds: Set<string>,
   pageWidth: number,
   pageHeight: number,
 ): NoteLabelLayout[] {
-  const requests = labelRequests(sidecar, selectedIds);
+  const requests = labelRequests(geometry, selectedIds);
   if (requests.length === 0) return [];
-  const layoutData = sidecarLayoutData(sidecar);
+  const layoutData = pageLayoutData(geometry);
   const fontSize = clamp(
     Math.max(pageWidth * 0.0185, median(layoutData.noteheadHeights) * 2.1),
     MIN_FONT_SIZE,

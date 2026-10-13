@@ -6,7 +6,8 @@ import {
   committedTempoPercentage,
   constrainViewportTransform,
   DocumentViewer,
-  hitTest,
+  noteheadAt,
+  pageDiagnosticNoteheads,
   playbackMomentExtents,
   shouldScrollPlaybackHorizontally,
   validTempoPercentage,
@@ -16,6 +17,7 @@ import {
   type ListenModeFeedback,
 } from "./noteRecognizer";
 import type { PlaybackMoment } from "./playback";
+import { pdfNoteGeometry, sidecarNoteGeometry } from "./sidecarNoteGeometry";
 import type { DocumentPage, VisualGroup, VisualSidecar } from "./types";
 
 test("tempo input accepts partial edits and validates only complete percentages", () => {
@@ -107,6 +109,7 @@ function render(playbackActive: boolean, feedback: ListenModeFeedback = listenFe
     <DocumentViewer
       documentKey="fixture"
       pages={[page]}
+      noteGeometry={pdfNoteGeometry([page])}
       selectedGroup={null}
       highlightAllNotes={false}
       showOriginalNoteheadContours={false}
@@ -177,6 +180,7 @@ test("hides diagnostic groups while retaining raw contour diagnostics", () => {
     <DocumentViewer
       documentKey="diagnostic-fixture"
       pages={[diagnosticPage]}
+      noteGeometry={pdfNoteGeometry([diagnosticPage])}
       selectedGroup={null}
       highlightAllNotes
       showOriginalNoteheadContours={false}
@@ -229,12 +233,22 @@ test("debug mode renders and selects diagnostic visual groups", () => {
     visualSidecar: diagnosticSidecar,
   };
 
+  const overlapPage: DocumentPage = { ...page, visualSidecar: overlapHitTestSidecar };
+  const overlapGeometry = sidecarNoteGeometry(overlapHitTestSidecar, 0, "");
   assert.equal(
-    hitTest(overlapHitTestSidecar, diagnosticGroup.center)?.visual_group_id,
+    noteheadAt(
+      overlapGeometry,
+      pageDiagnosticNoteheads(overlapPage, false),
+      diagnosticGroup.center,
+    )?.id,
     linkedOverlapGroup.visual_group_id,
   );
   assert.equal(
-    hitTest(overlapHitTestSidecar, diagnosticGroup.center, true)?.visual_group_id,
+    noteheadAt(
+      overlapGeometry,
+      pageDiagnosticNoteheads(overlapPage, true),
+      diagnosticGroup.center,
+    )?.id,
     diagnosticGroup.visual_group_id,
   );
 
@@ -242,6 +256,7 @@ test("debug mode renders and selects diagnostic visual groups", () => {
     <DocumentViewer
       documentKey="diagnostic-debug-fixture"
       pages={[diagnosticPage]}
+      noteGeometry={pdfNoteGeometry([diagnosticPage])}
       selectedGroup={{ pageIndex: 0, visualGroupId: diagnosticGroup.visual_group_id }}
       highlightAllNotes={false}
       showOriginalNoteheadContours={false}
@@ -275,6 +290,7 @@ test("renders realtime selector, transport states, tempo, and vertical playhead"
     <DocumentViewer
       documentKey="fixture"
       pages={[page]}
+      noteGeometry={pdfNoteGeometry([page])}
       selectedGroup={null}
       highlightAllNotes={false}
       showOriginalNoteheadContours={false}
@@ -317,6 +333,7 @@ test("shows the 3D note highway toggle state in both playback modes", () => {
     <DocumentViewer
       documentKey="fixture"
       pages={[page]}
+      noteGeometry={pdfNoteGeometry([page])}
       selectedGroup={null}
       highlightAllNotes={false}
       showOriginalNoteheadContours={false}
@@ -358,6 +375,7 @@ test("offers a practice-hand selector and a hand sound menu for one hand only", 
     <DocumentViewer
       documentKey="fixture"
       pages={[page]}
+      noteGeometry={pdfNoteGeometry([page])}
       selectedGroup={null}
       highlightAllNotes={false}
       showOriginalNoteheadContours={false}
@@ -394,6 +412,7 @@ test("explains why realtime playback is disabled", () => {
     <DocumentViewer
       documentKey="fixture"
       pages={[page]}
+      noteGeometry={pdfNoteGeometry([page])}
       selectedGroup={null}
       highlightAllNotes={false}
       showOriginalNoteheadContours={false}
@@ -482,6 +501,7 @@ test("omits pages that were skipped because they contain no music", () => {
     <DocumentViewer
       documentKey="fixture"
       pages={[skippedPage, musicPage]}
+      noteGeometry={pdfNoteGeometry([skippedPage, musicPage])}
       selectedGroup={null}
       highlightAllNotes={false}
       showOriginalNoteheadContours={false}
@@ -515,6 +535,7 @@ test("renders an explicit recognition state inside a pending page", () => {
     <DocumentViewer
       documentKey="processing-fixture"
       pages={[processingPage]}
+      noteGeometry={pdfNoteGeometry([processingPage])}
       selectedGroup={null}
       highlightAllNotes={false}
       showOriginalNoteheadContours={false}
@@ -549,6 +570,7 @@ test("sizes unfinished pages like the first page with known PDF dimensions", () 
     <DocumentViewer
       documentKey="mixed-size-fixture"
       pages={[page, processingPage]}
+      noteGeometry={pdfNoteGeometry([page, processingPage])}
       selectedGroup={null}
       highlightAllNotes={false}
       showOriginalNoteheadContours={false}
@@ -608,7 +630,8 @@ test("keeps a document smaller than the viewport fully on screen", () => {
 });
 
 test("measures the playing moment against every notehead of its system", () => {
-  const extents = playbackMomentExtents(page, { ...moment, visualGroupIds: ["treble"] });
+  const [geometry] = pdfNoteGeometry([page]);
+  const extents = playbackMomentExtents(geometry, page, { ...moment, visualGroupIds: ["treble"] });
   assert.ok(extents);
   assert.deepEqual(extents.system, [290, 342, 312, 528]);
   assert.equal(extents.momentLeft, 290);
@@ -620,9 +643,13 @@ test("measures the playing moment against every notehead of its system", () => {
 });
 
 test("has no extents for a moment outside any recognized system", () => {
-  assert.equal(playbackMomentExtents(page, { ...moment, staffGroupIndex: 5 }), null);
-  assert.equal(playbackMomentExtents(page, { ...moment, visualGroupIds: ["missing"] }), null);
-  assert.equal(playbackMomentExtents({ ...page, visualSidecar: undefined }, moment), null);
+  const [geometry] = pdfNoteGeometry([page]);
+  assert.equal(playbackMomentExtents(geometry, page, { ...moment, staffGroupIndex: 5 }), null);
+  assert.equal(
+    playbackMomentExtents(geometry, page, { ...moment, visualGroupIds: ["missing"] }),
+    null,
+  );
+  assert.equal(playbackMomentExtents(undefined, page, moment), null);
 });
 
 test("does not scroll horizontally when the approached staff edge is already visible", () => {
@@ -674,6 +701,7 @@ test("restores a supplied viewport transform after remounting", () => {
     <DocumentViewer
       documentKey="fixture"
       pages={[page]}
+      noteGeometry={pdfNoteGeometry([page])}
       selectedGroup={null}
       highlightAllNotes={false}
       showOriginalNoteheadContours={false}

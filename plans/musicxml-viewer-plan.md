@@ -128,44 +128,16 @@ Tests sit next to the files they test, as elsewhere in `webapp/src`.
 
 ### 3.4 Note-geometry contract
 
-`noteGeometry.ts` defines what the shared consumers need to know about the notes on a page, independent of where the page came from. It starts as the minimum the current features read and grows when a feature needs more.
+`noteGeometry.ts` defines what the shared consumers need to know about the notes on a page, independent of where the page came from, and is the reference for its fields. It holds only what current features read and grows when a feature needs more. Per page it lists:
 
-```ts
-type Bounds = [left: number, top: number, right: number, bottom: number];  // page pixels
+- Noteheads: ID, system on the page, center, the visible notehead box (labels are placed around it and playback orders moments by it), the hit areas a click selects (with a 3-pixel clearance), the box with the stem (the hit-test fallback and the measure of a system), and chord and moment IDs.
+- Notes: page-scoped viewer ID, the notehead that shows the note, pitch, grace flag, and measure.
 
-interface PageNoteGeometry {
-  noteheads: NoteheadGeometry[];
-  notes: GeometryNote[];
-}
+Notes and noteheads are separate because one PDF notehead can be linked to more than one note (for example, a unison shared by two voices). The contract also provides hit testing and chord-aware selection, so every source selects the same way.
 
-/** One selectable, highlightable notehead (a linked visual group for PDFs). */
-interface NoteheadGeometry {
-  id: string;                  // unique on the page
-  systemIndex: number;         // system on the page, top to bottom
-  staffIndex: number;
-  center: [number, number];
-  noteheadBounds: Bounds[];    // the notehead shapes, for hit testing, labels, playback placement
-  bounds: Bounds;              // notehead with stem, for hit-test fallback and system extents
-  chordId: string | null;
-  momentId: string | null;
-}
+Geometry is derived for the whole document rather than stored on each page: a PDF note's page prefix counts the pages that contain music, which changes while a PDF is still being recognized. `App.tsx` derives it whenever the pages change, and the adapter caches each page's conversion, so unchanged pages keep the same geometry object. PDF pages keep `visualSidecar`, which remains the source for the PDF highlight shapes, Diagnostics, and the note inspector's homr fields. Diagnostic groups reach selection and hit testing only through `pageDiagnosticNoteheads` in `DocumentViewer.tsx`, while Diagnostics shows them.
 
-/** One score note, linked to the notehead that shows it. */
-interface GeometryNote {
-  id: string;                  // page-scoped viewer ID
-  noteheadId: string;
-  pitch: string | null;        // scientific pitch, e.g. "F#5"
-  grace: boolean;
-  measure: number;
-  voice: number;
-}
-```
-
-Notes and noteheads are separate because one PDF notehead can be linked to more than one note (for example, a unison shared by two voices).
-
-`DocumentPage` gains `noteGeometry: PageNoteGeometry`. PDF pages also keep `visualSidecar`, which remains the source for the PDF highlight shapes, Diagnostics, and the note inspector's homr fields.
-
-PDF adapter (`sidecarNoteGeometry.ts`): converts linked, non-diagnostic visual groups and their notes, applies the page prefix to note IDs, and parses the grace flag from homr duration strings. Where today's consumers derive bounds from different shapes (hit testing from traced outlines; playback and labels from fitted ellipses when present), the adapter reproduces each consumer's current numbers exactly; unifying them would be a separate, deliberate behavior change. Moving the consumers onto the contract must not change PDF behavior; section 7 defines the test.
+PDF adapter (`sidecarNoteGeometry.ts`): converts linked, non-diagnostic visual groups and the notes that point at them, applies the page prefix to note IDs, parses the grace flag from homr duration strings, and builds the score facts playback reads (from the merged document, or from each page's own MusicXML until the merge exists). Hit areas come from the traced outlines and the notehead box from the fitted ellipses, as the consumers used them before; the box keeps the exact arithmetic labels used, because labels on one staff line tie on their anchors and equivalent formulas reorder them. A group without a box, which homr does not produce, falls back to its notehead box in every consumer. Moving the consumers onto the contract must not change PDF behavior; section 7 defines the check.
 
 MusicXML geometry (`geometry/pageNoteGeometry.ts`): built from the layout positions and glyph metadata, at a few numbers per notehead.
 
@@ -223,7 +195,7 @@ source:
 Opening:
 
 - A single "Open score…" dialog replaces the PDF-only one. Its default filter, "All supported scores", shows every supported type (`pdf`, `musicxml`, `xml`, `mxl`), with "PDF" and "MusicXML" filters as alternatives. The extension chooses the flow. `choose_pdf` becomes `choose_score` (and `choosePdf` becomes `chooseScore`), and later formats are added to the same dialog. The existing reset sequence in `handleOpenPdf` (stop playback, listen mode, and realtime; clear selection) moves into a shared function used by both flows.
-- PDFs continue through the worker exactly as today; each completed page also gets its `noteGeometry` from the adapter.
+- PDFs continue through the worker exactly as today; their note geometry comes from the adapter.
 - MusicXML calls `openMusicXmlScore(path)`, which reads the file through the native bridge, imports, lays out, and returns a complete `LoadedDocument` with status `"complete"`. A synthetic job ID keeps the existing stale-request guards working. Fingering prediction then runs through the module's fingering lifecycle (section 4.3).
 
 Page surface: `DocumentPage` gains an optional `surface` field. When it holds a MusicXML page, `DocumentViewer` renders `MusicXmlPageSurface` in place of the `<img>` and the sidecar highlight layer. Pan, zoom, and hit testing are shared because they work in page pixels on the note geometry. Pages outside the viewport render a sized placeholder, so long scores do not keep hundreds of SVG pages alive.
@@ -356,7 +328,7 @@ Any change to shared playback code is checked against PDFs as well, so behavior 
 
 - Unit tests for each stage, run by `npm test`.
 - Note-geometry adapter tests with small sidecar fixtures, including notes sharing a notehead, diagnostic groups (excluded), groups with and without fitted ellipses, and pages without music (page numbering).
-- PDF parity check for the consumer switch: a script under `tools/` records, for every cached PDF, the note-by-note playback moments, realtime targets and system bounds, note label placements, and hit-test results at a grid of points. It runs once on the code before the switch and again after; the outputs must be identical. The same check is repeated whenever shared consumer code changes later.
+- PDF parity check for shared consumer code (`webapp/tools/note-geometry-parity`, `npm run parity:note-geometry`): records, for every recognized PDF page in the given pdf-cache folders, the note-by-note playback timelines (from the merged document and from page MusicXML), realtime targets, selections, pitch labels, hit tests on a grid and around every hit boundary, and playback scroll extents. A recording before and after a change must agree; numbers that differ by at most 1e-6 px are reported separately as rounding. The harness file maps the consumers' current APIs onto the recorded format and is the only part that changes with them. The check is repeated whenever shared consumer code changes.
 - Contract tests from section 3.4, run on every corpus score.
 - Note-key tests: keys are unchanged by different page formats and break settings; chords, voices, grace notes, and duplicate pitches get distinct keys; every key is a valid XML ID.
 - Boundary tests from section 3.1.
@@ -373,7 +345,7 @@ Visual comparison: a script under `tools/` renders each corpus score with the ne
 
 | Phase | Deliverable | Exit criteria |
 | --- | --- | --- |
-| 1. Note-geometry contract | `noteGeometry.ts`, PDF adapter, shared consumers switched from the sidecar, consumer boundary test | PDF parity check identical on every cached PDF; all existing tests pass. |
+| 1. Note-geometry contract | `noteGeometry.ts`, PDF adapter, shared consumers switched from the sidecar, consumer boundary test | PDF parity check shows the same behavior on every corpus PDF; all existing tests pass. |
 | 2. Skeleton | Module folder, module boundary test, native open command for `.musicxml`/`.xml`/`.mxl`, score-data folder, `source` on `LoadedDocument`, UI gating | A corpus file opens and shows blank pages of the right size; Diagnostics hidden; PDFs unchanged. |
 | 3. Notes on staves | Import with structural keys, page format, segments, chords, stems, simple beams, spacing, encoded breaks, SVG rendering with highlight classes, note geometry | All corpus scores render notes and rests on correct staves with correct pitches; contract tests pass; selection and highlighting work. |
 | 4. Playback parity | Viewer IDs, document adapter, playback fixes from section 6 | Note-by-note and realtime playback, navigation, shortcuts, keyboard, and note highway behave as for PDFs on every corpus score. |

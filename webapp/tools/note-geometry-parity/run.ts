@@ -18,6 +18,11 @@ import { harness } from "./harness";
 const GRID_STEP = 48;
 const HIT_PADDING = 3;
 const MAX_REPORTED_DIFFERENCES = 40;
+/**
+ * Pixel values computed by different but equivalent arithmetic can differ in their last
+ * bits. Differences up to this size are reported as rounding, not as changed behavior.
+ */
+const ROUNDING_TOLERANCE = 1e-6;
 
 interface ManifestPage {
   index: number;
@@ -246,9 +251,28 @@ function record(outputDirectory: string, inputs: string[]): void {
   }
 }
 
-function differences(baseline: unknown, candidate: unknown, path: string, found: string[]): void {
-  if (found.length >= MAX_REPORTED_DIFFERENCES) return;
+interface Rounding {
+  count: number;
+  largest: number;
+}
+
+function differences(
+  baseline: unknown,
+  candidate: unknown,
+  path: string,
+  found: string[],
+  rounding: Rounding,
+): void {
   if (Object.is(baseline, candidate)) return;
+  if (
+    typeof baseline === "number" && typeof candidate === "number" &&
+    Math.abs(baseline - candidate) <= ROUNDING_TOLERANCE
+  ) {
+    rounding.count += 1;
+    rounding.largest = Math.max(rounding.largest, Math.abs(baseline - candidate));
+    return;
+  }
+  if (found.length >= MAX_REPORTED_DIFFERENCES) return;
   if (
     typeof baseline !== "object" || typeof candidate !== "object" ||
     baseline === null || candidate === null ||
@@ -264,6 +288,7 @@ function differences(baseline: unknown, candidate: unknown, path: string, found:
       (candidate as Record<string, unknown>)[key],
       `${path}/${key}`,
       found,
+      rounding,
     );
   }
 }
@@ -271,6 +296,7 @@ function differences(baseline: unknown, candidate: unknown, path: string, found:
 function compare(baselineDirectory: string, candidateDirectory: string): void {
   const names = new Set([...readdirSync(baselineDirectory), ...readdirSync(candidateDirectory)]);
   let changed = 0;
+  const rounding: Rounding = { count: 0, largest: 0 };
   for (const name of [...names].sort()) {
     const baselinePath = join(baselineDirectory, name);
     const candidatePath = join(candidateDirectory, name);
@@ -282,13 +308,19 @@ function compare(baselineDirectory: string, candidateDirectory: string): void {
     const baselineText = readFileSync(baselinePath, "utf8");
     const candidateText = readFileSync(candidatePath, "utf8");
     if (baselineText === candidateText) continue;
-    changed += 1;
     const found: string[] = [];
-    differences(JSON.parse(baselineText), JSON.parse(candidateText), "", found);
+    differences(JSON.parse(baselineText), JSON.parse(candidateText), "", found, rounding);
+    if (found.length === 0) continue;
+    changed += 1;
     console.log(`${name}: differs`);
     for (const line of found) console.log(`  ${line.slice(0, 400)}`);
   }
-  console.log(changed === 0 ? `identical (${names.size} document(s))` : `${changed} document(s) differ`);
+  if (rounding.count > 0) {
+    console.log(
+      `${rounding.count} number(s) differ only by rounding (largest ${rounding.largest.toExponential(2)} px)`,
+    );
+  }
+  console.log(changed === 0 ? `same behavior (${names.size} document(s))` : `${changed} document(s) differ`);
   process.exitCode = changed === 0 ? 0 : 1;
 }
 

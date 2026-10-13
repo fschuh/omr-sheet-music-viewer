@@ -12,6 +12,7 @@ import {
   type RealtimeAudioSink,
   type RealtimeClock,
 } from "./realtime";
+import { pdfNoteGeometry } from "./sidecarNoteGeometry";
 import type { DocumentPage, VisualSidecar } from "./types";
 
 function score(measures: string, extraPart = ""): string {
@@ -401,7 +402,7 @@ test("maps merged page-scoped MusicXML IDs back to page sidecars", () => {
       visualSidecar: sidecar,
     };
   });
-  const map = buildRealtimeVisualMap(pages);
+  const map = buildRealtimeVisualMap(pdfNoteGeometry(pages));
   assert.equal(map.get("page-1-n1")?.visualGroupId, "g1");
   assert.equal(map.get("page-2-n2")?.pageIndex, 1);
 });

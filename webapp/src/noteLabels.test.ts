@@ -1,12 +1,40 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { selectedNoteheadIds } from "./noteGeometry";
 import {
   formatPitchName,
-  layoutNoteLabels,
+  layoutNoteLabels as layoutPageLabels,
   noteLabelsOverlap,
-  selectedGroupIds,
 } from "./noteLabels";
-import type { VisualGroup, VisualSidecar } from "./types";
+import { diagnosticNoteheads, sidecarNoteGeometry } from "./sidecarNoteGeometry";
+import type { VisualGroup, VisualGroupRef, VisualSidecar } from "./types";
+
+/** Labels for a recognized page, as the viewer lays them out. */
+function layoutNoteLabels(
+  data: VisualSidecar,
+  selectedIds: Set<string>,
+  pageWidth: number,
+  pageHeight: number,
+) {
+  return layoutPageLabels(sidecarNoteGeometry(data, 0, ""), selectedIds, pageWidth, pageHeight);
+}
+
+/** The highlighted noteheads of a recognized page, as the viewer selects them. */
+function selectedGroupIds(
+  data: VisualSidecar,
+  selected: VisualGroupRef | null,
+  pageIndex: number,
+  highlightAll: boolean,
+  includeDiagnosticGroups = false,
+): Set<string> {
+  return selectedNoteheadIds(
+    sidecarNoteGeometry(data, pageIndex, ""),
+    selected,
+    pageIndex,
+    highlightAll,
+    includeDiagnosticGroups ? diagnosticNoteheads(data) : [],
+  );
+}
 
 function group(
   index: number,

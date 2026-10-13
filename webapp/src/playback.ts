@@ -1,8 +1,7 @@
-import type { DocumentPage, VisualGroup, VisualGroupRef, VisualSidecarNote } from "./types";
-import { isLinkedVisualGroup } from "./types";
+import type { VisualGroupRef } from "./types";
+import type { GeometryNote, NoteheadGeometry, PageNoteGeometry } from "./noteGeometry";
 import type { PredictedFingering } from "./fingering";
 import {
-  parseRealtimeMusicXml,
   scoreNoteStartsAttack,
   type RealtimeScore,
   type RealtimeScoreNote,
@@ -166,11 +165,10 @@ export function effectivePlaybackNoteSounds(state: PlaybackState): boolean {
 }
 
 interface TimelineGroup {
-  group: VisualGroup;
+  notehead: NoteheadGeometry;
   x: number;
-  width: number;
   measures: Set<number>;
-  notes: VisualSidecarNote[];
+  notes: GeometryNote[];
 }
 
 interface MomentCluster {
@@ -189,49 +187,18 @@ interface PlaybackPitchNote {
   visualGroupId: string;
 }
 
-export function playbackPitchForNote(note: VisualSidecarNote): string | null {
-  return note.pitch;
-}
-
-function isGraceNote(note: VisualSidecarNote): boolean {
-  return note.duration.startsWith("note_") && note.duration.includes("G");
-}
-
-function notesByVisualGroup(
-  notes: VisualSidecarNote[],
-  suppressedNoteIds: ReadonlySet<string>,
-): Map<string, VisualSidecarNote[]> {
-  const result = new Map<string, VisualSidecarNote[]>();
+function notesByNotehead(
+  notes: readonly GeometryNote[],
+  suppressed: (note: GeometryNote) => boolean,
+): Map<string, GeometryNote[]> {
+  const result = new Map<string, GeometryNote[]>();
   for (const note of notes) {
-    if (
-      isGraceNote(note) ||
-      suppressedNoteIds.has(note.musicxml_id) ||
-      !note.visual_group_id ||
-      playbackPitchForNote(note) === null
-    ) {
-      continue;
-    }
-    const linked = result.get(note.visual_group_id) ?? [];
+    if (suppressed(note) || note.pitch === null) continue;
+    const linked = result.get(note.noteheadId) ?? [];
     linked.push(note);
-    result.set(note.visual_group_id, linked);
+    result.set(note.noteheadId, linked);
   }
   return result;
-}
-
-function horizontalGeometry(group: VisualGroup): { x: number; width: number } {
-  const ellipses = group.notehead_ellipses ?? [];
-  if (ellipses.length > 0) {
-    const left = Math.min(...ellipses.map((ellipse) => ellipse.center[0] - ellipse.rx));
-    const right = Math.max(...ellipses.map((ellipse) => ellipse.center[0] + ellipse.rx));
-    return { x: (left + right) / 2, width: Math.max(1, right - left) };
-  }
-  if (group.bbox.length === 4) {
-    return {
-      x: (group.bbox[0] + group.bbox[2]) / 2,
-      width: Math.max(1, group.bbox[2] - group.bbox[0]),
-    };
-  }
-  return { x: group.center[0], width: 12 };
 }
 
 function mostCommonMeasure(groups: TimelineGroup[]): number | null {
@@ -250,26 +217,25 @@ function mostCommonMeasure(groups: TimelineGroup[]): number | null {
   return result;
 }
 
-function clustersByMomentIdForStaffGroup(
-  groups: VisualGroup[],
-  notes: VisualSidecarNote[],
-  suppressedNoteIds: ReadonlySet<string>,
+function clustersByMomentIdForSystem(
+  noteheads: readonly NoteheadGeometry[],
+  notes: readonly GeometryNote[],
+  suppressed: (note: GeometryNote) => boolean,
 ): MomentCluster[] {
-  const linkedNotes = notesByVisualGroup(notes, suppressedNoteIds);
+  const linkedNotes = notesByNotehead(notes, suppressed);
   const byMoment = new Map<string, TimelineGroup[]>();
-  for (const group of groups) {
-    if (group.moment_id === null) continue;
-    const geometry = horizontalGeometry(group);
-    const groupNotes = linkedNotes.get(group.visual_group_id) ?? [];
+  for (const notehead of noteheads) {
+    if (notehead.momentId === null) continue;
+    const noteheadNotes = linkedNotes.get(notehead.id) ?? [];
     const entry: TimelineGroup = {
-      group,
-      ...geometry,
-      measures: new Set(groupNotes.map((note) => note.measure)),
-      notes: groupNotes,
+      notehead,
+      x: (notehead.noteheadBounds[0] + notehead.noteheadBounds[2]) / 2,
+      measures: new Set(noteheadNotes.map((note) => note.measure)),
+      notes: noteheadNotes,
     };
-    const entries = byMoment.get(group.moment_id) ?? [];
+    const entries = byMoment.get(notehead.momentId) ?? [];
     entries.push(entry);
-    byMoment.set(group.moment_id, entries);
+    byMoment.set(notehead.momentId, entries);
   }
   return [...byMoment.entries()]
     .map(([momentId, entries]) => ({
@@ -285,138 +251,115 @@ function clustersByMomentIdForStaffGroup(
     );
 }
 
-interface NoteByNoteScoreData {
+/** What the score says about each note, keyed by viewer note ID. */
+export interface NoteScoreFacts {
+  /** Notes that start no sound of their own, such as tied continuations. */
   suppressedNoteIds: Set<string>;
   startsAttackByNoteId: Map<string, boolean>;
   dynamicByNoteId: Map<string, MusicalDynamic>;
   leftByNoteId: Map<string, boolean>;
 }
 
-function noteForPage(
-  note: RealtimeScoreNote,
-  musicPageNumber: number,
-  documentScore: boolean,
-): RealtimeScoreNote | null {
-  if (!documentScore) return note;
-  const prefix = `page-${musicPageNumber}-`;
-  if (!note.musicXmlId.startsWith(prefix)) return null;
-  return { ...note, musicXmlId: note.musicXmlId.slice(prefix.length) };
+export function emptyNoteScoreFacts(): NoteScoreFacts {
+  return {
+    suppressedNoteIds: new Set(),
+    startsAttackByNoteId: new Map(),
+    dynamicByNoteId: new Map(),
+    leftByNoteId: new Map(),
+  };
 }
 
-function noteByNoteScoreData(
-  musicXml: string | undefined,
-  musicPageNumber: number,
-  documentScore?: RealtimeScore | null,
-): NoteByNoteScoreData {
-  const suppressedNoteIds = new Set<string>();
-  const startsAttackByNoteId = new Map<string, boolean>();
-  const dynamicByNoteId = new Map<string, MusicalDynamic>();
-  const leftByNoteId = new Map<string, boolean>();
-  if (!documentScore && !musicXml) {
-    return { suppressedNoteIds, startsAttackByNoteId, dynamicByNoteId, leftByNoteId };
-  }
-  try {
-    const score = documentScore ?? parseRealtimeMusicXml(musicXml!);
-    for (const measure of score.measures) {
-      for (const event of measure.events) {
-        const eventNotes = event.notes
-          .map((note) => noteForPage(
-            note,
-            musicPageNumber,
-            documentScore !== null && documentScore !== undefined,
-          ))
-          .filter((note): note is RealtimeScoreNote => note !== null && !note.grace);
-        for (const note of eventNotes) leftByNoteId.set(note.musicXmlId, note.left);
-        if (eventNotes.some(scoreNoteStartsAttack)) {
-          // Record attack status for every tone in a partial-tie event so the
-          // sidecar-defined chord can distinguish held and newly attacked notes.
-          for (const note of eventNotes) {
-            startsAttackByNoteId.set(note.musicXmlId, scoreNoteStartsAttack(note));
-            dynamicByNoteId.set(note.musicXmlId, note.dynamic);
-          }
-        } else {
-          for (const note of eventNotes) {
-            suppressedNoteIds.add(note.musicXmlId);
-            startsAttackByNoteId.set(note.musicXmlId, false);
-            dynamicByNoteId.set(note.musicXmlId, note.dynamic);
-          }
+/** Facts for every non-grace note of `score`, keyed by `idPrefix` and the note's ID. */
+export function noteScoreFacts(score: RealtimeScore, idPrefix = ""): NoteScoreFacts {
+  const facts = emptyNoteScoreFacts();
+  for (const measure of score.measures) {
+    for (const event of measure.events) {
+      const eventNotes = event.notes.filter((note) => !note.grace);
+      const id = (note: RealtimeScoreNote) => `${idPrefix}${note.musicXmlId}`;
+      for (const note of eventNotes) facts.leftByNoteId.set(id(note), note.left);
+      if (eventNotes.some(scoreNoteStartsAttack)) {
+        // Record attack status for every tone in a partial-tie event so the
+        // chord on the page can distinguish held and newly attacked notes.
+        for (const note of eventNotes) {
+          facts.startsAttackByNoteId.set(id(note), scoreNoteStartsAttack(note));
+          facts.dynamicByNoteId.set(id(note), note.dynamic);
+        }
+      } else {
+        for (const note of eventNotes) {
+          facts.suppressedNoteIds.add(id(note));
+          facts.startsAttackByNoteId.set(id(note), false);
+          facts.dynamicByNoteId.set(id(note), note.dynamic);
         }
       }
     }
-  } catch {
-    // Note-by-note playback can still use the visual sidecar when score parsing fails.
   }
-  return { suppressedNoteIds, startsAttackByNoteId, dynamicByNoteId, leftByNoteId };
+  return facts;
+}
+
+export function mergeNoteScoreFacts(all: readonly NoteScoreFacts[]): NoteScoreFacts {
+  const merged = emptyNoteScoreFacts();
+  for (const facts of all) {
+    for (const id of facts.suppressedNoteIds) merged.suppressedNoteIds.add(id);
+    for (const [id, value] of facts.startsAttackByNoteId) merged.startsAttackByNoteId.set(id, value);
+    for (const [id, value] of facts.dynamicByNoteId) merged.dynamicByNoteId.set(id, value);
+    for (const [id, value] of facts.leftByNoteId) merged.leftByNoteId.set(id, value);
+  }
+  return merged;
 }
 
 function playbackNotesForCluster(
   cluster: MomentCluster,
-  scoreData: NoteByNoteScoreData,
+  scoreFacts: NoteScoreFacts,
 ): PlaybackPitchNote[] {
   const result: PlaybackPitchNote[] = [];
   const seenIds = new Set<string>();
-  const add = (musicXmlId: string, pitch: string | null, visualGroupId: string) => {
-    if (pitch === null || seenIds.has(musicXmlId)) return;
-    seenIds.add(musicXmlId);
-    result.push({
-      musicXmlId,
-      pitch,
-      startsAttack: scoreData.startsAttackByNoteId.get(musicXmlId) ?? true,
-      dynamic: scoreData.dynamicByNoteId.get(musicXmlId) ?? "mp",
-      left: scoreData.leftByNoteId.get(musicXmlId),
-      visualGroupId,
-    });
-  };
-
   for (const entry of cluster.groups) {
     for (const note of entry.notes) {
-      add(note.musicxml_id, playbackPitchForNote(note), entry.group.visual_group_id);
+      if (note.pitch === null || seenIds.has(note.id)) continue;
+      seenIds.add(note.id);
+      result.push({
+        musicXmlId: note.id,
+        pitch: note.pitch,
+        startsAttack: scoreFacts.startsAttackByNoteId.get(note.id) ?? true,
+        dynamic: scoreFacts.dynamicByNoteId.get(note.id) ?? "mp",
+        left: scoreFacts.leftByNoteId.get(note.id),
+        visualGroupId: entry.notehead.id,
+      });
     }
   }
   return result;
 }
 
 export function buildPlaybackTimeline(
-  pages: DocumentPage[],
+  geometry: readonly PageNoteGeometry[],
+  scoreFacts: NoteScoreFacts = emptyNoteScoreFacts(),
   predictedFingerings: Readonly<Record<string, PredictedFingering>> = {},
-  documentScore?: RealtimeScore | null,
 ): PlaybackMoment[] {
   const result: PlaybackMoment[] = [];
-  let musicPageNumber = 0;
-  for (const page of [...pages].sort((first, second) => first.index - second.index)) {
-    const hasRecognizedScore = Boolean(
-      page.musicXml || page.visualSidecar || page.artifacts?.musicXmlPath,
+  // Grace notes are ornaments of the following note and never form a moment of their own.
+  const suppressed = (note: GeometryNote) =>
+    note.grace || scoreFacts.suppressedNoteIds.has(note.id);
+  for (const page of [...geometry].sort((first, second) => first.pageIndex - second.pageIndex)) {
+    // A notehead plays when one of its notes does.
+    const playingNoteheadIds = new Set(
+      page.notes.filter((note) => !suppressed(note)).map((note) => note.noteheadId),
     );
-    if (hasRecognizedScore) musicPageNumber += 1;
-    const sidecar = page.visualSidecar;
-    if (!sidecar) continue;
-    const scoreData = noteByNoteScoreData(page.musicXml, musicPageNumber, documentScore);
-    const suppressedNoteIds = new Set(scoreData.suppressedNoteIds);
-    for (const note of sidecar.notes) {
-      if (isGraceNote(note)) suppressedNoteIds.add(note.musicxml_id);
-    }
-    const eligibleGroups = sidecar.visual_groups.filter(
-      (group) =>
-        isLinkedVisualGroup(group) &&
-        group.musicxml_id !== null &&
-        !suppressedNoteIds.has(group.musicxml_id),
+    const eligibleNoteheads = page.noteheads.filter((notehead) =>
+      playingNoteheadIds.has(notehead.id),
     );
-    const staffGroupIndexes = Array.from(
-      new Set(eligibleGroups.map((group) => group.staff_group_index)),
+    const systemIndexes = Array.from(
+      new Set(eligibleNoteheads.map((notehead) => notehead.systemIndex)),
     ).sort((first, second) => first - second);
-    for (const staffGroupIndex of staffGroupIndexes) {
-      const staffGroups = eligibleGroups.filter(
-        (group) => group.staff_group_index === staffGroupIndex,
-      );
-      const clusters = clustersByMomentIdForStaffGroup(
-        staffGroups,
-        sidecar.notes,
-        suppressedNoteIds,
+    for (const systemIndex of systemIndexes) {
+      const clusters = clustersByMomentIdForSystem(
+        eligibleNoteheads.filter((notehead) => notehead.systemIndex === systemIndex),
+        page.notes,
+        suppressed,
       );
       clusters.forEach((cluster, clusterIndex) => {
-        const momentNotes = playbackNotesForCluster(cluster, scoreData);
+        const momentNotes = playbackNotesForCluster(cluster, scoreFacts);
         const visualGroupIds = cluster.groups
-          .map((entry) => entry.group.visual_group_id)
+          .map((entry) => entry.notehead.id)
           .sort((first, second) => first.localeCompare(second));
         const pitches = Array.from(
           new Set(
@@ -428,9 +371,7 @@ export function buildPlaybackTimeline(
         const keyboardNotes: PlaybackKeyboardNote[] = [];
         const seenKeyboardNotes = new Set<string>();
         for (const note of momentNotes) {
-          const predicted = predictedFingerings[
-            `page-${musicPageNumber}-${note.musicXmlId}`
-          ];
+          const predicted = predictedFingerings[note.musicXmlId];
           // Fingering picks its hand by the same staff/clef rule, so the two agree.
           const left = predicted?.left ?? note.left;
           const key = `${note.pitch}:${left ?? ""}:${predicted?.finger ?? ""}`;
@@ -443,17 +384,18 @@ export function buildPlaybackTimeline(
           });
         }
         const centerY =
-          cluster.groups.reduce((total, entry) => total + entry.group.center[1], 0) /
+          cluster.groups.reduce((total, entry) => total + entry.notehead.center[1], 0) /
           cluster.groups.length;
-        const unknownBarKey = `page-${page.index}-staff-group-${staffGroupIndex}-unknown`;
+        const pageIndex = page.pageIndex;
+        const unknownBarKey = `page-${pageIndex}-staff-group-${systemIndex}-unknown`;
         result.push({
           id: cluster.canonicalMomentId
-            ? `page-${page.index}-${cluster.canonicalMomentId}`
-            : `page-${page.index}-staff-group-${staffGroupIndex}-moment-${clusterIndex}-${visualGroupIds.join("+")}`,
-          pageIndex: page.index,
-          staffGroupIndex,
+            ? `page-${pageIndex}-${cluster.canonicalMomentId}`
+            : `page-${pageIndex}-staff-group-${systemIndex}-moment-${clusterIndex}-${visualGroupIds.join("+")}`,
+          pageIndex,
+          staffGroupIndex: systemIndex,
           measure: cluster.measure,
-          barKey: cluster.measure === null ? unknownBarKey : `page-${page.index}-measure-${cluster.measure}`,
+          barKey: cluster.measure === null ? unknownBarKey : `page-${pageIndex}-measure-${cluster.measure}`,
           visualGroupIds,
           pitches,
           dynamic: momentNotes.find((note) => note.startsAttack)?.dynamic ?? "mp",

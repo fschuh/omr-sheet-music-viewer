@@ -4,7 +4,6 @@ import {
   buildPlaybackTimeline,
   effectivePlaybackNoteSounds,
   initialPlaybackState,
-  playbackPitchForNote,
   playbackGroupIdsForPage,
   runPlaybackCommand,
   seekPlaybackToGroup,
@@ -14,8 +13,23 @@ import {
   type PlaybackCommand,
   type PlaybackState,
 } from "./playback";
-import { parseRealtimeMusicXml } from "./realtime";
-import type { DocumentPage, VisualGroup, VisualSidecar, VisualSidecarNote } from "./types";
+import type { PredictedFingering } from "./fingering";
+import { parseRealtimeMusicXml, type RealtimeScore } from "./realtime";
+import { pdfNoteGeometry, pdfNoteScoreFacts } from "./sidecarNoteGeometry";
+import type { DocumentPage, VisualGroup, VisualSidecar } from "./types";
+
+/** The timeline the app builds for recognized PDF pages. */
+function timelineForPages(
+  pages: DocumentPage[],
+  predictedFingerings: Record<string, PredictedFingering> = {},
+  documentScore?: RealtimeScore | null,
+): ReturnType<typeof buildPlaybackTimeline> {
+  return buildPlaybackTimeline(
+    pdfNoteGeometry(pages),
+    pdfNoteScoreFacts(pages, documentScore),
+    predictedFingerings,
+  );
+}
 
 function group(
   id: string,
@@ -65,7 +79,7 @@ function page(index: number, groups: VisualGroup[], measures: number[]): Documen
 }
 
 function activeAtFirst(pages: DocumentPage[]): { timeline: ReturnType<typeof buildPlaybackTimeline>; state: PlaybackState } {
-  const timeline = buildPlaybackTimeline(pages);
+  const timeline = timelineForPages(pages);
   return { timeline, state: runPlaybackCommand(timeline, initialPlaybackState, "togglePlayback") };
 }
 
@@ -78,20 +92,13 @@ function run(
 }
 
 test("uses the authoritative sidecar pitch without a MusicXML override", () => {
-  const note: VisualSidecarNote = {
-    musicxml_id: "note-flat",
-    part: 1,
-    measure: 1,
-    musicxml_staff_number: 1,
-    voice: 1,
-    pitch: "A3",
-    duration: "note_4",
-    match_confidence: 1,
-    visual_group_id: "flat",
-    alignment_method: "attention",
-  };
+  const flat = group("flat", 0, 0, 200, 250);
+  const sidecarPage = page(0, [flat], [1]);
+  sidecarPage.visualSidecar!.notes[0].pitch = "A3";
 
-  assert.equal(playbackPitchForNote(note), "A3");
+  const [geometry] = pdfNoteGeometry([sidecarPage]);
+  assert.equal(geometry.notes[0].pitch, "A3");
+  assert.deepEqual(timelineForPages([sidecarPage])[0].pitches, ["A3"]);
 });
 
 test("groups a chord and aligned notes in different clefs into one playhead moment", () => {
@@ -101,7 +108,7 @@ test("groups a chord and aligned notes in different clefs into one playhead mome
   upper.stem_component_ids = ["stem-1"];
   const lower = group("lower", 0, 1, 204, 420);
   for (const candidate of [upper, chord, lower]) candidate.moment_id = "moment-chord";
-  const timeline = buildPlaybackTimeline([page(0, [upper, chord, lower], [1, 1, 1])]);
+  const timeline = timelineForPages([page(0, [upper, chord, lower], [1, 1, 1])]);
 
   assert.equal(timeline.length, 1);
   assert.deepEqual(timeline[0].visualGroupIds, ["chord", "lower", "upper"]);
@@ -132,7 +139,7 @@ test("groups a displaced chord second before aligning notes across clefs", () =>
   scorePage.visualSidecar?.notes.forEach((note, index) => {
     note.pitch = pitches[index];
   });
-  const timeline = buildPlaybackTimeline([scorePage]);
+  const timeline = timelineForPages([scorePage]);
 
   assert.equal(timeline.length, 1);
   assert.deepEqual(timeline[0].visualGroupIds, [
@@ -175,7 +182,7 @@ test("does not manufacture playback notes for diagnostic visual candidates", () 
   sidecar.notes[3].pitch = "Bb3";
   sidecar.notes[3].visual_group_id = null;
 
-  const timeline = buildPlaybackTimeline([scorePage]);
+  const timeline = timelineForPages([scorePage]);
 
   assert.equal(timeline.length, 1);
   assert.deepEqual(timeline[0].visualGroupIds, ["upper-high", "upper-low"]);
@@ -208,7 +215,7 @@ test("note-by-note playback ignores grace notes sharing the main note's onset", 
       </part>
     </score-partwise>`;
 
-  const timeline = buildPlaybackTimeline([scorePage]);
+  const timeline = timelineForPages([scorePage]);
 
   assert.equal(timeline.length, 1);
   assert.deepEqual(timeline[0].visualGroupIds, ["main"]);
@@ -246,7 +253,7 @@ test("note-by-note playback skips inferred cross-voice chord tie continuations",
       </measure></part>
     </score-partwise>`;
 
-  const timeline = buildPlaybackTimeline([scorePage]);
+  const timeline = timelineForPages([scorePage]);
 
   assert.equal(timeline.length, 1);
   assert.deepEqual(timeline[0].visualGroupIds, ["start-c5", "start-c6"]);
@@ -283,7 +290,7 @@ test("note-by-note playback displays but does not replay a tied tone beside a fr
       </measure></part>
     </score-partwise>`;
 
-  const timeline = buildPlaybackTimeline([scorePage]);
+  const timeline = timelineForPages([scorePage]);
 
   assert.equal(timeline.length, 2);
   assert.deepEqual(timeline[1].visualGroupIds, ["stop-d", "stop-g"]);
@@ -322,7 +329,7 @@ function twoHandTimeline() {
         <note id="note-lh3"><pitch><step>E</step><octave>3</octave></pitch><duration>1</duration><voice>2</voice><staff>2</staff></note>
       </measure></part>
     </score-partwise>`;
-  return buildPlaybackTimeline([scorePage]);
+  return timelineForPages([scorePage]);
 }
 
 test("narrows note-by-note to one hand and skips the moments it does not play", () => {
@@ -381,7 +388,7 @@ test("note-by-note playback reuses document tie inference across pages", () => {
       </part>
     </score-partwise>`);
 
-  const timeline = buildPlaybackTimeline([firstPage, secondPage], {}, documentScore);
+  const timeline = timelineForPages([firstPage, secondPage], {}, documentScore);
 
   assert.equal(timeline.length, 1);
   assert.equal(timeline[0].pageIndex, 0);
@@ -389,7 +396,7 @@ test("note-by-note playback reuses document tie inference across pages", () => {
 });
 
 test("keeps vertically aligned notes on different systems as separate moments", () => {
-  const timeline = buildPlaybackTimeline([
+  const timeline = timelineForPages([
     page(0, [group("system-1", 0, 0, 200, 250), group("system-2", 1, 0, 200, 750)], [1, 3]),
   ]);
 
@@ -409,7 +416,7 @@ test("canonical playback groups cross-staff notes by moment_id", () => {
   lower.moment_id = "moment-1";
   following.moment_id = "moment-2";
 
-  const timeline = buildPlaybackTimeline([
+  const timeline = timelineForPages([
     page(0, [upper, lower, following], [1, 1, 1]),
   ]);
 
@@ -429,7 +436,7 @@ test("fallback playback keeps consecutive beamed moment_ids separate", () => {
   lowerFirst.stem_component_ids = ["connected-beam"];
   lowerSecond.stem_component_ids = ["connected-beam"];
 
-  const timeline = buildPlaybackTimeline([
+  const timeline = timelineForPages([
     page(0, [upper, lowerFirst, lowerSecond], [16, 16, 16]),
   ]);
 
@@ -447,7 +454,7 @@ test("fallback groups use authoritative moment metadata", () => {
   const fallback = group("fallback", 0, 1, 204, 430);
   fallback.moment_id = "moment-1";
 
-  const timeline = buildPlaybackTimeline([
+  const timeline = timelineForPages([
     page(0, [canonical, fallback], [1, 1]),
   ]);
 
@@ -470,7 +477,7 @@ test("diagnostic and unlinked groups are absent from playback", () => {
   const scorePage = page(0, [linked, diagnostic, unlinked], [1, 1, 1]);
   scorePage.visualSidecar!.notes[1].visual_group_id = null;
   scorePage.visualSidecar!.notes[2].visual_group_id = null;
-  const timeline = buildPlaybackTimeline([scorePage]);
+  const timeline = timelineForPages([scorePage]);
 
   assert.equal(timeline.length, 1);
   assert.deepEqual(timeline[0].visualGroupIds, ["linked"]);
@@ -478,7 +485,7 @@ test("diagnostic and unlinked groups are absent from playback", () => {
 
 test("attaches page-scoped predicted fingerings to keyboard notes after skipped pages", () => {
   const recognized = page(1, [group("right", 0, 0, 200, 250)], [1]);
-  const timeline = buildPlaybackTimeline(
+  const timeline = timelineForPages(
     [
       { index: 0, status: "skipped", width: 1000, height: 1400 },
       recognized,
@@ -529,7 +536,7 @@ test("seeks playback to a mouse-selected group and continues navigation there", 
 });
 
 test("starts playback at a group selected before entering playback mode", () => {
-  const timeline = buildPlaybackTimeline([
+  const timeline = timelineForPages([
     page(
       0,
       [group("first", 0, 0, 100, 200), group("selected", 0, 0, 200, 200)],
@@ -547,7 +554,7 @@ test("starts playback at a group selected before entering playback mode", () => 
 });
 
 test("ignores mouse selection outside playback or when the group has no timeline moment", () => {
-  const timeline = buildPlaybackTimeline([page(0, [group("a", 0, 0, 100, 200)], [1])]);
+  const timeline = timelineForPages([page(0, [group("a", 0, 0, 100, 200)], [1])]);
   const active = run(timeline, initialPlaybackState, "togglePlayback");
 
   assert.equal(
@@ -595,14 +602,14 @@ test("page commands target page beginnings and the document edges", () => {
 });
 
 test("navigation is inactive outside playback mode and toggle exits cleanly", () => {
-  const timeline = buildPlaybackTimeline([page(0, [group("a", 0, 0, 100, 200)], [1])]);
+  const timeline = timelineForPages([page(0, [group("a", 0, 0, 100, 200)], [1])]);
   assert.equal(run(timeline, initialPlaybackState, "forwardNote"), initialPlaybackState);
   const active = run(timeline, initialPlaybackState, "togglePlayback");
   assert.deepEqual(run(timeline, active, "togglePlayback"), initialPlaybackState);
 });
 
 test("note sounds toggle only in playback mode and survive leaving playback", () => {
-  const timeline = buildPlaybackTimeline([page(0, [group("a", 0, 0, 100, 200)], [1])]);
+  const timeline = timelineForPages([page(0, [group("a", 0, 0, 100, 200)], [1])]);
   assert.equal(run(timeline, initialPlaybackState, "toggleNoteSounds"), initialPlaybackState);
   const active = run(timeline, initialPlaybackState, "togglePlayback");
   const muted = run(timeline, active, "toggleNoteSounds");
@@ -614,7 +621,7 @@ test("note sounds toggle only in playback mode and survive leaving playback", ()
 });
 
 test("listen mode forces effective muting without changing the sound preference", () => {
-  const timeline = buildPlaybackTimeline([page(0, [group("a", 0, 0, 100, 200)], [1])]);
+  const timeline = timelineForPages([page(0, [group("a", 0, 0, 100, 200)], [1])]);
   const active = run(timeline, initialPlaybackState, "togglePlayback");
   assert.equal(effectivePlaybackNoteSounds(active), true);
   const listening = run(timeline, active, "toggleListenMode");
@@ -630,7 +637,7 @@ test("listen mode forces effective muting without changing the sound preference"
 });
 
 test("audition is a state-free command and exiting playback disables listen mode", () => {
-  const timeline = buildPlaybackTimeline([page(0, [group("a", 0, 0, 100, 200)], [1])]);
+  const timeline = timelineForPages([page(0, [group("a", 0, 0, 100, 200)], [1])]);
   const active = run(timeline, initialPlaybackState, "togglePlayback");
   assert.equal(run(timeline, active, "playCurrentNotes"), active);
   const listening = run(timeline, active, "toggleListenMode");

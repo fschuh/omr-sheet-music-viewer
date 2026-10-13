@@ -1,11 +1,18 @@
 // Maps the viewer's current note-geometry consumers onto the fixed interface that
 // run.ts records. Only this file changes when the consumers' APIs change, so two
 // recordings of the same inputs can be compared byte for byte.
-import { playbackMomentExtents, hitTest, type PlaybackMomentExtents } from "../../src/DocumentViewer";
-import { layoutNoteLabels, selectedGroupIds } from "../../src/noteLabels";
+import {
+  noteheadAt,
+  pageDiagnosticNoteheads,
+  playbackMomentExtents,
+  type PlaybackMomentExtents,
+} from "../../src/DocumentViewer";
+import { selectedNoteheadIds, type PageNoteGeometry } from "../../src/noteGeometry";
+import { layoutNoteLabels } from "../../src/noteLabels";
 import { buildPlaybackTimeline, type PlaybackMoment } from "../../src/playback";
 import type { PredictedFingering } from "../../src/fingering";
 import { buildRealtimeVisualMap, type RealtimeScore, type VisualNoteTarget } from "../../src/realtime";
+import { pdfNoteGeometry, pdfNoteScoreFacts } from "../../src/sidecarNoteGeometry";
 import type { DocumentPage, VisualGroupRef, VisualPoint } from "../../src/types";
 
 export interface LabelRecord {
@@ -40,24 +47,45 @@ export interface ParityHarness {
   extents(pages: DocumentPage[], page: DocumentPage, moment: PlaybackMoment): PlaybackMomentExtents | null;
 }
 
+const geometryCache = new WeakMap<DocumentPage[], PageNoteGeometry[]>();
+
+function geometryOf(pages: DocumentPage[], page: DocumentPage): PageNoteGeometry | undefined {
+  let geometry = geometryCache.get(pages);
+  if (!geometry) {
+    geometry = pdfNoteGeometry(pages);
+    geometryCache.set(pages, geometry);
+  }
+  return geometry.find((candidate) => candidate.pageIndex === page.index);
+}
+
 export const harness: ParityHarness = {
   timeline: (pages, fingerings, documentScore) =>
-    buildPlaybackTimeline(pages, fingerings, documentScore),
-  visualTargets: (pages) =>
-    new Map([...buildRealtimeVisualMap(pages)].filter(([key]) => key.startsWith("page-"))),
-  selection: (_pages, page, selected, highlightAll, diagnostics) =>
-    page.visualSidecar
-      ? [...selectedGroupIds(page.visualSidecar, selected, page.index, highlightAll, diagnostics)]
-      : [],
-  labels: (_pages, page, selectedIds) =>
-    page.visualSidecar
-      ? layoutNoteLabels(page.visualSidecar, selectedIds, page.width, page.height).map(
+    buildPlaybackTimeline(pdfNoteGeometry(pages), pdfNoteScoreFacts(pages, documentScore), fingerings),
+  visualTargets: (pages) => buildRealtimeVisualMap(pdfNoteGeometry(pages)),
+  selection: (pages, page, selected, highlightAll, diagnostics) => [
+    ...selectedNoteheadIds(
+      geometryOf(pages, page),
+      selected,
+      page.index,
+      highlightAll,
+      pageDiagnosticNoteheads(page, diagnostics),
+    ),
+  ],
+  labels: (pages, page, selectedIds) => {
+    const geometry = geometryOf(pages, page);
+    return geometry
+      ? layoutNoteLabels(geometry, selectedIds, page.width, page.height).map(
           ({ visualGroupId, text, x, y, width, height, fontSize, anchor, connector }) => ({
             visualGroupId, text, x, y, width, height, fontSize, anchor, connector,
           }),
         )
-      : [],
-  hit: (_pages, page, point, diagnostics) =>
-    page.visualSidecar ? hitTest(page.visualSidecar, point, diagnostics)?.visual_group_id ?? null : null,
-  extents: (_pages, page, moment) => playbackMomentExtents(page, moment),
+      : [];
+  },
+  hit: (pages, page, point, diagnostics) => {
+    const geometry = geometryOf(pages, page);
+    return geometry
+      ? noteheadAt(geometry, pageDiagnosticNoteheads(page, diagnostics), point)?.id ?? null
+      : null;
+  },
+  extents: (pages, page, moment) => playbackMomentExtents(geometryOf(pages, page), page, moment),
 };

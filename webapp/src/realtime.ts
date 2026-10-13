@@ -1,12 +1,7 @@
 import { DOMParser } from "@xmldom/xmldom";
 import { formatPitchName } from "./noteLabels";
-import type {
-  DocumentPage,
-  VisualBBox,
-  VisualGroup,
-  VisualGroupRef,
-} from "./types";
-import { isLinkedVisualGroup } from "./types";
+import type { PageNoteGeometry } from "./noteGeometry";
+import type { DocumentPage, VisualGroupRef } from "./types";
 import { MUSICAL_DYNAMICS, type MusicalDynamic } from "./pianoRegistry";
 
 export type PlaybackMode = "note-by-note" | "realtime";
@@ -851,51 +846,43 @@ export function parseRealtimeMusicXml(musicXml: string): RealtimeScore {
   return { measures };
 }
 
-export function buildRealtimeVisualMap(pages: DocumentPage[]): Map<string, VisualNoteTarget> {
+export function buildRealtimeVisualMap(
+  geometry: readonly PageNoteGeometry[],
+): Map<string, VisualNoteTarget> {
   const result = new Map<string, VisualNoteTarget>();
-  let musicPageNumber = 0;
-  for (const page of [...pages].sort((left, right) => left.index - right.index)) {
-    if (page.musicXml || page.visualSidecar || page.artifacts?.musicXmlPath) musicPageNumber += 1;
-    const sidecar = page.visualSidecar;
-    if (!sidecar) continue;
-    const eligibleGroups = sidecar.visual_groups.filter(isLinkedVisualGroup);
-    const groups = new Map(
-      eligibleGroups.map((group) => [group.visual_group_id, group]),
-    );
+  for (const page of [...geometry].sort((left, right) => left.pageIndex - right.pageIndex)) {
+    const noteheads = new Map(page.noteheads.map((notehead) => [notehead.id, notehead]));
     const systems = new Map<number, { right: number; top: number; bottom: number }>();
-    for (const group of eligibleGroups) {
-      const bounds = bbox(group);
-      const system = systems.get(group.staff_group_index);
+    for (const notehead of page.noteheads) {
+      const bounds = notehead.bounds;
+      const system = systems.get(notehead.systemIndex);
       if (system) {
         system.right = Math.max(system.right, bounds[2] + 12);
         system.top = Math.min(system.top, bounds[1] - 18);
         system.bottom = Math.max(system.bottom, bounds[3] + 18);
       } else {
-        systems.set(group.staff_group_index, {
+        systems.set(notehead.systemIndex, {
           right: bounds[2] + 12,
           top: bounds[1] - 18,
           bottom: bounds[3] + 18,
         });
       }
     }
-    for (const note of sidecar.notes) {
-      if (!note.visual_group_id) continue;
-      const group = groups.get(note.visual_group_id);
-      if (!group) continue;
-      const system = systems.get(group.staff_group_index)!;
-      const target: VisualNoteTarget = {
-        musicXmlId: `page-${musicPageNumber}-${note.musicxml_id}`,
-        pageIndex: page.index,
-        visualGroupId: group.visual_group_id,
-        staffGroupIndex: group.staff_group_index,
-        x: group.center[0],
-        y: group.center[1],
+    for (const note of page.notes) {
+      const notehead = noteheads.get(note.noteheadId);
+      if (!notehead) continue;
+      const system = systems.get(notehead.systemIndex)!;
+      result.set(note.id, {
+        musicXmlId: note.id,
+        pageIndex: page.pageIndex,
+        visualGroupId: notehead.id,
+        staffGroupIndex: notehead.systemIndex,
+        x: notehead.center[0],
+        y: notehead.center[1],
         systemRight: system.right,
         systemTop: system.top,
         systemBottom: system.bottom,
-      };
-      result.set(target.musicXmlId, target);
-      if (!result.has(note.musicxml_id)) result.set(note.musicxml_id, target);
+      });
     }
   }
   return result;
@@ -1498,11 +1485,6 @@ export function scoreOffsetAfterSeconds(
   }
   return timing.offsets[segment] +
     (target - timing.cumulativeSeconds[segment]) * timing.bpms[segment] / 60;
-}
-
-function bbox(group: VisualGroup): VisualBBox {
-  if (group.bbox.length === 4) return group.bbox as VisualBBox;
-  return [group.center[0] - 8, group.center[1] - 8, group.center[0] + 8, group.center[1] + 8];
 }
 
 const playheadNotesCache = new WeakMap<PerformanceRoute, PerformanceNote[]>();
