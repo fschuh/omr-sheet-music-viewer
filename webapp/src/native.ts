@@ -138,6 +138,15 @@ export async function openScoreDataDirectory(path: string): Promise<void> {
   return invoke("open_score_data_directory", { path });
 }
 
+/** A file in a score's data folder, or null when it has not been written yet. */
+export async function readScoreData(folder: string, name: string): Promise<string | null> {
+  return invoke<string | null>("read_score_data", { folder, name });
+}
+
+export async function writeScoreData(folder: string, name: string, contents: string): Promise<void> {
+  return invoke("write_score_data", { folder, name, contents });
+}
+
 export async function loadPageArtifacts(artifacts: PageArtifacts): Promise<PageArtifactData> {
   return invoke<PageArtifactData>("load_page_artifacts", {
     musicXmlPath: artifacts.musicXmlPath,

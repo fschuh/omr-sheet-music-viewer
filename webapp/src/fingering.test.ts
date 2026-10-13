@@ -158,3 +158,27 @@ test("converts metronome beat units to quarter-note tempo", async () => {
 
   assert.equal(duration, 500);
 });
+
+test("predictions without write-back leave the MusicXML as it is", async () => {
+  const { predictFingerings } = await import("./fingering");
+  const result = await predictFingerings(SCORE, async (notes) =>
+    notes.map((note) => ({ ...note, finger: note.left ? 5 : 1 })));
+  assert.equal(result.noteCount, 5);
+  assert.deepEqual(result.fingeringsByMusicXmlId["page-1-rh-c"], { finger: 1, left: false });
+  assert.ok(Object.values(result.fingeringsByMusicXmlId).some((value) => value.left && value.finger === 5));
+  assert.doesNotMatch(SCORE, /<fingering>/);
+  await assert.rejects(
+    predictFingerings(SCORE, async (notes) => notes.slice(1).map((note) => ({ ...note, finger: 2 }))),
+    /usable predictions/,
+  );
+});
+
+test("printed fingerings are read with the hand their staff implies", async () => {
+  const { printedFingerings } = await import("./fingering");
+  const printed = SCORE.replace(
+    '<note id="page-1-rh-e"><chord/><pitch><step>E</step><octave>4</octave></pitch><duration>4</duration><staff>1</staff></note>',
+    '<note id="page-1-rh-e"><chord/><pitch><step>E</step><octave>4</octave></pitch><duration>4</duration><staff>1</staff><notations><technical><fingering>3</fingering></technical></notations></note>',
+  );
+  assert.deepEqual(printedFingerings(printed), { "page-1-rh-e": { finger: 3, left: false } });
+  assert.deepEqual(printedFingerings(SCORE), {});
+});

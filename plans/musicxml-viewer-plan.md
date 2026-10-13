@@ -1,7 +1,7 @@
 # MusicXML viewer plan
 
 Date: 2026-10-12  
-Status: In progress; phases 1 to 4 are implemented.
+Status: In progress; phases 1 to 5 are implemented.
 
 ## 1. Objective and scope
 
@@ -228,7 +228,7 @@ New commands in `src-tauri/src/musicxml.rs`:
 | `open_music_xml_score(path)` | Accepts only an existing `.musicxml`, `.xml`, or `.mxl` file. For `.mxl`, reads `META-INF/container.xml` and returns the first root file. Decodes UTF-8 and, with a byte-order mark, UTF-16. Rejects a score whose XML exceeds 64 MB, and XML whose root is not `score-partwise` or `score-timewise`. Returns the XML text, the source SHA-256 and size, and the score-data folder path, creating the folder and updating its `manifest.json`. Remembers the file as opened in this session. |
 | `open_score_source(path)` | Opens the original file with the system's default application ("Open MusicXML"). Only files opened in this session are accepted, so the webview cannot open arbitrary files. |
 | `open_score_data_directory(folder)` | Opens a score-data folder in the system file manager. The folder must be an existing directory directly inside `<app data>/musicxml-scores/`, named by a lowercase SHA-256. |
-| `read_score_data(folder, name)` / `write_score_data(folder, name, contents)` | Added with fingerings (phase 5): read or atomically write a JSON file in a score-data folder, with the same folder check and an allowed set of names. |
+| `read_score_data(folder, name)` / `write_score_data(folder, name, contents)` | Read (null when not yet written) or atomically write a file in a score-data folder, with the same folder check; the name must be one of the allowed files, so far only `fingerings.json`. |
 
 `.mxl` reading uses the `zip` crate (deflate only), XML scanning `quick-xml`, and hashing `sha2`. Rust tests cover the format, size, container, path, and opened-file checks; each check has a test that fails when the check is removed.
 
@@ -308,7 +308,7 @@ The PDF lifecycle writes predictions into a MusicXML copy. MusicXML scores use a
 2. Otherwise run the existing predictor on the in-memory `documentMusicXml` (whose notes all have viewer IDs), strip the page prefixes, and write `fingerings.json`.
 3. Printed fingerings from the source are engraved as part of the score and are never overwritten. Where a note has a printed fingering, the keyboard shows the printed finger. A user override (later) takes precedence over both.
 
-The prediction call is factored so that both lifecycles share it. The PDF lifecycle itself does not change in this work.
+The prediction call is factored so that both lifecycles share it (`predictFingerings` and `printedFingerings` in `fingering.ts`). The PDF lifecycle itself does not change in this work. The MusicXML lifecycle is `scoreData/fingerings.ts`; a failed write of `fingerings.json` keeps the predictions for the session. Grace notes, which last no time, get no fingering, as in the PDF lifecycle.
 
 ## 5. Notation coverage
 
@@ -373,6 +373,8 @@ Visual comparison: `npm run musicxml:render -- <output-dir> <scores>` renders ea
 | 7. Section 5.2 | Second-stage notation | Same review for the second-stage symbols. |
 
 Phase 1 changes only shared code and PDF behavior must stay identical, so it can be reviewed and merged on its own. Each phase is a separate reviewable commit series on the `musicxml` branch.
+
+Phase 5 result: predictions are stored by structural key and reused on the next opening without running the model; with a stand-in model on the Turkish March and the Nocturne Op. 9 No. 2 (1,425 and 1,238 notes, 69 and 61 kB of `fingerings.json`), the second opening restores identical fingerings, and all 70 and 85 printed fingerings stay as printed. Because the folder is named by the file's content, moving or renaming the file keeps its fingerings.
 
 Phase 4 result: every corpus score plays from its document MusicXML. The corpus check confirms that each realtime note is a note on the pages with a visual target, in a measure on the same page; that note-by-note playback attacks every note that starts a sound exactly once, in score order; and that the realtime route expands. Against MuseScore 4's MIDI export (24 scores; MuseScore could not export the other two), more than 98% of the steps between aligned chords agree within 20 ms in 22 scores. The other two read tempo marks differently: Mozart's K. 545 II through the tempo choice described in section 6, and a Nocturne file that encodes its rubato as 526 hidden tempo changes, where 95.6% of the steps agree and the rest fall in measures dense with them.
 

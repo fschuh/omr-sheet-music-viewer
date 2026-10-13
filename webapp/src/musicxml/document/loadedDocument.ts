@@ -20,6 +20,7 @@ export function musicXmlLoadedDocument(
     pageCount: layout.pages.length,
     source: { kind: "musicxml", sourcePath: file.path, scoreDataPath: file.scoreDataPath },
     documentMusicXml,
+    fingeringStatus: "pending",
     status: "complete",
     pages: layout.pages.map((page) => ({
       index: page.index,

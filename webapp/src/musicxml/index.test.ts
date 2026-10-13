@@ -44,6 +44,7 @@ test("a score file opens as a complete document of engraved pages", () => {
       name: "etude.mxl",
       pageCount: 2,
       source: { kind: "musicxml", sourcePath: "/scores/etude.mxl", scoreDataPath: "/data/musicxml-scores/abc" },
+      fingeringStatus: "pending",
       status: "complete",
       pages: [0, 1].map((index) => ({ index, status: "complete", width, height, surface: index })),
     },

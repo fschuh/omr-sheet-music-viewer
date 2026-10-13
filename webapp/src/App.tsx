@@ -80,6 +80,7 @@ import {
 } from "./documentSource";
 import {
   isMusicXmlPath,
+  musicXmlFingerings,
   openMusicXmlScore,
   showScoreDataFolder,
   showScoreSource,
@@ -181,7 +182,11 @@ function replacePage(
 function statusLabel(document: LoadedDocument): string {
   const { source } = document;
   if (source.kind === "musicxml") {
-    return document.status === "opening" ? "Opening MusicXML…" : "MusicXML score";
+    if (document.status === "opening") return "Opening MusicXML…";
+    if (document.fingeringStatus === "pending") return "Loading piano fingerings…";
+    if (document.fingeringStatus === "predicting") return "Predicting piano fingerings…";
+    if (document.fingeringStatus === "failed") return "MusicXML score · fingerings unavailable";
+    return "MusicXML score";
   }
   if (document.status === "opening") return "Opening PDF…";
   if (document.status === "processing") {
@@ -1625,6 +1630,44 @@ export function App() {
       unsubscribe?.();
     };
   }, [nativeAvailable]);
+
+  // A MusicXML score keeps its fingerings in its data folder, never in the score file.
+  useEffect(() => {
+    if (!document || document.source.kind !== "musicxml" || document.fingeringStatus !== "pending") return;
+    const jobId = document.jobId;
+    const requestKey = `${jobId}:musicxml`;
+    if (fingeringRequestRef.current === requestKey) return;
+    fingeringRequestRef.current = requestKey;
+    const current = () => activeJobId.current === jobId && fingeringRequestRef.current === requestKey;
+    void musicXmlFingerings(
+      document,
+      async (notes) => (await import("./fingeringModel")).predictPianoFingerings(notes),
+      () => setDocument((value) => (value?.jobId === jobId ? { ...value, fingeringStatus: "predicting" } : value)),
+    )
+      .then((result) => {
+        if (!current()) return;
+        setDocument((value) =>
+          value?.jobId === jobId
+            ? {
+                ...value,
+                fingeringStatus: "ready",
+                fingeringError: undefined,
+                predictedFingerings: result.fingeringsByMusicXmlId,
+                predictedFingeringCount: result.noteCount,
+              }
+            : value,
+        );
+      })
+      .catch((fingeringError: unknown) => {
+        if (!current()) return;
+        const message = fingeringError instanceof Error ? fingeringError.message : String(fingeringError);
+        setDocument((value) =>
+          value?.jobId === jobId ? { ...value, fingeringStatus: "failed", fingeringError: message } : value,
+        );
+        setError(`Piano fingering prediction failed: ${message}`);
+      });
+    // The document object changes as fingerings arrive; the job and status decide what to do.
+  }, [document?.jobId, document?.fingeringStatus, document?.source.kind]);
 
   useEffect(() => {
     const path = document?.documentMusicXmlPath;

@@ -356,6 +356,55 @@ pub(crate) fn open_score_data_directory(app: AppHandle, path: String) -> Result<
     open_with_system(&checked_score_data_folder(&score_data_root(&app)?, &path)?)
 }
 
+/// The files a score data folder may hold besides its manifest, which only this module writes.
+const SCORE_DATA_FILES: [&str; 1] = ["fingerings.json"];
+
+/// The path of an allowed file in a checked score data folder.
+fn score_data_file(root: &Path, folder: &str, name: &str) -> Result<PathBuf, String> {
+    if !SCORE_DATA_FILES.contains(&name) {
+        return Err(format!("{name} is not a score data file"));
+    }
+    Ok(checked_score_data_folder(root, folder)?.join(name))
+}
+
+/// A score data file's contents, or None when it has not been written yet.
+fn read_score_data_file(root: &Path, folder: &str, name: &str) -> Result<Option<String>, String> {
+    let path = score_data_file(root, folder, name)?;
+    match fs::read_to_string(&path) {
+        Ok(text) => Ok(Some(text)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+fn write_score_data_file(
+    root: &Path,
+    folder: &str,
+    name: &str,
+    contents: &str,
+) -> Result<(), String> {
+    write_atomically(&score_data_file(root, folder, name)?, contents)
+}
+
+#[tauri::command(async)]
+pub(crate) fn read_score_data(
+    app: AppHandle,
+    folder: String,
+    name: String,
+) -> Result<Option<String>, String> {
+    read_score_data_file(&score_data_root(&app)?, &folder, &name)
+}
+
+#[tauri::command(async)]
+pub(crate) fn write_score_data(
+    app: AppHandle,
+    folder: String,
+    name: String,
+    contents: String,
+) -> Result<(), String> {
+    write_score_data_file(&score_data_root(&app)?, &folder, &name, &contents)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -560,6 +609,42 @@ mod tests {
         assert!(check(&base.path().join(&hash)).is_err());
         assert!(check(&root.join("f".repeat(64))).is_err());
         assert!(check(&root.join(hash.to_uppercase())).is_err());
+    }
+
+    #[test]
+    fn score_data_files_are_read_and_written_only_by_allowed_name_in_data_folders() {
+        let base = tempfile::tempdir().unwrap();
+        let root = base.path().join(SCORE_DATA_DIRECTORY);
+        let folder = root.join("0123456789abcdef".repeat(4));
+        fs::create_dir_all(&folder).unwrap();
+        let folder_text = folder.to_str().unwrap();
+
+        assert_eq!(
+            read_score_data_file(&root, folder_text, "fingerings.json").unwrap(),
+            None
+        );
+        write_score_data_file(&root, folder_text, "fingerings.json", "{\"a\":1}").unwrap();
+        assert_eq!(
+            read_score_data_file(&root, folder_text, "fingerings.json")
+                .unwrap()
+                .as_deref(),
+            Some("{\"a\":1}")
+        );
+        assert!(
+            !folder.join("fingerings.json.tmp").exists(),
+            "the write is atomic"
+        );
+
+        assert!(write_score_data_file(&root, folder_text, "manifest.json", "{}").is_err());
+        assert!(write_score_data_file(&root, folder_text, "../escape.json", "{}").is_err());
+        assert!(read_score_data_file(&root, folder_text, "score.musicxml").is_err());
+        let outside = base.path().join("0123456789abcdef".repeat(4));
+        fs::create_dir_all(&outside).unwrap();
+        assert!(
+            write_score_data_file(&root, outside.to_str().unwrap(), "fingerings.json", "{}")
+                .is_err()
+        );
+        assert!(!outside.join("fingerings.json").exists());
     }
 
     #[test]

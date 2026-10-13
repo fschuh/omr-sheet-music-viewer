@@ -4,6 +4,8 @@ const DEFAULT_TEMPO_BPM = 120;
 const FINGERING_CACHE_FIELD_NAME = "homr-piano-fingering-cache";
 // Bump this whenever the model version or hand-assignment rules change.
 const FINGERING_CACHE_VERSION = "lumikey-0.3.0-staff-hands-v1";
+/** Identifies the predictions: stored predictions from another model or hand rule are stale. */
+export const FINGERING_MODEL = FINGERING_CACHE_VERSION;
 const STEP_SEMITONES: Readonly<Record<string, number>> = {
   C: 0,
   D: 2,
@@ -425,49 +427,92 @@ export function cachedFingeringsFromMusicXml(
   };
 }
 
-export async function addPredictedFingeringsToMusicXml(
-  musicXml: string,
+export interface FingeringPredictions {
+  fingeringsByMusicXmlId: Record<string, PredictedFingering>;
+  noteCount: number;
+}
+
+/** Predicts every playable note's finger; the notes of `document` are not changed. */
+async function predictNotes(
+  document: XMLDocument,
   predict: FingeringPredictor,
-): Promise<MusicXmlFingeringResult> {
-  const document = musicXmlDocument(musicXml);
+): Promise<{ raw: RawNote[]; fingers: Map<number, number>; noteCount: number }> {
   const tempoOrder = { value: 0 };
   const parts = childrenNamed(document.documentElement, "part").map((part) =>
     parsePart(part, tempoOrder),
   );
   const { indexed, raw } = modelNotes(parts);
-  if (indexed.length === 0) {
-    return { musicXml, fingeringsByMusicXmlId: {}, noteCount: 0 };
-  }
-
-  const predictions = await predict(indexed);
-  const fingeringsByMusicXmlId: Record<string, PredictedFingering> = {};
-  let annotatedCount = 0;
-  for (const prediction of predictions) {
-    const source = raw[prediction.sourceIndex];
+  const fingers = new Map<number, number>();
+  if (indexed.length === 0) return { raw, fingers, noteCount: 0 };
+  for (const prediction of await predict(indexed)) {
     const finger = prediction.finger;
     if (
-      !source ||
+      !raw[prediction.sourceIndex] ||
       typeof finger !== "number" ||
       !Number.isInteger(finger) ||
       finger < 1 ||
       finger > 5
     ) continue;
+    fingers.set(prediction.sourceIndex, finger);
+  }
+  if (fingers.size !== indexed.length) {
+    throw new Error(
+      `The fingering model returned ${fingers.size} usable predictions for ${indexed.length} notes`,
+    );
+  }
+  return { raw, fingers, noteCount: indexed.length };
+}
+
+/** Predicted fingers by note ID, without writing them into the MusicXML. */
+export async function predictFingerings(
+  musicXml: string,
+  predict: FingeringPredictor,
+): Promise<FingeringPredictions> {
+  const { raw, fingers, noteCount } = await predictNotes(musicXmlDocument(musicXml), predict);
+  const fingeringsByMusicXmlId: Record<string, PredictedFingering> = {};
+  for (const [index, finger] of fingers) {
+    const source = raw[index];
+    if (source.musicXmlId) fingeringsByMusicXmlId[source.musicXmlId] = { finger, left: source.left };
+  }
+  return { fingeringsByMusicXmlId, noteCount };
+}
+
+/** Fingers the MusicXML prints, by note ID, with the hand the staff and clef imply. */
+export function printedFingerings(musicXml: string): Record<string, PredictedFingering> {
+  const document = musicXmlDocument(musicXml);
+  const tempoOrder = { value: 0 };
+  const result: Record<string, PredictedFingering> = {};
+  for (const part of childrenNamed(document.documentElement, "part")) {
+    for (const note of parsePart(part, tempoOrder).notes) {
+      const finger = fingeringForNote(note.element);
+      if (finger !== null && note.musicXmlId) result[note.musicXmlId] = { finger, left: note.left };
+    }
+  }
+  return result;
+}
+
+export async function addPredictedFingeringsToMusicXml(
+  musicXml: string,
+  predict: FingeringPredictor,
+): Promise<MusicXmlFingeringResult> {
+  const document = musicXmlDocument(musicXml);
+  const { raw, fingers, noteCount } = await predictNotes(document, predict);
+  if (noteCount === 0) {
+    return { musicXml, fingeringsByMusicXmlId: {}, noteCount: 0 };
+  }
+  const fingeringsByMusicXmlId: Record<string, PredictedFingering> = {};
+  for (const [index, finger] of fingers) {
+    const source = raw[index];
     replaceFingering(source.element, finger);
-    annotatedCount += 1;
     if (source.musicXmlId) {
       fingeringsByMusicXmlId[source.musicXmlId] = { finger, left: source.left };
     }
-  }
-  if (annotatedCount !== indexed.length) {
-    throw new Error(
-      `The fingering model returned ${annotatedCount} usable predictions for ${indexed.length} notes`,
-    );
   }
   markFingeringCacheCurrent(document);
 
   return {
     musicXml: serializeMusicXml(document),
     fingeringsByMusicXmlId,
-    noteCount: annotatedCount,
+    noteCount,
   };
 }

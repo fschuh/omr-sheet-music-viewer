@@ -823,6 +823,8 @@ pub fn run() {
             musicxml::open_music_xml_score,
             musicxml::open_score_source,
             musicxml::open_score_data_directory,
+            musicxml::read_score_data,
+            musicxml::write_score_data,
             cancel_job,
             retry_page,
             load_page_artifacts,

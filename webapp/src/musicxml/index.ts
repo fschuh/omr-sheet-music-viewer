@@ -7,7 +7,9 @@ import { documentMusicXml } from "./import/documentMusicXml";
 import { importMusicXml } from "./import/parseMusicXml";
 import { pageFormat } from "./layout/pageFormat";
 import { layoutScore } from "./layout/pages";
-import { readScoreFile, type MusicXmlScoreFile } from "./scoreData/scoreData";
+import type { FingeringPredictor } from "../fingering";
+import { loadScoreFingerings, type ScoreFingerings } from "./scoreData/fingerings";
+import { readScoreFile, scoreDataStore, type MusicXmlScoreFile } from "./scoreData/scoreData";
 
 export type { LayoutPage as MusicXmlPage } from "./model/layout";
 export { MusicXmlImportError } from "./import/parseMusicXml";
@@ -32,6 +34,23 @@ export function musicXmlScoreDocument(jobId: string, file: MusicXmlScoreFile): L
 /** Reads, imports and lays out a MusicXML score file. */
 export async function openMusicXmlScore(path: string, jobId: string): Promise<LoadedDocument> {
   return musicXmlScoreDocument(jobId, await readScoreFile(path));
+}
+
+export type { ScoreFingerings };
+
+/**
+ * A MusicXML score's fingerings: stored predictions when current, else new ones stored in
+ * its data folder; fingerings the score prints win.
+ */
+export function musicXmlFingerings(
+  document: LoadedDocument,
+  predict: FingeringPredictor,
+  onPredicting?: () => void,
+): Promise<ScoreFingerings> {
+  if (document.source.kind !== "musicxml" || !document.source.scoreDataPath || !document.documentMusicXml) {
+    return Promise.reject(new Error("Fingerings need an opened MusicXML score"));
+  }
+  return loadScoreFingerings(document.documentMusicXml, scoreDataStore(document.source.scoreDataPath), predict, onPredicting);
 }
 
 /** Note geometry of every engraved page, in page order. */

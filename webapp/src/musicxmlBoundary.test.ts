@@ -33,7 +33,8 @@ function boundaryViolations(file: string, source: string): string[] {
   const isTest = /\.test\.tsx?$/.test(file);
   return imports(source).flatMap(({ specifier, names }): string[] => {
     if (!specifier.startsWith(".")) {
-      if (!inModule || (isTest && specifier.startsWith("node:"))) return [];
+      // Tests may use node's modules, and xmldom to give node a DOMParser.
+      if (!inModule || (isTest && (specifier.startsWith("node:") || specifier === "@xmldom/xmldom"))) return [];
       return PACKAGES[specifier] === stage ? [] : [`${file}: ${specifier}`];
     }
     const target = posix
@@ -136,6 +137,10 @@ test("only render uses React and only import reads XML", () => {
     ["musicxml/index.ts: @tauri-apps/api/core"],
   );
   assert.deepEqual(boundaryViolations("musicxml/layout/a.test.ts", 'import test from "node:test";'), []);
+  assert.deepEqual(boundaryViolations("musicxml/scoreData/a.test.ts", 'import { DOMParser } from "@xmldom/xmldom";'), []);
+  assert.deepEqual(boundaryViolations("musicxml/scoreData/a.ts", 'import { DOMParser } from "@xmldom/xmldom";'), [
+    "musicxml/scoreData/a.ts: @xmldom/xmldom",
+  ]);
   assert.deepEqual(boundaryViolations("musicxml/layout/a.ts", 'import { readFileSync } from "node:fs";'), [
     "musicxml/layout/a.ts: node:fs",
   ]);
