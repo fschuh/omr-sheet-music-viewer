@@ -102,6 +102,28 @@ test("a tie between two spellings of one sound plays once", () => {
   assert.equal(route.notes[0].release, 2);
 });
 
+test("a slur between two spellings of one sound holds the note, in chords too", () => {
+  const spelled = (id: string, step: string, alter: number, extra: string) =>
+    `<note id="${id}">${extra.includes("<chord/>") ? "<chord/>" : ""}<pitch><step>${step}</step><alter>${alter}</alter><octave>5</octave></pitch>` +
+    `<duration>4</duration><voice>1</voice><type>quarter</type>${extra.replace("<chord/>", "")}</note>`;
+  const parsed = parseRealtimeMusicXml(score(`
+    <measure number="1">
+      <attributes><divisions>4</divisions></attributes>
+      ${spelled("top-start", "E", 0, '<notations><slur type="start" number="1"/></notations>')}
+      ${spelled("d-flat", "D", -1, "<chord/>")}
+      ${spelled("top-stop", "E", 0, '<notations><slur type="stop" number="1"/></notations>')}
+      ${spelled("c-sharp", "C", 1, "<chord/>")}
+      ${spelled("lone-start", "G", -1, '<notations><slur type="start" number="1"/></notations>')}
+      ${spelled("lone-stop", "F", 1, '<notations><slur type="stop" number="1"/></notations>')}
+    </measure>
+  `));
+
+  const route = expandPerformanceRoute(parsed);
+
+  assert.deepEqual(route.notes.map((note) => note.musicXmlId).sort(), ["d-flat", "lone-start", "top-start"]);
+  assert.ok(route.notes.every((note) => note.release - note.onset === 2));
+});
+
 test("sustains contiguous same-pitch slur endpoints as a realtime tie", () => {
   const parsed = parseRealtimeMusicXml(score(`
     <measure number="1">

@@ -653,20 +653,22 @@ function inferSamePitchSlurTies(measures: PartMeasureData[]): void {
           start &&
           !start.grace &&
           !note.grace &&
-          start.pitch === note.pitch &&
+          soundingPitch(start.pitch) === soundingPitch(note.pitch) &&
           (adjacentInVoice || rhythmicallyContiguous)
         ) {
           const startNotes = notesByVoiceEvent.get(voiceEventKey(start)) ?? [start];
           const stopNotes = notesByVoiceEvent.get(voiceEventKey(note)) ?? [note];
           const inferredTieGroup = `slur:${start.partId}:${start.staff}:${number}`;
+          // By sound: a slur from D♭5 to C♯5 holds one note, as a tie between them would.
           const unusedStops = new Map<string, ParsedScoreNote[]>();
           for (const stopNote of stopNotes) {
-            const matching = unusedStops.get(stopNote.pitch) ?? [];
+            const sound = soundingPitch(stopNote.pitch);
+            const matching = unusedStops.get(sound) ?? [];
             matching.push(stopNote);
-            unusedStops.set(stopNote.pitch, matching);
+            unusedStops.set(sound, matching);
           }
           for (const startNote of startNotes) {
-            const matching = unusedStops.get(startNote.pitch)?.shift();
+            const matching = unusedStops.get(soundingPitch(startNote.pitch))?.shift();
             if (!matching || startNote.grace || matching.grace) continue;
             startNote.tieStart = true;
             startNote.inferredTieGroup = inferredTieGroup;
