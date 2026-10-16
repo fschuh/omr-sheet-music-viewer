@@ -652,6 +652,45 @@ test("controller releases and retriggers repeated tremolo pitches", () => {
   assert.deepEqual(attacks, [["C4"], ["C4"]]);
 });
 
+test("controller strikes a pitch another voice is holding", () => {
+  const parsed = parseRealtimeMusicXml(score(`
+    <measure number="1">
+      <attributes><divisions>4</divisions></attributes>
+      <direction><sound tempo="60"/></direction>
+      <note id="held"><pitch><step>E</step><octave>5</octave></pitch><duration>16</duration><voice>1</voice><type>whole</type></note>
+      <backup><duration>16</duration></backup>
+      <note id="rest"><rest/><duration>8</duration><voice>2</voice><type>half</type></note>
+      <note id="struck"><pitch><step>E</step><octave>5</octave></pitch><duration>8</duration><voice>2</voice><type>half</type></note>
+    </measure>
+  `));
+  const route = expandPerformanceRoute(parsed);
+  let now = 0;
+  let tick: (() => void) | null = null;
+  const attacks: string[][] = [];
+  const controller = new RealtimeController(
+    {
+      attack: (pitches) => attacks.push([...pitches]),
+      release: () => undefined,
+      stop: () => undefined,
+    },
+    { onFrame: () => undefined, onComplete: () => undefined },
+    {
+      now: () => now,
+      setInterval: (callback) => { tick = callback; return 1; },
+      clearInterval: () => { tick = null; },
+    },
+  );
+
+  controller.play(route);
+  assert.deepEqual(attacks, [["E5"]]);
+  now = 2.1;
+  (tick as (() => void) | null)?.();
+  assert.deepEqual(attacks, [["E5"], ["E5"]]);
+  now = 3;
+  (tick as (() => void) | null)?.();
+  assert.deepEqual(attacks, [["E5"], ["E5"]]);
+});
+
 test("assigns hands by staff and by a bass clef on a single staff", () => {
   const parsed = parseRealtimeMusicXml(score(`
     <measure number="1">

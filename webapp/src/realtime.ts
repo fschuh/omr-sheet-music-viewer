@@ -1982,12 +1982,12 @@ export class RealtimeController {
         const desiredIds = desiredByPitch.get(pitch);
         if (!desiredIds || ![...currentIds].some((id) => desiredIds.has(id))) releases.push(pitch);
       }
+      // A note that starts strikes its key, even while another voice holds the same pitch.
       for (const [pitch, desiredIds] of desiredByPitch) {
         const currentIds = currentByPitch.get(pitch);
-        if (!currentIds || ![...desiredIds].some((id) => currentIds.has(id))) {
-          const desiredNote = audibleNotes.find((note) => (
-            note.pitch === pitch && desiredIds.has(note.id)
-          ));
+        const started = [...desiredIds].filter((id) => !currentIds?.has(id));
+        if (started.length > 0) {
+          const desiredNote = audibleNotes.find((note) => note.id === started[0]);
           const dynamic = desiredNote?.dynamic ?? "mp";
           const selected = attacksByDynamic.get(dynamic) ?? [];
           selected.push(pitch);
