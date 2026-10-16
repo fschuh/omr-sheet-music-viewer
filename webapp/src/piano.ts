@@ -427,7 +427,10 @@ export class PianoSampler {
     this.activeNotes = notes;
   }
 
-  /** Attack additional notes without releasing sustained realtime notes. */
+  /**
+   * Attack notes without releasing other sustained realtime notes. A note that is already
+   * sounding is struck again, its new strike replacing the old one as on a piano key.
+   */
   attack(
     pitches: readonly string[],
     dynamicOrLayer: MusicalDynamic | PianoLayerId = "mp",
@@ -436,14 +439,16 @@ export class PianoSampler {
       const midi = pitchToMidi(pitch);
       return midi === null ? [] : [midiToPitchName(midi)];
     })));
-    const newNotes = notes.filter((note) => !this.activeNotes.includes(note));
-    if (newNotes.length === 0) return;
-    this.audioEngine().attack(
-      newNotes,
-      pianoChordMixGain(newNotes.length),
+    if (notes.length === 0) return;
+    const engine = this.audioEngine();
+    const restruck = notes.filter((note) => this.activeNotes.includes(note));
+    if (restruck.length > 0) engine.release(restruck);
+    engine.attack(
+      notes,
+      pianoChordMixGain(notes.length),
       requestedLayer(this.pianoId, dynamicOrLayer),
     );
-    this.activeNotes = Array.from(new Set([...this.activeNotes, ...newNotes]));
+    this.activeNotes = Array.from(new Set([...this.activeNotes, ...notes]));
   }
 
   /** Release only the requested notes, preserving other realtime sustains. */

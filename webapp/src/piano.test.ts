@@ -91,6 +91,30 @@ test("attacks distinct Tone.js pitches and releases them on navigation", async (
   assert.deepEqual(releases, [["C4", "E4", "G#3"], ["D4"]]);
 });
 
+test("realtime attacks strike a sounding note again, replacing its old strike", () => {
+  const attacks: Array<readonly string[]> = [];
+  const releases: Array<readonly string[]> = [];
+  const engine: PianoPlaybackEngine = {
+    load: async () => undefined,
+    activate: async () => undefined,
+    prepare: async () => undefined,
+    attack: (notes) => attacks.push(notes),
+    release: (notes) => releases.push(notes),
+    dispose: () => undefined,
+  };
+  const sampler = new PianoSampler(() => engine);
+
+  sampler.attack(["C5", "E5"]);
+  // Another voice strikes E5 while the first still holds it, then adds G5.
+  sampler.attack(["E5"]);
+  sampler.attack(["E5", "G5"]);
+
+  assert.deepEqual(attacks, [["C5", "E5"], ["E5"], ["E5", "G5"]]);
+  assert.deepEqual(releases, [["E5"], ["E5"]]);
+  sampler.release(["C5", "E5", "G5"]);
+  assert.deepEqual(releases.at(-1), ["C5", "E5", "G5"]);
+});
+
 test("keeps acoustic layer selection independent from chord-size mix gain", async () => {
   const attacks: Array<{ velocity: number; layer: string }> = [];
   const loadedLayers: Array<readonly string[] | undefined> = [];
