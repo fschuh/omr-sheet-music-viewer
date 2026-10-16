@@ -2,9 +2,10 @@
 // chords, converted from staff spaces to page pixels.
 import { glyphBox, glyphAnchor, glyphWidth, ENGRAVING_DEFAULTS, type GlyphName } from "../fonts/smufl";
 import { fractionKey } from "../model/fraction";
-import type { Bounds, Drawable, LayoutChord, LayoutNote, LayoutPage, PageFormat, TextRun } from "../model/layout";
-import type { CreditModel, ScoreModel } from "../model/score";
+import type { Bounds, Drawable, LayoutChord, LayoutNote, LayoutPage, PageFormat } from "../model/layout";
+import type { ScoreModel } from "../model/score";
 import { STEM_WIDTH, type ChordShape } from "./chords";
+import { pageCredits, titleBlock } from "./credits";
 import {
   BARLINE_SEPARATION,
   BARLINE_WIDTH,
@@ -51,7 +52,10 @@ function pitchName(step: string, alter: number, octave: number): string {
 
 export function drawPage(index: number, systems: PlacedSystem[], context: DrawContext): LayoutPage {
   const { sp } = context;
-  const items: Drawable[] = [...drawCredits(context.score, index, context.format), ...(index === 0 ? titleBlock(context.score, context.format).items : [])];
+  const items: Drawable[] = [
+    ...(index === 0 ? titleBlock(context.score, context.format).items : []),
+    ...pageCredits(context.score, index, context.format),
+  ];
   const chords: LayoutChord[] = [];
   // Drawing works in staff spaces; these convert to page pixels.
   const glyph = (name: GlyphName, x: number, y: number, scale = 1, scaleY?: number): Drawable => ({
@@ -398,86 +402,3 @@ function drawChord(
   };
 }
 
-const POINTS_TO_PIXELS = 300 / 72;
-const LINE_HEIGHT = 1.2;
-/** MuseScore's default title, subtitle and composer sizes, in points. */
-const TITLE_SIZE = 22;
-const SUBTITLE_SIZE = 16;
-const COMPOSER_SIZE = 10;
-
-/** Credits laid out as lines of styled runs, split where their text breaks. */
-function creditLines(credit: CreditModel): TextRun[][] {
-  const lines: TextRun[][] = [[]];
-  for (const run of credit.runs) {
-    run.text.split("\n").forEach((part, index) => {
-      if (index > 0) lines.push([]);
-      if (part) {
-        lines[lines.length - 1].push({
-          text: part,
-          size: run.fontSize * POINTS_TO_PIXELS,
-          italic: run.italic || undefined,
-          bold: run.bold || undefined,
-        });
-      }
-    });
-  }
-  return lines.filter((line) => line.length > 0);
-}
-
-/** The text the file places on a page, at its positions in tenths from the bottom left. */
-export function drawCredits(score: ScoreModel, pageIndex: number, format: PageFormat): Drawable[] {
-  const pixelsPerTenth = format.staffSpace / 10;
-  const items: Drawable[] = [];
-  for (const credit of score.credits.filter((value) => value.page === pageIndex + 1)) {
-    const lines = creditLines(credit);
-    const size = Math.max(...credit.runs.map((run) => run.fontSize)) * POINTS_TO_PIXELS;
-    const height = size * LINE_HEIGHT;
-    const anchorY = format.height - credit.y * pixelsPerTenth;
-    // Where the first baseline goes, from the credit's vertical alignment.
-    const firstBaseline =
-      credit.valign === "top" ? anchorY + size * 0.8
-      : credit.valign === "middle" ? anchorY + size * 0.35 - (height * (lines.length - 1)) / 2
-      : credit.valign === "bottom" ? anchorY - height * (lines.length - 1) - size * 0.2
-      : anchorY - height * (lines.length - 1);
-    lines.forEach((runs, index) => {
-      items.push({
-        kind: "text",
-        text: runs.map((run) => run.text).join(""),
-        runs,
-        x: credit.x * pixelsPerTenth,
-        y: firstBaseline + index * height,
-        size: runs[0].size ?? size,
-        anchor: credit.align === "center" ? "middle" : credit.align === "right" ? "end" : "start",
-      });
-    });
-  }
-  return items;
-}
-
-/**
- * For a file without credits, a title block like MuseScore's: the title centred, a subtitle
- * under it, the composer to the right. Returns its items and its height, in page pixels.
- */
-export function titleBlock(score: ScoreModel, format: PageFormat): { items: Drawable[]; height: number } {
-  const { title, subtitle, composer } = score.titles;
-  if (score.credits.length > 0 || (!title && !composer)) return { items: [], height: 0 };
-  const items: Drawable[] = [];
-  let y = format.margins.top;
-  const line = (text: string, points: number, anchor: "middle" | "end") => {
-    const size = points * POINTS_TO_PIXELS;
-    y += size;
-    items.push({
-      kind: "text",
-      text,
-      x: anchor === "middle" ? format.width / 2 : format.width - format.margins.right,
-      y,
-      size,
-      anchor,
-    });
-    y += size * (LINE_HEIGHT - 1);
-  };
-  if (title) line(title, TITLE_SIZE, "middle");
-  if (subtitle) line(subtitle, SUBTITLE_SIZE, "middle");
-  if (composer) line(composer, COMPOSER_SIZE, "end");
-  return { items, height: y - format.margins.top };
-}

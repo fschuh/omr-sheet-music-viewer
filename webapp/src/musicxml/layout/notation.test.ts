@@ -4,7 +4,7 @@ import { parseMusicXml } from "../import/parseMusicXml";
 import type { Drawable, LayoutPage } from "../model/layout";
 import { attributes, backup, barline, measure, note, part, piano, score } from "../testScores";
 import { avoidRestCollisions, layoutChord, type ChordShape } from "./chords";
-import { drawCredits, titleBlock } from "./drawing";
+import { pageCredits, titleBlock } from "./credits";
 import { prepareScore, type PreparedChord } from "./measureContent";
 import { pageFormat } from "./pageFormat";
 import { layoutScore } from "./pages";
@@ -108,24 +108,135 @@ test("an ending the file leaves open stops at the next start-repeat", () => {
   for (const line of voltaLines) assert.ok((line as { x2: number }).x2 < repeatX, "the volta ends before the start-repeat");
 });
 
-test("credits are drawn where the file puts them, with their styles", () => {
-  const parsed = parseMusicXml(score([piano([note("C5", 16, { type: "whole" })])],
-    `<credit page="1"><credit-words default-x="600" default-y="1600" justify="center" valign="top" font-style="italic" font-size="22">Für Elise</credit-words><credit-words> (Bagatelle)</credit-words><credit-words font-style="normal"> in A Minor</credit-words></credit>
-     <credit page="1"><credit-words default-x="1100" default-y="1500" justify="right" valign="bottom">Beethoven
-(1770–1827)</credit-words></credit>`));
+type Text = Extract<Drawable, { kind: "text" }>;
+const texts = (values: Drawable[]) => values.filter((item): item is Text => item.kind === "text");
+const textOf = (values: Drawable[], text: string) => texts(values).find((item) => item.text === text)!;
+/** The top staff line of the page's first system. */
+const firstStaffTop = (page: LayoutPage) =>
+  Math.min(...page.items.flatMap((item) => (item.kind === "line" && item.y1 === item.y2 ? [item.y1] : [])));
+/** A one-measure score whose first measure asks for `top` tenths above its system. */
+const withCredits = (credits: string, top = "") =>
+  score([part("P1", [measure(
+    attributes({ divisions: 4, fifths: 0, time: [4, 4], clefs: ["G"] }) + note("C5", 16, { type: "whole" }),
+    top ? `<print><system-layout><top-system-distance>${top}</top-system-distance></system-layout></print>` : "",
+  )])], credits);
+
+// A Finale-style header: the file's positions overlap the first system MuseScore would draw.
+const FINALE_CREDITS = `
+  <credit page="1"><credit-type>title</credit-type><credit-words default-x="617" default-y="1497" font-size="24" justify="center" valign="top">"Battle 1"</credit-words></credit>
+  <credit page="1"><credit-type>subtitle</credit-type><credit-words default-x="617" default-y="1427" font-size="14" justify="center" valign="top">Final Fantasy IV</credit-words></credit>
+  <credit page="1"><credit-type>composer</credit-type><credit-type>arranger</credit-type><credit-words default-x="1134" default-y="1377" font-size="12" justify="right" valign="top">Composition by Nobuo Uematsu
+Arrangement by Yug Guy</credit-words></credit>
+  <credit page="1"><credit-type>rights</credit-type><credit-words default-x="617" default-y="100" font-size="10" justify="center" valign="bottom">Square © 1991
+http://www.NinSheetMusic.org/</credit-words></credit>
+  <credit page="1"><credit-type>page number</credit-type><credit-words default-x="1134" default-y="1550">1</credit-words></credit>
+  <credit page="2"><credit-type>title</credit-type><credit-words default-x="617" default-y="1550">Battle 1 (continued)</credit-words></credit>`;
+
+test("the first page's top credits make a title frame: title and subtitle centred, the composer below on the right", () => {
+  const xml = withCredits(FINALE_CREDITS);
+  const parsed = parseMusicXml(xml);
   const format = pageFormat(parsed.defaults);
-  const credits = drawCredits(parsed, 0, format);
-  const title = credits[0] as Extract<Drawable, { kind: "text" }>;
-  assert.equal(title.text, "Für Elise (Bagatelle) in A Minor");
-  assert.equal(title.anchor, "middle");
-  // A run without its own style continues the one before it.
-  assert.deepEqual(title.runs!.map((run) => [run.text, run.italic ?? false]), [["Für Elise", true], [" (Bagatelle)", true], [" in A Minor", false]]);
-  assert.ok(title.runs!.every((run) => run.size === title.runs![0].size), "and its size");
-  assert.ok(Math.abs(title.x - 60 * format.staffSpace) < 1e-6);
-  const composer = credits.filter((item) => item.kind === "text" && item.anchor === "end");
-  assert.deepEqual(composer.map((item) => (item as { text: string }).text), ["Beethoven", "(1770–1827)"]);
-  assert.deepEqual(drawCredits(parsed, 1, format), []);
-  assert.deepEqual(titleBlock(parsed, format).items, [], "a file with credits gets no title block");
+  const block = titleBlock(parsed, format);
+  assert.deepEqual(texts(block.items).map((item) => item.text),
+    ['"Battle 1"', "Final Fantasy IV", "Composition by Nobuo Uematsu", "Arrangement by Yug Guy"]);
+  const [title, subtitle, composer, arranger] = texts(block.items);
+  const centre = (format.margins.left + format.width - format.margins.right) / 2;
+  for (const item of [title, subtitle]) {
+    assert.equal(item.anchor, "middle");
+    assert.ok(Math.abs(item.x - centre) < 1e-6);
+  }
+  for (const item of [composer, arranger]) {
+    assert.equal(item.anchor, "end");
+    assert.ok(Math.abs(item.x - (format.width - format.margins.right)) < 1e-6, "inside the right margin");
+  }
+  assert.ok(Math.abs(title.y - 0.8 * title.size - format.margins.top) < 1e-6, "the frame starts at the top margin");
+  assert.ok(title.y + title.size * 0.2 <= subtitle.y - subtitle.size * 0.8 + 1e-6, "the subtitle is under the title");
+  assert.ok(subtitle.y + subtitle.size * 0.2 <= composer.y - composer.size * 0.8 + 1e-6, "the composer is under the subtitle");
+  assert.ok(arranger.y > composer.y);
+  assert.ok(Math.abs(title.size - 24 * (300 / 72)) < 1e-6, "with the file's sizes");
+
+  const page = pages(xml)[0];
+  assert.ok(firstStaffTop(page) >= format.margins.top + block.height + 7 * format.staffSpace - 1e-6,
+    "the first system starts 7 spaces below the frame");
+  const drawn = texts(page.items).map((item) => item.text);
+  assert.ok(!drawn.includes("1"), "page numbers are left out");
+  assert.deepEqual(pageCredits(parsed, 1, format), [], "so are later pages' credits");
+});
+
+test("the first system clears the title frame even when the file asks for less room", () => {
+  const parsed = parseMusicXml(withCredits(FINALE_CREDITS, "20"));
+  const format = pageFormat(parsed.defaults);
+  const block = titleBlock(parsed, format);
+  const top = firstStaffTop(pages(withCredits(FINALE_CREDITS, "20"))[0]);
+  assert.ok(top >= format.margins.top + block.height + 7 * format.staffSpace - 1e-6);
+  // Without a frame, the file's distance stands.
+  const plain = firstStaffTop(pages(withCredits("", "20"))[0]);
+  assert.ok(Math.abs(plain - (format.margins.top + 2 * format.staffSpace)) < 1e-6);
+  // And a larger one is kept under a frame.
+  const roomy = firstStaffTop(pages(withCredits(FINALE_CREDITS, "800"))[0]);
+  assert.ok(Math.abs(roomy - (format.margins.top + 80 * format.staffSpace)) < 1e-6);
+});
+
+test("the rights go to the foot of the first page, other low credits stay where the file puts them", () => {
+  const parsed = parseMusicXml(withCredits(`${FINALE_CREDITS}
+    <credit page="1"><credit-words default-x="100" default-y="300" justify="left">Duration: 2'30"</credit-words></credit>
+    <credit page="1"><credit-words default-x="617" default-y="1300" justify="center">Arr. © 2020 someone</credit-words></credit>
+    <credit page="1"><credit-type>subtitle</credit-type><credit-words default-x="617" default-y="1400" justify="center">Theme © tribute</credit-words></credit>`));
+  const format = pageFormat(parsed.defaults);
+  const credits = pageCredits(parsed, 0, format);
+  const rights = [textOf(credits, "Square © 1991"), textOf(credits, "http://www.NinSheetMusic.org/")];
+  for (const line of rights) {
+    assert.equal(line.anchor, "middle");
+    assert.ok(line.y > format.height - format.margins.bottom && line.y < format.height, "in the bottom margin");
+  }
+  assert.ok(Math.abs(rights[0].size - 10 * (300 / 72)) < 1e-6);
+  // A credit without a type whose text holds © is rights too, even in the top half.
+  assert.ok(Math.abs(textOf(credits, "Arr. © 2020 someone").size - 9 * (300 / 72)) < 1e-6, "at MuseScore's copyright size");
+  const frame = texts(titleBlock(parsed, format).items).map((item) => item.text);
+  assert.ok(!frame.includes("Arr. © 2020 someone"));
+  // A credit typed as something else keeps its type.
+  assert.ok(frame.includes("Theme © tribute"));
+  assert.ok(!frame.includes("Duration: 2'30\""), "a low credit stays out of the title frame");
+  const duration = textOf(credits, "Duration: 2'30\"");
+  assert.equal(duration.anchor, "start");
+  assert.ok(Math.abs(duration.x - 10 * format.staffSpace) < 1e-6);
+  assert.ok(Math.abs(duration.y - (format.height - 30 * format.staffSpace)) < 1e-6);
+});
+
+test("untyped header credits are told apart by column and size, and take their role's size", () => {
+  // In no particular order in the file.
+  const parsed = parseMusicXml(withCredits(`
+    <credit page="1"><credit-type>subtitle</credit-type><credit-words default-x="600" default-y="1450">From the game</credit-words></credit>
+    <credit page="1"><credit-words default-x="1100" default-y="1560" justify="right">Koji Kondo</credit-words></credit>
+    <credit page="1"><credit-words default-x="100" default-y="1500" justify="left">Words by Nobody</credit-words></credit>
+    <credit page="1"><credit-words default-x="600" default-y="1550">Super Mario Bros.</credit-words></credit>
+    <credit page="1"><credit-words default-x="600" default-y="1520" font-size="20" font-style="italic">Underground</credit-words><credit-words> Theme</credit-words><credit-words font-style="normal"> (Remix)</credit-words></credit>`));
+  const format = pageFormat(parsed.defaults);
+  const items = titleBlock(parsed, format).items;
+  const composer = textOf(items, "Koji Kondo");
+  const lyricist = textOf(items, "Words by Nobody");
+  const smaller = textOf(items, "Super Mario Bros.");
+  const typed = textOf(items, "From the game");
+  // The right column is the composer, at the frame's foot under the centred credits even
+  // though the file puts it highest.
+  assert.equal(composer.anchor, "end");
+  assert.ok(composer.y > typed.y);
+  // The left column is the lyricist, at the frame's top.
+  assert.equal(lyricist.anchor, "start");
+  assert.ok(Math.abs(lyricist.x - format.margins.left) < 1e-6);
+  assert.ok(lyricist.y < smaller.y);
+  // Centred credits stack from the top of the page down; a run without a style continues the one before it.
+  const title = textOf(items, "Underground Theme (Remix)");
+  assert.ok(smaller.y < title.y && title.y < typed.y);
+  assert.deepEqual(title.runs!.map((run) => [run.text, run.italic ?? false, run.size]),
+    [["Underground", true, 20 * (300 / 72)], [" Theme", true, 20 * (300 / 72)], [" (Remix)", false, 20 * (300 / 72)]]);
+  // Without a size, a credit takes MuseScore's size for its role: a centred one with a larger
+  // one beside it is a subtitle, the largest a title.
+  assert.ok(Math.abs(smaller.size - 14 * (300 / 72)) < 1e-6);
+  assert.ok(Math.abs(typed.size - 14 * (300 / 72)) < 1e-6);
+  const lone = parseMusicXml(withCredits('<credit page="1"><credit-words default-x="600" default-y="1550">Theme</credit-words></credit>'));
+  assert.ok(Math.abs(texts(titleBlock(lone, format).items)[0].size - 22 * (300 / 72)) < 1e-6);
+  assert.ok(Math.abs(composer.size - 10 * (300 / 72)) < 1e-6);
 });
 
 test("a file without credits gets its title and composer, and room for them", () => {

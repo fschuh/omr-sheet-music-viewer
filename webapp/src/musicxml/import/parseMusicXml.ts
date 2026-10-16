@@ -623,9 +623,6 @@ function mergeSystemLayout(target: SystemLayout, source: SystemLayout | null): S
   };
 }
 
-/** MusicXML's default text size, in points. */
-const DEFAULT_FONT_SIZE = 10;
-
 function parseCredits(root: Element): CreditModel[] {
   return childElements(root, "credit").flatMap((credit): CreditModel[] => {
     const words = childElements(credit, "credit-words");
@@ -643,7 +640,7 @@ function parseCredits(root: Element): CreditModel[] {
       const weight = attribute(word, "font-weight");
       const run: CreditRun = {
         text: word.textContent ?? "",
-        fontSize: Number.isFinite(size) && size > 0 ? size : previous?.fontSize ?? DEFAULT_FONT_SIZE,
+        fontSize: Number.isFinite(size) && size > 0 ? size : previous?.fontSize ?? null,
         italic: style ? style === "italic" : previous?.italic ?? false,
         bold: weight ? weight === "bold" : previous?.bold ?? false,
       };
@@ -652,6 +649,7 @@ function parseCredits(root: Element): CreditModel[] {
     });
     return [{
       page: Number(attribute(credit, "page") ?? 1) || 1,
+      types: childElements(credit, "credit-type").map((type) => type.textContent?.trim() ?? ""),
       x,
       y,
       align: align === "center" || align === "right" ? align : "left",

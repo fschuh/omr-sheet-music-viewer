@@ -44,14 +44,16 @@ export interface SystemLayout {
 
 export interface CreditRun {
   text: string;
-  /** In points. */
-  fontSize: number;
+  /** In points; null where the file gives none, leaving the size to the credit's role. */
+  fontSize: number | null;
   italic: boolean;
   bold: boolean;
 }
 
 export interface CreditModel {
   page: number;
+  /** The file's `credit-type`s, such as "title", "composer" or "rights". */
+  types: string[];
   /** In tenths from the page's bottom left. */
   x: number;
   y: number;

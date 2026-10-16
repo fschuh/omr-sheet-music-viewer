@@ -6,7 +6,8 @@ import type { ScoreModel } from "../model/score";
 import { beamGroups, layoutBeam, stemDirections, type BeamDrawing, type BeamGroup, type PlacedChord } from "./beams";
 import { avoidRestCollisions, layoutChord, type ChordShape } from "./chords";
 import { layoutDirections } from "./directions";
-import { drawPage, titleBlock } from "./drawing";
+import { titleBlock } from "./credits";
+import { drawPage } from "./drawing";
 import { gapWidth, graceOffsets, measureSpacing, springWidth, type MeasureSpacing } from "./horizontal";
 import { prepareScore, type PreparedChord, type PreparedScore } from "./measureContent";
 import { layoutMarks } from "./marks";
@@ -224,10 +225,11 @@ export function layoutScore(score: ScoreModel, format: PageFormat): LayoutModel 
     const defaults = score.defaults.systemLayout;
     const reach = staffReach(staffCount, systemChords(system), shapes, system.staffTops, system.beams);
     const height = system.staffTops[system.staffTops.length - 1] + 4;
-    // A title block the file does not place itself needs room above the first system.
+    // The title frame needs room above the first system, whatever distance the file asks for.
     const titleSpace = pagesOfSystems.length === 0 ? titleHeight : 0;
-    const topDistance = tenths(layout.topSystemDistance ?? defaults.topSystemDistance) ??
-      titleSpace + Math.max(TOP_SYSTEM_DISTANCE, reach.above[0] + COLLISION_CLEARANCE);
+    const clearOfTitle = titleSpace + Math.max(TOP_SYSTEM_DISTANCE, reach.above[0] + COLLISION_CLEARANCE);
+    const encodedTop = tenths(layout.topSystemDistance ?? defaults.topSystemDistance);
+    const topDistance = encodedTop === null ? clearOfTitle : titleSpace > 0 ? Math.max(encodedTop, clearOfTitle) : encodedTop;
     const systemDistance = tenths(layout.systemDistance ?? defaults.systemDistance) ??
       Math.max(SYSTEM_DISTANCE, previousBelow + reach.above[0] + COLLISION_CLEARANCE);
     const page = pagesOfSystems[pagesOfSystems.length - 1];

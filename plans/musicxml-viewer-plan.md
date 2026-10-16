@@ -115,7 +115,8 @@ webapp/src/musicxml/
 │   ├── horizontal.ts      duration-based springs, minimum widths, justification and squeezing
 │   ├── systems.ts         breaking measures into systems (honoring encoded breaks)
 │   ├── pages.ts           staff and system distances, breaking systems into pages
-│   ├── drawing.ts         placed systems to drawables: staves, headers, barlines, chords, credits
+│   ├── drawing.ts         placed systems to drawables: staves, headers, barlines, chords
+│   ├── credits.ts         the title frame above the first system, the rights at the foot of the first page
 │   ├── spanners.ts        ties, slurs, tuplets and voltas
 │   ├── directions.ts      ottava lines, dynamics, hairpins, words, metronome marks, pedal, symbols
 │   └── marks.ts           articulations, fermatas, ornaments and trill lines, printed fingerings, arpeggios, tremolos
@@ -299,6 +300,7 @@ What phase 3 implements of these steps:
 - A score with encoded system breaks keeps them and breaks earlier only when a system does not fit even squeezed; otherwise measures fill a system while it fits at four fifths of the natural spacing. A last system less than 30% full keeps its natural spacing (MuseScore's `lastSystemFillLimit`).
 - Staff distances, system distances and the first system's distance on a page come from the file when it encodes them; otherwise MuseScore's defaults (6.5, 8.5 and 7 sp) grow until the content of neighbouring staves keeps 1 sp apart. A system that does not fit on the page starts a new one.
 - Accidentals are printed where the key and earlier notes on the same staff line in the measure do not imply the note's alteration, and wherever the file prints one; a note tied over continues its accidental.
+- Credits are placed as MuseScore places those of an imported file, not at the file's positions, which often overlap the first system MuseScore draws. The first page's credits in the top half of the page make a title frame from the top margin down: each column (left, centre or right third of the page) stacks its credits from the top of the page down, and the composer comes below everything else. A credit's role is its `credit-type` when it has exactly one; otherwise the right column is the composer, the left the lyricist, and the largest centred credit the title, the others subtitles. Text without a size takes MuseScore's size for its role (title 22, subtitle 14, composer and lyricist 10 pt). The first system starts at least 7 sp below the frame, even when the file asks for less. The rights (`credit-type` rights, or untyped text with © or "all rights reserved") are centred in the first page's bottom margin at 9 pt; other credits in the bottom half keep the file's positions; page numbers and the credits of later pages are left out.
 - Stem directions come from the file; otherwise a beam group's notes decide together, voices sharing a staff keep to their side, grace notes point up, and a lone chord follows its note furthest from the middle line. Beams slant with their outer notes by at most one staff space, stay flat over an inner peak, keep every stem at least 3.25 sp plus the extra beams long, and reach the middle line.
 
 `render/` draws the `LayoutModel` as SVG and does not compute positions. Every glyph that belongs to a notehead (notehead, stem, flag, accidental, dots) is grouped under that notehead's ID so highlighting can address it. The note geometry is computed from the same layout positions and glyph metadata, so hit testing matches what is drawn.
