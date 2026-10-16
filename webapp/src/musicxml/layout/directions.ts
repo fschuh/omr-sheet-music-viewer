@@ -75,7 +75,14 @@ function staffBand(
   return { top, bottom };
 }
 
-/** The baseline for marks above or below a staff between two x positions. */
+/** MuseScore's minimum distance between notes and the dynamics and tempo text beside them. */
+const MIN_DISTANCE = 0.5;
+
+/**
+ * The baseline for marks above or below a staff between two x positions, for a mark reaching
+ * `ascent` above its baseline and `descent` below it: `shift` from the default place, and
+ * never closer than the minimum distance to the notes.
+ */
 function markBaseline(
   system: PlacedSystem,
   staff: number,
@@ -84,17 +91,19 @@ function markBaseline(
   above: boolean,
   shapes: Map<PreparedChord, ChordShape>,
   prepared: PreparedScore,
+  { ascent = 1.5, descent = 0.3, shift = 0 }: { ascent?: number; descent?: number; shift?: number } = {},
 ): number {
   const band = staffBand(system, staff, x1, x2, shapes);
   const staffTop = system.top + system.staffTops[staff];
-  if (above) return Math.min(staffTop - 1.5, band.top - 0.8);
-  const baseline = Math.max(staffTop + 4 + 2.5, band.bottom + 2);
-  // Between the staves of a part, marks stay in the gap.
+  if (above) return Math.min(staffTop - 1.5 + shift, band.top - descent - MIN_DISTANCE);
+  const clear = band.bottom + ascent + MIN_DISTANCE;
+  const baseline = Math.max(staffTop + 4 + 2.5 + shift, clear);
+  // Between the staves of a part, marks move toward the middle of the gap, but not into notes.
   const partStaves = prepared.partStaves[prepared.staves[staff].part];
   const next = partStaves[partStaves.indexOf(staff) + 1];
   if (next === undefined) return baseline;
   const nextTop = system.top + system.staffTops[next];
-  return Math.min(baseline, (staffTop + 4 + nextTop) / 2 + 0.6);
+  return Math.max(Math.min(baseline, (staffTop + 4 + nextTop) / 2 + 0.6), clear);
 }
 
 const DYNAMIC_LETTERS: Record<string, GlyphName> = {
@@ -249,6 +258,85 @@ function drawOttavas(context: Context, output: Output): void {
   }
 }
 
+/** A direction item measured, to be drawn once its baseline is known. */
+interface Piece {
+  width: number;
+  ascent: number;
+  descent: number;
+  draw(output: Output, system: PlacedSystem, x: number, y: number): void;
+}
+
+/** Note characters that words use for tempo equations, drawn with the music font's metronome notes. */
+const NOTE_CHARACTERS: Record<string, GlyphName> = {
+  "\u{1D15D}": "metNoteWhole", "\u{1D15E}": "metNoteHalfUp", "\u{1D15F}": "metNoteQuarterUp", "\u2669": "metNoteQuarterUp",
+  "\u{1D160}": "metNote8thUp", "\u266A": "metNote8thUp", "\u{1D161}": "metNote16thUp",
+};
+const METRONOME_DOT_GAP = 0.15;
+
+function wordsPiece(item: Extract<DirectionItem, { kind: "words" }>, wordsSize: number, sp: number): Piece {
+  const size = item.size ? item.size * POINTS_TO_STAFF_SPACES(sp) : wordsSize;
+  // Runs of text, and notes with the dots that follow them.
+  const parts: ({ text: string } | { glyph: GlyphName; dots: number })[] = [];
+  for (const character of item.text) {
+    const glyph = NOTE_CHARACTERS[character];
+    const last = parts[parts.length - 1];
+    if (glyph) parts.push({ glyph, dots: 0 });
+    else if (character === "." && last && "glyph" in last) last.dots += 1;
+    else if (last && "text" in last) last.text += character;
+    else parts.push({ text: character });
+  }
+  const partWidth = (part: (typeof parts)[number]) => "text" in part
+    ? textWidth(part.text, size, item.bold)
+    : (glyphWidth(part.glyph) + part.dots * (glyphWidth("metAugmentationDot") + METRONOME_DOT_GAP)) * METRONOME_SCALE;
+  return {
+    width: parts.reduce((total, part) => total + partWidth(part), 0),
+    ascent: parts.some((part) => "glyph" in part) ? wordsSize * 1.1 : size * 0.75,
+    descent: size * 0.25,
+    draw: (output, system, start, y) => {
+      let x = start;
+      for (const part of parts) {
+        if ("text" in part) {
+          output.text(system, part.text, x, y, size, item.italic, item.bold);
+        } else {
+          output.glyph(system, part.glyph, x, y, METRONOME_SCALE);
+          let dotX = x + glyphWidth(part.glyph) * METRONOME_SCALE;
+          for (let dot = 0; dot < part.dots; dot += 1) {
+            output.glyph(system, "metAugmentationDot", dotX + METRONOME_DOT_GAP * METRONOME_SCALE, y, METRONOME_SCALE);
+            dotX += (glyphWidth("metAugmentationDot") + METRONOME_DOT_GAP) * METRONOME_SCALE;
+          }
+        }
+        x += partWidth(part);
+      }
+    },
+  };
+}
+
+function metronomePiece(item: Extract<DirectionItem, { kind: "metronome" }>, wordsSize: number): Piece {
+  const note = BEAT_UNITS[item.beatUnit] ?? "metNoteQuarterUp";
+  const label = ` = ${item.perMinute}${item.parentheses ? ")" : ""}`;
+  const opening = item.parentheses ? textWidth("(", wordsSize, false) : 0;
+  const noteWidth = (glyphWidth(note) + item.dots * (glyphWidth("metAugmentationDot") + METRONOME_DOT_GAP)) * METRONOME_SCALE;
+  return {
+    width: opening + noteWidth + textWidth(label, wordsSize, false),
+    ascent: wordsSize * 1.1,
+    descent: wordsSize * 0.25,
+    draw: (output, system, start, y) => {
+      let x = start;
+      if (item.parentheses) {
+        output.text(system, "(", x, y, wordsSize);
+        x += opening;
+      }
+      output.glyph(system, note, x, y, METRONOME_SCALE);
+      x += glyphWidth(note) * METRONOME_SCALE;
+      for (let dot = 0; dot < item.dots; dot += 1) {
+        output.glyph(system, "metAugmentationDot", x + METRONOME_DOT_GAP * METRONOME_SCALE, y, METRONOME_SCALE);
+        x += (glyphWidth("metAugmentationDot") + METRONOME_DOT_GAP) * METRONOME_SCALE;
+      }
+      output.text(system, label, x, y, wordsSize);
+    },
+  };
+}
+
 function dynamicGlyphs(text: string): GlyphName[] | null {
   const glyphs = [...text].map((letter) => DYNAMIC_LETTERS[letter]);
   return glyphs.every(Boolean) ? glyphs : null;
@@ -279,17 +367,43 @@ export function layoutDirections(
         let cursor = at.x;
         const placementFor = (item: DirectionItem, fallback: Placement) =>
           (direction.placement ?? fallback) === "above";
+        // A metronome mark and the words beside it are one tempo text, on one baseline, as
+        // MuseScore imports them.
+        type TempoItem = Extract<DirectionItem, { kind: "words" | "metronome" }>;
+        const tempo: DirectionItem[] = direction.items.some((item) => item.kind === "metronome")
+          ? direction.items.filter((item): item is TempoItem => item.kind === "words" || item.kind === "metronome")
+          : [];
+        if (tempo.length > 0) {
+          const above = (direction.placement ?? "above") === "above";
+          const pieces = (tempo as TempoItem[]).map((item) =>
+            item.kind === "metronome" ? metronomePiece(item, wordsSize) : wordsPiece(item, wordsSize, sp));
+          const width = pieces.reduce((total, piece) => total + piece.width, 0) + ITEM_GAP * (pieces.length - 1);
+          const ascent = Math.max(...pieces.map((piece) => piece.ascent));
+          const descent = Math.max(...pieces.map((piece) => piece.descent));
+          const y = output.place(
+            at.system, cursor, cursor + width,
+            markBaseline(at.system, staff, cursor, cursor + width, above, shapes, prepared, { ascent, descent }),
+            ascent, descent, above,
+          );
+          for (const piece of pieces) {
+            piece.draw(output, at.system, cursor, y);
+            cursor += piece.width + ITEM_GAP;
+          }
+        }
         for (const item of direction.items) {
+          if (tempo.includes(item)) continue;
           switch (item.kind) {
             case "dynamics": {
               const above = placementFor(item, "below");
               const glyphs = dynamicGlyphs(item.text);
               const width = glyphs ? glyphs.reduce((total, glyph) => total + glyphWidth(glyph), 0) : item.text.length * 0.9;
+              const ascent = glyphs ? Math.max(...glyphs.map((glyph) => -glyphBox(glyph).top)) : 1.6;
+              const descent = glyphs ? Math.max(...glyphs.map((glyph) => glyphBox(glyph).bottom)) : 0.6;
               // Centred under a notehead at the direction's onset.
               let x = Math.max(cursor, at.x + 0.65 - width / 2);
               const y = output.place(
                 at.system, x, x + width,
-                markBaseline(at.system, staff, x, x + width, above, shapes, prepared) + (above ? 0 : -0.5),
+                markBaseline(at.system, staff, x, x + width, above, shapes, prepared, { ascent, descent, shift: above ? 0 : -0.5 }),
                 1.6, 0.6, above,
               );
               if (glyphs) {
@@ -305,42 +419,14 @@ export function layoutDirections(
             }
             case "words": {
               const above = placementFor(item, "above");
-              const size = item.size ? item.size * POINTS_TO_STAFF_SPACES(sp) : wordsSize;
-              const width = textWidth(item.text, size, item.bold);
+              const piece = wordsPiece(item, wordsSize, sp);
               const { dx, y } = output.placeOrSlide(
-                at.system, cursor, cursor + width,
-                markBaseline(at.system, staff, cursor, cursor + width, above, shapes, prepared),
-                size * 0.75, size * 0.25, above,
+                at.system, cursor, cursor + piece.width,
+                markBaseline(at.system, staff, cursor, cursor + piece.width, above, shapes, prepared),
+                piece.ascent, piece.descent, above,
               );
-              output.text(at.system, item.text, cursor + dx, y, size, item.italic, item.bold);
-              cursor += dx + width + ITEM_GAP;
-              break;
-            }
-            case "metronome": {
-              const above = placementFor(item, "above");
-              const note = BEAT_UNITS[item.beatUnit] ?? "metNoteQuarterUp";
-              const label = ` = ${item.perMinute}${item.parentheses ? ")" : ""}`;
-              const opening = item.parentheses ? textWidth("(", wordsSize, false) : 0;
-              const noteWidth = (glyphWidth(note) + item.dots * (glyphWidth("metAugmentationDot") + 0.15)) * METRONOME_SCALE;
-              const width = opening + noteWidth + textWidth(label, wordsSize, false);
-              const y = output.place(
-                at.system, cursor, cursor + width,
-                markBaseline(at.system, staff, cursor, cursor + width, above, shapes, prepared),
-                wordsSize * 1.1, wordsSize * 0.25, above,
-              );
-              let x = cursor;
-              if (item.parentheses) {
-                output.text(at.system, "(", x, y, wordsSize);
-                x += opening;
-              }
-              output.glyph(at.system, note, x, y, METRONOME_SCALE);
-              x += glyphWidth(note) * METRONOME_SCALE;
-              for (let dot = 0; dot < item.dots; dot += 1) {
-                output.glyph(at.system, "metAugmentationDot", x + 0.15 * METRONOME_SCALE, y, METRONOME_SCALE);
-                x += (glyphWidth("metAugmentationDot") + 0.15) * METRONOME_SCALE;
-              }
-              output.text(at.system, label, x, y, wordsSize);
-              cursor = x + textWidth(label, wordsSize, false) + ITEM_GAP;
+              piece.draw(output, at.system, cursor + dx, y);
+              cursor += dx + piece.width + ITEM_GAP;
               break;
             }
             case "symbol": {

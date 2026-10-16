@@ -246,13 +246,17 @@ export function layoutScore(score: ScoreModel, format: PageFormat): LayoutModel 
 
   const places = notePlaces(systems, shapes);
   const marks = layoutMarks(systems, shapes, sp);
+  const slurs = layoutSlurs(systems, shapes, sp);
+  const tuplets = layoutTuplets(systems, shapes, sp);
+  // Directions keep clear of the chord marks, slurs and tuplets drawn before them.
+  const taken = new Map(systems.map((system) => [system, [marks.boxes, slurs.boxes, tuplets.boxes].flatMap((boxes) => boxes.get(system) ?? [])]));
   const spanners = mergeSpanners(
     layoutTies(systems, places, sp),
-    layoutSlurs(systems, shapes, sp),
-    layoutTuplets(systems, shapes, sp),
+    slurs.drawables,
+    tuplets.drawables,
     layoutVoltas(systems, shapes, sp),
     marks.drawables,
-    layoutDirections(score, prepared, systems, shapes, sp, marks.boxes),
+    layoutDirections(score, prepared, systems, shapes, sp, taken),
   );
   const pages = pagesOfSystems.map((pageSystems, pageIndex) =>
     drawPage(pageIndex, pageSystems, { score, prepared, shapes, format, sp, firstSystem: systems[0], spanners }),

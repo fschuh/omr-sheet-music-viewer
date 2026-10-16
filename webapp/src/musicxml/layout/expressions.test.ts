@@ -530,3 +530,115 @@ test("a tie joins two spellings of one sound, and the second shows its accidenta
   // The flat, the sharp of the new spelling, the natural the flat calls for, and nothing on the tied D.
   assert.deepEqual(accidentals, [["accidentalFlat"], ["accidentalSharp"], ["accidentalNatural"], []]);
 });
+
+const triplet = (start: string, stop = false) =>
+  `<time-modification><actual-notes>3</actual-notes><normal-notes>2</normal-notes></time-modification>` +
+  notations(`${start}${stop ? '<tuplet type="stop"/>' : ""}`);
+/** Three triplet quarters with their stems up, unbeamed so the tuplet has a bracket, then a half rest. */
+const tripletQuarters = (pitches: [string, string, string]) =>
+  note(pitches[0], 2, { type: "quarter", stem: "up", extra: triplet('<tuplet type="start"/>') }) +
+  note(pitches[1], 3, { type: "quarter", stem: "up", extra: triplet("") }) +
+  note(pitches[2], 3, { type: "quarter", stem: "up", extra: triplet("", true) }) +
+  note(null, 8, { type: "half" });
+/** The tuplet bracket's long lines: as thin as a bracket, neither vertical nor a staff line. */
+const bracketLines = (page: LayoutPage) => page.items.filter((item): item is Line =>
+  item.kind === "line" && item.width < staffSpace(page) * 0.13 && item.x1 !== item.x2 && item.x2 - item.x1 < 200);
+
+test("a tuplet number is MuseScore's 9 pt italic text, scaled with the staff", () => {
+  const [page] = pages(treble([tripletQuarters(["C5", "C5", "C5"])]));
+  const [three] = texts(page, "3");
+  assert.ok(three.runs!.every((run) => run.italic));
+  assert.equal(three.anchor, "middle");
+  // 9 pt at a 1.75 mm staff space.
+  assert.ok(Math.abs(three.size / staffSpace(page) - (9 / 72) * 25.4 / 1.75) < 1e-3);
+});
+
+test("a tuplet's line follows its notes' slope, at most 0.5, clear of every note", () => {
+  const [page] = pages(treble([tripletQuarters(["D4", "F4", "A4"])]));
+  const space = staffSpace(page);
+  const [left, right] = bracketLines(page).sort((a, b) => a.x1 - b.x1);
+  const slope = (right.y2 - left.y1) / (right.x2 - left.x1);
+  assert.ok(slope < -0.1, "it rises with the notes");
+  const [three] = texts(page, "3");
+  // The number sits on the line, between its ends.
+  assert.ok(three.y < left.y1 + space && three.y > right.y2);
+  const [steep] = pages(treble([tripletQuarters(["C4", "G4", "E5"])]));
+  const [steepLeft, steepRight] = bracketLines(steep).sort((a, b) => a.x1 - b.x1);
+  assert.ok(Math.abs((steepRight.y2 - steepLeft.y1) / (steepRight.x2 - steepLeft.x1) + 0.5) < 1e-6, "no steeper than 0.5");
+  // Every stem end keeps its distance from the line: the middle note's too.
+  const [middle] = pages(treble([tripletQuarters(["C4", "A5", "C4"])]));
+  const [line] = bracketLines(middle);
+  const stemTop = Math.min(...middle.chords.flatMap((chord) => chord.items)
+    .filter((item): item is Line => item.kind === "line" && item.x1 === item.x2).map((item) => Math.min(item.y1, item.y2)));
+  assert.ok(line.y1 <= stemTop - staffSpace(middle) + 1e-6);
+});
+
+test("directions keep clear of tuplet numbers", () => {
+  const [page] = pages(treble([
+    direction(directionType("<metronome><beat-unit>quarter</beat-unit><per-minute>140</per-minute></metronome>"), "above") +
+      note("A5", 1, { type: "eighth", beams: ["begin"], extra: triplet('<tuplet type="start" placement="above"/>') }) +
+      note("B5", 1, { type: "eighth", beams: ["continue"], extra: triplet("") }) +
+      note("C6", 2, { type: "eighth", beams: ["end"], extra: triplet("", true) }) +
+      note(null, 12, { type: "half", dots: 1 }),
+  ]));
+  const [three] = texts(page, "3");
+  const [tempo] = texts(page, " = 140");
+  const space = staffSpace(page);
+  // The tempo's descent stays above the number's top.
+  assert.ok(tempo.y + 0.25 * tempo.size < three.y - 0.68 * three.size - 0.2 * space + 1e-6);
+});
+
+test("a dynamic between the staves moves toward the gap's middle, but not into a low note", () => {
+  const low = pages(score([piano([
+    direction(directionType("<dynamics><f/></dynamics>"), "below", 1) +
+      note("A3", 16, { type: "whole", staff: 1 }) + "<backup><duration>16</duration></backup>" +
+      note("C3", 16, { type: "whole", staff: 2, voice: 5 }),
+  ])]))[0];
+  const space = staffSpace(low);
+  const [forte] = glyphs(low, "dynamicForte");
+  const noteBottom = noteheadY(low, "A3") + 0.5 * space;
+  assert.ok(forte.y + glyphBox("dynamicForte").top * space >= noteBottom + 0.5 * space - 1e-6,
+    "half a space below the note");
+  const high = pages(score([piano([
+    direction(directionType("<dynamics><f/></dynamics>"), "below", 1) +
+      note("C5", 16, { type: "whole", staff: 1 }) + "<backup><duration>16</duration></backup>" +
+      note("C3", 16, { type: "whole", staff: 2, voice: 5 }),
+  ])]))[0];
+  const [middle] = glyphs(high, "dynamicForte");
+  assert.ok(middle.y < forte.y, "under a note in the staff it stays nearer the staff");
+});
+
+test("directions keep clear of slurs where they pass over them", () => {
+  const [page] = pages(treble([
+    direction(directionType("<words>dolce espressivo</words>"), "above") + slurred(["G5", "B5", "D6", "G5"], "down", "above"),
+  ]));
+  const [words] = texts(page, "dolce espressivo");
+  // The slur's outer curve, sampled where the words are.
+  const [x1, y1, c1x, c1y, c2x, c2y, x2, y2] = numbers(paths(page)[0]);
+  const right = words.x + words.text.length * words.size * 0.45;
+  const under = Array.from({ length: 101 }, (_, index) => index / 100).map((t) => {
+    const u = 1 - t;
+    return {
+      x: u * u * u * x1 + 3 * u * u * t * c1x + 3 * u * t * t * c2x + t * t * t * x2,
+      y: u * u * u * y1 + 3 * u * u * t * c1y + 3 * u * t * t * c2y + t * t * t * y2,
+    };
+  }).filter((point) => point.x >= words.x && point.x <= right);
+  assert.ok(under.length > 0, "the words are over the slur");
+  assert.ok(words.y + 0.25 * words.size <= Math.min(...under.map((point) => point.y)) + 1e-6);
+});
+
+test("a tempo's words and metronome mark share a baseline, and note characters are drawn as notes", () => {
+  const [page] = pages(treble([
+    direction(directionType("<words>\u2669.=\u2669</words>") + directionType("<metronome><beat-unit>quarter</beat-unit><per-minute>140</per-minute></metronome>"), "above") +
+      slurred(["G5", "B5", "D6", "G5"], "down", "above"),
+  ]));
+  const [label] = texts(page, " = 140");
+  const notes = glyphs(page, "metNoteQuarterUp").sort((a, b) => a.x - b.x);
+  assert.equal(notes.length, 3, "two from the words, one from the metronome mark");
+  assert.deepEqual(texts(page, "="), [texts(page, "=")[0]]);
+  const [equals] = texts(page, "=");
+  const [dot] = glyphs(page, "metAugmentationDot");
+  assert.ok(dot.x > notes[0].x && dot.x < equals.x, "the dot follows its note");
+  for (const item of [...notes, equals, dot]) assert.ok(Math.abs(item.y - label.y) < 1e-6, "on one baseline");
+  assert.ok(notes[1].x < notes[2].x - glyphBox("metNoteQuarterUp").right * notes[1].scale * staffSpace(page), "side by side");
+});

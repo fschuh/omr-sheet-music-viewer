@@ -1,9 +1,10 @@
 // Spanners: marks that connect notes or measures, laid out once every chord has its place.
 // Lengths are staff spaces; drawables come out in page pixels.
-import { ENGRAVING_DEFAULTS, glyphBox, type GlyphName } from "../fonts/smufl";
+import { ENGRAVING_DEFAULTS, glyphBox } from "../fonts/smufl";
 import type { Drawable } from "../model/layout";
 import type { NoteModel, Placement, TupletStart } from "../model/score";
 import { isUpperVoice, type ChordShape } from "./chords";
+import type { Box } from "./directions";
 import type { PreparedChord } from "./measureContent";
 import { systemChords, type PlacedSystem } from "./pages";
 import { soundingPitch } from "./staffPosition";
@@ -147,9 +148,17 @@ export function layoutTies(
   return result;
 }
 
-const TUPLET_DISTANCE = 0.9;
+/** From the notes to the tuplet's line, where its number is centred and its bracket runs. */
+const TUPLET_DISTANCE = 1.1;
 const TUPLET_BRACKET_HOOK = 0.6;
 const TUPLET_NUMBER_GAP = 0.3;
+/** MuseScore's tuplet number: 9 pt italic text at its default 1.75 mm staff space, scaling with the staff. */
+const TUPLET_NUMBER_SIZE = (9 / 72) * 25.4 / 1.75;
+/** MuseScore's tupletMaxSlope. */
+const TUPLET_MAX_SLOPE = 0.5;
+/** Estimates of a serif digit's width and height, as shares of the text size. */
+const DIGIT_WIDTH = 0.5;
+const DIGIT_HEIGHT = 0.68;
 const TUPLET_BRACKET_THICKNESS = ENGRAVING_DEFAULTS.tupletBracketThickness;
 
 const SLUR_THICKNESS = ENGRAVING_DEFAULTS.slurMidpointThickness;
@@ -195,6 +204,7 @@ function slurAnchor(system: PlacedSystem, chord: PreparedChord, shape: ChordShap
 /**
  * One piece of a slur within a system. The curve rises with its length, and further, or
  * its ends move out, so that it clears every chord of the part's staves it passes over.
+ * Returns it with the boxes along its curve.
  */
 function slurPiece(
   system: PlacedSystem,
@@ -203,7 +213,7 @@ function slurPiece(
   up: boolean,
   over: { chord: PreparedChord; shape: ChordShape }[],
   sp: number,
-): Drawable {
+): { drawable: Drawable; boxes: Box[] } {
   const length = Math.max(0.1, to.x - from.x);
   const sign = up ? -1 : 1;
   let control = Math.min(2.5, Math.max(0.8, 0.6 + length * 0.1));
@@ -221,21 +231,55 @@ function slurPiece(
   }
   for (const { t, depth } of intrusions) control = Math.max(control, Math.min(SLUR_MAX_CONTROL, depth / (3 * t * (1 - t))));
   const lift = Math.max(0, ...intrusions.map(({ t, depth }) => depth - 3 * t * (1 - t) * control));
-  return curvePath(from.x, from.y + sign * lift, to.x, to.y + sign * lift, up, sp, { control, thickness: SLUR_THICKNESS });
+  const y1 = from.y + sign * lift;
+  const y2 = to.y + sign * lift;
+  return {
+    drawable: curvePath(from.x, y1, to.x, y2, up, sp, { control, thickness: SLUR_THICKNESS }),
+    boxes: curveBoxes(from.x, y1, to.x, y2, up, control),
+  };
+}
+
+/** How many boxes follow a slur's curve, for directions to keep clear of it. */
+const SLUR_BOX_COUNT = 8;
+
+/** Boxes covering the outer edge of `curvePath`'s curve, piece by piece along it. */
+function curveBoxes(x1: number, y1: number, x2: number, y2: number, up: boolean, control: number): Box[] {
+  const height = control * (up ? -1 : 1);
+  const c1 = x1 + (x2 - x1) / 4;
+  const c2 = x2 - (x2 - x1) / 4;
+  const at = (t: number) => {
+    const u = 1 - t;
+    return {
+      x: u * u * u * x1 + 3 * u * u * t * c1 + 3 * u * t * t * c2 + t * t * t * x2,
+      y: u * u * u * y1 + 3 * u * u * t * (y1 + height) + 3 * u * t * t * (y2 + height) + t * t * t * y2,
+    };
+  };
+  const boxes: Box[] = [];
+  for (let index = 0; index < SLUR_BOX_COUNT; index += 1) {
+    const a = at(index / SLUR_BOX_COUNT);
+    const b = at((index + 1) / SLUR_BOX_COUNT);
+    boxes.push({ x1: Math.min(a.x, b.x), x2: Math.max(a.x, b.x), top: Math.min(a.y, b.y) - SLUR_THICKNESS / 2, bottom: Math.max(a.y, b.y) + SLUR_THICKNESS / 2 });
+  }
+  return boxes;
 }
 
 /**
  * Slurs, joining each start to the next stop with the same number in its part. A slur
  * across system breaks is drawn in pieces: to the end of its first system, across any
- * systems between, and from the start of its last.
+ * systems between, and from the start of its last. Returns the drawables and boxes along
+ * each curve, for directions to avoid.
  */
 export function layoutSlurs(
   systems: PlacedSystem[],
   shapes: Map<PreparedChord, ChordShape>,
   sp: number,
-): Map<PlacedSystem, Drawable[]> {
+): { drawables: Map<PlacedSystem, Drawable[]>; boxes: Map<PlacedSystem, Box[]> } {
   const result = new Map<PlacedSystem, Drawable[]>();
-  const add = (system: PlacedSystem, item: Drawable) => result.set(system, [...(result.get(system) ?? []), item]);
+  const covered = new Map<PlacedSystem, Box[]>();
+  const add = (system: PlacedSystem, piece: { drawable: Drawable; boxes: Box[] }) => {
+    result.set(system, [...(result.get(system) ?? []), piece.drawable]);
+    covered.set(system, [...(covered.get(system) ?? []), ...piece.boxes]);
+  };
   const ordered = systems.map((system) =>
     systemChords(system)
       .filter((chord) => chord.model.printed)
@@ -293,11 +337,7 @@ export function layoutSlurs(
       }
     }
   });
-  return result;
-}
-
-function tupletDigits(value: number): GlyphName[] {
-  return [...String(value)].map((digit) => `tuplet${digit}` as GlyphName);
+  return { drawables: result, boxes: covered };
 }
 
 /** A chord's extent on the page, with its stem and beam. */
@@ -312,17 +352,22 @@ export function chordExtent(system: PlacedSystem, chord: PreparedChord, shape: C
 }
 
 /**
- * Tuplets: the number centred over or under the group, beyond its stems and beams, and a
- * bracket when the file asks for one or the group is not beamed together. A tuplet is
- * drawn in the system it starts in.
+ * Tuplets: the number centred over or under the group on a line that follows the notes'
+ * slope, beyond their stems and beams, and a bracket along that line when the file asks for
+ * one or the group is not beamed together. A tuplet is drawn in the system it starts in.
+ * Returns the drawables and the areas the numbers and brackets cover, for directions to avoid.
  */
 export function layoutTuplets(
   systems: PlacedSystem[],
   shapes: Map<PreparedChord, ChordShape>,
   sp: number,
-): Map<PlacedSystem, Drawable[]> {
+): { drawables: Map<PlacedSystem, Drawable[]>; boxes: Map<PlacedSystem, Box[]> } {
   const result = new Map<PlacedSystem, Drawable[]>();
-  const add = (system: PlacedSystem, items: Drawable[]) => result.set(system, [...(result.get(system) ?? []), ...items]);
+  const boxes = new Map<PlacedSystem, Box[]>();
+  const add = (system: PlacedSystem, items: Drawable[], covered: Box[]) => {
+    result.set(system, [...(result.get(system) ?? []), ...items]);
+    boxes.set(system, [...(boxes.get(system) ?? []), ...covered]);
+  };
   const open = new Map<string, { start: TupletStart; system: PlacedSystem; chords: PreparedChord[] }>();
   const groups: { start: TupletStart; system: PlacedSystem; chords: PreparedChord[] }[] = [];
   for (const system of systems) {
@@ -356,35 +401,52 @@ export function layoutTuplets(
       : !(stems.length > 0 && stems.every((stem) => !stem!.up));
     const left = Math.min(...extents.map((extent) => extent.left));
     const right = Math.max(...extents.map((extent) => extent.right));
-    const y = above
-      ? Math.min(...extents.map((extent) => extent.top)) - TUPLET_DISTANCE
-      : Math.max(...extents.map((extent) => extent.bottom)) + TUPLET_DISTANCE;
-    const glyphs: GlyphName[] = start.showNumber === "none" ? []
-      : start.showNumber === "both" ? [...tupletDigits(start.actual), "tupletColon", ...tupletDigits(start.normal)]
-      : tupletDigits(start.actual);
-    const width = glyphs.reduce((total, glyph) => total + glyphBox(glyph).right, 0);
+    // The line runs from the first chord's end to the last's, no steeper than the maximum
+    // slope, then moves out until every chord keeps its distance from it.
+    const centre = (extent: (typeof extents)[number]) => (extent.left + extent.right) / 2;
+    const end = (extent: (typeof extents)[number]) => (above ? extent.top : extent.bottom);
+    const first = extents[0];
+    const last = extents[extents.length - 1];
+    const run = centre(last) - centre(first);
+    const slope = run > 0
+      ? Math.max(-TUPLET_MAX_SLOPE, Math.min(TUPLET_MAX_SLOPE, (end(last) - end(first)) / run))
+      : 0;
+    const offsets = extents.map((extent) => end(extent) + (above ? -TUPLET_DISTANCE : TUPLET_DISTANCE) - slope * (centre(extent) - left));
+    const offset = above ? Math.min(...offsets) : Math.max(...offsets);
+    const lineY = (x: number) => offset + slope * (x - left);
+
+    const number = start.showNumber === "none" ? ""
+      : start.showNumber === "both" ? `${start.actual}:${start.normal}`
+      : String(start.actual);
+    const width = number.length * DIGIT_WIDTH * TUPLET_NUMBER_SIZE;
     const middle = (left + right) / 2;
     const items: Drawable[] = [];
-    // Tuplet digits stand on their baseline and are about 1.45 spaces tall.
-    let cursor = middle - width / 2;
-    for (const glyph of glyphs) {
-      items.push({ kind: "glyph", glyph, x: cursor * sp, y: (y + 0.72) * sp, scale: 1 });
-      cursor += glyphBox(glyph).right;
+    const covered: Box[] = [];
+    if (number) {
+      // Centred on the line.
+      const baseline = lineY(middle) + (DIGIT_HEIGHT * TUPLET_NUMBER_SIZE) / 2;
+      items.push({
+        kind: "text", text: number, runs: [{ text: number, italic: true }],
+        x: middle * sp, y: baseline * sp, size: TUPLET_NUMBER_SIZE * sp, anchor: "middle",
+      });
+      covered.push({ x1: middle - width / 2, x2: middle + width / 2, top: baseline - DIGIT_HEIGHT * TUPLET_NUMBER_SIZE, bottom: baseline });
     }
     if (showBracket) {
       const hook = above ? TUPLET_BRACKET_HOOK : -TUPLET_BRACKET_HOOK;
-      const gapLeft = glyphs.length ? middle - width / 2 - TUPLET_NUMBER_GAP : middle;
-      const gapRight = glyphs.length ? middle + width / 2 + TUPLET_NUMBER_GAP : middle;
+      const gapLeft = number ? middle - width / 2 - TUPLET_NUMBER_GAP : middle;
+      const gapRight = number ? middle + width / 2 + TUPLET_NUMBER_GAP : middle;
       const line = (x1: number, y1: number, x2: number, y2: number): Drawable =>
         ({ kind: "line", x1: x1 * sp, y1: y1 * sp, x2: x2 * sp, y2: y2 * sp, width: TUPLET_BRACKET_THICKNESS * sp });
       items.push(
-        line(left, y + hook, left, y), line(left, y, gapLeft, y),
-        line(gapRight, y, right, y), line(right, y, right, y + hook),
+        line(left, lineY(left) + hook, left, lineY(left)), line(left, lineY(left), gapLeft, lineY(gapLeft)),
+        line(gapRight, lineY(gapRight), right, lineY(right)), line(right, lineY(right), right, lineY(right) + hook),
       );
+      const ys = [lineY(left), lineY(right), lineY(left) + hook, lineY(right) + hook];
+      covered.push({ x1: left, x2: right, top: Math.min(...ys), bottom: Math.max(...ys) });
     }
-    add(system, items);
+    add(system, items, covered);
   }
-  return result;
+  return { drawables: result, boxes };
 }
 
 /** Spanners of several kinds, by the system they are drawn in. */

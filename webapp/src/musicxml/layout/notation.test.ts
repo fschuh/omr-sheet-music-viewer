@@ -51,6 +51,10 @@ const triplet = (start: string, stop = false) =>
   `<time-modification><actual-notes>3</actual-notes><normal-notes>2</normal-notes></time-modification>` +
   `<notations>${start}${stop ? '<tuplet type="stop"/>' : ""}</notations>`;
 
+/** Tuplet numbers: italic text, as MuseScore draws them. */
+const tupletNumbers = (page: LayoutPage, text: string) => page.items.filter((item) =>
+  item.kind === "text" && item.text === text && item.runs?.every((run) => run.italic));
+
 test("a tuplet shows its number, and a bracket when its notes are not beamed together", () => {
   const beamed = pages(treble([
     note("C5", 1, { type: "eighth", beams: ["begin"], extra: triplet('<tuplet type="start"/>') }) +
@@ -58,7 +62,7 @@ test("a tuplet shows its number, and a bracket when its notes are not beamed tog
       note("E5", 2, { type: "eighth", beams: ["end"], extra: triplet("", true) }) +
       note(null, 12, { type: "half", dots: 1 }),
   ]))[0];
-  assert.equal(glyphs(beamed, "tuplet3").length, 1);
+  assert.equal(tupletNumbers(beamed, "3").length, 1);
   const lines = (page: LayoutPage) => page.items.filter((item) => item.kind === "line" && item.width < page.staffSpace * 0.15 && item.y1 !== item.y2).length;
   const unbeamed = pages(treble([
     note("C5", 2, { type: "quarter", extra: triplet('<tuplet type="start"/>') }) +
@@ -66,7 +70,7 @@ test("a tuplet shows its number, and a bracket when its notes are not beamed tog
       note("E5", 3, { type: "quarter", extra: triplet("", true) }) +
       note(null, 8, { type: "half" }),
   ]))[0];
-  assert.equal(glyphs(unbeamed, "tuplet3").length, 1);
+  assert.equal(tupletNumbers(unbeamed, "3").length, 1);
   assert.ok(lines(unbeamed) > lines(beamed), "the bracket's hooks are drawn");
   const hidden = pages(treble([
     note("C5", 1, { type: "eighth", beams: ["begin"], extra: triplet('<tuplet type="start" bracket="no" show-number="none"/>') }) +
@@ -74,7 +78,7 @@ test("a tuplet shows its number, and a bracket when its notes are not beamed tog
       note("E5", 2, { type: "eighth", beams: ["end"], extra: triplet("", true) }) +
       note(null, 12, { type: "half", dots: 1 }),
   ]))[0];
-  assert.equal(glyphs(hidden, "tuplet3").length, 0);
+  assert.equal(tupletNumbers(hidden, "3").length, 0);
 });
 
 test("repeat signs draw their dots on every staff, and voltas their text", () => {
