@@ -12,6 +12,8 @@ const BEAM_STEP = ENGRAVING_DEFAULTS.beamThickness + ENGRAVING_DEFAULTS.beamSpac
 const HOOK_LENGTH = 1.1;
 const MIDDLE_POSITION = 4;
 const MAX_SLANT = 1;
+/** The stem of a kneed beam: from the notehead nearest the beam to the beam. */
+const KNEE_STEM = 2.5;
 
 export type BeamGroup = PreparedChord[];
 
@@ -131,7 +133,7 @@ export function layoutBeam(group: PlacedChord[]): BeamDrawing {
   let lineAtFirst: number;
   if (mixed) {
     // A kneed beam runs flat between the notes above it and the notes below it.
-    const ends = stemmed.map((placed) => beamSideY(placed) + (placed.shape.stem!.up ? -2.5 : 2.5) * scale);
+    const ends = stemmed.map((placed) => beamSideY(placed) + (placed.shape.stem!.up ? -KNEE_STEM : KNEE_STEM) * scale);
     lineAtFirst = ends.reduce((total, y) => total + y, 0) / ends.length;
   } else {
     const up = ups[0];
@@ -195,3 +197,25 @@ export function layoutBeam(group: PlacedChord[]): BeamDrawing {
   return { segments };
 }
 
+
+/**
+ * The distance below each upper staff that a beam running between two staves needs, as
+ * MuseScore's minVertSpaceForCrossStaffBeams makes room for it: a kneed stem from the upper
+ * staff's lowest notehead down to the beams, and one from the lower staff's highest up to them.
+ */
+export function crossStaffBeamGaps(group: BeamGroup, shapes: Map<PreparedChord, ChordShape>): Map<number, number> {
+  const gaps = new Map<number, number>();
+  const stemmed = group.filter((chord) => shapes.get(chord)!.stem);
+  if (stemmed.length < 2) return gaps;
+  const scale = shapes.get(stemmed[0])!.scale;
+  const levels = Math.max(1, ...stemmed.map((chord) => flagCount(noteType(chord.model.type, chord.model.duration))));
+  const beams = (BEAM_THICKNESS + (levels - 1) * BEAM_STEP) * scale;
+  const ys = (chords: PreparedChord[]) => chords.flatMap((chord) => shapes.get(chord)!.notes.map((note) => note.y));
+  for (const staff of new Set(stemmed.map((chord) => chord.staff))) {
+    const upper = stemmed.filter((chord) => chord.staff === staff && !shapes.get(chord)!.stem!.up);
+    const lower = stemmed.filter((chord) => chord.staff === staff + 1 && shapes.get(chord)!.stem!.up);
+    if (upper.length === 0 || lower.length === 0) continue;
+    gaps.set(staff, Math.max(...ys(upper)) - 4 + 2 * KNEE_STEM * scale + beams - Math.min(...ys(lower)));
+  }
+  return gaps;
+}

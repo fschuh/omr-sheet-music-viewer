@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { glyphBox, glyphWidth } from "../fonts/smufl";
+import { ENGRAVING_DEFAULTS, glyphBox, glyphWidth } from "../fonts/smufl";
 import { parseMusicXml } from "../import/parseMusicXml";
 import type { Drawable, LayoutPage } from "../model/layout";
 import { attributes, measure, note, part, piano, score } from "../testScores";
@@ -382,13 +382,15 @@ function textExtent(text: Text): { top: number; bottom: number } {
   return { top: text.y - 0.75 * text.size, bottom: text.y + 0.25 * text.size };
 }
 
-const conPed = (print = "", dynamic = true) => score([piano([
-  print + (dynamic ? direction(directionType("<dynamics><pp/></dynamics>"), "below", 1) : "") +
+const staffDistance = (tenths: number) => `<defaults><staff-layout><staff-distance>${tenths}</staff-distance></staff-layout></defaults>`;
+
+const conPed = (defaults = "", dynamic = true) => score([piano([
+  (dynamic ? direction(directionType("<dynamics><pp/></dynamics>"), "below", 1) : "") +
     direction(directionType("<words>con ped.</words>"), "above", 2) +
     note("G4", 16, { type: "whole", staff: 1 }) + "<backup><duration>16</duration></backup>" +
     note("E3", 16, { type: "whole", staff: 2, voice: 5 }) +
     note("E4", 16, { chord: true, type: "whole", staff: 2, voice: 5 }),
-])]);
+])], defaults);
 
 test("a mark is placed against its own staff, and the staves move apart until the marks between them clear", () => {
   const [page] = pages(conPed());
@@ -417,7 +419,7 @@ test("a mark is placed against its own staff, and the staves move apart until th
 });
 
 test("a distance between staves the file sets still grows for the marks between them", () => {
-  const [page] = pages(conPed('<print><staff-layout number="2"><staff-distance>40</staff-distance></staff-layout></print>'));
+  const [page] = pages(conPed(staffDistance(40)));
   const [words] = texts(page, "con ped.");
   const [pp] = glyphs(page, "dynamicPiano");
   assert.ok(dynamicExtent(page, pp).bottom <= textExtent(words).top + 1e-6);
@@ -962,7 +964,8 @@ test("a chain with a mark of its staff beyond one of its marks stays by its staf
 
 /** `count` one-bar systems of a treble staff, the file setting `tenths` between them. */
 const spacedSystems = (count: number, tenths: number) => pages(treble(Array.from({ length: count }, () => note("C5", 16, { type: "whole" })))
-  .replace(/<measure>/g, `<measure><print new-system="yes"><system-layout><system-distance>${tenths}</system-distance></system-layout></print>`));
+  .replace(/<measure>/g, '<measure><print new-system="yes"/>')
+  .replace("<part-list>", `<defaults><system-layout><system-distance>${tenths}</system-distance></system-layout></defaults><part-list>`));
 const systemGaps = (page: LayoutPage) => {
   const edges = staffEdges(page);
   return edges.slice(1).map((edge, index) => (edge.top - edges[index].bottom) / staffSpace(page));
@@ -996,14 +999,13 @@ test("chords beamed across staves count with their notes only, and their marks a
   // staves' distance, so only what reaches into the gap can widen it.
   const accent = '<articulations><accent placement="below"/></articulations>';
   const [page] = pages(score([piano([
-    '<print><staff-layout number="2"><staff-distance>65</staff-distance></staff-layout></print>' +
-      direction(directionType("<words>con ped. sempre</words>"), "above", 2) +
+    direction(directionType("<words>con ped. sempre</words>"), "above", 2) +
       note("E2", 2, { type: "eighth", staff: 2, stem: "down", beams: ["begin"] }) +
       note("C5", 2, { type: "eighth", staff: 1, stem: "down", beams: ["continue"], extra: notations(`<slur type="start" placement="below"/>${accent}`) }) +
       note("A4", 2, { type: "eighth", staff: 1, stem: "down", beams: ["continue"], extra: notations(`<slur type="stop"/>${accent}`) }) +
       note("C2", 2, { type: "eighth", staff: 2, stem: "down", beams: ["end"] }) +
       note(null, 8, { type: "half" }),
-  ])]));
+  ])], staffDistance(65)));
   assert.ok(Math.abs(firstGap(page) / staffSpace(page) - 6.5) < 1e-6);
 });
 
@@ -1012,15 +1014,14 @@ test("a tuplet of chords beamed across staves belongs to neither staff", () => {
     `<time-modification><actual-notes>3</actual-notes><normal-notes>2</normal-notes></time-modification>` +
     notations(`${start}${stop ? '<tuplet type="stop"/>' : ""}`);
   const [page] = pages(score([piano([
-    '<print><staff-layout number="2"><staff-distance>65</staff-distance></staff-layout></print>' +
-      direction(directionType("<words>con ped. sempre</words>"), "above", 2) +
+    direction(directionType("<words>con ped. sempre</words>"), "above", 2) +
       note("E2", 6, { type: "eighth", staff: 2, stem: "down", beams: ["begin"] }) +
       note("C5", 4, { type: "eighth", staff: 1, stem: "down", beams: ["continue"], extra: triplet12('<tuplet type="start" placement="below"/>') }) +
       note("A4", 4, { type: "eighth", staff: 1, stem: "down", beams: ["continue"], extra: triplet12("") }) +
       note("C5", 4, { type: "eighth", staff: 1, stem: "down", beams: ["continue"], extra: triplet12("", true) }) +
       note("C2", 6, { type: "eighth", staff: 2, stem: "down", beams: ["end"] }) +
       note(null, 24, { type: "half" }),
-  ], { divisions: 12 })]));
+  ], { divisions: 12 })], staffDistance(65)));
   assert.ok(texts(page, "3").length === 1);
   assert.ok(Math.abs(firstGap(page) / staffSpace(page) - 6.5) < 1e-6);
 });
@@ -1066,4 +1067,69 @@ test("expressions side by side ignore each other, as dynamics and hairpins do", 
       direction(directionType('<words font-style="italic">dolce</words>'), "below", 1) + note("C5", 12, { type: "half", dots: 1 }),
   ]));
   assert.ok(Math.abs(texts(page, "molto espressivo e legato")[0].y - texts(page, "dolce")[0].y) < 1e-6);
+});
+
+test("a page break of the file after a page that ran out of room lets the systems flow on", () => {
+  // Eleven of these systems fit on a page. The file breaks the page before the thirteenth,
+  // but the twelfth has already moved to a page of its own.
+  const broken = (systems: number, breaks: number[]) => {
+    let count = 0;
+    return pages(treble(Array.from({ length: systems }, () => note("C5", 16, { type: "whole" }))).replace(/<measure>/g, () => {
+      count += 1;
+      return `<measure><print new-system="yes"${breaks.includes(count) ? ' new-page="yes"' : ""}/>`;
+    })).map((page) => staffEdges(page).length);
+  };
+  assert.deepEqual(broken(15, [13]), [11, 4]);
+  // Pages that begin where the file breaks keep its next break.
+  assert.deepEqual(broken(6, [3, 5]), [2, 2, 2]);
+});
+
+test("distances a measure's print sets are left out, as MuseScore's import leaves them out", () => {
+  const plain = pages(score([piano([note("C5", 16, { type: "whole" }), note("C5", 16, { type: "whole" })])]))[0];
+  const printed = pages(score([piano([
+    note("C5", 16, { type: "whole" }),
+    note("C5", 16, { type: "whole" }),
+  ].map((content) => '<print new-system="yes"><system-layout><system-distance>400</system-distance>' +
+    `<top-system-distance>300</top-system-distance></system-layout><staff-layout number="2"><staff-distance>200</staff-distance></staff-layout></print>` +
+    content))]))[0];
+  const space = staffSpace(plain);
+  // The same staves as the plain score's first system, with the same distance between systems.
+  const edges = staffEdges(printed);
+  assert.equal(edges.length, 4);
+  assert.ok(Math.abs(edges[0].top - staffEdges(plain)[0].top) < 1e-6);
+  assert.ok(Math.abs((edges[1].top - edges[0].bottom) / space - 6.5) < 1e-6);
+  assert.ok(Math.abs((edges[2].top - edges[1].bottom) / space - 8.5) < 1e-6);
+});
+
+/** The beams' filled shapes on a page. */
+const beamPolygons = (page: LayoutPage) =>
+  items(page).filter((item): item is Extract<Drawable, { kind: "polygon" }> => item.kind === "polygon");
+
+test("stems running to a beam across staves leave the distance between the staves as it is", () => {
+  // The beam runs below the bass staff, or above the treble staff, not between them.
+  for (const stem of ["down", "up"] as const) {
+    const [page] = pages(score([piano([
+      note("C4", 2, { type: "eighth", staff: 2, stem, beams: ["begin"] }) +
+        note("C4", 2, { type: "eighth", staff: 1, stem, beams: ["continue"] }) +
+        note("D4", 2, { type: "eighth", staff: 1, stem, beams: ["continue"] }) +
+        note("C4", 2, { type: "eighth", staff: 2, stem, beams: ["end"] }) +
+        note(null, 8, { type: "half" }),
+    ])]));
+    assert.ok(Math.abs(firstGap(page) / staffSpace(page) - 6.5) < 1e-6, stem);
+  }
+});
+
+test("a beam across staves between them gets room for a kneed stem on either side", () => {
+  const [page] = pages(score([piano([
+    note("F3", 2, { type: "eighth", staff: 1, stem: "down", beams: ["begin"] }) +
+      note("G4", 2, { type: "eighth", staff: 2, stem: "up", beams: ["end"] }) +
+      note(null, 4, { type: "quarter" }) + note(null, 8, { type: "half" }),
+  ])]));
+  const ys = beamPolygons(page).flatMap((polygon) => polygon.points.filter((_, index) => index % 2 === 1));
+  assert.ok(ys.length > 0);
+  const space = staffSpace(page);
+  assert.ok(Math.min(...ys) > noteheadY(page, "F3") + 0.5 * space);
+  assert.ok(Math.max(...ys) < noteheadY(page, "G4") - 0.5 * space);
+  // Two kneed stems of 2.5 spaces and the beam's thickness, no more.
+  assert.ok(Math.abs((noteheadY(page, "G4") - noteheadY(page, "F3")) / space - (5 + ENGRAVING_DEFAULTS.beamThickness)) < 1e-6);
 });

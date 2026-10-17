@@ -118,12 +118,11 @@ const textOf = (values: Drawable[], text: string) => texts(values).find((item) =
 /** The top staff line of the page's first system. */
 const firstStaffTop = (page: LayoutPage) =>
   Math.min(...page.items.flatMap((item) => (item.kind === "line" && item.y1 === item.y2 ? [item.y1] : [])));
-/** A one-measure score whose first measure asks for `top` tenths above its system. */
+/** A one-measure score whose defaults ask for `top` tenths above a page's first system. */
 const withCredits = (credits: string, top = "") =>
   score([part("P1", [measure(
     attributes({ divisions: 4, fifths: 0, time: [4, 4], clefs: ["G"] }) + note("C5", 16, { type: "whole" }),
-    top ? `<print><system-layout><top-system-distance>${top}</top-system-distance></system-layout></print>` : "",
-  )])], credits);
+  )])], (top ? `<defaults><system-layout><top-system-distance>${top}</top-system-distance></system-layout></defaults>` : "") + credits);
 
 // A Finale-style header: the file's positions overlap the first system MuseScore would draw.
 const FINALE_CREDITS = `

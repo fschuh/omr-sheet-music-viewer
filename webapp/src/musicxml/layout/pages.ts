@@ -3,7 +3,7 @@
 // page pixels when drawn.
 import type { LayoutModel, PageFormat } from "../model/layout";
 import type { ScoreModel } from "../model/score";
-import { beamGroups, layoutBeam, stemDirections, type BeamDrawing, type BeamGroup, type PlacedChord } from "./beams";
+import { beamGroups, crossStaffBeamGaps, layoutBeam, stemDirections, type BeamDrawing, type BeamGroup, type PlacedChord } from "./beams";
 import { avoidRestCollisions, layoutChord, type ChordShape } from "./chords";
 import { layoutDirections, type Box } from "./directions";
 import { titleBlock } from "./credits";
@@ -116,19 +116,25 @@ function layoutBeams(
   );
 }
 
-/** How far each staff's content reaches above its top line and below its bottom line. */
+/**
+ * How far each staff's content reaches above its top line and below its bottom line. A chord
+ * beamed across staves counts with its noteheads: its stem runs to the other staff's beam.
+ */
 function staffReach(
   staffCount: number,
   chords: PreparedChord[],
   shapes: Map<PreparedChord, ChordShape>,
   staffTops: number[],
   beams: BeamDrawing[],
+  crossStaff: Set<PreparedChord>,
 ): { above: number[]; below: number[] } {
   const above = new Array<number>(staffCount).fill(0);
   const below = new Array<number>(staffCount).fill(0);
   for (const chord of chords) {
     const shape = shapes.get(chord)!;
-    const ys = [shape.top, shape.bottom, ...(shape.stem ? [shape.stem.yEnd] : [])];
+    const ys = crossStaff.has(chord) && shape.notes.length > 0
+      ? shape.notes.flatMap((note) => [note.y - 0.5, note.y + 0.5])
+      : [shape.top, shape.bottom, ...(shape.stem ? [shape.stem.yEnd] : [])];
     above[chord.staff] = Math.max(above[chord.staff], -Math.min(...ys));
     below[chord.staff] = Math.max(below[chord.staff], Math.max(...ys) - 4);
   }
@@ -147,10 +153,11 @@ function staffReach(
 function staffGaps(
   score: ScoreModel,
   prepared: PreparedScore,
-  firstMeasure: number,
   reach: { above: number[]; below: number[] } | null,
 ): number[] {
-  const encoded = tenths(score.measures[firstMeasure].staffDistance ?? score.defaults.staffDistance);
+  // Only the file's default: a distance a measure's print sets is its exporter's spread result
+  // for that page, which MuseScore's import also leaves out.
+  const encoded = tenths(score.defaults.staffDistance);
   return prepared.staves.slice(1).map((_, index) => {
     if (encoded !== null) return encoded;
     if (!reach) return STAFF_DISTANCE;
@@ -257,13 +264,15 @@ export function layoutScore(score: ScoreModel, format: PageFormat): LayoutModel 
     (index) => pageWidth - margins.left - margins.right - systemMargins(index).left - systemMargins(index).right,
   );
 
+  // Chords beamed across staves, which MuseScore leaves out of the staves' skylines.
+  const crossStaff = new Set(groups.flat().filter((group) => new Set(group.map((chord) => chord.staff)).size > 1).flat());
   // Systems: horizontal placement, then staves spaced so their content does not collide.
   const systems: PlacedSystem[] = plans.map((plan) => {
     const placed = placeHorizontally(plan, spacings, shapes, margins.left + systemMargins(plan.measures[0]).left);
     const chords = systemChords(placed);
-    let staffTops = topsFromGaps(staffGaps(score, prepared, plan.measures[0], null));
+    let staffTops = topsFromGaps(staffGaps(score, prepared, null));
     let beams = layoutBeams({ ...placed, staffTops }, groups, shapes);
-    staffTops = topsFromGaps(staffGaps(score, prepared, plan.measures[0], staffReach(staffCount, chords, shapes, staffTops, beams)));
+    staffTops = topsFromGaps(staffGaps(score, prepared, staffReach(staffCount, chords, shapes, staffTops, beams, crossStaff)));
     beams = layoutBeams({ ...placed, staffTops }, groups, shapes);
     return { ...placed, staffTops, top: 0, beams };
   });
@@ -272,12 +281,14 @@ export function layoutScore(score: ScoreModel, format: PageFormat): LayoutModel 
   // it does not depend on the staff's place: placed once here, they show how far apart the
   // staves must be for what each reaches into the gap between them to clear the other's.
   // Chords beamed across staves, which MuseScore leaves out of the staves' skylines.
-  const crossStaff = new Set(groups.flat().filter((group) => new Set(group.map((chord) => chord.staff)).size > 1).flat());
   const draft = annotate(score, prepared, systems, shapes, sp, crossStaff).directions.boxes;
   const skylines = new Map(systems.map((system) => {
     const skyline = staffSkylines(system, draft.get(system) ?? [], shapes, staffCount, crossStaff);
     const gaps = system.staffTops.slice(1).map((top, index) => top - system.staffTops[index] - 4);
-    const needed = gaps.map((gap, index) => Math.max(gap, skylineDistance(skyline[index], skyline[index + 1])));
+    const beamed = system.plan.measures.flatMap((measure) => groups[measure]).map((group) => crossStaffBeamGaps(group, shapes));
+    const needed = gaps.map((gap, index) => Math.max(
+      gap, skylineDistance(skyline[index], skyline[index + 1]), ...beamed.map((beam) => beam.get(index) ?? -Infinity),
+    ));
     if (needed.some((gap, index) => gap > gaps[index])) {
       system.staffTops = topsFromGaps(needed);
       system.beams = layoutBeams(system, groups, shapes);
@@ -293,11 +304,17 @@ export function layoutScore(score: ScoreModel, format: PageFormat): LayoutModel 
   const pagesOfSystems: { system: PlacedSystem; preferred: number; least: number }[][] = [];
   const pageTops: number[] = [];
   let used = 0;
+  // Whether the current page began because the systems before it ran out of room, rather than
+  // where the file breaks: the file's layout no longer holds, so its next page break is not
+  // kept either, and the systems flow on instead of leaving a page nearly empty.
+  let overflowed = false;
   systems.forEach((system, index) => {
     const first = system.plan.measures[0];
-    const layout = score.measures[first].systemLayout;
+    // Only the file's defaults: the distances a measure's print sets are its exporter's spread
+    // result for that page, which MuseScore's import also leaves out. They would space a page
+    // unevenly once its systems are not those the exporter put there.
     const defaults = score.defaults.systemLayout;
-    const reach = staffReach(staffCount, systemChords(system), shapes, system.staffTops, system.beams);
+    const reach = staffReach(staffCount, systemChords(system), shapes, system.staffTops, system.beams, crossStaff);
     const skyline = skylines.get(system)!;
     const height = system.staffTops[system.staffTops.length - 1] + 4;
     // The distance from the system before, which another page starts afresh.
@@ -305,22 +322,24 @@ export function layoutScore(score: ScoreModel, format: PageFormat): LayoutModel 
     let least = 0;
     if (index > 0) {
       const previous = systems[index - 1];
-      const previousReach = staffReach(staffCount, systemChords(previous), shapes, previous.staffTops, previous.beams);
+      const previousReach = staffReach(staffCount, systemChords(previous), shapes, previous.staffTops, previous.beams, crossStaff);
       const clear = skylineDistance(skylines.get(previous)![staffCount - 1], skyline[0]);
       preferred = Math.max(
-        tenths(layout.systemDistance ?? defaults.systemDistance) ??
+        tenths(defaults.systemDistance) ??
           Math.max(SYSTEM_DISTANCE, previousReach.below[staffCount - 1] + reach.above[0] + COLLISION_CLEARANCE),
         clear,
       );
       least = Math.min(preferred, Math.max(SYSTEM_DISTANCE, clear));
     }
     const page = pagesOfSystems[pagesOfSystems.length - 1];
-    if (!page || score.measures[first].newPage || used + least + height > pageHeight - margins.bottom) {
+    const fileBreak = score.measures[first].newPage && !overflowed;
+    if (!page || fileBreak || used + least + height > pageHeight - margins.bottom) {
+      overflowed = Boolean(page) && !fileBreak;
       // The title frame needs room above the first system, whatever distance the file asks for.
       const titleSpace = pagesOfSystems.length === 0 ? titleHeight : 0;
       const above = Math.max(reach.above[0], ...skyline[0].map((box) => -box.top));
       const clearOfTitle = titleSpace + Math.max(TOP_SYSTEM_DISTANCE, above + COLLISION_CLEARANCE);
-      const encodedTop = tenths(layout.topSystemDistance ?? defaults.topSystemDistance);
+      const encodedTop = tenths(defaults.topSystemDistance);
       const topDistance = encodedTop === null ? clearOfTitle : titleSpace > 0 ? Math.max(encodedTop, clearOfTitle) : encodedTop;
       pagesOfSystems.push([{ system, preferred: 0, least: 0 }]);
       pageTops.push(margins.top + topDistance);
