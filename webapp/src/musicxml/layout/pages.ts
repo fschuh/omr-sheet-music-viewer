@@ -5,13 +5,13 @@ import type { LayoutModel, PageFormat } from "../model/layout";
 import type { ScoreModel } from "../model/score";
 import { beamGroups, layoutBeam, stemDirections, type BeamDrawing, type BeamGroup, type PlacedChord } from "./beams";
 import { avoidRestCollisions, layoutChord, type ChordShape } from "./chords";
-import { layoutDirections } from "./directions";
+import { layoutDirections, type Box } from "./directions";
 import { titleBlock } from "./credits";
 import { drawPage } from "./drawing";
 import { gapWidth, graceOffsets, measureSpacing, springWidth, type MeasureSpacing } from "./horizontal";
 import { prepareScore, type PreparedChord, type PreparedScore } from "./measureContent";
 import { layoutMarks } from "./marks";
-import { layoutSlurs, layoutTies, layoutTuplets, layoutVoltas, mergeSpanners, notePlaces } from "./spanners";
+import { chordExtent, layoutSlurs, layoutTies, layoutTuplets, layoutVoltas, mergeSpanners, notePlaces } from "./spanners";
 import { breakSystems, type SystemPlan } from "./systems";
 
 /** MuseScore's staffDistance and akkoladeDistance, from the bottom of one staff to the top of the next. */
@@ -21,6 +21,10 @@ const SYSTEM_DISTANCE = 8.5;
 /** MuseScore's staffUpperBorder: the default space above a page's first system. */
 const TOP_SYSTEM_DISTANCE = 7;
 const COLLISION_CLEARANCE = 1;
+/** MuseScore's minVerticalDistance: the least room between what two staves reach into their gap. */
+const MIN_VERTICAL_DISTANCE = 0.5;
+/** MuseScore's skylineMinHorizontalClearance: closer side by side than this, things stack. */
+const HORIZONTAL_CLEARANCE = 0.25;
 
 const tenths = (value: number | null | undefined): number | null =>
   value === null || value === undefined ? null : value / 10;
@@ -154,6 +158,56 @@ function staffGaps(
   });
 }
 
+/**
+ * What each staff of a system covers, relative to its top line: its chords, and the marks,
+ * slurs, tuplets and directions placed against it.
+ */
+function staffSkylines(
+  system: PlacedSystem, boxes: Box[], shapes: Map<PreparedChord, ChordShape>, staffCount: number, crossStaff: Set<PreparedChord>,
+): Box[][] {
+  const skylines = Array.from({ length: staffCount }, (): Box[] => []);
+  const relative = (staff: number, box: Box): Box => {
+    const top = system.top + system.staffTops[staff];
+    return { x1: box.x1, x2: box.x2, top: box.top - top, bottom: box.bottom - top };
+  };
+  for (const chord of systemChords(system)) {
+    // A chord beamed across staves counts with its notes only: its stem and beam reach the other staff.
+    const extent = chordExtent(system, chord, shapes.get(chord)!, !crossStaff.has(chord));
+    skylines[chord.staff].push(relative(chord.staff, { x1: extent.left, x2: extent.right, top: extent.top, bottom: extent.bottom }));
+  }
+  for (const box of boxes) if (box.staff !== undefined) skylines[box.staff].push(relative(box.staff, box));
+  return skylines;
+}
+
+/**
+ * The least distance from one staff's bottom line down to the next staff's top line that
+ * keeps what they reach into the gap apart wherever it overlaps side by side, as MuseScore
+ * spaces staves by their skylines.
+ */
+function skylineDistance(upper: Box[], lower: Box[]): number {
+  let distance = -Infinity;
+  for (const a of upper) {
+    for (const b of lower) {
+      if (a.x1 < b.x2 + HORIZONTAL_CLEARANCE && b.x1 < a.x2 + HORIZONTAL_CLEARANCE) {
+        distance = Math.max(distance, a.bottom - 4 - b.top + MIN_VERTICAL_DISTANCE);
+      }
+    }
+  }
+  return distance;
+}
+
+/** Chord marks, slurs, tuplets and directions, each kept clear of those placed before it. */
+function annotate(
+  score: ScoreModel, prepared: PreparedScore, systems: PlacedSystem[], shapes: Map<PreparedChord, ChordShape>, sp: number,
+  crossStaff: Set<PreparedChord>,
+) {
+  const marks = layoutMarks(systems, shapes, sp, crossStaff);
+  const slurs = layoutSlurs(systems, shapes, sp, crossStaff);
+  const tuplets = layoutTuplets(systems, shapes, sp, crossStaff);
+  const taken = new Map(systems.map((system) => [system, [marks.boxes, slurs.boxes, tuplets.boxes].flatMap((boxes) => boxes.get(system) ?? [])]));
+  return { marks, slurs, tuplets, directions: layoutDirections(score, prepared, systems, shapes, sp, taken, crossStaff) };
+}
+
 function topsFromGaps(gaps: number[]): number[] {
   const tops = [0];
   for (const gap of gaps) tops.push(tops[tops.length - 1] + 4 + gap);
@@ -214,52 +268,94 @@ export function layoutScore(score: ScoreModel, format: PageFormat): LayoutModel 
     return { ...placed, staffTops, top: 0, beams };
   });
 
+  // Marks and directions are placed against their own staff, so where they sit relative to
+  // it does not depend on the staff's place: placed once here, they show how far apart the
+  // staves must be for what each reaches into the gap between them to clear the other's.
+  // Chords beamed across staves, which MuseScore leaves out of the staves' skylines.
+  const crossStaff = new Set(groups.flat().filter((group) => new Set(group.map((chord) => chord.staff)).size > 1).flat());
+  const draft = annotate(score, prepared, systems, shapes, sp, crossStaff).directions.boxes;
+  const skylines = new Map(systems.map((system) => {
+    const skyline = staffSkylines(system, draft.get(system) ?? [], shapes, staffCount, crossStaff);
+    const gaps = system.staffTops.slice(1).map((top, index) => top - system.staffTops[index] - 4);
+    const needed = gaps.map((gap, index) => Math.max(gap, skylineDistance(skyline[index], skyline[index + 1])));
+    if (needed.some((gap, index) => gap > gaps[index])) {
+      system.staffTops = topsFromGaps(needed);
+      system.beams = layoutBeams(system, groups, shapes);
+    }
+    return [system, skyline];
+  }));
+
   const titleHeight = titleBlock(score, format).height / sp;
-  // Pages: systems stack down each page and move to a new page when they do not fit.
-  const pagesOfSystems: PlacedSystem[][] = [];
-  let previousBottom = 0;
-  let previousBelow = 0;
+  // Pages: systems stack down each page and move to a new page when they do not fit at the
+  // least distance between them. A distance the file sets is MuseScore's spread result, not a
+  // minimum: on a page that cannot hold its systems at those distances, every one gives up the
+  // same share of what it has beyond the least, as MuseScore's vertical spread would.
+  const pagesOfSystems: { system: PlacedSystem; preferred: number; least: number }[][] = [];
+  const pageTops: number[] = [];
+  let used = 0;
   systems.forEach((system, index) => {
     const first = system.plan.measures[0];
     const layout = score.measures[first].systemLayout;
     const defaults = score.defaults.systemLayout;
     const reach = staffReach(staffCount, systemChords(system), shapes, system.staffTops, system.beams);
+    const skyline = skylines.get(system)!;
     const height = system.staffTops[system.staffTops.length - 1] + 4;
-    // The title frame needs room above the first system, whatever distance the file asks for.
-    const titleSpace = pagesOfSystems.length === 0 ? titleHeight : 0;
-    const clearOfTitle = titleSpace + Math.max(TOP_SYSTEM_DISTANCE, reach.above[0] + COLLISION_CLEARANCE);
-    const encodedTop = tenths(layout.topSystemDistance ?? defaults.topSystemDistance);
-    const topDistance = encodedTop === null ? clearOfTitle : titleSpace > 0 ? Math.max(encodedTop, clearOfTitle) : encodedTop;
-    const systemDistance = tenths(layout.systemDistance ?? defaults.systemDistance) ??
-      Math.max(SYSTEM_DISTANCE, previousBelow + reach.above[0] + COLLISION_CLEARANCE);
-    const page = pagesOfSystems[pagesOfSystems.length - 1];
-    let top = page ? previousBottom + systemDistance : margins.top + topDistance;
-    if (!page || (index > 0 && score.measures[first].newPage) || top + height > pageHeight - margins.bottom) {
-      top = margins.top + topDistance;
-      pagesOfSystems.push([]);
+    // The distance from the system before, which another page starts afresh.
+    let preferred = 0;
+    let least = 0;
+    if (index > 0) {
+      const previous = systems[index - 1];
+      const previousReach = staffReach(staffCount, systemChords(previous), shapes, previous.staffTops, previous.beams);
+      const clear = skylineDistance(skylines.get(previous)![staffCount - 1], skyline[0]);
+      preferred = Math.max(
+        tenths(layout.systemDistance ?? defaults.systemDistance) ??
+          Math.max(SYSTEM_DISTANCE, previousReach.below[staffCount - 1] + reach.above[0] + COLLISION_CLEARANCE),
+        clear,
+      );
+      least = Math.min(preferred, Math.max(SYSTEM_DISTANCE, clear));
     }
-    system.top = top;
-    pagesOfSystems[pagesOfSystems.length - 1].push(system);
-    previousBottom = top + height;
-    previousBelow = reach.below[staffCount - 1];
+    const page = pagesOfSystems[pagesOfSystems.length - 1];
+    if (!page || score.measures[first].newPage || used + least + height > pageHeight - margins.bottom) {
+      // The title frame needs room above the first system, whatever distance the file asks for.
+      const titleSpace = pagesOfSystems.length === 0 ? titleHeight : 0;
+      const above = Math.max(reach.above[0], ...skyline[0].map((box) => -box.top));
+      const clearOfTitle = titleSpace + Math.max(TOP_SYSTEM_DISTANCE, above + COLLISION_CLEARANCE);
+      const encodedTop = tenths(layout.topSystemDistance ?? defaults.topSystemDistance);
+      const topDistance = encodedTop === null ? clearOfTitle : titleSpace > 0 ? Math.max(encodedTop, clearOfTitle) : encodedTop;
+      pagesOfSystems.push([{ system, preferred: 0, least: 0 }]);
+      pageTops.push(margins.top + topDistance);
+      used = margins.top + topDistance + height;
+    } else {
+      page.push({ system, preferred, least });
+      used += least + height;
+    }
+  });
+  pagesOfSystems.forEach((page, pageIndex) => {
+    const heights = page.reduce((total, { system }) => total + system.staffTops[system.staffTops.length - 1] + 4, 0);
+    const least = page.reduce((total, entry) => total + entry.least, 0);
+    const slack = page.reduce((total, entry) => total + entry.preferred - entry.least, 0);
+    const room = pageHeight - margins.bottom - pageTops[pageIndex] - heights - least;
+    const share = slack > 0 ? Math.max(0, Math.min(1, room / slack)) : 0;
+    let top = pageTops[pageIndex];
+    for (const entry of page) {
+      top += entry.least + share * (entry.preferred - entry.least);
+      entry.system.top = top;
+      top += entry.system.staffTops[entry.system.staffTops.length - 1] + 4;
+    }
   });
 
   const places = notePlaces(systems, shapes);
-  const marks = layoutMarks(systems, shapes, sp);
-  const slurs = layoutSlurs(systems, shapes, sp);
-  const tuplets = layoutTuplets(systems, shapes, sp);
-  // Directions keep clear of the chord marks, slurs and tuplets drawn before them.
-  const taken = new Map(systems.map((system) => [system, [marks.boxes, slurs.boxes, tuplets.boxes].flatMap((boxes) => boxes.get(system) ?? [])]));
+  const { marks, slurs, tuplets, directions } = annotate(score, prepared, systems, shapes, sp, crossStaff);
   const spanners = mergeSpanners(
     layoutTies(systems, places, sp),
     slurs.drawables,
     tuplets.drawables,
     layoutVoltas(systems, shapes, sp),
     marks.drawables,
-    layoutDirections(score, prepared, systems, shapes, sp, taken),
+    directions.drawables,
   );
-  const pages = pagesOfSystems.map((pageSystems, pageIndex) =>
-    drawPage(pageIndex, pageSystems, { score, prepared, shapes, format, sp, firstSystem: systems[0], spanners }),
+  const pages = pagesOfSystems.map((page, pageIndex) =>
+    drawPage(pageIndex, page.map((entry) => entry.system), { score, prepared, shapes, format, sp, firstSystem: systems[0], spanners }),
   );
   return { format, pages };
 }

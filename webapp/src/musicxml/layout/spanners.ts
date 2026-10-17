@@ -213,6 +213,7 @@ function slurPiece(
   up: boolean,
   over: { chord: PreparedChord; shape: ChordShape }[],
   sp: number,
+  staff: number | undefined,
 ): { drawable: Drawable; boxes: Box[] } {
   const length = Math.max(0.1, to.x - from.x);
   const sign = up ? -1 : 1;
@@ -235,7 +236,7 @@ function slurPiece(
   const y2 = to.y + sign * lift;
   return {
     drawable: curvePath(from.x, y1, to.x, y2, up, sp, { control, thickness: SLUR_THICKNESS }),
-    boxes: curveBoxes(from.x, y1, to.x, y2, up, control),
+    boxes: curveBoxes(from.x, y1, to.x, y2, up, control).map((box) => ({ ...box, staff })),
   };
 }
 
@@ -273,6 +274,7 @@ export function layoutSlurs(
   systems: PlacedSystem[],
   shapes: Map<PreparedChord, ChordShape>,
   sp: number,
+  crossStaff: Set<PreparedChord> = new Set(),
 ): { drawables: Map<PlacedSystem, Drawable[]>; boxes: Map<PlacedSystem, Box[]> } {
   const result = new Map<PlacedSystem, Drawable[]>();
   const covered = new Map<PlacedSystem, Box[]>();
@@ -313,22 +315,24 @@ export function layoutSlurs(
         if (!start) continue;
         const up = slurUp(start.chord, chord, shapes, start.placement);
         const staves = new Set([start.chord.staff, chord.staff]);
+        // A slur between two staves, or of chords beamed across staves, belongs to no staff.
+        const staff = staves.size === 1 && !crossStaff.has(start.chord) && !crossStaff.has(chord) ? chord.staff : undefined;
         const from = slurAnchor(start.system, start.chord, shapes.get(start.chord)!, up);
         const to = slurAnchor(system, chord, shapes.get(chord)!, up);
         if (start.system === system) {
-          add(system, slurPiece(system, from, to, up, chordsOver(system, chord.part, staves, from.x, to.x), sp));
+          add(system, slurPiece(system, from, to, up, chordsOver(system, chord.part, staves, from.x, to.x), sp, staff));
           continue;
         }
         const first = start.system;
-        add(first, slurPiece(first, from, { x: first.right - 0.3, y: from.y }, up, chordsOver(first, chord.part, staves, from.x, first.right), sp));
+        add(first, slurPiece(first, from, { x: first.right - 0.3, y: from.y }, up, chordsOver(first, chord.part, staves, from.x, first.right), sp, staff));
         for (const middle of systems.slice(systems.indexOf(first) + 1, systemIndex)) {
           const staffTop = middle.top + middle.staffTops[start.chord.staff];
           const y = up ? staffTop - 1 : staffTop + 5;
           const left = systemMusicStart(middle);
-          add(middle, slurPiece(middle, { x: left, y }, { x: middle.right - 0.3, y }, up, chordsOver(middle, chord.part, staves, left, middle.right), sp));
+          add(middle, slurPiece(middle, { x: left, y }, { x: middle.right - 0.3, y }, up, chordsOver(middle, chord.part, staves, left, middle.right), sp, staff));
         }
         const left = systemMusicStart(system);
-        add(system, slurPiece(system, { x: left, y: to.y }, to, up, chordsOver(system, chord.part, staves, left, to.x), sp));
+        add(system, slurPiece(system, { x: left, y: to.y }, to, up, chordsOver(system, chord.part, staves, left, to.x), sp, staff));
       }
       for (const mark of chord.model.slurs) {
         if (mark.type !== "start") continue;
@@ -340,14 +344,16 @@ export function layoutSlurs(
   return { drawables: result, boxes: covered };
 }
 
-/** A chord's extent on the page, with its stem and beam. */
-export function chordExtent(system: PlacedSystem, chord: PreparedChord, shape: ChordShape) {
+/** A chord's extent on the page: with its stem and beam, or, if `withStem` is false, its noteheads only. */
+export function chordExtent(system: PlacedSystem, chord: PreparedChord, shape: ChordShape, withStem = true) {
   const x = system.chords.get(chord)!;
   const staffTop = system.top + system.staffTops[chord.staff];
   const xs = shape.rest
     ? [x + shape.rest.x, x + shape.rest.x + glyphBox(shape.rest.glyph).right * shape.scale]
     : shape.notes.flatMap((note) => [x + note.x, x + note.x + glyphBox(note.head).right * shape.scale]);
-  const ys = [shape.top, shape.bottom, ...(shape.stem ? [shape.stem.yEnd] : [])].map((y) => staffTop + y);
+  const heads = shape.notes.flatMap((note) => [note.y - 0.5, note.y + 0.5]);
+  const ys = (withStem || heads.length === 0 ? [shape.top, shape.bottom, ...(shape.stem ? [shape.stem.yEnd] : [])] : heads)
+    .map((y) => staffTop + y);
   return { left: Math.min(...xs), right: Math.max(...xs), top: Math.min(...ys), bottom: Math.max(...ys) };
 }
 
@@ -361,6 +367,7 @@ export function layoutTuplets(
   systems: PlacedSystem[],
   shapes: Map<PreparedChord, ChordShape>,
   sp: number,
+  crossStaff: Set<PreparedChord> = new Set(),
 ): { drawables: Map<PlacedSystem, Drawable[]>; boxes: Map<PlacedSystem, Box[]> } {
   const result = new Map<PlacedSystem, Drawable[]>();
   const boxes = new Map<PlacedSystem, Box[]>();
@@ -444,7 +451,9 @@ export function layoutTuplets(
       const ys = [lineY(left), lineY(right), lineY(left) + hook, lineY(right) + hook];
       covered.push({ x1: left, x2: right, top: Math.min(...ys), bottom: Math.max(...ys) });
     }
-    add(system, items, covered);
+    // A tuplet across staves, or of chords beamed across staves, belongs to no staff.
+    const staff = chords.every((chord) => chord.staff === chords[0].staff && !crossStaff.has(chord)) ? chords[0].staff : undefined;
+    add(system, items, covered.map((box) => ({ ...box, staff })));
   }
   return { drawables: result, boxes };
 }

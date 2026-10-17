@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { glyphBox } from "../fonts/smufl";
+import { glyphBox, glyphWidth } from "../fonts/smufl";
 import { parseMusicXml } from "../import/parseMusicXml";
 import type { Drawable, LayoutPage } from "../model/layout";
 import { attributes, measure, note, part, piano, score } from "../testScores";
@@ -361,18 +361,165 @@ test("text above the staff clears printed fingerings", () => {
   assert.ok(words.y < three.y + box.top * staffSpace(page) * three.scale);
 });
 
-test("text that would be pushed into a staff moves along its line instead", () => {
+const newSystem = (xml: string) => xml.replace(/<\/measure><measure>/, '</measure><measure><print new-system="yes"/>');
+
+/** The top and bottom lines of each staff on a page, top staff first. */
+function staffEdges(page: LayoutPage): { top: number; bottom: number }[] {
+  const ys = [...new Set(page.items
+    .filter((item): item is Line => item.kind === "line" && item.y1 === item.y2 && item.x2 - item.x1 > 200)
+    .map((line) => line.y1))].sort((a, b) => a - b);
+  return Array.from({ length: ys.length / 5 }, (_, index) => ({ top: ys[index * 5], bottom: ys[index * 5 + 4] }));
+}
+
+/** A dynamic's extent from its glyphs' boxes. */
+function dynamicExtent(page: LayoutPage, glyph: Glyph): { top: number; bottom: number } {
+  const box = glyphBox(glyph.glyph as Parameters<typeof glyphBox>[0]);
+  return { top: glyph.y + box.top * staffSpace(page), bottom: glyph.y + box.bottom * staffSpace(page) };
+}
+
+/** Words' extent, as layout measures it: three quarters of the size above the baseline, a quarter below. */
+function textExtent(text: Text): { top: number; bottom: number } {
+  return { top: text.y - 0.75 * text.size, bottom: text.y + 0.25 * text.size };
+}
+
+const conPed = (print = "", dynamic = true) => score([piano([
+  print + (dynamic ? direction(directionType("<dynamics><pp/></dynamics>"), "below", 1) : "") +
+    direction(directionType("<words>con ped.</words>"), "above", 2) +
+    note("G4", 16, { type: "whole", staff: 1 }) + "<backup><duration>16</duration></backup>" +
+    note("E3", 16, { type: "whole", staff: 2, voice: 5 }) +
+    note("E4", 16, { chord: true, type: "whole", staff: 2, voice: 5 }),
+])]);
+
+test("a mark is placed against its own staff, and the staves move apart until the marks between them clear", () => {
+  const [page] = pages(conPed());
+  const [words] = texts(page, "con ped.");
+  const [pp] = glyphs(page, "dynamicPiano");
+  const space = staffSpace(page);
+  const [upper] = staffEdges(page);
+  // At its note, not moved along the staff.
+  const head = page.chords.flatMap((chord) => chord.notes).find((value) => value.key.endsWith("E4"))!
+    .items.find((item): item is Glyph => item.kind === "glyph")!;
+  assert.ok(Math.abs(words.x - head.x) < space);
+  // Between the staves, below the pp and above the bass's E4.
+  assert.ok(textExtent(words).top > upper.bottom);
+  assert.ok(dynamicExtent(page, pp).bottom <= textExtent(words).top + 1e-6);
+  assert.ok(textExtent(words).bottom <= noteheadY(page, "E4") - 0.5 * space + 1e-6);
+  // Each sits where it would without the other, and the gap is just wide enough for half a
+  // space between them.
+  const [alone] = pages(conPed("", false));
+  const [aloneWords] = texts(alone, "con ped.");
+  const [bass] = staffEdges(page).slice(1);
+  assert.ok(Math.abs((bass.top - words.y) - (staffEdges(alone)[1].top - aloneWords.y)) < 1e-6);
+  const [single] = pages(treble([direction(directionType("<dynamics><pp/></dynamics>"), "below", 1) + note("G4", 16, { type: "whole" })]));
+  const ppReach = dynamicExtent(single, glyphs(single, "dynamicPiano")[0]).bottom - staffEdges(single)[0].bottom;
+  const wordsReach = staffEdges(alone)[1].top - textExtent(aloneWords).top;
+  assert.ok(Math.abs((bass.top - upper.bottom) - (ppReach + 0.5 * space + wordsReach)) < 1e-6);
+});
+
+test("a distance between staves the file sets still grows for the marks between them", () => {
+  const [page] = pages(conPed('<print><staff-layout number="2"><staff-distance>40</staff-distance></staff-layout></print>'));
+  const [words] = texts(page, "con ped.");
+  const [pp] = glyphs(page, "dynamicPiano");
+  assert.ok(dynamicExtent(page, pp).bottom <= textExtent(words).top + 1e-6);
+  assert.ok(textExtent(words).bottom <= noteheadY(page, "E4") - 0.5 * staffSpace(page) + 1e-6);
+});
+
+test("a dynamic between a grand staff's staves centres in the room the staves leave it", () => {
   const [page] = pages(score([piano([
-    direction(directionType("<dynamics><p/></dynamics>"), "below", 1) +
-      direction(directionType("<words>con ped.</words>"), "above", 2) +
-      note("C4", 16, { type: "whole", staff: 1 }) + "<backup><duration>16</duration></backup>" +
+    direction(directionType("<dynamics><f/></dynamics>"), "below", 1) +
+      note("C5", 16, { type: "whole", staff: 1 }) + "<backup><duration>16</duration></backup>" +
       note("C3", 16, { type: "whole", staff: 2, voice: 5 }),
   ])]));
-  const [words] = texts(page, "con ped.");
-  const [piano_] = glyphs(page, "dynamicPiano");
-  assert.ok(words.x > piano_.x);
-  // Between the staves: below the treble staff's bottom line.
-  assert.ok(words.y > noteheadY(page, "C4") - 5);
+  const [forte] = glyphs(page, "dynamicForte");
+  const [treble, bass] = staffEdges(page);
+  const extent = dynamicExtent(page, forte);
+  assert.ok(Math.abs((extent.top - treble.bottom) - (bass.top - extent.bottom)) < 0.01 * staffSpace(page));
+});
+
+test("a dynamic with another mark of its staff beyond it stays by its staff", () => {
+  const ppY = (words: string) => glyphs(pages(score([piano([
+    direction(directionType("<dynamics><pp/></dynamics>"), "below", 1) + words +
+      note("C5", 16, { type: "whole", staff: 1 }) + "<backup><duration>16</duration></backup>" +
+      note("C3", 16, { type: "whole", staff: 2, voice: 5 }),
+  ])]))[0], "dynamicPiano")[0].y;
+  const alone = ppY("");
+  const blocked = ppY(direction(directionType("<words>dolce</words>"), "below", 1));
+  assert.ok(blocked < alone - 0.5);
+});
+
+test("cresc. and dim. text is italic, goes below unless placed, and centres like a dynamic", () => {
+  const [page] = pages(score([piano([
+    direction(directionType("<words>cresc.</words>"), "", 1) +
+      note("C5", 16, { type: "whole", staff: 1 }) + "<backup><duration>16</duration></backup>" +
+      note("C3", 16, { type: "whole", staff: 2, voice: 5 }),
+  ])]));
+  const [words] = texts(page, "cresc.");
+  assert.equal(words.runs?.[0].italic, true);
+  const [treble, bass] = staffEdges(page);
+  const extent = textExtent(words);
+  assert.ok(Math.abs((extent.top - treble.bottom) - (bass.top - extent.bottom)) < 0.01 * staffSpace(page));
+});
+
+test("a hairpin between a grand staff's staves centres like a dynamic", () => {
+  const [page] = pages(score([piano([
+    direction(directionType('<wedge type="crescendo"/>'), "below", 1) +
+      note("C5", 8, { type: "half", staff: 1, stem: "up" }) +
+      direction(directionType('<wedge type="stop"/>'), "below", 1) +
+      note("C5", 8, { type: "half", staff: 1, stem: "up" }) + "<backup><duration>16</duration></backup>" +
+      note("C3", 16, { type: "whole", staff: 2, voice: 5 }),
+  ])]));
+  const wedge = items(page).filter((item): item is Line => item.kind === "line" && item.y1 !== item.y2 && item.x1 !== item.x2);
+  assert.equal(wedge.length, 2);
+  const middle = wedge.flatMap((line) => [line.y1, line.y2]).reduce((total, y) => total + y, 0) / 4;
+  const [treble, bass] = staffEdges(page);
+  assert.ok(Math.abs(middle - (treble.bottom + bass.top) / 2) < 0.01 * staffSpace(page));
+});
+
+test("italic words placed below are an expression, centred between the staves", () => {
+  const [page] = pages(score([piano([
+    direction(directionType('<words font-style="italic">dolce</words>'), "below", 1) +
+      note("C5", 16, { type: "whole", staff: 1 }) + "<backup><duration>16</duration></backup>" +
+      note("C3", 16, { type: "whole", staff: 2, voice: 5 }),
+  ])]));
+  const [words] = texts(page, "dolce");
+  const [treble, bass] = staffEdges(page);
+  const extent = textExtent(words);
+  assert.ok(Math.abs((extent.top - treble.bottom) - (bass.top - extent.bottom)) < 0.01 * staffSpace(page));
+});
+
+test("marks centred in one gap above one another move together, keeping clear of each other", () => {
+  const [page] = pages(score([piano([
+    direction(directionType("<dynamics><f/></dynamics>"), "below", 1) +
+      direction(directionType("<words>cresc.</words>"), "above", 2) +
+      note("C5", 16, { type: "whole", staff: 1 }) + "<backup><duration>16</duration></backup>" +
+      note("C3", 16, { type: "whole", staff: 2, voice: 5 }),
+  ])]));
+  const [forte] = glyphs(page, "dynamicForte");
+  const [words] = texts(page, "cresc.");
+  assert.ok(dynamicExtent(page, forte).bottom <= textExtent(words).top + 1e-6);
+});
+
+test("marks above the first system keep it clear of the title", () => {
+  const [page] = pages(treble([
+    ["Allegro", "dolce", "legato", "cantabile", "rubato"].map((text) => direction(directionType(`<words>${text}</words>`), "above")).join("") +
+      note("C5", 16, { type: "whole" }),
+  ]).replace("<part-list>", "<work><work-title>Sonata</work-title></work><part-list>"));
+  const [title] = texts(page, "Sonata");
+  const highest = Math.min(...["Allegro", "dolce", "legato", "cantabile", "rubato"].map((text) => textExtent(texts(page, text)[0]).top));
+  assert.ok(highest > title.y + 0.25 * title.size);
+});
+
+test("systems move apart when marks above one would reach the notes of the one before", () => {
+  const [page] = pages(newSystem(treble([
+    note("C3", 16, { type: "whole" }),
+    direction(directionType("<words>Allegro</words>"), "above") +
+      direction(directionType("<words>dolce</words>"), "above") + note("C5", 16, { type: "whole" }),
+  ])));
+  const [allegro] = texts(page, "Allegro");
+  const [dolce] = texts(page, "dolce");
+  const highest = Math.min(textExtent(allegro).top, textExtent(dolce).top);
+  const space = staffSpace(page);
+  assert.ok(highest >= noteheadY(page, "C3") + 0.5 * space + 0.5 * space - 1e-6);
 });
 
 test("segno, coda and SMuFL-named symbols are drawn; names the font lacks are not", () => {
@@ -389,7 +536,6 @@ test("segno, coda and SMuFL-named symbols are drawn; names the font lacks are no
   assert.ok(!items(page).some((item) => item.kind === "glyph" && (item.glyph as string) === "notAGlyph"));
 });
 
-const newSystem = (xml: string) => xml.replace(/<\/measure><measure>/, '</measure><measure><print new-system="yes"/>');
 
 test("a hairpin broken by a system stays partly open where it breaks; a diminuendo opens at its start", () => {
   const hairpin = (type: string) => newSystem(treble([
@@ -641,4 +787,283 @@ test("a tempo's words and metronome mark share a baseline, and note characters a
   assert.ok(dot.x > notes[0].x && dot.x < equals.x, "the dot follows its note");
   for (const item of [...notes, equals, dot]) assert.ok(Math.abs(item.y - label.y) < 1e-6, "on one baseline");
   assert.ok(notes[1].x < notes[2].x - glyphBox("metNoteQuarterUp").right * notes[1].scale * staffSpace(page), "side by side");
+});
+
+/** The distance from a page's first staff's bottom line to its second staff's top line. */
+const firstGap = (page: LayoutPage) => staffEdges(page)[1].top - staffEdges(page)[0].bottom;
+
+test("marks of two staves that are not above one another leave the gap between them as it is", () => {
+  const twoBars = (dynamic: boolean) => pages(score([piano([
+    (dynamic ? direction(directionType("<dynamics><pp/></dynamics>"), "below", 1) : "") +
+      note("G4", 16, { type: "whole", staff: 1 }) + "<backup><duration>16</duration></backup>" +
+      note("C3", 16, { type: "whole", staff: 2, voice: 5 }),
+    note("G4", 16, { type: "whole", staff: 1 }) + "<backup><duration>16</duration></backup>" +
+      direction(directionType("<words>con ped.</words>"), "above", 2) +
+      note("E3", 16, { type: "whole", staff: 2, voice: 5 }) +
+      note("E4", 16, { chord: true, type: "whole", staff: 2, voice: 5 }),
+  ])]))[0];
+  assert.ok(Math.abs(firstGap(twoBars(true)) - firstGap(twoBars(false))) < 1e-6);
+});
+
+test("chord marks, slurs and tuplets below a staff count toward the room its gap needs", () => {
+  // The bass staff's high notes reach up toward what hangs below the treble staff.
+  const gap = (upper: string) => firstGap(pages(score([piano([
+    upper + "<backup><duration>16</duration></backup>" +
+      note("G4", 16, { type: "whole", staff: 2, voice: 5 }),
+  ])]))[0]);
+  const plain = gap(quarters("A3", 4, { stem: "up" }));
+  const staccato = notations('<articulations><staccato placement="below"/></articulations>');
+  const below = '<tuplet type="start" placement="below"/>';
+  for (const [kind, upper] of [
+    ["chord marks", quarters("A3", 4, { stem: "up", extra: staccato })],
+    ["slur", slurred(["A3", "A3", "A3", "A3"], "up")],
+    ["tuplet", note("A3", 2, { type: "quarter", stem: "up", extra: triplet(below) }) +
+      note("A3", 3, { type: "quarter", stem: "up", extra: triplet("") }) +
+      note("A3", 3, { type: "quarter", stem: "up", extra: triplet("", true) }) + note(null, 8, { type: "half" })],
+  ]) {
+    assert.ok(gap(upper) > plain + 0.1, kind);
+  }
+});
+
+test("a trill line continued into the next system stays with its staff", () => {
+  const gap = (trill: boolean) => firstGap(pages(newSystem(score([piano([
+    note("C5", 16, { type: "whole", staff: 1, extra: trill ? notations('<ornaments><trill-mark/><wavy-line type="start"/></ornaments>') : "" }) +
+      "<backup><duration>16</duration></backup>" + note("C3", 16, { type: "whole", staff: 2, voice: 5 }),
+    note("C5", 16, { type: "whole", staff: 1, extra: trill ? notations('<ornaments><wavy-line type="stop"/></ornaments>') : "" }) +
+      "<backup><duration>16</duration></backup>" + note("C3", 16, { type: "whole", staff: 2, voice: 5 }),
+  ])])))[0]);
+  assert.ok(Math.abs(gap(true) - gap(false)) < 1e-6);
+});
+
+test("a slur or tuplet between two staves does not move them apart", () => {
+  const slur = (marked: boolean) => firstGap(pages(score([piano([
+    note("C5", 16, { type: "whole", staff: 1, extra: marked ? notations('<slur type="start"/>') : "" }) +
+      "<backup><duration>16</duration></backup>" +
+      note("C3", 16, { type: "whole", staff: 2, voice: 5, extra: marked ? notations('<slur type="stop"/>') : "" }),
+  ])]))[0]);
+  assert.ok(Math.abs(slur(true) - slur(false)) < 1e-6, "slur");
+  const tuplet = (marked: boolean) => firstGap(pages(score([piano([
+    note("E4", 2, { type: "quarter", stem: "up", extra: marked ? triplet('<tuplet type="start" placement="below"/>') : "" }) +
+      note("C3", 3, { type: "quarter", stem: "up", staff: 2, extra: marked ? triplet("") : "" }) +
+      note("E4", 3, { type: "quarter", stem: "up", extra: marked ? triplet("", true) : "" }) + note(null, 8, { type: "half" }),
+  ])]))[0]);
+  assert.ok(Math.abs(tuplet(true) - tuplet(false)) < 1e-6, "tuplet");
+});
+
+test("marks of either staff keep clear of a slur between the staves", () => {
+  const [page] = pages(score([piano([
+    note("C5", 8, { type: "half", staff: 1, stem: "down", extra: notations('<slur type="start" placement="below"/>') }) +
+      note(null, 8, { type: "half", staff: 1 }) + "<backup><duration>16</duration></backup>" +
+      direction(directionType("<words>con ped.</words>"), "above", 2) +
+      note(null, 8, { type: "half", staff: 2, voice: 5 }) +
+      note("C3", 8, { type: "half", staff: 2, voice: 5, extra: notations('<slur type="stop"/>') }),
+  ])]));
+  const [words] = texts(page, "con ped.");
+  const [x1, y1, c1x, c1y, c2x, c2y, x2, y2] = numbers(paths(page)[0]);
+  const right = words.x + words.text.length * words.size * 0.45;
+  const extent = textExtent(words);
+  const inside = Array.from({ length: 201 }, (_, index) => index / 200).map((t) => {
+    const u = 1 - t;
+    return {
+      x: u * u * u * x1 + 3 * u * u * t * c1x + 3 * u * t * t * c2x + t * t * t * x2,
+      y: u * u * u * y1 + 3 * u * u * t * c1y + 3 * u * t * t * c2y + t * t * t * y2,
+    };
+  }).filter((point) => point.x >= words.x && point.x <= right && point.y >= extent.top && point.y <= extent.bottom);
+  assert.deepEqual(inside, []);
+});
+
+/** A hairpin's two lines: neither horizontal nor vertical. */
+const hairpinLines = (page: LayoutPage) =>
+  items(page).filter((item): item is Line => item.kind === "line" && item.y1 !== item.y2 && item.x1 !== item.x2);
+const middleOf = (lines: Line[]) => lines.flatMap((line) => [line.y1, line.y2]).reduce((total, y) => total + y, 0) / (2 * lines.length);
+const centreOf = (extent: { top: number; bottom: number }) => (extent.top + extent.bottom) / 2;
+
+const wedge = (type: string) => direction(directionType(`<wedge type="${type}"/>`), "below", 1);
+const dynamic = (letter: string, staff = 1) => direction(directionType(`<dynamics><${letter}/></dynamics>`), "below", staff);
+
+test("a hairpin starts and ends half a space from the dynamics at its ends", () => {
+  const [page] = pages(treble([
+    dynamic("p") + wedge("crescendo") + note("C5", 8, { type: "half" }) + wedge("stop") + dynamic("f") + note("C5", 8, { type: "half" }),
+  ]));
+  const space = staffSpace(page);
+  const [piano_] = glyphs(page, "dynamicPiano");
+  const [forte] = glyphs(page, "dynamicForte");
+  const lines = hairpinLines(page);
+  const left = Math.min(...lines.map((line) => line.x1));
+  const right = Math.max(...lines.map((line) => line.x2));
+  assert.ok(Math.abs(left - (piano_.x + glyphWidth("dynamicPiano") * space + 0.5 * space)) < 1e-6);
+  assert.ok(Math.abs(right - (forte.x - 0.5 * space)) < 1e-6);
+});
+
+test("a hairpin ending where the next one starts stays on its line", () => {
+  const [page] = pages(treble([
+    wedge("crescendo") + note("C5", 8, { type: "half" }) + wedge("stop") + wedge("diminuendo") + note("C5", 8, { type: "half" }),
+    wedge("stop") + note("C5", 16, { type: "whole" }),
+  ]));
+  const lines = hairpinLines(page).sort((a, b) => a.x1 - b.x1);
+  assert.equal(lines.length, 4);
+  // Where a hairpin on its own would be.
+  const [alone] = pages(treble([wedge("crescendo") + note("C5", 8, { type: "half" }) + wedge("stop") + note("C5", 8, { type: "half" })]));
+  assert.ok(Math.abs(middleOf(lines.slice(0, 2)) - middleOf(hairpinLines(alone))) < 1e-6);
+  assert.ok(Math.abs(middleOf(lines.slice(2)) - middleOf(hairpinLines(alone))) < 1e-6);
+});
+
+test("a dynamic above the staff and a hairpin below it are not snapped together", () => {
+  const [page] = pages(treble([
+    direction(directionType("<dynamics><p/></dynamics>"), "above", 1) + wedge("crescendo") + note("C5", 8, { type: "half" }) +
+      wedge("stop") + note("C5", 8, { type: "half" }),
+  ]));
+  const [staff] = staffEdges(page);
+  const [piano_] = glyphs(page, "dynamicPiano");
+  assert.ok(dynamicExtent(page, piano_).bottom < staff.top);
+  assert.ok(middleOf(hairpinLines(page)) > staff.bottom);
+  // Nor does the hairpin make room for the dynamic.
+  assert.ok(Math.min(...hairpinLines(page).map((line) => line.x1)) < piano_.x + glyphWidth("dynamicPiano") * staffSpace(page));
+});
+
+test("dynamics and the hairpins between them line up with the one furthest from the staff", () => {
+  // A low note under the forte pushes it down; the piano and the hairpin follow it.
+  const [page] = pages(treble([
+    dynamic("p") + wedge("crescendo") + note("C5", 8, { type: "half" }) + wedge("stop") + dynamic("f") + note("A3", 8, { type: "half", stem: "up" }),
+  ]));
+  const [piano_] = glyphs(page, "dynamicPiano");
+  const [forte] = glyphs(page, "dynamicForte");
+  const centre = centreOf(dynamicExtent(page, forte));
+  assert.ok(Math.abs(centreOf(dynamicExtent(page, piano_)) - centre) < 1e-6);
+  assert.ok(Math.abs(middleOf(hairpinLines(page)) - centre) < 1e-6);
+});
+
+/** A grand staff with p, a crescendo and f below the treble staff; `bass` sets the bass staff's two halves. */
+const chainBetween = (bass: [string, string], extra = "") => pages(score([piano([
+  dynamic("p") + wedge("crescendo") + note("C5", 8, { type: "half", staff: 1, stem: "up" }) +
+    wedge("stop") + dynamic("f") + extra + note("C5", 8, { type: "half", staff: 1, stem: "up" }) +
+    "<backup><duration>16</duration></backup>" +
+    note(bass[0], 8, { type: "half", staff: 2, voice: 5, stem: "down" }) +
+    note(bass[1], 8, { type: "half", staff: 2, voice: 5, stem: "down" }),
+])]))[0];
+
+test("a chain of dynamics and hairpins centres between the staves as one", () => {
+  // The bass reaches up under the forte only.
+  const page = chainBetween(["C3", "E4"]);
+  const [piano_] = glyphs(page, "dynamicPiano");
+  const [forte] = glyphs(page, "dynamicForte");
+  assert.ok(Math.abs(centreOf(dynamicExtent(page, piano_)) - centreOf(dynamicExtent(page, forte))) < 1e-6);
+  assert.ok(Math.abs(middleOf(hairpinLines(page)) - centreOf(dynamicExtent(page, forte))) < 1e-6);
+});
+
+test("a chain with a mark of its staff beyond one of its marks stays by its staff", () => {
+  const free = chainBetween(["C3", "C3"]);
+  const page = chainBetween(["C3", "C3"], direction(directionType("<words>dolce</words>"), "below", 1));
+  const [piano_] = glyphs(page, "dynamicPiano");
+  const [forte] = glyphs(page, "dynamicForte");
+  assert.ok(Math.abs(centreOf(dynamicExtent(page, piano_)) - centreOf(dynamicExtent(page, forte))) < 1e-6);
+  assert.ok(piano_.y < glyphs(free, "dynamicPiano")[0].y - 0.5);
+});
+
+/** `count` one-bar systems of a treble staff, the file setting `tenths` between them. */
+const spacedSystems = (count: number, tenths: number) => pages(treble(Array.from({ length: count }, () => note("C5", 16, { type: "whole" })))
+  .replace(/<measure>/g, `<measure><print new-system="yes"><system-layout><system-distance>${tenths}</system-distance></system-layout></print>`));
+const systemGaps = (page: LayoutPage) => {
+  const edges = staffEdges(page);
+  return edges.slice(1).map((edge, index) => (edge.top - edges[index].bottom) / staffSpace(page));
+};
+
+test("a page keeps the distances the file sets between its systems while they fit", () => {
+  const [page] = spacedSystems(2, 200);
+  assert.ok(systemGaps(page).every((gap) => Math.abs(gap - 20) < 1e-6));
+});
+
+test("a page too small for the file's distances gives every system the same share of what it has beyond the least", () => {
+  const result = spacedSystems(10, 400);
+  assert.equal(result.length, 1);
+  const gaps = systemGaps(result[0]);
+  assert.equal(gaps.length, 9);
+  assert.ok(gaps.every((gap) => gap >= 8.5 - 1e-6 && gap < 40 && Math.abs(gap - gaps[0]) < 1e-6));
+  // The page is filled to its bottom margin.
+  const edges = staffEdges(result[0]);
+  const format = pageFormat(parseMusicXml(treble([note("C5", 16, { type: "whole" })])).defaults);
+  assert.ok(Math.abs(edges[edges.length - 1].bottom - (format.height - format.margins.bottom)) < 1e-6);
+});
+
+test("a distance the file sets below MuseScore's least is kept", () => {
+  const [page] = spacedSystems(2, 50);
+  assert.ok(systemGaps(page).every((gap) => Math.abs(gap - 5) < 1e-6));
+});
+
+test("chords beamed across staves count with their notes only, and their marks and slurs with neither staff", () => {
+  // The treble notes' stems reach down to a beam below the bass staff, and their slur and
+  // accents go there with them, past the words above the bass staff. The file sets the
+  // staves' distance, so only what reaches into the gap can widen it.
+  const accent = '<articulations><accent placement="below"/></articulations>';
+  const [page] = pages(score([piano([
+    '<print><staff-layout number="2"><staff-distance>65</staff-distance></staff-layout></print>' +
+      direction(directionType("<words>con ped. sempre</words>"), "above", 2) +
+      note("E2", 2, { type: "eighth", staff: 2, stem: "down", beams: ["begin"] }) +
+      note("C5", 2, { type: "eighth", staff: 1, stem: "down", beams: ["continue"], extra: notations(`<slur type="start" placement="below"/>${accent}`) }) +
+      note("A4", 2, { type: "eighth", staff: 1, stem: "down", beams: ["continue"], extra: notations(`<slur type="stop"/>${accent}`) }) +
+      note("C2", 2, { type: "eighth", staff: 2, stem: "down", beams: ["end"] }) +
+      note(null, 8, { type: "half" }),
+  ])]));
+  assert.ok(Math.abs(firstGap(page) / staffSpace(page) - 6.5) < 1e-6);
+});
+
+test("a tuplet of chords beamed across staves belongs to neither staff", () => {
+  const triplet12 = (start: string, stop = false) =>
+    `<time-modification><actual-notes>3</actual-notes><normal-notes>2</normal-notes></time-modification>` +
+    notations(`${start}${stop ? '<tuplet type="stop"/>' : ""}`);
+  const [page] = pages(score([piano([
+    '<print><staff-layout number="2"><staff-distance>65</staff-distance></staff-layout></print>' +
+      direction(directionType("<words>con ped. sempre</words>"), "above", 2) +
+      note("E2", 6, { type: "eighth", staff: 2, stem: "down", beams: ["begin"] }) +
+      note("C5", 4, { type: "eighth", staff: 1, stem: "down", beams: ["continue"], extra: triplet12('<tuplet type="start" placement="below"/>') }) +
+      note("A4", 4, { type: "eighth", staff: 1, stem: "down", beams: ["continue"], extra: triplet12("") }) +
+      note("C5", 4, { type: "eighth", staff: 1, stem: "down", beams: ["continue"], extra: triplet12("", true) }) +
+      note("C2", 6, { type: "eighth", staff: 2, stem: "down", beams: ["end"] }) +
+      note(null, 24, { type: "half" }),
+  ], { divisions: 12 })]));
+  assert.ok(texts(page, "3").length === 1);
+  assert.ok(Math.abs(firstGap(page) / staffSpace(page) - 6.5) < 1e-6);
+});
+
+test("a dynamic centres between the staves past the stems of chords beamed across them", () => {
+  const [page] = pages(score([piano([
+    note("E2", 2, { type: "eighth", staff: 2, stem: "down", beams: ["begin"] }) + dynamic("f") +
+      note("C5", 2, { type: "eighth", staff: 1, stem: "down", beams: ["continue"] }) +
+      note("A4", 2, { type: "eighth", staff: 1, stem: "down", beams: ["continue"] }) +
+      note("C2", 2, { type: "eighth", staff: 2, stem: "down", beams: ["end"] }) +
+      note(null, 8, { type: "half" }),
+  ])]));
+  const [forte] = glyphs(page, "dynamicForte");
+  const [treble, bass] = staffEdges(page);
+  assert.ok(Math.abs(centreOf(dynamicExtent(page, forte)) - (treble.bottom + bass.top) / 2) < 0.01 * staffSpace(page));
+});
+
+test("an expression at a dynamic's place follows it on its line", () => {
+  const [page] = pages(treble([
+    dynamic("p") + direction(directionType('<words font-style="italic">espress.</words>'), "below", 1) +
+      note("C5", 8, { type: "half" }) + note("A3", 8, { type: "half", stem: "up" }),
+  ]));
+  const [piano_] = glyphs(page, "dynamicPiano");
+  const [words] = texts(page, "espress.");
+  const space = staffSpace(page);
+  assert.ok(Math.abs(words.x - (piano_.x + glyphWidth("dynamicPiano") * space + 0.5 * space)) < 1e-6);
+  assert.ok(Math.abs(centreOf(textExtent(words)) - centreOf(dynamicExtent(page, piano_))) < 1e-6);
+});
+
+test("an expression on the other side of the staff from a dynamic does not follow it", () => {
+  const [page] = pages(treble([
+    direction(directionType("<dynamics><p/></dynamics>"), "above", 1) +
+      direction(directionType('<words font-style="italic">espress.</words>'), "below", 1) + note("C5", 16, { type: "whole" }),
+  ]));
+  const [piano_] = glyphs(page, "dynamicPiano");
+  const [words] = texts(page, "espress.");
+  assert.ok(words.x < piano_.x + glyphWidth("dynamicPiano") * staffSpace(page));
+});
+
+test("expressions side by side ignore each other, as dynamics and hairpins do", () => {
+  const [page] = pages(treble([
+    direction(directionType('<words font-style="italic">molto espressivo e legato</words>'), "below", 1) + note("C5", 4, { type: "quarter" }) +
+      direction(directionType('<words font-style="italic">dolce</words>'), "below", 1) + note("C5", 12, { type: "half", dots: 1 }),
+  ]));
+  assert.ok(Math.abs(texts(page, "molto espressivo e legato")[0].y - texts(page, "dolce")[0].y) < 1e-6);
 });

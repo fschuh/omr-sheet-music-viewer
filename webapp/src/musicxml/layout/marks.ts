@@ -48,6 +48,8 @@ interface Pen {
   items: Drawable[];
   /** What each unrotated mark covers, in staff spaces. */
   boxes: Box[];
+  /** The staff the marks drawn next belong to; none for a mark across staves. */
+  staff: number | undefined;
   glyph(name: GlyphName, x: number, y: number, scale?: number, rotate?: number): void;
   text(text: string, x: number, y: number, size: number): void;
 }
@@ -55,21 +57,23 @@ interface Pen {
 function pen(sp: number): Pen {
   const items: Drawable[] = [];
   const boxes: Box[] = [];
-  return {
+  const result: Pen = {
     items,
     boxes,
+    staff: undefined,
     glyph: (name, x, y, scale = 1, rotate) => {
       items.push({ kind: "glyph", glyph: name, x: x * sp, y: y * sp, scale, ...(rotate === undefined ? {} : { rotate }) });
       if (rotate !== undefined) return;
       const box = glyphBox(name);
-      boxes.push({ x1: x + box.left * scale, x2: x + box.right * scale, top: y + box.top * scale, bottom: y + box.bottom * scale });
+      boxes.push({ x1: x + box.left * scale, x2: x + box.right * scale, top: y + box.top * scale, bottom: y + box.bottom * scale, staff: result.staff });
     },
     text: (text, x, y, size) => {
       items.push({ kind: "text", text, x: x * sp, y: y * sp, size: size * sp, anchor: "middle" });
       const width = text.length * size * 0.5;
-      boxes.push({ x1: x - width / 2, x2: x + width / 2, top: y - size * 0.75, bottom: y + size * 0.25 });
+      boxes.push({ x1: x - width / 2, x2: x + width / 2, top: y - size * 0.75, bottom: y + size * 0.25, staff: result.staff });
     },
   };
+  return result;
 }
 
 /** Which side a chord's marks go to: the file's placement, else away from the stem. */
@@ -213,8 +217,9 @@ function chordMarks(system: PlacedSystem, chord: PreparedChord, shape: ChordShap
   return trill ?? { x: headCentre, y: outerTop - MARK_GAP - 0.5 };
 }
 
-/** A trill line: the wiggle repeated from one x to another, centred on y. */
-function trillLine(output: Pen, from: number, to: number, y: number): void {
+/** A trill line of a staff: the wiggle repeated from one x to another, centred on y. */
+function trillLine(output: Pen, staff: number, from: number, to: number, y: number): void {
+  output.staff = staff;
   const width = glyphWidth("wiggleTrill");
   const box = glyphBox("wiggleTrill");
   const count = Math.floor((to - from) / width);
@@ -255,6 +260,7 @@ export function layoutMarks(
   systems: PlacedSystem[],
   shapes: Map<PreparedChord, ChordShape>,
   sp: number,
+  crossStaff: Set<PreparedChord> = new Set(),
 ): { drawables: Map<PlacedSystem, Drawable[]>; boxes: Map<PlacedSystem, Box[]> } {
   const drawables = new Map<PlacedSystem, Drawable[]>();
   const boxes = new Map<PlacedSystem, Box[]>();
@@ -266,6 +272,8 @@ export function layoutMarks(
     const chords = systemChords(system).sort((a, b) => system.chords.get(a)! - system.chords.get(b)!);
     for (const chord of chords) {
       if (!chord.model.printed) continue;
+      // The marks of a chord beamed across staves belong to no staff.
+      output.staff = crossStaff.has(chord) ? undefined : chord.staff;
       const anchor = chordMarks(system, chord, shapes.get(chord)!, output);
       // In document order, so that a line starting and stopping on one note spans that note.
       for (const wavy of chord.model.wavyLines) {
@@ -277,16 +285,16 @@ export function layoutMarks(
         trills.delete(key);
         const end = chordEndX(system, chord, chords);
         if (start.system === system) {
-          trillLine(output, start.anchor.x, end, start.anchor.y);
+          trillLine(output, start.chord.staff, start.anchor.x, end, start.anchor.y);
         } else {
-          trillLine(outputs.get(start.system)!, start.anchor.x, start.system.right - 0.3, start.anchor.y);
+          trillLine(outputs.get(start.system)!, start.chord.staff, start.anchor.x, start.system.right - 0.3, start.anchor.y);
           const middle = systems.slice(systems.indexOf(start.system) + 1, systems.indexOf(system));
           for (const between of middle) {
             const y = between.top + between.staffTops[start.chord.staff] - 1.5;
-            trillLine(outputs.get(between)!, systemMusicStart(between), between.right - 0.3, y);
+            trillLine(outputs.get(between)!, start.chord.staff, systemMusicStart(between), between.right - 0.3, y);
           }
           const y = system.top + system.staffTops[chord.staff] + (start.anchor.y - (start.system.top + start.system.staffTops[start.chord.staff]));
-          trillLine(output, systemMusicStart(system), end, y);
+          trillLine(output, start.chord.staff, systemMusicStart(system), end, y);
         }
       }
     }
