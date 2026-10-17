@@ -56,6 +56,8 @@ export const GRID_LINE_INSTANCE_FLOATS = 2;
 
 const MEASURE_LINE_STRENGTH = 1;
 const BEAT_LINE_STRENGTH = 0.32;
+/** Grid lines stronger than a bar line are drawn in the loop colour. */
+export const LOOP_LINE_STRENGTH = 2;
 
 export interface HighwayKeyLane {
   midi: number;
@@ -210,6 +212,26 @@ export function highwayTrackForRoute(
   const track = { notes: packNotes(notes), lines: packLines(lines) };
   byHand.set(hand, track);
   return track;
+}
+
+const loopTracks = new WeakMap<HighwayTrack, { time: number; track: HighwayTrack }>();
+
+/**
+ * The track with a loop-coloured line across every lane at `time`, where a loop starts
+ * over, so the repeat can be seen coming. Cached per track for the last time asked.
+ */
+export function highwayTrackWithLoopEnd(track: HighwayTrack, time: number | null): HighwayTrack {
+  if (time === null) return track;
+  const cached = loopTracks.get(track);
+  if (cached?.time === time) return cached.track;
+  const lines: TrackLine[] = Array.from({ length: track.lines.count }, (_, index) => ({
+    time: track.lines.instances[index * GRID_LINE_INSTANCE_FLOATS],
+    strength: track.lines.instances[index * GRID_LINE_INSTANCE_FLOATS + 1],
+  }));
+  lines.push({ time, strength: LOOP_LINE_STRENGTH });
+  const looped = { notes: track.notes, lines: packLines(lines) };
+  loopTracks.set(track, { time, track: looped });
+  return looped;
 }
 
 /** The parts of a note-by-note playback moment the highway reads. */

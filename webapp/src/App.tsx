@@ -65,6 +65,7 @@ import {
 import {
   loadDebugPanelEnabled,
   loadListenInputSource,
+  loadLoopDimOutside,
   loadNoteHighwayEnabled,
   loadPlaybackPiano,
   loadSharedNoteheadTimingRepair,
@@ -73,6 +74,7 @@ import {
   repairSettings,
   saveDebugPanelEnabled,
   saveListenInputSource,
+  saveLoopDimOutside,
   saveNoteHighwayEnabled,
   savePlaybackPiano,
   saveSharedNoteheadTimingRepair,
@@ -80,6 +82,18 @@ import {
   saveTupletRepair,
 } from "./preferences";
 import { NoteHighway } from "./noteHighway/NoteHighway";
+import {
+  clampLoopRegion,
+  loopAroundMeasure,
+  loopMeasureCount,
+  loopNoteByNoteState,
+  loopRouteOffset,
+  loopSystems,
+  measureInLoop,
+  noteByNoteInLoop,
+  routeStructuralPosition,
+  type LoopRegion,
+} from "./loop";
 import {
   diagnosticsAvailable,
   documentFolder,
@@ -138,6 +152,13 @@ import type {
   VisualSidecarNote,
 } from "./types";
 import { isLinkedVisualGroup, isSelectableVisualGroup } from "./types";
+
+/** A realtime route and where in it playback begins; a looping route starts over at its end. */
+interface RealtimeStart {
+  route: PerformanceRoute;
+  offset: number;
+  loops: boolean;
+}
 
 interface WorkerLogEntry {
   id: number;
@@ -223,7 +244,8 @@ function isPlaybackToggleCommand(command: PlaybackCommand): boolean {
     command === "stopPlayback" ||
     command === "toggleNoteSounds" ||
     command === "toggleListenMode" ||
-    command === "playCurrentNotes";
+    command === "playCurrentNotes" ||
+    command === "toggleLoopMode";
 }
 
 function RefreshRateDiagnostic() {
@@ -292,6 +314,7 @@ export function App() {
   const [tupletRepair, setTupletRepair] = useState(loadTupletRepair);
   const [playbackPiano, setPlaybackPiano] = useState(loadPlaybackPiano);
   const [listenInputSource, setListenInputSource] = useState(loadListenInputSource);
+  const [loopDimOutside, setLoopDimOutside] = useState(loadLoopDimOutside);
   const listenInputSourceRef = useRef<ListenInputSource>(listenInputSource);
   listenInputSourceRef.current = listenInputSource;
   const activePageRef = useRef(activePage);
@@ -369,6 +392,17 @@ export function App() {
     () => buildRealtimeVisualMap(noteGeometry),
     [noteGeometry],
   );
+  // Loop mode is per document. Its region is remembered while it is off, so turning it
+  // back on loops the same bars; playback follows it only while loop mode is on.
+  const [loopMode, setLoopMode] = useState(false);
+  const [loopRegion, setLoopRegion] = useState<LoopRegion | null>(null);
+  const [loopPass, setLoopPass] = useState(1);
+  const scoreSystems = useMemo(() => loopSystems(noteGeometry), [noteGeometry]);
+  const documentMeasureCount = realtimeModel.score?.measures.length ?? loopMeasureCount(scoreSystems);
+  const loop = loopMode && loopRegion ? clampLoopRegion(loopRegion, documentMeasureCount) : null;
+  // Read by callbacks that must see a loop change in the same event that makes it.
+  const loopRef = useRef<LoopRegion | null>(loop);
+  loopRef.current = loop;
   const realtimeOpeningBpm = realtimeModel.score?.measures[0]?.tempos
     .filter((tempo) => tempo.onset <= 0)
     .at(-1)?.bpm ?? 120;
@@ -390,6 +424,8 @@ export function App() {
   const [tempoMultiplier, setTempoMultiplier] = useState(1);
   const [noteHighwayEnabled, setNoteHighwayEnabled] = useState(loadNoteHighwayEnabled);
   const realtimeRouteRef = useRef<PerformanceRoute | null>(null);
+  /** The realtime route is a loop's, which starts over at its end. */
+  const realtimeRouteLoopsRef = useRef(false);
   const realtimeStartGenerationRef = useRef(0);
   const documentPagesRef = useRef(document?.pages ?? []);
   documentPagesRef.current = document?.pages ?? [];
@@ -459,6 +495,7 @@ export function App() {
       pageIndex: anchor.visual.pageIndex,
       staffGroupIndex: anchor.visual.staffGroupIndex,
       measure: null,
+      measureIndex: null,
       barKey: `realtime-${anchor.visual.pageIndex}`,
       visualGroupIds: groupIds,
       pitches: realtimeFrame.activeNotes.map((note) => note.pitch),
@@ -489,8 +526,10 @@ export function App() {
             setRealtimeFrame(frame);
           }
         },
+        onLoop: () => setLoopPass((pass) => pass + 1),
         onComplete: () => {
           realtimeRouteRef.current = null;
+          realtimeRouteLoopsRef.current = false;
           realtimeLatestFrameRef.current = null;
           realtimeRenderSignatureRef.current = "";
           setRealtimeStatus("inactive");
@@ -510,16 +549,25 @@ export function App() {
     () => realtimeControllerRef.current?.getOffset() ?? 0,
     [],
   );
+  const getRealtimeRouteLoops = useCallback(() => realtimeRouteLoopsRef.current, []);
   const realtimeHighwayFrame = useRealtimeHighwaySource(
     getRealtimeRoute,
     getRealtimeOffset,
     tempoMultiplier,
     practiceHand,
+    getRealtimeRouteLoops,
   );
+  const noteByNoteLoopEndStep = useMemo(() => {
+    if (!loop) return null;
+    let last = playbackTimeline.length - 1;
+    while (last >= 0 && !measureInLoop(playbackTimeline[last].measureIndex, loop)) last -= 1;
+    return last < 0 ? null : last + 1;
+  }, [loop?.startMeasure, loop?.endMeasure, playbackTimeline]);
   const noteByNoteHighwayFrame = useNoteByNoteHighwaySource(
     fullPlaybackTimeline,
     notePlaybackMoment ? Math.max(0, playbackTimeline.indexOf(notePlaybackMoment)) : 0,
     practiceHand,
+    noteByNoteLoopEndStep,
   );
   // Both hands sound in ordinary playback. Practising one hand, each hand follows
   // its own switch; accompaniment by the other hand exists in realtime only,
@@ -549,13 +597,20 @@ export function App() {
     // render, and listen mode retargets from it like any other move.
     const state = playbackStateRef.current;
     if (!state.active || !state.currentMomentId) return;
+    const handTimeline = timelineForPracticeHand(fullPlaybackTimeline, hand);
     const currentMomentId = snapMomentToTimeline(
       fullPlaybackTimeline,
-      timelineForPracticeHand(fullPlaybackTimeline, hand),
+      handTimeline,
       state.currentMomentId,
     );
-    if (currentMomentId === state.currentMomentId) return;
-    const next = { ...state, currentMomentId };
+    const next = loopNoteByNoteState(
+      handTimeline,
+      state,
+      { ...state, currentMomentId },
+      null,
+      loopRef.current,
+    ).state;
+    if (next.currentMomentId === state.currentMomentId) return;
     playbackStateRef.current = next;
     setPlaybackState(next);
   }, [fullPlaybackTimeline, practiceHand]);
@@ -608,9 +663,18 @@ export function App() {
       processingTimeMs: null,
     }));
   }, [playbackTimeline]);
+  /**
+   * `command` is what moved playback, when a command did: leaving the loop forwards
+   * from inside it starts the loop's next pass.
+   */
   const commitPlaybackState = useCallback(
-    (next: PlaybackState, playNormalSound = true) => {
-      const previousMomentId = playbackStateRef.current.currentMomentId;
+    (proposed: PlaybackState, playNormalSound = true, command: PlaybackCommand | null = null) => {
+      const previous = playbackStateRef.current;
+      const looped = loopNoteByNoteState(playbackTimeline, previous, proposed, command, loopRef.current);
+      const next = looped.state;
+      if (looped.nextPass) setLoopPass((pass) => pass + 1);
+      else if (next.active && !previous.active) setLoopPass(1);
+      const previousMomentId = previous.currentMomentId;
       playbackStateRef.current = next;
       setPlaybackState(next);
       if (next.currentMomentId !== previousMomentId) retargetListenMode(next);
@@ -636,6 +700,7 @@ export function App() {
     realtimeStartGenerationRef.current += 1;
     realtimeControllerRef.current?.stop();
     realtimeRouteRef.current = null;
+    realtimeRouteLoopsRef.current = false;
     realtimeLatestFrameRef.current = null;
     realtimeRenderSignatureRef.current = "";
     setRealtimeStatus("inactive");
@@ -664,36 +729,56 @@ export function App() {
     );
     setListenMatcherProfileOverride(profileId);
   }, [listenMatcherProfileOverride, stopRealtime]);
-  const routeForPosition = useCallback((position: StructuralPosition | null): PerformanceRoute | null => {
+  /**
+   * The route realtime plays from a position, and where in it to begin. While looping it
+   * is the loop's own route, which starts over at its end; a position outside the loop
+   * begins at the loop's start.
+   */
+  const routeForPosition = useCallback((position: StructuralPosition | null): RealtimeStart | null => {
     if (!realtimeModel.score) return null;
-    return expandPerformanceRoute(realtimeModel.score, {
+    const loopRegion = loopRef.current;
+    if (loopRegion) {
+      const route = expandPerformanceRoute(realtimeModel.score, {
+        startMeasureIndex: loopRegion.startMeasure,
+        endMeasureIndex: loopRegion.endMeasure,
+        visualMap: realtimeVisualMap,
+      });
+      if (route.totalQuarters > 0) {
+        return { route, offset: position ? loopRouteOffset(route, position) ?? 0 : 0, loops: true };
+      }
+    }
+    const route = expandPerformanceRoute(realtimeModel.score, {
       startMeasureIndex: position?.measureIndex ?? 0,
       startOffset: position?.onset ?? 0,
       visualMap: realtimeVisualMap,
     });
+    return { route, offset: 0, loops: false };
   }, [realtimeModel.score, realtimeVisualMap]);
-  const routeForGroup = useCallback((group: VisualGroupRef | null): PerformanceRoute | null => {
+  const routeForGroup = useCallback((group: VisualGroupRef | null): RealtimeStart | null => {
     const position = realtimeModel.score
       ? structuralPositionForGroup(realtimeModel.score, realtimeVisualMap, group)
       : null;
     return routeForPosition(position);
   }, [realtimeModel.score, realtimeVisualMap, routeForPosition]);
   const startRealtime = useCallback((group: VisualGroupRef | null) => {
-    let route: PerformanceRoute | null;
+    let start: RealtimeStart | null;
     try {
-      route = routeForGroup(group);
+      start = routeForGroup(group);
     } catch (routeError) {
       setPlaybackAudioError(
         `Realtime playback could not build a safe route: ${routeError instanceof Error ? routeError.message : String(routeError)}`,
       );
       return;
     }
-    if (!route) return;
+    if (!start) return;
+    const { route } = start;
     const generation = ++realtimeStartGenerationRef.current;
     realtimeRouteRef.current = route;
+    realtimeRouteLoopsRef.current = start.loops;
     realtimeLatestFrameRef.current = null;
     realtimeRenderSignatureRef.current = "";
     setRealtimeStatus("playing");
+    setLoopPass(1);
     const routeLayers = Array.from(new Set(
       route.notes.map((note) => pianoLayerForDynamic(playbackPiano, note.dynamic)),
     ));
@@ -704,7 +789,8 @@ export function App() {
         if (!controller) return;
         controller.setTempoMultiplier(tempoMultiplier);
         controller.setMuted(!playbackStateRef.current.noteSoundsEnabled);
-        controller.play(route!, 0);
+        controller.setLooping(start!.loops);
+        controller.play(route, start!.offset);
         setPlaybackAudioError(null);
       })
       .catch((audioError: unknown) => {
@@ -713,41 +799,43 @@ export function App() {
         setPlaybackAudioError(`Piano audio could not start: ${audioError instanceof Error ? audioError.message : String(audioError)}`);
       });
   }, [playbackPiano, routeForGroup, stopRealtime, tempoMultiplier]);
+  /** Moves realtime playback onto `start`, keeping it playing or paused. */
+  const seekRealtimeStart = useCallback((start: RealtimeStart, status: "playing" | "paused") => {
+    realtimeRouteRef.current = start.route;
+    realtimeRouteLoopsRef.current = start.loops;
+    realtimeLatestFrameRef.current = null;
+    realtimeRenderSignatureRef.current = "";
+    realtimeControllerRef.current?.setLooping(start.loops);
+    realtimeControllerRef.current?.seek(start.route, status, start.offset);
+    setPlaybackAudioError(null);
+  }, []);
   const seekRealtime = useCallback((group: VisualGroupRef, status: "playing" | "paused") => {
     try {
-      const route = routeForGroup(group);
-      if (!route) return;
-      realtimeRouteRef.current = route;
-      realtimeLatestFrameRef.current = null;
-      realtimeRenderSignatureRef.current = "";
-      realtimeControllerRef.current?.seek(route, status);
-      setPlaybackAudioError(null);
+      const start = routeForGroup(group);
+      if (!start) return;
+      seekRealtimeStart(start, status);
     } catch (routeError) {
       stopRealtime();
       setPlaybackAudioError(
         `Realtime playback could not build a safe route: ${routeError instanceof Error ? routeError.message : String(routeError)}`,
       );
     }
-  }, [routeForGroup, stopRealtime]);
+  }, [routeForGroup, seekRealtimeStart, stopRealtime]);
   const seekRealtimePosition = useCallback((
-    position: StructuralPosition,
+    position: StructuralPosition | null,
     status: "playing" | "paused",
   ) => {
     try {
-      const route = routeForPosition(position);
-      if (!route) return;
-      realtimeRouteRef.current = route;
-      realtimeLatestFrameRef.current = null;
-      realtimeRenderSignatureRef.current = "";
-      realtimeControllerRef.current?.seek(route, status);
-      setPlaybackAudioError(null);
+      const start = routeForPosition(position);
+      if (!start) return;
+      seekRealtimeStart(start, status);
     } catch (routeError) {
       stopRealtime();
       setPlaybackAudioError(
         `Realtime playback could not build a safe route: ${routeError instanceof Error ? routeError.message : String(routeError)}`,
       );
     }
-  }, [routeForPosition, stopRealtime]);
+  }, [routeForPosition, seekRealtimeStart, stopRealtime]);
   const applyPlaybackStateCommand = useCallback(
     (command: PlaybackCommand) => {
       if (playbackMode === "realtime") {
@@ -771,18 +859,16 @@ export function App() {
           realtimeControllerRef.current?.setMuted(!next.noteSoundsEnabled);
           return;
         }
-        if (command === "toggleListenMode" || command === "playCurrentNotes") return;
+        if (
+          command === "toggleListenMode" ||
+          command === "playCurrentNotes" ||
+          command === "toggleLoopMode"
+        ) return;
         if (realtimeStatus === "inactive" || !realtimeModel.score) return;
         const route = realtimeRouteRef.current;
         const offset = realtimeControllerRef.current?.getOffset() ?? realtimeFrame?.offset ?? 0;
-        const occurrence = route?.occurrences
-          .filter((item) => item.scoreStart <= offset + 1e-6)
-          .at(-1);
-        if (!occurrence) return;
-        const current = {
-          measureIndex: occurrence.measureIndex,
-          onset: occurrence.localStart + Math.max(0, offset - occurrence.scoreStart),
-        };
+        const current = route ? routeStructuralPosition(route, offset) : null;
+        if (!current) return;
         const destination = seekStructuralPosition(realtimeModel.score, current, command);
         seekRealtimePosition(destination, realtimeStatus);
         return;
@@ -795,6 +881,8 @@ export function App() {
           selectedGroup,
           fullPlaybackTimeline,
         ),
+        true,
+        command,
       );
     },
     [
@@ -1113,7 +1201,64 @@ export function App() {
     }
   }, [playbackTimeline]);
 
+  /** The measure the playhead is in, by its document position. */
+  const playheadMeasure = useCallback((): number | null => {
+    if (playbackMode === "realtime") {
+      const route = realtimeRouteRef.current;
+      const offset = realtimeControllerRef.current?.getOffset() ?? 0;
+      return route ? routeStructuralPosition(route, offset)?.measureIndex ?? null : null;
+    }
+    return currentPlaybackMoment(playbackTimeline, playbackStateRef.current)?.measureIndex ?? null;
+  }, [playbackMode, playbackTimeline]);
+
+  /**
+   * Puts playback under `next`, or under no loop. Note-by-note moves into the loop when it
+   * stands outside; realtime takes the loop's route from where it is, or from the loop's
+   * start, and keeps playing or paused.
+   */
+  const applyLoop = useCallback((next: LoopRegion | null) => {
+    loopRef.current = next;
+    setLoopPass(1);
+    if (playbackMode === "realtime") {
+      if (realtimeStatus === "inactive") return;
+      const route = realtimeRouteRef.current;
+      const offset = realtimeControllerRef.current?.getOffset() ?? 0;
+      seekRealtimePosition(route ? routeStructuralPosition(route, offset) : null, realtimeStatus);
+      return;
+    }
+    const current = playbackStateRef.current;
+    const looped = loopNoteByNoteState(playbackTimeline, current, current, null, next).state;
+    if (looped !== current) commitPlaybackState(looped);
+  }, [commitPlaybackState, playbackMode, playbackTimeline, realtimeStatus, seekRealtimePosition]);
+
+  /** Loop mode is a playback feature: it turns on only while playback runs. */
+  const toggleLoopMode = useCallback(() => {
+    if (loopMode) {
+      setLoopMode(false);
+      applyLoop(null);
+      return;
+    }
+    if (!playbackActiveRef.current) return;
+    const remembered = loopRegion ? clampLoopRegion(loopRegion, documentMeasureCount) : null;
+    const region = remembered ?? loopAroundMeasure(playheadMeasure() ?? 0, documentMeasureCount);
+    if (!region) return;
+    setLoopRegion(region);
+    setLoopMode(true);
+    applyLoop(region);
+  }, [applyLoop, documentMeasureCount, loopMode, loopRegion, playheadMeasure]);
+
+  const changeLoopRegion = useCallback((region: LoopRegion) => {
+    const next = clampLoopRegion(region, documentMeasureCount);
+    if (!next) return;
+    setLoopRegion(next);
+    if (loopMode) applyLoop(next);
+  }, [applyLoop, documentMeasureCount, loopMode]);
+
   const handlePlaybackCommand = useCallback((command: PlaybackCommand) => {
+    if (command === "toggleLoopMode") {
+      toggleLoopMode();
+      return;
+    }
     if (command === "toggleListenMode") {
       if (playbackMode !== "note-by-note") return;
       if (recognizerRef.current) stopListenMode();
@@ -1139,6 +1284,7 @@ export function App() {
     playbackMode,
     startListenMode,
     stopListenMode,
+    toggleLoopMode,
   ]);
   handlePlaybackCommandRef.current = handlePlaybackCommand;
 
@@ -1308,6 +1454,10 @@ export function App() {
     setRealtimeFrame(null);
     setPlaybackMode("note-by-note");
     setTempoMultiplier(1);
+    loopRef.current = null;
+    setLoopMode(false);
+    setLoopRegion(null);
+    setLoopPass(1);
     setListenFeedback({
       lifecycle: stoppedRecognizerLifecycle,
       targetPitches: [],
@@ -2080,6 +2230,7 @@ export function App() {
           shortcuts={shortcuts}
           playbackPiano={playbackPiano}
           listenInputSource={listenInputSource}
+          loopDimOutside={loopDimOutside}
           debugPanelEnabled={debugPanelEnabled}
           sharedNoteheadTimingRepair={sharedNoteheadTimingRepair}
           timeSignatureRepair={timeSignatureRepair}
@@ -2100,6 +2251,10 @@ export function App() {
             setPlaybackState(initialPlaybackState);
             setPlaybackPiano(pianoId);
             savePlaybackPiano(pianoId);
+          }}
+          onChangeLoopDimOutside={(enabled) => {
+            setLoopDimOutside(enabled);
+            saveLoopDimOutside(enabled);
           }}
           onChangeListenInputSource={(inputSource) => {
             stopListenMode();
@@ -2213,6 +2368,15 @@ export function App() {
               onOtherHandSoundChange={setOtherHandSoundEnabled}
               noteHighwayEnabled={noteHighwayEnabled}
               noteHighwayVisible={noteHighwayVisible}
+              loopMode={loopMode}
+              loop={playbackActive ? loop : null}
+              loopPass={loopPass}
+              loopPlaying={playbackMode === "realtime"
+                ? realtimeStatus !== "inactive" && realtimeRouteLoopsRef.current
+                : noteByNoteInLoop(notePlaybackMoment, loop)}
+              loopDimOutside={loopDimOutside}
+              onLoopToggle={() => handlePlaybackCommand("toggleLoopMode")}
+              onLoopChange={changeLoopRegion}
               onNoteHighwayToggle={toggleNoteHighway}
               listenFeedback={listenFeedback}
               initialViewportTransform={

@@ -1,4 +1,13 @@
-import { memo, useEffect, useId, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import { layoutNoteLabels } from "./noteLabels";
 import {
   hitTestNoteheads,
@@ -18,6 +27,17 @@ import type { PlaybackMode, PlaybackStatus, RealtimePlayhead } from "./realtime"
 import type { ListenModeFeedback } from "./noteRecognizer";
 import { NOTE_HIGHWAY_TOP_FRACTION } from "./noteHighway/highwayModel";
 import { midiToPitchName } from "./piano";
+import {
+  draggedLoopRegion,
+  loopMeasureCount,
+  loopSegments,
+  loopSystems,
+  moveLoopHandleTo,
+  type LoopHandle,
+  type LoopRegion,
+  type ScreenLoopSystem,
+} from "./loop";
+import { LoopPageLayer, LoopPageTint, type LoopHandleEvents } from "./LoopOverlay";
 import type {
   DocumentPage,
   ViewportTransform,
@@ -63,6 +83,17 @@ function FitPageIcon() {
     <svg className="toolbar-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
       <rect x="8" y="5" width="8" height="14" rx="1" />
       <path d="M8 3.5H3.5V8M16 3.5h4.5V8M8 20.5H3.5V16M16 20.5h4.5V16" />
+    </svg>
+  );
+}
+
+function LoopIcon() {
+  return (
+    <svg className="toolbar-icon loop-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M17 4.5 19.5 7 17 9.5" />
+      <path d="M4.5 11.5V10a3 3 0 0 1 3-3h12" />
+      <path d="M7 19.5 4.5 17 7 14.5" />
+      <path d="M19.5 12.5V14a3 3 0 0 1-3 3h-12" />
     </svg>
   );
 }
@@ -135,6 +166,19 @@ interface DocumentViewerProps {
   /** The highway is on screen, so playback scrolling keeps the staff above it. */
   noteHighwayVisible?: boolean;
   listenFeedback: ListenModeFeedback;
+  /** Loop mode is on; the Loop button is hidden without onLoopToggle. */
+  loopMode?: boolean;
+  /** The loop drawn on the score, while loop mode is on during playback. */
+  loop?: LoopRegion | null;
+  /** The repetition being played, from 1. */
+  loopPass?: number;
+  /** Playback is inside the loop, so the button shows the pass. */
+  loopPlaying?: boolean;
+  /** Dim the bars outside the loop. */
+  loopDimOutside?: boolean;
+  onLoopToggle?: () => void;
+  /** A handle was moved to another barline, by dragging or with the arrow keys. */
+  onLoopChange?: (region: LoopRegion) => void;
   initialViewportTransform?: ViewportTransform;
   onViewportTransformChange?: (transform: ViewportTransform) => void;
   onPlaybackCommand: (command: PlaybackCommand) => void;
@@ -692,6 +736,13 @@ export function DocumentViewer({
   noteHighwayEnabled = false,
   noteHighwayVisible = false,
   listenFeedback,
+  loopMode = false,
+  loop = null,
+  loopPass = 1,
+  loopPlaying = false,
+  loopDimOutside = true,
+  onLoopToggle,
+  onLoopChange,
   initialViewportTransform,
   onViewportTransformChange,
   onPlaybackCommand,
@@ -800,6 +851,111 @@ export function DocumentViewer({
       targetSignals ? `Signal ${targetSignals}` : "",
     ].filter(Boolean).join(" · ") + processing;
   }, [listenFeedback]);
+  const scoreSystems = useMemo(() => loopSystems(noteGeometry), [noteGeometry]);
+  const scoreMeasureCount = loopMeasureCount(scoreSystems);
+  const [loopDrag, setLoopDrag] = useState<{
+    handle: LoopHandle;
+    pointerId: number;
+    region: LoopRegion;
+  } | null>(null);
+  const [loopHover, setLoopHover] = useState<LoopHandle | null>(null);
+  const shownLoop = loop ? loopDrag?.region ?? loop : null;
+  const loopView = useMemo(() => {
+    if (!shownLoop) return null;
+    const segments = loopSegments(scoreSystems, shownLoop);
+    // The label goes on the widest part of a loop that spans several systems.
+    const labelSegment = segments.reduce<(typeof segments)[number] | null>(
+      (widest, segment) =>
+        !widest || segment.right - segment.left > widest.right - widest.left ? segment : widest,
+      null,
+    );
+    return { region: shownLoop, segments, labelSegment };
+  }, [scoreSystems, shownLoop?.startMeasure, shownLoop?.endMeasure]);
+  const loopLatest = useRef({ loop, loopDrag, onLoopChange, scoreSystems, scoreMeasureCount, displayPages });
+  loopLatest.current = { loop, loopDrag, onLoopChange, scoreSystems, scoreMeasureCount, displayPages };
+  useEffect(() => {
+    if (!loop) {
+      setLoopDrag(null);
+      setLoopHover(null);
+    }
+  }, [loop]);
+  // Stable, so the page layers re-render only when what they draw changes.
+  const loopHandleEvents = useMemo<LoopHandleEvents>(() => {
+    const screenSystems = (): ScreenLoopSystem[] => {
+      const { scoreSystems: systems, displayPages: shown } = loopLatest.current;
+      return systems.flatMap((system) => {
+        const rect = pageRefs.current.get(system.pageIndex)?.getBoundingClientRect();
+        const page = shown.find((candidate) => candidate.page.index === system.pageIndex);
+        if (!rect || !page || page.width <= 0) return [];
+        const pixels = rect.width / page.width;
+        return [{
+          centerY: rect.top + ((system.top + system.bottom) / 2) * pixels,
+          firstMeasure: system.firstMeasure,
+          barlines: system.barlines.map((x) => rect.left + x * pixels),
+        }];
+      });
+    };
+    const finish = (event: ReactPointerEvent<SVGElement>, commit: boolean) => {
+      const { loop: current, loopDrag: drag, onLoopChange: change } = loopLatest.current;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      event.stopPropagation();
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+      setLoopDrag(null);
+      if (
+        commit && current &&
+        (drag.region.startMeasure !== current.startMeasure || drag.region.endMeasure !== current.endMeasure)
+      ) {
+        change?.(drag.region);
+      }
+    };
+    return {
+      onPointerDown(handle: LoopHandle, event: ReactPointerEvent<SVGElement>) {
+        const { loop: current } = loopLatest.current;
+        if (!current || event.button !== 0) return;
+        // The handle takes the pointer; the score must not pan or select under it.
+        event.stopPropagation();
+        event.preventDefault();
+        event.currentTarget.setPointerCapture(event.pointerId);
+        setLoopDrag({ handle, pointerId: event.pointerId, region: current });
+      },
+      onPointerMove(event: ReactPointerEvent<SVGElement>) {
+        const { loopDrag: drag, scoreMeasureCount: count } = loopLatest.current;
+        if (!drag || drag.pointerId !== event.pointerId) return;
+        event.stopPropagation();
+        const region = draggedLoopRegion(
+          drag.region,
+          drag.handle,
+          screenSystems(),
+          event.clientX,
+          event.clientY,
+          count,
+        );
+        if (region !== drag.region) setLoopDrag({ ...drag, region });
+      },
+      onPointerUp(event: ReactPointerEvent<SVGElement>) {
+        finish(event, true);
+      },
+      onPointerCancel(event: ReactPointerEvent<SVGElement>) {
+        finish(event, false);
+      },
+      onKeyDown(handle: LoopHandle, event: ReactKeyboardEvent<SVGElement>) {
+        const { loop: current, onLoopChange: change, scoreMeasureCount: count } = loopLatest.current;
+        if (!current || (event.key !== "ArrowLeft" && event.key !== "ArrowRight")) return;
+        // Arrow keys move the focused handle, not the playhead.
+        event.preventDefault();
+        event.stopPropagation();
+        const boundary = (handle === "start" ? current.startMeasure : current.endMeasure) +
+          (event.key === "ArrowLeft" ? -1 : 1);
+        const region = moveLoopHandleTo(current, handle, boundary, count);
+        if (region !== current) change?.(region);
+      },
+      onHover(handle: LoopHandle | null) {
+        setLoopHover(handle);
+      },
+    };
+  }, []);
   const hasCompletePageRef = useRef(pages.some((page) => page.status === "complete"));
   hasCompletePageRef.current = pages.some((page) => page.status === "complete");
 
@@ -1327,6 +1483,24 @@ export function DocumentViewer({
               onClick={() => onPlaybackCommand("stopPlayback")}
             >■</button>
           ) : null}
+          {onLoopToggle ? (
+            <button
+              type="button"
+              className={`loop-toggle${loopMode ? " active" : ""}${loopMode && loopPlaying ? " looping" : ""}`}
+              aria-label={loopMode ? "Turn loop mode off" : "Turn loop mode on"}
+              aria-pressed={loopMode}
+              title={loopMode
+                ? "Stop looping (L); the bars stay marked for next time"
+                : "Loop the bar being played; drag the handles to loop more (L)"}
+              disabled={!effectivelyActive && !loopMode}
+              onClick={onLoopToggle}
+            >
+              <LoopIcon />
+              <span className="loop-toggle-label">
+                {loopMode && loopPlaying ? `Pass ${loopPass}` : "Loop"}
+              </span>
+            </button>
+          ) : null}
           <div className="hand-sound-control">
             <button
               type="button"
@@ -1386,7 +1560,7 @@ export function DocumentViewer({
             className={`listen-toggle${listenActive ? " active" : ""}`}
             aria-label={listenActive ? "Disable listen mode" : "Enable listen mode"}
             aria-pressed={listenActive}
-            title={listenActive ? "Disable listen mode (L)" : "Listen and advance when the chord is played (L)"}
+            title={listenActive ? "Disable listen mode (I)" : "Listen and advance when the chord is played (I)"}
             disabled={playbackMode !== "note-by-note" || !playbackActive}
             onClick={() => onPlaybackCommand("toggleListenMode")}
           >🎙</button>
@@ -1554,6 +1728,32 @@ export function DocumentViewer({
                 />
               ) : page.imageUrl ? (
                 <img src={page.imageUrl} alt={`Sheet music page ${page.index + 1}`} draggable={false} />
+              ) : null}
+              {loopView && scoreSystems.some((system) => system.pageIndex === page.index) ? (
+                <>
+                  <LoopPageTint
+                    width={page.width}
+                    height={page.height}
+                    segments={loopView.segments.filter((segment) => segment.system.pageIndex === page.index)}
+                    scale={transform.scale}
+                    active={loopHover !== null || loopDrag !== null}
+                  />
+                  <LoopPageLayer
+                    pageIndex={page.index}
+                    width={page.width}
+                    height={page.height}
+                    systems={scoreSystems}
+                    region={loopView.region}
+                    segments={loopView.segments}
+                    labelSegment={loopView.labelSegment}
+                    scale={transform.scale}
+                    measureCount={scoreMeasureCount}
+                    dimOutside={loopDimOutside}
+                    dragging={loopDrag?.handle ?? null}
+                    hover={loopHover}
+                    events={loopHandleEvents}
+                  />
+                </>
               ) : null}
               <PageOverlay
                 page={page}

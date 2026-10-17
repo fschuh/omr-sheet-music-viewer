@@ -195,6 +195,7 @@ void main() {
     gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
     return;
   }
+  // Bar and beat lines by strength; the loop line, stronger than both, is thicker still.
   float thickness = mix(0.05, 0.12, a_line.y);
   vec3 world = vec3(
     -u_halfWidth + a_corner.x * 2.0 * u_halfWidth,
@@ -218,8 +219,11 @@ out vec4 outColor;
 
 void main() {
   float profile = 1.0 - abs(v_across * 2.0 - 1.0);
-  float alpha = v_strength * 0.5 * profile * (1.0 - smoothstep(0.35, 1.0, v_far));
-  outColor = vec4(vec3(0.82, 0.88, 0.92) * alpha, alpha);
+  float loopLine = step(1.5, v_strength);
+  float alpha = min(v_strength * 0.5, 0.95) * profile * (1.0 - smoothstep(0.35, 1.0, v_far));
+  // The loop line takes the score's loop colour, #D98A1C.
+  vec3 color = mix(vec3(0.82, 0.88, 0.92), vec3(0.851, 0.541, 0.11), loopLine);
+  outColor = vec4(color * alpha, alpha);
 }`;
 
 /** Top, front, left and right faces; the bottom and back are never seen. */

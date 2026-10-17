@@ -216,3 +216,19 @@ test("fits the hit line to the canvas bottom and the far end to its top", () => 
     assert.ok(farRightX > 0.6 && farRightX < 0.8, "the far end narrows in perspective");
   }
 });
+
+test("a loop's end is a loop-coloured line across the highway, cached per track", async () => {
+  const { highwayTrackWithLoopEnd, LOOP_LINE_STRENGTH } = await import("./highwayModel");
+  const track = highwayTrackForSteps([
+    { pitches: ["C4"], keyboardNotes: [{ pitch: "C4" }], barKey: "b1" },
+    { pitches: ["D4"], keyboardNotes: [{ pitch: "D4" }], barKey: "b2" },
+  ]);
+  assert.equal(highwayTrackWithLoopEnd(track, null), track);
+  const looped = highwayTrackWithLoopEnd(track, 2);
+  assert.equal(looped.notes, track.notes);
+  assert.equal(looped.lines.count, track.lines.count + 1);
+  const last = (looped.lines.count - 1) * 2;
+  assert.deepEqual([looped.lines.instances[last], looped.lines.instances[last + 1]], [2, LOOP_LINE_STRENGTH]);
+  assert.equal(highwayTrackWithLoopEnd(track, 2), looped);
+  assert.notEqual(highwayTrackWithLoopEnd(track, 1), looped);
+});

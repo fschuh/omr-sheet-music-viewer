@@ -39,6 +39,7 @@ export const playbackCommandDetails: ReadonlyArray<{
   { command: "backwardBar", label: "Previous bar", description: "Move to the first note of the previous bar." },
   { command: "forwardPage", label: "Next page", description: "Move to the first note of the next page." },
   { command: "backwardPage", label: "Previous page", description: "Move to the first note of the previous page." },
+  { command: "toggleLoopMode", label: "Loop", description: "Turn loop mode on or off; its bars stay marked on the score for the next time." },
 ];
 
 function keyboard(code: string): KeyboardShortcut {
@@ -50,7 +51,7 @@ export function defaultPlaybackShortcuts(): PlaybackShortcuts {
     togglePlayback: { keyboard: keyboard("Space"), midi: null },
     stopPlayback: { keyboard: keyboard("Escape"), midi: null },
     toggleNoteSounds: { keyboard: keyboard("KeyM"), midi: null },
-    toggleListenMode: { keyboard: keyboard("KeyL"), midi: null },
+    toggleListenMode: { keyboard: keyboard("KeyI"), midi: null },
     playCurrentNotes: { keyboard: keyboard("KeyP"), midi: null },
     forwardNote: { keyboard: keyboard("ArrowRight"), midi: null },
     backwardNote: { keyboard: keyboard("ArrowLeft"), midi: null },
@@ -58,8 +59,12 @@ export function defaultPlaybackShortcuts(): PlaybackShortcuts {
     backwardBar: { keyboard: keyboard("Comma"), midi: null },
     forwardPage: { keyboard: keyboard("ArrowDown"), midi: null },
     backwardPage: { keyboard: keyboard("ArrowUp"), midi: null },
+    toggleLoopMode: { keyboard: keyboard("KeyL"), midi: null },
   };
 }
+
+/** Listen mode's default before loop mode took L. */
+const FORMER_LISTEN_DEFAULT = keyboard("KeyL");
 
 function validKeyboardShortcut(value: unknown): value is KeyboardShortcut {
   if (!value || typeof value !== "object") return false;
@@ -108,6 +113,19 @@ export function parsePlaybackShortcuts(value: unknown): PlaybackShortcuts {
       result[command].keyboard = { ...candidate.keyboard };
     }
     result[command].midi = sanitizedMidiShortcut(candidate.midi);
+  }
+  // Settings saved before loop mode existed hold listen mode on its old default, L, which
+  // is now loop mode's: listen mode moves to its new default unless it was chosen on purpose.
+  if (
+    !stored.toggleLoopMode &&
+    keyboardShortcutsEqual(result.toggleListenMode.keyboard, FORMER_LISTEN_DEFAULT) &&
+    !playbackCommandNames.some((command) => (
+      command !== "toggleListenMode" &&
+      command !== "toggleLoopMode" &&
+      keyboardShortcutsEqual(result[command].keyboard, defaultPlaybackShortcuts().toggleListenMode.keyboard)
+    ))
+  ) {
+    result.toggleListenMode.keyboard = defaultPlaybackShortcuts().toggleListenMode.keyboard;
   }
   return result;
 }

@@ -2,7 +2,7 @@
 // chords, converted from staff spaces to page pixels.
 import { glyphBox, glyphAnchor, glyphWidth, ENGRAVING_DEFAULTS, type GlyphName } from "../fonts/smufl";
 import { fractionKey } from "../model/fraction";
-import type { Bounds, Drawable, LayoutChord, LayoutNote, LayoutPage, PageFormat } from "../model/layout";
+import type { Bounds, Drawable, LayoutChord, LayoutNote, LayoutPage, LayoutSystem, PageFormat } from "../model/layout";
 import type { ScoreModel } from "../model/score";
 import { STEM_WIDTH, type ChordShape } from "./chords";
 import { pageCredits, titleBlock } from "./credits";
@@ -57,6 +57,7 @@ export function drawPage(index: number, systems: PlacedSystem[], context: DrawCo
     ...pageCredits(context.score, index, context.format),
   ];
   const chords: LayoutChord[] = [];
+  const layoutSystems: LayoutSystem[] = [];
   // Drawing works in staff spaces; these convert to page pixels.
   const glyph = (name: GlyphName, x: number, y: number, scale = 1, scaleY?: number): Drawable => ({
     kind: "glyph", glyph: name, x: x * sp, y: y * sp, scale, ...(scaleY === undefined ? {} : { scaleY }),
@@ -69,6 +70,14 @@ export function drawPage(index: number, systems: PlacedSystem[], context: DrawCo
     const staffTop = (staff: number) => system.top + system.staffTops[staff];
     const first = system.measures[0].spacing.measure;
     const lastStaff = system.staffTops.length - 1;
+    // A measure ends at the middle of its barline, where the next one begins.
+    const measureEnds = system.measures.map((measure) => (measure.barlineX + measure.spacing.barlineWidth / 2) * sp);
+    layoutSystems.push({
+      top: staffTop(0) * sp,
+      bottom: (staffTop(lastStaff) + 4) * sp,
+      firstMeasure: system.plan.measures[0],
+      barlines: [system.left * sp, ...measureEnds],
+    });
 
     for (let staff = 0; staff <= lastStaff; staff += 1) {
       for (let lineIndex = 0; lineIndex < 5; lineIndex += 1) {
@@ -145,6 +154,7 @@ export function drawPage(index: number, systems: PlacedSystem[], context: DrawCo
     staffSpace: sp,
     items,
     chords,
+    systems: layoutSystems,
   };
 }
 

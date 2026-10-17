@@ -84,6 +84,8 @@ interface SettingsPageProps {
   shortcuts: PlaybackShortcuts;
   playbackPiano: PianoId;
   listenInputSource: ListenInputSource;
+  /** Whether loop mode dims the bars outside the loop. */
+  loopDimOutside?: boolean;
   debugPanelEnabled: boolean;
   sharedNoteheadTimingRepair: boolean;
   timeSignatureRepair: boolean;
@@ -97,6 +99,7 @@ interface SettingsPageProps {
   onChangeShortcuts: (shortcuts: PlaybackShortcuts) => void;
   onChangePlaybackPiano: (pianoId: PianoId) => void;
   onChangeListenInputSource: (inputSource: ListenInputSource) => void;
+  onChangeLoopDimOutside?: (enabled: boolean) => void;
   onChangeDebugPanelEnabled: (enabled: boolean) => void;
   onChangeSharedNoteheadTimingRepair: (enabled: boolean) => void;
   onChangeTimeSignatureRepair: (enabled: boolean) => void;
@@ -112,6 +115,7 @@ export function SettingsPage({
   shortcuts,
   playbackPiano,
   listenInputSource,
+  loopDimOutside = true,
   debugPanelEnabled,
   sharedNoteheadTimingRepair,
   timeSignatureRepair,
@@ -125,6 +129,7 @@ export function SettingsPage({
   onChangeShortcuts,
   onChangePlaybackPiano,
   onChangeListenInputSource,
+  onChangeLoopDimOutside,
   onChangeDebugPanelEnabled,
   onChangeSharedNoteheadTimingRepair,
   onChangeTimeSignatureRepair,
@@ -246,6 +251,20 @@ export function SettingsPage({
             <option value="midi" disabled={!nativeAvailable}>MIDI keyboard</option>
           </select>
         </label>
+        {onChangeLoopDimOutside ? (
+          <label className="settings-toggle-row">
+            <input
+              type="checkbox"
+              aria-label="Dim bars outside the loop"
+              checked={loopDimOutside}
+              onChange={(event) => onChangeLoopDimOutside(event.target.checked)}
+            />
+            <span>
+              <strong>Dim bars outside the loop</strong>
+              <small>While loop mode is on, the bars it does not play are faded on the score.</small>
+            </span>
+          </label>
+        ) : null}
       </section>
 
       <section className="settings-card" aria-labelledby="shortcuts-title">

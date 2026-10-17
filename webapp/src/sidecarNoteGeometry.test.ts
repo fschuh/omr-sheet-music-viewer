@@ -158,3 +158,91 @@ test("a page whose MusicXML does not parse contributes no facts", () => {
   assert.equal(facts.suppressedNoteIds.size, 0);
   assert.equal(facts.startsAttackByNoteId.size, 0);
 });
+
+/** homr's staff positions: 1 on the bottom line, 9 on the top line, half a space apart. */
+function staffGroup(id: string, system: number, staff: number, position: number, x: number): VisualGroup {
+  const bottomLine = 1000 * system + 300 + staff * 200;
+  return group(id, x, bottomLine - (position - 1) * 10, {
+    staff_group_index: system,
+    staff_index: staff,
+    staff_position: position,
+  });
+}
+
+function measureXml(count: number): string {
+  return `<score-partwise><part id="P1">${"<measure></measure>".repeat(count)}</part></score-partwise>`;
+}
+
+test("a PDF page's systems are fitted to its noteheads, with barlines between its measures", () => {
+  const groups = [
+    staffGroup("a", 0, 0, 5, 100),
+    staffGroup("b", 0, 1, 3, 200),
+    staffGroup("c", 0, 0, 9, 400),
+    staffGroup("d", 1, 0, 1, 120),
+    staffGroup("e", 1, 1, 7, 500),
+  ];
+  const measures = { a: 1, b: 1, c: 2, d: 3, e: 5 } as Record<string, number>;
+  const data = sidecar(groups, groups.map((value) => note(`n-${value.visual_group_id}`, value.visual_group_id, {
+    measure: measures[value.visual_group_id],
+  })));
+  const [first, second] = pdfNoteGeometry([
+    recognizedPage(0, sidecar([], []), measureXml(4)),
+    recognizedPage(1, data, measureXml(5)),
+  ]);
+  assert.deepEqual([first.pageIndex, first.measureOffset, first.systems], [0, 0, []]);
+  assert.equal(second.measureOffset, 4);
+  const [top, bottom] = second.systems;
+  // The first staff's top line and the second staff's bottom line.
+  assert.deepEqual([top.top, top.bottom], [220, 500]);
+  assert.deepEqual([bottom.top, bottom.bottom], [1220, 1500]);
+  // Measures 1-2 on the first system, 3-5 on the second, after the page before's four.
+  assert.equal(top.firstMeasure, 4);
+  assert.equal(bottom.firstMeasure, 6);
+  assert.equal(top.barlines.length, 3);
+  assert.equal(bottom.barlines.length, 4);
+  // Halfway between measure 1's last notehead and measure 2's first.
+  assert.equal(top.barlines[1], (210 + 390) / 2);
+  // Measure 4 has no notes: the gap between measures 3 and 5 is shared out.
+  assert.deepEqual(bottom.barlines.slice(1, 3), [130 + (490 - 130) / 3, 130 + (2 * (490 - 130)) / 3]);
+  assert.ok(top.barlines[0] < 90 && top.barlines[2] > 410, "the system reaches past its outer notes");
+});
+
+test("rests place their measures and give their staff's lines", () => {
+  const groups = [staffGroup("a", 0, 0, 5, 100)];
+  const data: VisualSidecar = {
+    ...sidecar(groups, [note("n-a", "a", { measure: 1 })]),
+    rest_verification: {
+      version: 1,
+      rests: [{
+        rest_id: "r",
+        part: 1,
+        measure: 2,
+        musicxml_staff_number: 1,
+        voice: 1,
+        duration: "rest_1",
+        status: "supported",
+        reason: "",
+        staff_group_index: 0,
+        staff_index: 0,
+        center: [600, 260],
+        staff_lines: [218, 238, 258, 278, 298],
+        unit_size: 20,
+      }],
+    },
+  };
+  const [system] = pdfNoteGeometry([recognizedPage(0, data, measureXml(2))])[0].systems;
+  assert.deepEqual([system.top, system.bottom], [218, 298]);
+  assert.equal(system.barlines.length, 3);
+  assert.equal(system.barlines[1], (110 + 588) / 2);
+});
+
+test("playback moments know their measure's place in the document", async () => {
+  const { buildPlaybackTimeline } = await import("./playback");
+  const groups = [staffGroup("a", 0, 0, 5, 100), staffGroup("c", 0, 0, 9, 400)];
+  const data = sidecar(groups, [note("n-a", "a", { measure: 1 }), note("n-c", "c", { measure: 2 })]);
+  const timeline = buildPlaybackTimeline(pdfNoteGeometry([
+    recognizedPage(0, sidecar([], []), measureXml(3)),
+    recognizedPage(1, data, measureXml(2)),
+  ]));
+  assert.deepEqual(timeline.map((moment) => [moment.measure, moment.measureIndex]), [[1, 3], [2, 4]]);
+});

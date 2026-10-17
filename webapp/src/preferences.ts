@@ -6,6 +6,7 @@ export const DEBUG_PANEL_STORAGE_KEY = "homr.debug-panel-enabled.v1";
 export const PLAYBACK_PIANO_STORAGE_KEY = "homr.playback-piano.v1";
 export const LISTEN_INPUT_SOURCE_STORAGE_KEY = "homr.listen-input-source.v1";
 export const NOTE_HIGHWAY_STORAGE_KEY = "homr.note-highway-enabled.v1";
+export const LOOP_DIM_OUTSIDE_STORAGE_KEY = "homr.loop-dim-outside.v1";
 export const SHARED_NOTEHEAD_TIMING_STORAGE_KEY = "homr.repair-shared-notehead-timing.v1";
 export const TIME_SIGNATURE_REPAIR_STORAGE_KEY = "homr.repair-time-signatures.v1";
 export const TUPLET_REPAIR_STORAGE_KEY = "homr.repair-tuplets.v1";
@@ -41,6 +42,25 @@ export function saveNoteHighwayEnabled(enabled: boolean): void {
   if (typeof window === "undefined") return;
   try {
     window.localStorage.setItem(NOTE_HIGHWAY_STORAGE_KEY, String(enabled));
+  } catch {
+    // A disabled/full local store should not prevent changing the current session.
+  }
+}
+
+/** On unless it was switched off. */
+export function loadLoopDimOutside(): boolean {
+  if (typeof window === "undefined") return true;
+  try {
+    return window.localStorage.getItem(LOOP_DIM_OUTSIDE_STORAGE_KEY) !== "false";
+  } catch {
+    return true;
+  }
+}
+
+export function saveLoopDimOutside(enabled: boolean): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(LOOP_DIM_OUTSIDE_STORAGE_KEY, String(enabled));
   } catch {
     // A disabled/full local store should not prevent changing the current session.
   }

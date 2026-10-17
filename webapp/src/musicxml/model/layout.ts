@@ -61,6 +61,17 @@ export interface LayoutChord {
   stemBounds: Bounds | null;
 }
 
+/** A drawn system: its staves' extent and where its measures begin and end. */
+export interface LayoutSystem {
+  /** The top line of the first staff and the bottom line of the last one. */
+  top: number;
+  bottom: number;
+  /** The system's first measure, by position. */
+  firstMeasure: number;
+  /** Where each measure begins, then where the last one ends: one more than its measures. */
+  barlines: number[];
+}
+
 export interface LayoutPage {
   index: number;
   /** The measure the page starts with, by position. */
@@ -71,6 +82,8 @@ export interface LayoutPage {
   /** Everything that does not belong to a note: staves, clefs, rests, beams, barlines. */
   items: Drawable[];
   chords: LayoutChord[];
+  /** From the top, numbered as LayoutChord.systemIndex numbers them. */
+  systems: LayoutSystem[];
 }
 
 export interface LayoutModel {

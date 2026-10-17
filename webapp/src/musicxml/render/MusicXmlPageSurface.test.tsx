@@ -10,6 +10,7 @@ const page: LayoutPage = {
   width: 1000,
   height: 1400,
   staffSpace: 20,
+  systems: [],
   items: [
     { kind: "line", x1: 100, y1: 200, x2: 900, y2: 200, width: 2 },
     { kind: "glyph", glyph: "gClef", x: 110, y: 260, scale: 1 },

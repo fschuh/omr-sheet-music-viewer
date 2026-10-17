@@ -188,6 +188,11 @@ export interface PerformanceRoute {
 export interface ExpandRouteOptions {
   startMeasureIndex?: number;
   startOffset?: number;
+  /**
+   * Ends the route where it would next play a measure at or past this one, or before
+   * the start: what a loop from the start up to this measure plays once.
+   */
+  endMeasureIndex?: number;
   visualMap?: ReadonlyMap<string, VisualNoteTarget>;
   maxMeasureVisits?: number;
   maxOccurrences?: number;
@@ -1420,7 +1425,9 @@ export function expandPerformanceRoute(
     ? Math.min(...score.measures[startMeasure].endingNumbers)
     : null;
 
+  const endMeasure = options.endMeasureIndex ?? score.measures.length;
   while (index >= 0 && index < score.measures.length) {
+    if (index >= endMeasure || (options.endMeasureIndex !== undefined && index < startMeasure)) break;
     if (occurrences.length >= maxOccurrences) {
       throw new Error(`Realtime navigation exceeded ${maxOccurrences} measures. Check repeat and jump marks.`);
     }
@@ -1873,6 +1880,8 @@ export interface AudibleHands {
 export interface RealtimeControllerCallbacks {
   onFrame(frame: Omit<RealtimeFrame, "playhead">): void;
   onComplete(): void;
+  /** A looping route played to its end and started over. */
+  onLoop?(): void;
 }
 
 export class RealtimeController {
@@ -1884,6 +1893,7 @@ export class RealtimeController {
   private tempoMultiplier = 1;
   private muted = false;
   private audibleHands: AudibleHands = { left: true, right: true };
+  private looping = false;
   private timer: unknown = null;
   private soundingNotes = new Map<string, string>();
   private activeTimelineNotes = new Map<string, PerformanceNote>();
@@ -1950,9 +1960,41 @@ export class RealtimeController {
     return [...this.activeTimelineNotes.values()];
   }
 
+  /**
+   * Starts a looping route over from where its end was reached, so the time spent past
+   * the end is not lost and every pass lasts as long as the first.
+   */
+  private wrap(route: PerformanceRoute): void {
+    const passSeconds = (
+      scoreOffsetToSeconds(route, route.totalQuarters, 1) -
+      scoreOffsetToSeconds(route, this.anchorOffset, 1)
+    ) / this.tempoMultiplier;
+    this.anchorTime += passSeconds;
+    this.anchorOffset = 0;
+    this.offset = this.currentOffset();
+    if (this.offset >= route.totalQuarters) {
+      // Further behind than a whole pass: start the pass now rather than skip it.
+      this.anchorTime = this.clock.now();
+      this.offset = 0;
+    }
+    const sounding = Array.from(new Set(this.soundingNotes.values()));
+    this.soundingNotes.clear();
+    if (sounding.length > 0) this.sink.release(sounding);
+    this.resetActiveNotes(this.offset);
+    this.callbacks.onLoop?.();
+  }
+
   private publish(): void {
     if (!this.route || this.status === "inactive") return;
     this.offset = this.currentOffset();
+    if (
+      this.looping &&
+      this.route.totalQuarters > 0 &&
+      this.offset >= this.route.totalQuarters &&
+      this.status === "playing"
+    ) {
+      this.wrap(this.route);
+    }
     if (this.offset >= this.route.totalQuarters && this.status === "playing") {
       this.offset = this.route.totalQuarters;
       this.clearTimer();
@@ -2041,20 +2083,25 @@ export class RealtimeController {
     this.timer = this.clock.setInterval(() => this.publish(), this.intervalMs);
   }
 
-  seek(route: PerformanceRoute, keepStatus: "playing" | "paused"): void {
+  seek(route: PerformanceRoute, keepStatus: "playing" | "paused", offset = 0): void {
     if (keepStatus === "playing") {
-      this.play(route, 0);
+      this.play(route, offset);
       return;
     }
     this.clearTimer();
     this.silence();
     this.route = route;
     this.status = "paused";
-    this.offset = 0;
-    this.anchorOffset = 0;
+    this.offset = Math.min(route.totalQuarters, Math.max(0, offset));
+    this.anchorOffset = this.offset;
     this.anchorTime = this.clock.now();
-    this.resetActiveNotes(0);
+    this.resetActiveNotes(this.offset);
     this.publish();
+  }
+
+  /** A looping route starts over when it reaches its end instead of completing. */
+  setLooping(looping: boolean): void {
+    this.looping = looping;
   }
 
   stop(): void {

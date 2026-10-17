@@ -86,6 +86,7 @@ const moment: PlaybackMoment = {
   pageIndex: 0,
   staffGroupIndex: 0,
   measure: 1,
+  measureIndex: 0,
   barKey: "page-0-measure-1",
   visualGroupIds: groups.map((value) => value.visual_group_id),
   pitches: ["C4", "E3"],
@@ -752,7 +753,7 @@ test("a MusicXML page draws its engraved surface in place of an image", () => {
     status: "complete",
     width: 2480,
     height: 3508,
-    surface: { index: 0, firstMeasure: 0, width: 2480, height: 3508, staffSpace: 20, items: [], chords: [] },
+    surface: { index: 0, firstMeasure: 0, width: 2480, height: 3508, staffSpace: 20, items: [], chords: [], systems: [] },
   }]);
   assert.match(engraved, /<svg class="musicxml-page" viewBox="0 0 2480 3508"/);
   assert.doesNotMatch(engraved, /<img/);
@@ -774,6 +775,7 @@ test("a selected MusicXML note is coloured on its page and labelled by the overl
       width: 1000,
       height: 1400,
       staffSpace: 20,
+      systems: [],
       items: [],
       chords: [{
         id: "P1-m1-s1-v1-t0",
@@ -932,4 +934,119 @@ test("debug mode draws ghosts of unsupported rests only", () => {
   assert.match(shown, /class="ghost-rest" data-rest-id="homr-rest-2" data-rest-reason="no_rest_shaped_ink" data-rest-kind="eighth"/);
   assert.match(shown, /class="ghost-rest estimated" data-rest-id="homr-rest-3" data-rest-reason="note_without_pitch"/);
   assert.doesNotMatch(renderRests(false), /ghost-rest/);
+});
+
+/** The fixture page with two systems of three measures each. */
+const loopGeometry = pdfNoteGeometry([page]).map((value) => ({
+  ...value,
+  systems: [
+    { index: 0, top: 300, bottom: 540, firstMeasure: 0, barlines: [100, 400, 700, 950] },
+    { index: 1, top: 800, bottom: 1040, firstMeasure: 3, barlines: [100, 400, 700, 950] },
+  ],
+}));
+
+function renderLoop(options: {
+  playbackActive?: boolean;
+  loopMode?: boolean;
+  loop?: { startMeasure: number; endMeasure: number } | null;
+  loopPass?: number;
+  loopPlaying?: boolean;
+  loopDimOutside?: boolean;
+  scale?: number;
+}): string {
+  const { playbackActive = true, loopMode = true, loop = null, loopPass = 1, loopPlaying = false, loopDimOutside = true, scale = 1 } = options;
+  return renderToStaticMarkup(
+    <DocumentViewer
+      documentKey="loop-fixture"
+      pages={[page]}
+      noteGeometry={loopGeometry}
+      selectedGroup={null}
+      highlightAllNotes={false}
+      showOriginalNoteheadContours={false}
+      showDetectedNoteheadContours={false}
+      showRefinedNoteheadContours={false}
+      showRawStemContours={false}
+      playbackActive={playbackActive}
+      playbackNoteSoundsEnabled
+      playbackAvailable
+      playbackMoment={playbackActive ? moment : null}
+      listenFeedback={listenFeedback}
+      loopMode={loopMode}
+      loop={loop}
+      loopPass={loopPass}
+      loopPlaying={loopPlaying}
+      loopDimOutside={loopDimOutside}
+      initialViewportTransform={{ scale, x: 0, y: 0 }}
+      onLoopToggle={() => undefined}
+      onLoopChange={() => undefined}
+      onPlaybackCommand={() => undefined}
+      onSelectGroup={() => undefined}
+      onRetryPage={() => undefined}
+    />,
+  );
+}
+
+function loopButton(markup: string): string {
+  return /<button[^>]*class="loop-toggle[^"]*"[^>]*>.*?<\/button>/.exec(markup)?.[0] ?? "";
+}
+
+test("the Loop button is off, on, or showing the pass while playback is inside the loop", () => {
+  const off = loopButton(renderLoop({ loopMode: false }));
+  assert.match(off, /class="loop-toggle"/);
+  assert.match(off, /aria-pressed="false"/);
+  assert.match(off, />Loop<\/span>/);
+
+  const on = loopButton(renderLoop({ loop: { startMeasure: 1, endMeasure: 2 } }));
+  assert.match(on, /class="loop-toggle active"/);
+  assert.match(on, /aria-pressed="true"/);
+  assert.match(on, />Loop<\/span>/);
+
+  const looping = loopButton(renderLoop({ loop: { startMeasure: 1, endMeasure: 2 }, loopPlaying: true, loopPass: 3 }));
+  assert.match(looping, /class="loop-toggle active looping"/);
+  assert.match(looping, />Pass 3<\/span>/);
+});
+
+test("loop mode turns on only during playback, and can be turned off at any time", () => {
+  assert.match(loopButton(renderLoop({ playbackActive: false, loopMode: false })), /disabled=""/);
+  assert.doesNotMatch(loopButton(renderLoop({ playbackActive: false, loopMode: true })), /disabled=""/);
+  assert.doesNotMatch(loopButton(renderLoop({ loopMode: false })), /disabled=""/);
+});
+
+test("without a loop to show, the score has no loop overlay", () => {
+  assert.doesNotMatch(renderLoop({ loop: null }), /data-testid="loop-layer"/);
+  assert.doesNotMatch(renderLoop({ loopMode: false }), /loop-tint/);
+});
+
+test("a loop on one system draws its tint, label and two handles as sliders", () => {
+  const markup = renderLoop({ loop: { startMeasure: 0, endMeasure: 2 } });
+  assert.equal(markup.match(/data-testid="loop-tint"/g)?.length, 1);
+  assert.match(markup, /data-testid="loop-label".*?>Bars 1–2<\/text>/);
+  assert.match(markup, /role="slider"[^>]*aria-label="Loop start"[^>]*aria-valuemin="1"[^>]*aria-valuemax="2"[^>]*aria-valuenow="1"[^>]*aria-valuetext="Bar 1"/);
+  assert.match(markup, /role="slider"[^>]*aria-label="Loop end"[^>]*aria-valuemin="1"[^>]*aria-valuemax="6"[^>]*aria-valuenow="2"[^>]*aria-valuetext="Bar 2"/);
+  assert.doesNotMatch(markup, /data-testid="loop-chevron"/);
+  // Bar 3 and the whole second system are dimmed.
+  assert.equal(markup.match(/data-testid="loop-dim"/g)?.length, 2);
+  assert.equal(renderLoop({ loop: { startMeasure: 0, endMeasure: 2 }, loopDimOutside: false }).match(/data-testid="loop-dim"/g), null);
+});
+
+test("a loop across systems has a segment on each and chevrons where it continues", () => {
+  const markup = renderLoop({ loop: { startMeasure: 2, endMeasure: 4 } });
+  assert.equal(markup.match(/data-testid="loop-tint"/g)?.length, 2);
+  assert.equal(markup.match(/data-testid="loop-chevron"/g)?.length, 2);
+  assert.equal(markup.match(/role="slider"/g)?.length, 2);
+  // The label goes on the wider segment, the second system's.
+  assert.match(markup, /data-testid="loop-label"><rect x="180"[^>]*><\/rect><text x="250"[^>]*>Bars 3–4<\/text>/);
+  // A loop narrower than the label needs on screen goes without it.
+  assert.match(renderLoop({ loop: { startMeasure: 2, endMeasure: 3 } }), /data-testid="loop-label"/);
+  assert.doesNotMatch(renderLoop({ loop: { startMeasure: 2, endMeasure: 3 }, scale: 0.5 }), /data-testid="loop-label"/);
+});
+
+test("handles keep their screen size at any zoom", () => {
+  const tab = (markup: string) => /class="loop-handle-bar" x="[^"]+" y="[^"]+" width="([^"]+)" height="([^"]+)" rx="([^"]+)"/g;
+  // Widths and corner radii; a handle bar's height also spans the system, which zoom does not change.
+  const tabs = (markup: string) => [...markup.matchAll(tab(markup))].map((match) => [match[1], match[3]].map(Number));
+  const atFull = tabs(renderLoop({ loop: { startMeasure: 0, endMeasure: 2 } }));
+  const atHalf = tabs(renderLoop({ loop: { startMeasure: 0, endMeasure: 2 }, scale: 0.5 }));
+  // The handle bar and grip tab are twice as wide in page pixels at half the zoom.
+  assert.deepEqual(atHalf, atFull.map((sizes) => sizes.map((size) => size * 2)));
 });

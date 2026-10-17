@@ -35,7 +35,27 @@ export interface GeometryNote {
   /** Scientific pitch such as "F#5"; null when the note has no pitch. */
   pitch: string | null;
   grace: boolean;
+  /** One-based, as the page's own MusicXML numbers its measures. */
   measure: number;
+}
+
+/**
+ * One system of a page and where its barlines are. Measures are counted by their
+ * position in the document, from 0, the way the document MusicXML orders them.
+ */
+export interface SystemGeometry {
+  /** The system on the page, counted from the top, as NoteheadGeometry numbers it. */
+  index: number;
+  /** The top line of the first staff and the bottom line of the last one. */
+  top: number;
+  bottom: number;
+  /** The document position of the system's first measure. */
+  firstMeasure: number;
+  /**
+   * Where each measure of the system begins, followed by where the last one ends:
+   * one more entry than the system has measures, in increasing x.
+   */
+  barlines: number[];
 }
 
 export interface PageNoteGeometry {
@@ -44,6 +64,10 @@ export interface PageNoteGeometry {
   noteheads: NoteheadGeometry[];
   /** In source order. More than one note may share a notehead. */
   notes: GeometryNote[];
+  /** Added to a note's `measure`, less one, it gives the measure's document position. */
+  measureOffset: number;
+  /** From the top; together the pages' systems hold every measure once, in order. */
+  systems: SystemGeometry[];
 }
 
 /** Clicks within this many pixels of a hit area select its notehead. */

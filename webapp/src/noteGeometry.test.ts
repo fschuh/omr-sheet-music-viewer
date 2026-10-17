@@ -26,7 +26,7 @@ function notehead(
 }
 
 function page(noteheads: NoteheadGeometry[]): PageNoteGeometry {
-  return { pageIndex: 0, noteheads, notes: [] };
+  return { pageIndex: 0, noteheads, notes: [], measureOffset: 0, systems: [] };
 }
 
 test("a click selects a notehead up to three pixels outside its hit area", () => {

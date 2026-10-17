@@ -20,8 +20,9 @@ test("default shortcuts reproduce the existing playback keys", () => {
   assert.equal(commandForKeyboardEvent(shortcuts, keyEvent("Space")), "togglePlayback");
   assert.equal(commandForKeyboardEvent(shortcuts, keyEvent("Escape")), "stopPlayback");
   assert.equal(commandForKeyboardEvent(shortcuts, keyEvent("KeyM")), "toggleNoteSounds");
-  assert.equal(commandForKeyboardEvent(shortcuts, keyEvent("KeyL")), "toggleListenMode");
+  assert.equal(commandForKeyboardEvent(shortcuts, keyEvent("KeyI")), "toggleListenMode");
   assert.equal(commandForKeyboardEvent(shortcuts, keyEvent("KeyP")), "playCurrentNotes");
+  assert.equal(commandForKeyboardEvent(shortcuts, keyEvent("KeyL")), "toggleLoopMode");
   assert.equal(commandForKeyboardEvent(shortcuts, keyEvent("ArrowRight")), "forwardNote");
   assert.equal(commandForKeyboardEvent(shortcuts, keyEvent("ArrowLeft")), "backwardNote");
   assert.equal(commandForKeyboardEvent(shortcuts, keyEvent("Period")), "forwardBar");
@@ -38,8 +39,42 @@ test("old persisted settings receive the new listen and audition defaults", () =
     },
   });
   assert.equal(commandForKeyboardEvent(parsed, keyEvent("Enter")), "togglePlayback");
-  assert.equal(commandForKeyboardEvent(parsed, keyEvent("KeyL")), "toggleListenMode");
+  assert.equal(commandForKeyboardEvent(parsed, keyEvent("KeyI")), "toggleListenMode");
   assert.equal(commandForKeyboardEvent(parsed, keyEvent("KeyP")), "playCurrentNotes");
+  assert.equal(commandForKeyboardEvent(parsed, keyEvent("KeyL")), "toggleLoopMode");
+});
+
+const keyL = { code: "KeyL", ctrl: false, alt: false, shift: false, meta: false };
+const keyK = { code: "KeyK", ctrl: false, alt: false, shift: false, meta: false };
+const keyI = { code: "KeyI", ctrl: false, alt: false, shift: false, meta: false };
+
+test("settings saved before loop mode move listen mode off L, which loop mode now uses", () => {
+  const parsed = parsePlaybackShortcuts({ toggleListenMode: { keyboard: keyL, midi: null } });
+  assert.equal(commandForKeyboardEvent(parsed, keyEvent("KeyL")), "toggleLoopMode");
+  assert.equal(commandForKeyboardEvent(parsed, keyEvent("KeyI")), "toggleListenMode");
+});
+
+test("a listen key chosen away from L, or L saved alongside a loop key, is kept", () => {
+  const custom = parsePlaybackShortcuts({ toggleListenMode: { keyboard: keyK, midi: null } });
+  assert.equal(commandForKeyboardEvent(custom, keyEvent("KeyK")), "toggleListenMode");
+  assert.equal(commandForKeyboardEvent(custom, keyEvent("KeyL")), "toggleLoopMode");
+
+  const chosen = parsePlaybackShortcuts({
+    toggleListenMode: { keyboard: keyL, midi: null },
+    toggleLoopMode: { keyboard: keyK, midi: null },
+  });
+  assert.equal(commandForKeyboardEvent(chosen, keyEvent("KeyL")), "toggleListenMode");
+  assert.equal(commandForKeyboardEvent(chosen, keyEvent("KeyK")), "toggleLoopMode");
+});
+
+test("listen mode stays on L when another command already holds its new default", () => {
+  const parsed = parsePlaybackShortcuts({
+    toggleListenMode: { keyboard: keyL, midi: null },
+    playCurrentNotes: { keyboard: keyI, midi: null },
+  });
+  // Listen mode keeps L and wins it over loop mode, which comes later; I stays with audition.
+  assert.equal(commandForKeyboardEvent(parsed, keyEvent("KeyL")), "toggleListenMode");
+  assert.equal(commandForKeyboardEvent(parsed, keyEvent("KeyI")), "playCurrentNotes");
 });
 
 test("keyboard matching includes modifiers", () => {

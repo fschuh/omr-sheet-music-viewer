@@ -20,6 +20,7 @@ export const playbackCommandNames = [
   "backwardBar",
   "forwardPage",
   "backwardPage",
+  "toggleLoopMode",
 ] as const;
 
 export type PlaybackCommand = (typeof playbackCommandNames)[number];
@@ -29,6 +30,8 @@ export interface PlaybackMoment {
   pageIndex: number;
   staffGroupIndex: number;
   measure: number | null;
+  /** The measure by its position in the document, from 0, as loops count measures. */
+  measureIndex: number | null;
   barKey: string;
   visualGroupIds: string[];
   pitches: string[];
@@ -395,6 +398,7 @@ export function buildPlaybackTimeline(
           pageIndex,
           staffGroupIndex: systemIndex,
           measure: cluster.measure,
+          measureIndex: cluster.measure === null ? null : page.measureOffset + cluster.measure - 1,
           barKey: cluster.measure === null ? unknownBarKey : `page-${pageIndex}-measure-${cluster.measure}`,
           visualGroupIds,
           pitches,
@@ -488,6 +492,7 @@ function commandDestination(
     | "toggleNoteSounds"
     | "toggleListenMode"
     | "playCurrentNotes"
+    | "toggleLoopMode"
   >,
 ): number {
   if (command === "forwardNote") return Math.min(timeline.length - 1, index + 1);
@@ -550,7 +555,7 @@ export function runPlaybackCommand(
   if (command === "toggleListenMode") {
     return state.active ? { ...state, listenModeEnabled: !state.listenModeEnabled } : state;
   }
-  if (command === "playCurrentNotes") return state;
+  if (command === "playCurrentNotes" || command === "toggleLoopMode") return state;
   if (!state.active || timeline.length === 0) return state;
   const destination = commandDestination(timeline, currentIndex(timeline, state), command);
   return { ...state, active: true, currentMomentId: timeline[destination].id };

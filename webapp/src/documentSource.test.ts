@@ -52,7 +52,7 @@ test("note geometry comes from engraved pages for MusicXML and from the sidecar 
     width: 100,
     height: 100,
     surface: {
-      index: 0, firstMeasure: 0, width: 100, height: 100, staffSpace: 10, items: [],
+      index: 0, firstMeasure: 0, width: 100, height: 100, staffSpace: 10, items: [], systems: [],
       chords: [{
         id: "P1-m1-s1-v1-t0", systemIndex: 0, momentId: "m1-t0", items: [], stemBounds: null,
         notes: [{ key: "P1-m1-s1-v1-t0-C5", pitch: "C5", grace: false, measure: 1, center: [5, 5], headBounds: [0, 0, 10, 10], items: [] }],

@@ -65,7 +65,21 @@ toggle messages and message types without a release signal remain one-shot.
 On Windows, the repeat delay and rate follow the system keyboard settings; other
 platforms use a 400 ms delay and 75 ms interval.
 
-Listen mode is opt-in during note-by-note playback. **Settings** selects either
+Loop mode repeats a run of whole bars in either playback mode. The **Loop**
+button or the default `L` shortcut turns it on during playback, looping the bar
+being played; drag either bracket handle on the score to another barline, across
+lines and pages too, or focus a handle and use the arrow keys. Playback that
+starts or is moved outside the loop jumps to its first bar. Note-by-note wraps
+from the loop's last note to its first, and realtime starts the loop over without
+a gap; the button counts the passes, and the note highway marks where the loop
+starts over. Turning loop mode off keeps its bars for the next time; it is
+cleared when another score opens. **Settings** can stop the bars outside the
+loop from being dimmed. On a recognized PDF, homr records no barlines, so the
+handles stand between the notes and rests of neighbouring bars and can sit a
+little away from the printed barline.
+
+Listen mode is opt-in during note-by-note playback. Its default shortcut is `I`;
+settings saved while it was `L` move to `I` unless `I` is taken. **Settings** selects either
 the system-default microphone (the default) or MIDI keyboard input, and remembers
 the choice. The microphone path runs the local `online_amt` recognizer: an
 AudioWorklet captures 512-sample mono chunks at 16 kHz and a dedicated worker runs

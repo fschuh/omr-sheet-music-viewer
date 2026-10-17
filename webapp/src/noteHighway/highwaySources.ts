@@ -6,6 +6,7 @@ import {
   HIGHWAY_LOOKAHEAD_STEPS,
   highwayTrackForRoute,
   highwayTrackForSteps,
+  highwayTrackWithLoopEnd,
   type HighwayStepMoment,
   type HighwayTrack,
 } from "./highwayModel";
@@ -26,13 +27,15 @@ const STEP_GLIDE_MS = 160;
 /**
  * Realtime: score seconds on the playback clock. The window grows with the tempo
  * multiplier so notes take the same real time to reach the keys at any tempo.
- * While one hand is practised, the other hand's notes are ghosts.
+ * While one hand is practised, the other hand's notes are ghosts. A looping route
+ * starts over at its end, which the highway marks.
  */
 export function useRealtimeHighwaySource(
   getRoute: () => PerformanceRoute | null,
   getOffset: () => number,
   tempoMultiplier: number,
   hand: PracticeHand,
+  getLooping: () => boolean = () => false,
 ): HighwayFrameSource {
   const latest = useRef({ tempoMultiplier, hand });
   latest.current = { tempoMultiplier, hand };
@@ -40,12 +43,13 @@ export function useRealtimeHighwaySource(
     const window = HIGHWAY_LOOKAHEAD_SECONDS * latest.current.tempoMultiplier;
     const route = getRoute();
     if (!route) return { track: null, now: 0, window };
+    const loopEnd = getLooping() ? scoreOffsetToSeconds(route, route.totalQuarters, 1) : null;
     return {
-      track: highwayTrackForRoute(route, latest.current.hand),
+      track: highwayTrackWithLoopEnd(highwayTrackForRoute(route, latest.current.hand), loopEnd),
       now: scoreOffsetToSeconds(route, getOffset(), 1),
       window,
     };
-  }, [getOffset, getRoute]);
+  }, [getLooping, getOffset, getRoute]);
 }
 
 function easeOutCubic(progress: number): number {
@@ -58,20 +62,21 @@ function easeOutCubic(progress: number): number {
  * timeline, so moments the practised hand skips still show the other hand's
  * ghosts between steps; `currentIndex` indexes the practised hand's timeline.
  * The track is built on first use for each timeline and hand, so a hidden
- * highway costs nothing.
+ * highway costs nothing. `loopEndStep`, in the same steps, is where a loop starts over.
  */
 export function useNoteByNoteHighwaySource(
   moments: readonly HighwayStepMoment[],
   currentIndex: number,
   hand: PracticeHand,
+  loopEndStep: number | null = null,
 ): HighwayFrameSource {
   const trackCache = useRef<{
     moments: readonly HighwayStepMoment[];
     hand: PracticeHand;
     track: HighwayTrack;
   } | null>(null);
-  const latest = useRef({ moments, hand });
-  latest.current = { moments, hand };
+  const latest = useRef({ moments, hand, loopEndStep });
+  latest.current = { moments, hand, loopEndStep };
   const glide = useRef({ from: currentIndex, to: currentIndex, startedAt: 0, hand });
 
   const positionAt = useCallback((time: number) => {
@@ -101,7 +106,7 @@ export function useNoteByNoteHighwaySource(
       };
     }
     return {
-      track: trackCache.current!.track,
+      track: highwayTrackWithLoopEnd(trackCache.current!.track, latest.current.loopEndStep),
       now: positionAt(performance.now()),
       window: HIGHWAY_LOOKAHEAD_STEPS,
     };

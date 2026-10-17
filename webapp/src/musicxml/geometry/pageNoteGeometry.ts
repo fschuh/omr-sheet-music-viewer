@@ -43,7 +43,14 @@ export function pageNoteGeometry(page: LayoutPage): PageNoteGeometry {
       });
     }
   }
-  const geometry = { pageIndex: page.index, noteheads, notes };
+  const geometry: PageNoteGeometry = {
+    pageIndex: page.index,
+    noteheads,
+    notes,
+    // Note measures are already positions in the whole score.
+    measureOffset: 0,
+    systems: page.systems.map((system, index) => ({ index, ...system })),
+  };
   cache.set(page, geometry);
   return geometry;
 }
