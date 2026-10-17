@@ -85,6 +85,9 @@ interface SettingsPageProps {
   playbackPiano: PianoId;
   listenInputSource: ListenInputSource;
   debugPanelEnabled: boolean;
+  sharedNoteheadTimingRepair: boolean;
+  timeSignatureRepair: boolean;
+  tupletRepair: boolean;
   listenMatcherProfileOverride: ListenMatcherProfileId | null;
   nativeAvailable: boolean;
   midiPorts: string[];
@@ -95,6 +98,9 @@ interface SettingsPageProps {
   onChangePlaybackPiano: (pianoId: PianoId) => void;
   onChangeListenInputSource: (inputSource: ListenInputSource) => void;
   onChangeDebugPanelEnabled: (enabled: boolean) => void;
+  onChangeSharedNoteheadTimingRepair: (enabled: boolean) => void;
+  onChangeTimeSignatureRepair: (enabled: boolean) => void;
+  onChangeTupletRepair: (enabled: boolean) => void;
   onChangeListenMatcherProfileOverride: (profileId: ListenMatcherProfileId | null) => void;
   onBeginMidiCapture: (command: PlaybackCommand) => void;
   onCancelMidiCapture: () => void;
@@ -107,6 +113,9 @@ export function SettingsPage({
   playbackPiano,
   listenInputSource,
   debugPanelEnabled,
+  sharedNoteheadTimingRepair,
+  timeSignatureRepair,
+  tupletRepair,
   listenMatcherProfileOverride,
   nativeAvailable,
   midiPorts,
@@ -117,6 +126,9 @@ export function SettingsPage({
   onChangePlaybackPiano,
   onChangeListenInputSource,
   onChangeDebugPanelEnabled,
+  onChangeSharedNoteheadTimingRepair,
+  onChangeTimeSignatureRepair,
+  onChangeTupletRepair,
   onChangeListenMatcherProfileOverride,
   onBeginMidiCapture,
   onCancelMidiCapture,
@@ -334,6 +346,70 @@ export function SettingsPage({
             );
           })}
         </div>
+      </section>
+
+      <section className="settings-card" aria-labelledby="repairs-title">
+        <header className="settings-card-header">
+          <div>
+            <h3 id="repairs-title">Repairs</h3>
+            <p>
+              Corrections made while a score is recognized, where the page shows what the
+              recognizer missed. After a change, a score is recognized again the next time
+              it is opened.
+            </p>
+          </div>
+        </header>
+        <label className="settings-toggle-row">
+          <input
+            type="checkbox"
+            aria-label="Note timing at shared noteheads"
+            checked={sharedNoteheadTimingRepair}
+            onChange={(event) => onChangeSharedNoteheadTimingRepair(event.target.checked)}
+          />
+          <span>
+            <strong>Note timing at shared noteheads</strong>
+            <small>
+              Where two voices share one notehead, such as an eighth note on the first note
+              of a 16th run, the notes after it start when the shorter note ends, as printed.
+              Only applied where the bar then adds up to its time signature.
+            </small>
+          </span>
+        </label>
+        <label className="settings-toggle-row">
+          <input
+            type="checkbox"
+            aria-label="Time signatures from the page"
+            checked={timeSignatureRepair}
+            onChange={(event) => onChangeTimeSignatureRepair(event.target.checked)}
+          />
+          <span>
+            <strong>Time signatures from the page</strong>
+            <small>
+              Writes the time signature printed on the page instead of guessing it from the
+              bar lengths, which misread notes throw off, and carries it from page to page
+              where it is not printed again. A time signature the recognizer sees where none
+              is printed is left out.
+            </small>
+          </span>
+        </label>
+        <label className="settings-toggle-row">
+          <input
+            type="checkbox"
+            aria-label="Tuplets from beams and brackets"
+            checked={timeSignatureRepair && tupletRepair}
+            disabled={!timeSignatureRepair}
+            onChange={(event) => onChangeTupletRepair(event.target.checked)}
+          />
+          <span>
+            <strong>Tuplets from beams and brackets</strong>
+            <small>
+              Writes notes read as plain values as a triplet where a beam or a bracketed
+              number on the page shows one, such as three eighths under one beam in a beat.
+              Only applied where the bar then adds up to its time signature, so it needs the
+              time signatures from the page.
+            </small>
+          </span>
+        </label>
       </section>
 
       <section className="settings-card" aria-labelledby="debug-title">

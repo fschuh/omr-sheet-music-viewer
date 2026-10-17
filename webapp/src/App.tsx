@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DocumentViewer } from "./DocumentViewer";
+import { printedValueSummary } from "./noteValues";
 import {
   addPredictedFingeringsToMusicXml,
   cachedFingeringsFromMusicXml,
@@ -66,10 +67,17 @@ import {
   loadListenInputSource,
   loadNoteHighwayEnabled,
   loadPlaybackPiano,
+  loadSharedNoteheadTimingRepair,
+  loadTimeSignatureRepair,
+  loadTupletRepair,
+  repairSettings,
   saveDebugPanelEnabled,
   saveListenInputSource,
   saveNoteHighwayEnabled,
   savePlaybackPiano,
+  saveSharedNoteheadTimingRepair,
+  saveTimeSignatureRepair,
+  saveTupletRepair,
 } from "./preferences";
 import { NoteHighway } from "./noteHighway/NoteHighway";
 import {
@@ -277,6 +285,11 @@ export function App() {
   const workerLogOutput = useRef<HTMLDivElement | null>(null);
   const [activePage, setActivePage] = useState<"viewer" | "settings">("viewer");
   const [debugPanelEnabled, setDebugPanelEnabled] = useState(loadDebugPanelEnabled);
+  const [sharedNoteheadTimingRepair, setSharedNoteheadTimingRepair] = useState(
+    loadSharedNoteheadTimingRepair,
+  );
+  const [timeSignatureRepair, setTimeSignatureRepair] = useState(loadTimeSignatureRepair);
+  const [tupletRepair, setTupletRepair] = useState(loadTupletRepair);
   const [playbackPiano, setPlaybackPiano] = useState(loadPlaybackPiano);
   const [listenInputSource, setListenInputSource] = useState(loadListenInputSource);
   const listenInputSourceRef = useRef<ListenInputSource>(listenInputSource);
@@ -309,6 +322,8 @@ export function App() {
   const [showRefinedNoteheadContours, setShowRefinedNoteheadContours] = useState(false);
   const [showRawStemContours, setShowRawStemContours] = useState(false);
   const [showDiagnosticVisualGroups, setShowDiagnosticVisualGroups] = useState(false);
+  const [showUnsupportedRests, setShowUnsupportedRests] = useState(false);
+  const [showValueMismatches, setShowValueMismatches] = useState(false);
   const [workerInfo, setWorkerInfo] = useState<string | null>(null);
   const [workerLogs, setWorkerLogs] = useState<WorkerLogEntry[]>([]);
   const [workerLogPath, setWorkerLogPath] = useState<string | null>(null);
@@ -1843,7 +1858,10 @@ export function App() {
   }
 
   async function openPdfDocument(path: string) {
-    const jobId = await openPdf(path);
+    const jobId = await openPdf(
+      path,
+      repairSettings(sharedNoteheadTimingRepair, timeSignatureRepair, tupletRepair),
+    );
     activeJobId.current = jobId;
     setDocument((current) =>
       current?.jobId === jobId
@@ -2063,6 +2081,9 @@ export function App() {
           playbackPiano={playbackPiano}
           listenInputSource={listenInputSource}
           debugPanelEnabled={debugPanelEnabled}
+          sharedNoteheadTimingRepair={sharedNoteheadTimingRepair}
+          timeSignatureRepair={timeSignatureRepair}
+          tupletRepair={tupletRepair}
           listenMatcherProfileOverride={listenMatcherProfileOverride}
           nativeAvailable={nativeAvailable}
           midiPorts={midiPorts}
@@ -2084,6 +2105,18 @@ export function App() {
             stopListenMode();
             setListenInputSource(inputSource);
             saveListenInputSource(inputSource);
+          }}
+          onChangeSharedNoteheadTimingRepair={(enabled) => {
+            setSharedNoteheadTimingRepair(enabled);
+            saveSharedNoteheadTimingRepair(enabled);
+          }}
+          onChangeTimeSignatureRepair={(enabled) => {
+            setTimeSignatureRepair(enabled);
+            saveTimeSignatureRepair(enabled);
+          }}
+          onChangeTupletRepair={(enabled) => {
+            setTupletRepair(enabled);
+            saveTupletRepair(enabled);
           }}
           onChangeDebugPanelEnabled={(enabled) => {
             setDebugPanelEnabled(enabled);
@@ -2149,6 +2182,8 @@ export function App() {
               showDiagnosticVisualGroups={
                 diagnosticsShown && showDiagnosticVisualGroups
               }
+              showUnsupportedRests={diagnosticsShown && showUnsupportedRests}
+              showValueMismatches={diagnosticsShown && showValueMismatches}
               playbackActive={playbackActive}
               playbackNoteSoundsEnabled={
                 playbackMode === "note-by-note"
@@ -2260,6 +2295,14 @@ export function App() {
                 />
                 Diagnostic visual groups
               </label>
+              <label className="checkbox-row">
+                <input type="checkbox" checked={showUnsupportedRests} onChange={(event) => setShowUnsupportedRests(event.target.checked)} />
+                Unsupported rests
+              </label>
+              <label className="checkbox-row">
+                <input type="checkbox" checked={showValueMismatches} onChange={(event) => setShowValueMismatches(event.target.checked)} />
+                Note value mismatches
+              </label>
               <h2>Selection</h2>
               {selectedVisualGroup && selectedGroup ? (
                 <>
@@ -2268,6 +2311,8 @@ export function App() {
                     <dt>Visual group</dt><dd>{selectedVisualGroup.visual_group_id}</dd>
                     <dt>MusicXML ID</dt><dd>{selectedVisualGroup.musicxml_id ?? "None"}</dd>
                     <dt>Notes</dt><dd>{noteSummary(selectedNotes)}</dd>
+                    <dt>Printed value</dt>
+                    <dd>{selectedPage?.visualSidecar ? printedValueSummary(selectedPage.visualSidecar, selectedNotes) : "Not read"}</dd>
                     <dt>Staff position</dt><dd>{selectedVisualGroup.staff_position}</dd>
                     <dt>Visual status</dt><dd>{selectedVisualGroup.visual_status}</dd>
                     <dt>Provenance</dt><dd>{selectedVisualGroup.provenance}</dd>

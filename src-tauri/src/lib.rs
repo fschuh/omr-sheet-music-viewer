@@ -1,7 +1,7 @@
 #[cfg(target_os = "linux")]
 use gtk::prelude::{DialogExtManual, GtkWindowExt, WidgetExt};
 use midir::{Ignore, MidiInput, MidiInputConnection};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
@@ -79,6 +79,15 @@ fn install_linux_microphone_permission_handler<R: tauri::Runtime>(
                 true
             });
     })
+}
+
+/// The homr repairs a score is recognized with, as the worker reads them from a request.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RepairSettings {
+    shared_notehead_timing: bool,
+    time_signatures: bool,
+    tuplets: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
@@ -574,6 +583,7 @@ fn open_pdf(
     app: AppHandle,
     worker: State<'_, WorkerSupervisor>,
     path: String,
+    repairs: RepairSettings,
 ) -> Result<String, String> {
     let pdf = PathBuf::from(&path);
     if !pdf.is_file()
@@ -602,6 +612,7 @@ fn open_pdf(
                 "jobId": job_id,
                 "pdfPath": pdf,
                 "cacheRoot": cache_root,
+                "repairs": repairs,
             }
         }),
     )?;
@@ -850,8 +861,38 @@ mod tests {
     use super::{
         has_music_xml_extension, is_channel_voice_message, missing_webkit_gpu_environment,
         repeat_timing_from_windows_settings, strip_ansi_codes, BackgroundScan,
-        KeyboardRepeatTiming, MIDI_SCAN_PANICKED_ERROR,
+        KeyboardRepeatTiming, RepairSettings, MIDI_SCAN_PANICKED_ERROR,
     };
+
+    #[test]
+    fn repair_settings_use_the_field_names_the_worker_reads() {
+        let off = RepairSettings {
+            shared_notehead_timing: false,
+            time_signatures: true,
+            tuplets: false,
+        };
+        assert_eq!(
+            serde_json::to_value(off).unwrap(),
+            serde_json::json!({
+                "sharedNoteheadTiming": false,
+                "timeSignatures": true,
+                "tuplets": false
+            })
+        );
+        assert_eq!(
+            serde_json::from_value::<RepairSettings>(serde_json::json!({
+                "sharedNoteheadTiming": true,
+                "timeSignatures": false,
+                "tuplets": false
+            }))
+            .unwrap(),
+            RepairSettings {
+                shared_notehead_timing: true,
+                time_signatures: false,
+                tuplets: false
+            }
+        );
+    }
 
     #[test]
     fn webkit_gpu_environment_fills_in_unset_variables() {

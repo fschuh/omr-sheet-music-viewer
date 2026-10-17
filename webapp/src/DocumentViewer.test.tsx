@@ -819,3 +819,117 @@ test("a selected MusicXML note is coloured on its page and labelled by the overl
   assert.match(markup, /class="mx-note mx-selected" data-notehead="P1-m1-s1-v1-t0-E5"/);
   assert.match(markup, /class="note-label" data-musicxml-id="page-1-P1-m1-s1-v1-t0-C5"/);
 });
+
+test("debug mode haloes the notes whose printed value disagrees", () => {
+  const linked = sidecar.notes.filter((note) => note.visual_group_id !== null);
+  assert.ok(linked.length >= 2);
+  const [mismatch, agreed] = linked;
+  const valuePage: DocumentPage = {
+    ...page,
+    visualSidecar: {
+      ...sidecar,
+      note_value_verification: {
+        version: 1,
+        notes: [
+          { musicxml_id: mismatch.musicxml_id, printed: "eighth", dotted: false, status: "disagrees", reason: "1_bands" },
+          { musicxml_id: agreed.musicxml_id, printed: "quarter", dotted: false, status: "agrees", reason: "0_bands" },
+        ],
+      },
+    },
+  };
+  const renderValues = (showValueMismatches: boolean) =>
+    renderToStaticMarkup(
+      <DocumentViewer
+        documentKey="value-fixture"
+        pages={[valuePage]}
+        noteGeometry={pdfNoteGeometry([valuePage])}
+        selectedGroup={null}
+        highlightAllNotes={false}
+        showOriginalNoteheadContours={false}
+        showDetectedNoteheadContours={false}
+        showRefinedNoteheadContours={false}
+        showRawStemContours={false}
+        showValueMismatches={showValueMismatches}
+        playbackActive={false}
+        playbackNoteSoundsEnabled
+        playbackAvailable={false}
+        playbackMoment={null}
+        listenFeedback={listenFeedback}
+        onPlaybackCommand={() => undefined}
+        onSelectGroup={() => undefined}
+        onRetryPage={() => undefined}
+      />,
+    );
+
+  const shown = renderValues(true);
+  const marked = [...shown.matchAll(/data-visual-group-id="([^"]+)"[^>]*data-value-mismatch="true"/g)].map(
+    (match) => match[1],
+  );
+  assert.deepEqual(marked, [mismatch.visual_group_id]);
+  assert.match(
+    shown,
+    new RegExp(`data-visual-group-id="${mismatch.visual_group_id}"[^>]*data-diagnostic-highlight="halo"`),
+  );
+  assert.doesNotMatch(renderValues(false), /data-value-mismatch/);
+});
+
+test("debug mode draws ghosts of unsupported rests only", () => {
+  const rest = (restId: string, status: "supported" | "unsupported", reason: string) => ({
+    rest_id: restId,
+    part: 1,
+    measure: 1,
+    musicxml_staff_number: 1,
+    voice: 1,
+    duration: "rest_8",
+    status,
+    reason,
+    staff_group_index: 0,
+    staff_index: 0,
+    center: [400, 340] as [number, number],
+    staff_lines: [320, 330, 340, 350, 360],
+    unit_size: 10,
+  });
+  const restPage: DocumentPage = {
+    ...page,
+    visualSidecar: {
+      ...sidecar,
+      rest_verification: {
+        version: 1,
+        rests: [
+          rest("homr-rest-1", "supported", "rest_shaped_ink"),
+          rest("homr-rest-2", "unsupported", "no_rest_shaped_ink"),
+          { ...rest("homr-rest-3", "unsupported", "note_without_pitch"), position_estimated: true },
+        ],
+      },
+    },
+  };
+  const renderRests = (showUnsupportedRests: boolean) =>
+    renderToStaticMarkup(
+      <DocumentViewer
+        documentKey="rest-fixture"
+        pages={[restPage]}
+        noteGeometry={pdfNoteGeometry([restPage])}
+        selectedGroup={null}
+        highlightAllNotes={false}
+        showOriginalNoteheadContours={false}
+        showDetectedNoteheadContours={false}
+        showRefinedNoteheadContours={false}
+        showRawStemContours={false}
+        showUnsupportedRests={showUnsupportedRests}
+        playbackActive={false}
+        playbackNoteSoundsEnabled
+        playbackAvailable={false}
+        playbackMoment={null}
+        listenFeedback={listenFeedback}
+        onPlaybackCommand={() => undefined}
+        onSelectGroup={() => undefined}
+        onRetryPage={() => undefined}
+      />,
+    );
+
+  const shown = renderRests(true);
+  assert.doesNotMatch(shown, /data-rest-id="homr-rest-1"/);
+  assert.match(shown, /class="ghost-rest" data-rest-id="homr-rest-2" data-rest-reason="no_rest_shaped_ink" data-rest-kind="eighth"/);
+  assert.match(shown, /class="ghost-rest estimated" data-rest-id="homr-rest-3" data-rest-reason="note_without_pitch"/);
+  assert.doesNotMatch(renderRests(false), /ghost-rest/);
+});

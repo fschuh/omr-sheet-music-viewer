@@ -67,6 +67,13 @@ export interface MidiInputsChangedEvent {
   error: string | null;
 }
 
+/** The homr repairs a score is recognized with. Tuplets need the time signatures. */
+export interface RepairSettings {
+  sharedNoteheadTiming: boolean;
+  timeSignatures: boolean;
+  tuplets: boolean;
+}
+
 export interface KeyboardRepeatTiming {
   delayMs: number;
   intervalMs: number;
@@ -81,8 +88,8 @@ export async function chooseScore(): Promise<string | null> {
   return invoke<string | null>("choose_score");
 }
 
-export async function openPdf(path: string): Promise<string> {
-  return invoke<string>("open_pdf", { path });
+export async function openPdf(path: string, repairs: RepairSettings): Promise<string> {
+  return invoke<string>("open_pdf", { path, repairs });
 }
 
 export async function cancelJob(jobId: string): Promise<void> {
