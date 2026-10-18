@@ -352,6 +352,11 @@ export function shouldScrollPlaybackHorizontally(
 const LOOP_EDGE_ZONE = 48;
 /** The fastest a dragged loop handle scrolls the view, in screen pixels per frame. */
 const LOOP_EDGE_MAX_SPEED = 18;
+/**
+ * How long realtime playback leaves the view where a moved loop end put it before
+ * following the playhead again, in milliseconds.
+ */
+const LOOP_EDIT_FOLLOW_HOLD_MS = 2500;
 /** How far past the document's edge a loop handle may scroll, and the room kept around one it reveals, in screen pixels. */
 const LOOP_SCROLL_PADDING = 32;
 
@@ -950,6 +955,8 @@ export function DocumentViewer({
   const finishLoopDrag = useRef((_commit: boolean) => undefined as void);
   const revealLoopBoundary = useRef((_region: LoopRegion, _handle: LoopHandle) => undefined as void);
   const shownLoopBefore = useRef<LoopRegion | null>(null);
+  // When a loop end last moved, so realtime following leaves the view on it a while.
+  const loopEditedAt = useRef(Number.NEGATIVE_INFINITY);
   useEffect(() => {
     if (!loop) {
       finishLoopDrag.current(false);
@@ -968,6 +975,9 @@ export function DocumentViewer({
     const before = shownLoopBefore.current;
     shownLoopBefore.current = loop ?? null;
     if (!loop || !before || loopLatest.current.loopDrag) return;
+    if (loop.endMeasure !== before.endMeasure || loop.startMeasure !== before.startMeasure) {
+      loopEditedAt.current = performance.now();
+    }
     if (loop.endMeasure !== before.endMeasure) revealLoopBoundary.current(loop, "end");
     else if (loop.startMeasure !== before.startMeasure) revealLoopBoundary.current(loop, "start");
   }, [loop?.startMeasure, loop?.endMeasure]);
@@ -1497,6 +1507,13 @@ export function DocumentViewer({
 
   useEffect(() => {
     if (!playbackActive || !playbackMoment) return;
+    // The view is the loop handle's while one is dragged, and in realtime, where the
+    // playhead moves on regardless, for a moment after a loop end moved.
+    if (loopLatest.current.loopDrag) return;
+    if (
+      (effectiveStatus === "playing" || effectiveStatus === "paused") &&
+      performance.now() - loopEditedAt.current < LOOP_EDIT_FOLLOW_HOLD_MS
+    ) return;
     const stage = stageRef.current;
     const page = pages.find((candidate) => candidate.index === playbackMoment.pageIndex);
     const rect = stage?.getBoundingClientRect();
