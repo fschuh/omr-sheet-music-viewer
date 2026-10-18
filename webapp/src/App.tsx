@@ -91,6 +91,7 @@ import {
   loopSystems,
   measureInLoop,
   noteByNoteInLoop,
+  routeEndBarline,
   routeStructuralPosition,
   type LoopRegion,
 } from "./loop";
@@ -440,13 +441,20 @@ export function App() {
   playbackActiveRef.current = playbackActive;
   const notePlaybackMoment = currentPlaybackMoment(playbackTimeline, playbackState);
   const realtimePlayhead = realtimeFrame && realtimeRouteRef.current && document
-    ? realtimePlayheadAt(realtimeRouteRef.current, realtimeFrame.offset, document.pages)
+    ? realtimePlayheadAt(
+        realtimeRouteRef.current,
+        realtimeFrame.offset,
+        document.pages,
+        routeEndBarline(scoreSystems, realtimeRouteRef.current),
+      )
     : null;
+  const scoreSystemsRef = useRef(scoreSystems);
+  scoreSystemsRef.current = scoreSystems;
   const getRealtimePlayhead = useCallback(() => {
     const frame = realtimeLatestFrameRef.current;
     const route = realtimeRouteRef.current;
     return frame && route
-      ? realtimePlayheadAt(route, frame.offset, documentPagesRef.current)
+      ? realtimePlayheadAt(route, frame.offset, documentPagesRef.current, routeEndBarline(scoreSystemsRef.current, route))
       : null;
   }, []);
   const realtimeDisplayNotes = useMemo(() => {

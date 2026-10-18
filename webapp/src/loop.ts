@@ -4,7 +4,7 @@
 // playback goes next while looping.
 import type { PageNoteGeometry } from "./noteGeometry";
 import type { PlaybackCommand, PlaybackMoment, PlaybackState } from "./playback";
-import type { PerformanceRoute, StructuralPosition } from "./realtime";
+import type { PerformanceRoute, RouteEndBarline, StructuralPosition } from "./realtime";
 
 /**
  * Measures by their document position, from 0. Both ends lie on barlines: the loop
@@ -250,5 +250,14 @@ export function routeStructuralPosition(route: PerformanceRoute, offset: number)
         measureIndex: occurrence.measureIndex,
         onset: occurrence.localStart + Math.max(0, offset - occurrence.scoreStart),
       }
+    : null;
+}
+
+/** The barline after the last measure a route plays, where its playhead stops. */
+export function routeEndBarline(systems: readonly LoopSystem[], route: PerformanceRoute): RouteEndBarline | null {
+  const last = route.occurrences.at(-1);
+  const placement = last ? loopBoundaryPlacement(systems, last.measureIndex + 1, "end") : null;
+  return placement
+    ? { pageIndex: placement.system.pageIndex, staffGroupIndex: placement.system.systemIndex, x: placement.x }
     : null;
 }

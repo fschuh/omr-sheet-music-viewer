@@ -219,6 +219,13 @@ export interface RealtimePlayhead {
   y2: number;
 }
 
+/** The barline a route ends on, where the playhead stops after its last note. */
+export interface RouteEndBarline {
+  pageIndex: number;
+  staffGroupIndex: number;
+  x: number;
+}
+
 export interface RealtimeFrame {
   status: "playing" | "paused";
   offset: number;
@@ -1807,6 +1814,7 @@ export function realtimePlayheadAt(
   route: PerformanceRoute,
   offset: number,
   _pages: DocumentPage[],
+  routeEnd: RouteEndBarline | null = null,
 ): RealtimePlayhead | null {
   const visible = visibleRouteNotes(route);
   if (visible.length === 0) return null;
@@ -1840,6 +1848,15 @@ export function realtimePlayheadAt(
     destinationOffset = next.onset;
   } else if (next) {
     destinationOffset = next.onset;
+  } else if (
+    routeEnd?.pageIndex === visual.pageIndex &&
+    routeEnd.staffGroupIndex === visual.staffGroupIndex &&
+    routeEnd.x > visual.x
+  ) {
+    // The route's last note runs on to the barline the route ends on, not to the end of
+    // the line: a loop starts over there.
+    destinationX = routeEnd.x;
+    destinationOffset = route.occurrences.at(-1)?.scoreEnd ?? destinationOffset;
   }
   const progress = destinationOffset <= current.onset
     ? 0

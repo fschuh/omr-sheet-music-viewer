@@ -13,6 +13,7 @@ import {
   loopSegments,
   loopSystems,
   moveLoopHandleTo,
+  routeEndBarline,
   routeStructuralPosition,
   type LoopRegion,
   type LoopSystem,
@@ -23,6 +24,8 @@ import {
   expandPerformanceRoute,
   parseRealtimeMusicXml,
   RealtimeController,
+  realtimePlayheadAt,
+  type VisualNoteTarget,
 } from "./realtime";
 
 /** Two systems of three measures on page 0, one of two measures on page 1. */
@@ -283,4 +286,32 @@ test("a looping controller starts its route over at the end, without losing time
   now = 9.5;
   (tick as (() => void) | null)?.();
   assert.equal(completed, true);
+});
+
+test("a loop's playhead runs on to the loop's end barline after its last note, not to the end of the line", () => {
+  // Measures 2 and 3 stand on page 0's first system, between barlines 300, 550 and 800.
+  const xs: Record<string, number> = { b0: 350, b1: 450, c0: 600, c1: 700 };
+  const visualMap = new Map(Object.entries(xs).map(([id, x]): [string, VisualNoteTarget] => [id, {
+    musicXmlId: id,
+    pageIndex: 0,
+    visualGroupId: id,
+    staffGroupIndex: 0,
+    x,
+    y: 200,
+    systemRight: 1000,
+    systemTop: 100,
+    systemBottom: 300,
+  }]));
+  const route = expandPerformanceRoute(parsed, { startMeasureIndex: 1, endMeasureIndex: 3, visualMap });
+  const end = routeEndBarline(systems, route);
+  assert.deepEqual(end, { pageIndex: 0, staffGroupIndex: 0, x: 800 });
+  // Halfway through the last note: halfway from it to the end barline.
+  assert.equal(realtimePlayheadAt(route, 3.5, [], end)?.x, 750);
+  // Without it, the playhead would head for the end of the line.
+  assert.equal(realtimePlayheadAt(route, 3.5, [])?.x, 850);
+  // Between notes it still follows the notes.
+  assert.equal(realtimePlayheadAt(route, 1.5, [], end)?.x, 525);
+  // A one-measure loop ends on the barline inside the system.
+  const short = expandPerformanceRoute(parsed, { startMeasureIndex: 1, endMeasureIndex: 2, visualMap });
+  assert.equal(realtimePlayheadAt(short, 1.5, [], routeEndBarline(systems, short))?.x, 500);
 });
