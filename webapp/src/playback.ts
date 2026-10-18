@@ -21,6 +21,8 @@ export const playbackCommandNames = [
   "forwardPage",
   "backwardPage",
   "toggleLoopMode",
+  "tempoUp",
+  "tempoDown",
 ] as const;
 
 export type PlaybackCommand = (typeof playbackCommandNames)[number];
@@ -493,6 +495,8 @@ function commandDestination(
     | "toggleListenMode"
     | "playCurrentNotes"
     | "toggleLoopMode"
+    | "tempoUp"
+    | "tempoDown"
   >,
 ): number {
   if (command === "forwardNote") return Math.min(timeline.length - 1, index + 1);
@@ -555,7 +559,12 @@ export function runPlaybackCommand(
   if (command === "toggleListenMode") {
     return state.active ? { ...state, listenModeEnabled: !state.listenModeEnabled } : state;
   }
-  if (command === "playCurrentNotes" || command === "toggleLoopMode") return state;
+  if (
+    command === "playCurrentNotes" ||
+    command === "toggleLoopMode" ||
+    command === "tempoUp" ||
+    command === "tempoDown"
+  ) return state;
   if (!state.active || timeline.length === 0) return state;
   const destination = commandDestination(timeline, currentIndex(timeline, state), command);
   return { ...state, active: true, currentMomentId: timeline[destination].id };

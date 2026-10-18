@@ -29,6 +29,10 @@ test("default shortcuts reproduce the existing playback keys", () => {
   assert.equal(commandForKeyboardEvent(shortcuts, keyEvent("Comma")), "backwardBar");
   assert.equal(commandForKeyboardEvent(shortcuts, keyEvent("ArrowDown")), "forwardPage");
   assert.equal(commandForKeyboardEvent(shortcuts, keyEvent("ArrowUp")), "backwardPage");
+  // Shift turns the page arrows into tempo, which reads the same on every keyboard layout.
+  assert.equal(commandForKeyboardEvent(shortcuts, keyEvent("ArrowUp", { shiftKey: true })), "tempoUp");
+  assert.equal(commandForKeyboardEvent(shortcuts, keyEvent("ArrowDown", { shiftKey: true })), "tempoDown");
+  assert.equal(formatKeyboardShortcut(shortcuts.tempoUp.keyboard), "Shift + Up Arrow");
 });
 
 test("old persisted settings receive the new listen and audition defaults", () => {

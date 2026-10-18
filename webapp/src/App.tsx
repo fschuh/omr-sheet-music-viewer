@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { DocumentViewer } from "./DocumentViewer";
+import { DocumentViewer, steppedTempoMultiplier } from "./DocumentViewer";
 import { printedValueSummary } from "./noteValues";
 import {
   addPredictedFingeringsToMusicXml,
@@ -249,6 +249,14 @@ function isPlaybackToggleCommand(command: PlaybackCommand): boolean {
     command === "toggleLoopMode";
 }
 
+/** Commands that do something before playback starts. */
+function commandWorksWhileStopped(command: PlaybackCommand): boolean {
+  return command === "togglePlayback" ||
+    command === "stopPlayback" ||
+    command === "tempoUp" ||
+    command === "tempoDown";
+}
+
 function RefreshRateDiagnostic() {
   const [refreshRate, setRefreshRate] = useState<number | null>(null);
 
@@ -423,6 +431,13 @@ export function App() {
   } | null>(null);
   const realtimeRenderSignatureRef = useRef("");
   const [tempoMultiplier, setTempoMultiplier] = useState(1);
+  const tempoMultiplierRef = useRef(tempoMultiplier);
+  tempoMultiplierRef.current = tempoMultiplier;
+  const changeTempoMultiplier = useCallback((multiplier: number) => {
+    tempoMultiplierRef.current = multiplier;
+    setTempoMultiplier(multiplier);
+    realtimeControllerRef.current?.setTempoMultiplier(multiplier);
+  }, []);
   const [noteHighwayEnabled, setNoteHighwayEnabled] = useState(loadNoteHighwayEnabled);
   const realtimeRouteRef = useRef<PerformanceRoute | null>(null);
   /** The realtime route is a loop's, which starts over at its end. */
@@ -874,7 +889,9 @@ export function App() {
         if (
           command === "toggleListenMode" ||
           command === "playCurrentNotes" ||
-          command === "toggleLoopMode"
+          command === "toggleLoopMode" ||
+          command === "tempoUp" ||
+          command === "tempoDown"
         ) return;
         if (realtimeStatus === "inactive" || !realtimeModel.score) return;
         const route = realtimeRouteRef.current;
@@ -1267,6 +1284,11 @@ export function App() {
   }, [applyLoop, documentMeasureCount, loopMode]);
 
   const handlePlaybackCommand = useCallback((command: PlaybackCommand) => {
+    if (command === "tempoUp" || command === "tempoDown") {
+      if (playbackMode !== "realtime") return;
+      changeTempoMultiplier(steppedTempoMultiplier(tempoMultiplierRef.current, command === "tempoUp" ? 1 : -1));
+      return;
+    }
     if (command === "toggleLoopMode") {
       toggleLoopMode();
       return;
@@ -1293,6 +1315,7 @@ export function App() {
   }, [
     applyPlaybackStateCommand,
     auditionCurrentNotes,
+    changeTempoMultiplier,
     playbackMode,
     startListenMode,
     stopListenMode,
@@ -1491,11 +1514,7 @@ export function App() {
       if (activePage !== "viewer") return;
       if (isEditableKeyboardTarget(event.target)) return;
       const command = commandForKeyboardEvent(shortcuts, event);
-      if (!command || (
-        command !== "togglePlayback" &&
-        command !== "stopPlayback" &&
-        !playbackActive
-      )) return;
+      if (!command || (!commandWorksWhileStopped(command) && !playbackActive)) return;
       if (isPlaybackToggleCommand(command) && event.repeat) return;
       event.preventDefault();
       handlePlaybackCommand(command);
@@ -1560,11 +1579,7 @@ export function App() {
 
       if (activePageRef.current !== "viewer") return;
       const command = commandForMidiShortcut(shortcutsRef.current, received);
-      if (!command || (
-        command !== "togglePlayback" &&
-        command !== "stopPlayback" &&
-        !playbackActiveRef.current
-      )) return;
+      if (!command || (!commandWorksWhileStopped(command) && !playbackActiveRef.current)) return;
       stopMidiRepeat();
       handlePlaybackCommandRef.current(command);
       if (!isPlaybackToggleCommand(command)) startMidiRepeat(command, received);
@@ -2401,10 +2416,7 @@ export function App() {
               }}
               onPlaybackCommand={handlePlaybackCommand}
               onPlaybackModeChange={handlePlaybackModeChange}
-              onTempoMultiplierChange={(multiplier) => {
-                setTempoMultiplier(multiplier);
-                realtimeControllerRef.current?.setTempoMultiplier(multiplier);
-              }}
+              onTempoMultiplierChange={changeTempoMultiplier}
               onSelectGroup={handleSelectGroup}
               onRetryPage={handleRetryPage}
             />

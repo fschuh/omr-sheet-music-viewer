@@ -117,6 +117,12 @@ export function validTempoPercentage(value: string): number | null {
     : null;
 }
 
+/** The tempo multiplier `step` percentage points from `multiplier`, kept in range. */
+export function steppedTempoMultiplier(multiplier: number, step: number): number {
+  const percentage = Math.round(multiplier * 100) + step;
+  return Math.min(MAX_TEMPO_PERCENTAGE, Math.max(MIN_TEMPO_PERCENTAGE, percentage)) / 100;
+}
+
 export function committedTempoPercentage(value: string): number | null {
   if (value.trim() === "") return null;
   const percentage = Number(value);
@@ -1624,6 +1630,7 @@ export function DocumentViewer({
                 type="button"
                 className="tempo-button"
                 aria-label={`Tempo ${Math.round(tempoBpm)} BPM`}
+                title="Tempo; Shift+Up and Shift+Down change it by 1%"
                 aria-expanded={tempoPopoverOpen}
                 onClick={() => setTempoPopoverOpen((open) => !open)}
               >{Math.round(tempoBpm)} BPM</button>

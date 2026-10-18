@@ -40,6 +40,8 @@ export const playbackCommandDetails: ReadonlyArray<{
   { command: "forwardPage", label: "Next page", description: "Move to the first note of the next page." },
   { command: "backwardPage", label: "Previous page", description: "Move to the first note of the previous page." },
   { command: "toggleLoopMode", label: "Loop", description: "Turn loop mode on, looping the bar being played, or off." },
+  { command: "tempoUp", label: "Faster", description: "Raise the realtime tempo by 1%." },
+  { command: "tempoDown", label: "Slower", description: "Lower the realtime tempo by 1%." },
 ];
 
 function keyboard(code: string): KeyboardShortcut {
@@ -60,6 +62,8 @@ export function defaultPlaybackShortcuts(): PlaybackShortcuts {
     forwardPage: { keyboard: keyboard("ArrowDown"), midi: null },
     backwardPage: { keyboard: keyboard("ArrowUp"), midi: null },
     toggleLoopMode: { keyboard: keyboard("KeyL"), midi: null },
+    tempoUp: { keyboard: { ...keyboard("ArrowUp"), shift: true }, midi: null },
+    tempoDown: { keyboard: { ...keyboard("ArrowDown"), shift: true }, midi: null },
   };
 }
 

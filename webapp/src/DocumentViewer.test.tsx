@@ -10,6 +10,7 @@ import {
   pageDiagnosticNoteheads,
   playbackMomentExtents,
   shouldScrollPlaybackHorizontally,
+  steppedTempoMultiplier,
   validTempoPercentage,
 } from "./DocumentViewer";
 import {
@@ -34,6 +35,15 @@ test("tempo input accepts partial edits and validates only complete percentages"
   assert.equal(committedTempoPercentage("301"), 300);
   assert.equal(committedTempoPercentage("45.6"), 46);
   assert.equal(committedTempoPercentage("invalid"), null);
+});
+
+test("tempo shortcuts step by one percentage point within the tempo range", () => {
+  assert.equal(steppedTempoMultiplier(1, 1), 1.01);
+  assert.equal(steppedTempoMultiplier(1, -1), 0.99);
+  // Steps from the shown percentage, so a typed 45.6% that shows as 46% goes to 47%.
+  assert.equal(steppedTempoMultiplier(0.456, 1), 0.47);
+  assert.equal(steppedTempoMultiplier(3, 1), 3);
+  assert.equal(steppedTempoMultiplier(0.1, -1), 0.1);
 });
 
 function group(id: string, physicalStaffIndex: number, x: number, y: number): VisualGroup {

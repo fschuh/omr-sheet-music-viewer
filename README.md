@@ -42,6 +42,8 @@ Playback commands can be triggered from the viewer toolbar, customizable
 keyboard shortcuts, or optional MIDI messages. Open **Settings** to reassign a
 shortcut: select a keyboard cell and press a key combination, or select a MIDI
 cell and send the desired message. Press `Esc` to cancel either capture.
+In realtime playback, `Shift`+`Up` and `Shift`+`Down` raise and lower the tempo
+by 1%, repeating while held.
 Recognized notes and chords play with polyphonic piano audio while note sounds
 are enabled. Use the speaker button or the default `M` shortcut to mute or
 unmute them. Tone.js provides sample scheduling, release envelopes, compression,
