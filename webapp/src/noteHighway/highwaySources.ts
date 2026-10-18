@@ -6,7 +6,8 @@ import {
   HIGHWAY_LOOKAHEAD_STEPS,
   highwayTrackForRoute,
   highwayTrackForSteps,
-  highwayTrackWithLoopEnd,
+  highwayTrackLooped,
+  type HighwayLoop,
   type HighwayStepMoment,
   type HighwayTrack,
 } from "./highwayModel";
@@ -28,7 +29,7 @@ const STEP_GLIDE_MS = 160;
  * Realtime: score seconds on the playback clock. The window grows with the tempo
  * multiplier so notes take the same real time to reach the keys at any tempo.
  * While one hand is practised, the other hand's notes are ghosts. A looping route
- * starts over at its end, which the highway marks.
+ * starts over at its end, so the highway shows its start coming again after it.
  */
 export function useRealtimeHighwaySource(
   getRoute: () => PerformanceRoute | null,
@@ -43,9 +44,9 @@ export function useRealtimeHighwaySource(
     const window = HIGHWAY_LOOKAHEAD_SECONDS * latest.current.tempoMultiplier;
     const route = getRoute();
     if (!route) return { track: null, now: 0, window };
-    const loopEnd = getLooping() ? scoreOffsetToSeconds(route, route.totalQuarters, 1) : null;
+    const loop = getLooping() ? { start: 0, end: scoreOffsetToSeconds(route, route.totalQuarters, 1) } : null;
     return {
-      track: highwayTrackWithLoopEnd(highwayTrackForRoute(route, latest.current.hand), loopEnd),
+      track: highwayTrackLooped(highwayTrackForRoute(route, latest.current.hand), loop, window),
       now: scoreOffsetToSeconds(route, getOffset(), 1),
       window,
     };
@@ -62,21 +63,23 @@ function easeOutCubic(progress: number): number {
  * timeline, so moments the practised hand skips still show the other hand's
  * ghosts between steps; `currentIndex` indexes the practised hand's timeline.
  * The track is built on first use for each timeline and hand, so a hidden
- * highway costs nothing. `loopEndStep`, in the same steps, is where a loop starts over.
+ * highway costs nothing. `loop`, in the same steps, is what playback repeats: past its
+ * end the highway shows its start again, and stepping from its last moment back to its
+ * first glides on, as if into the next bar.
  */
 export function useNoteByNoteHighwaySource(
   moments: readonly HighwayStepMoment[],
   currentIndex: number,
   hand: PracticeHand,
-  loopEndStep: number | null = null,
+  loop: HighwayLoop | null = null,
 ): HighwayFrameSource {
   const trackCache = useRef<{
     moments: readonly HighwayStepMoment[];
     hand: PracticeHand;
     track: HighwayTrack;
   } | null>(null);
-  const latest = useRef({ moments, hand, loopEndStep });
-  latest.current = { moments, hand, loopEndStep };
+  const latest = useRef({ moments, hand, loop });
+  latest.current = { moments, hand, loop };
   const glide = useRef({ from: currentIndex, to: currentIndex, startedAt: 0, hand });
 
   const positionAt = useCallback((time: number) => {
@@ -87,7 +90,19 @@ export function useNoteByNoteHighwaySource(
 
   useLayoutEffect(() => {
     const time = performance.now();
-    const from = positionAt(time);
+    let from = positionAt(time);
+    // A loop starting over: glide on from where its last moment stands before its start.
+    const currentLoop = latest.current.loop;
+    const previous = glide.current.to;
+    if (
+      currentLoop &&
+      currentIndex === currentLoop.start &&
+      previous >= currentLoop.end - 1 &&
+      previous < currentLoop.end &&
+      previous > currentIndex
+    ) {
+      from -= currentLoop.end - currentLoop.start;
+    }
     // Jumps beyond the visible span (bar, page, seek) would only smear, and a
     // hand change renumbers the steps: cut instead of gliding.
     const cut = hand !== glide.current.hand ||
@@ -106,7 +121,7 @@ export function useNoteByNoteHighwaySource(
       };
     }
     return {
-      track: highwayTrackWithLoopEnd(trackCache.current!.track, latest.current.loopEndStep),
+      track: highwayTrackLooped(trackCache.current!.track, latest.current.loop, HIGHWAY_LOOKAHEAD_STEPS),
       now: positionAt(performance.now()),
       window: HIGHWAY_LOOKAHEAD_STEPS,
     };

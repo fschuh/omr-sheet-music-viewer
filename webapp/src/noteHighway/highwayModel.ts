@@ -214,23 +214,60 @@ export function highwayTrackForRoute(
   return track;
 }
 
-const loopTracks = new WeakMap<HighwayTrack, { time: number; track: HighwayTrack }>();
+/** A loop on a track's time axis: what plays from `start` up to `end` repeats. */
+export interface HighwayLoop {
+  start: number;
+  end: number;
+}
+
+const loopTracks = new WeakMap<HighwayTrack, { loop: HighwayLoop; window: number; track: HighwayTrack }>();
 
 /**
- * The track with a loop-coloured line across every lane at `time`, where a loop starts
- * over, so the repeat can be seen coming. Cached per track for the last time asked.
+ * The track as a loop plays it: the loop's notes and lines over and over, so what comes
+ * after the loop's end is its start again, as far ahead as `window` reaches, and the pass
+ * before it lies behind. Each start-over is a loop-coloured line across every lane, so
+ * the repeat can be seen coming. Cached per track for the last loop and window asked.
  */
-export function highwayTrackWithLoopEnd(track: HighwayTrack, time: number | null): HighwayTrack {
-  if (time === null) return track;
+export function highwayTrackLooped(
+  track: HighwayTrack,
+  loop: HighwayLoop | null,
+  window: number,
+): HighwayTrack {
+  if (!loop || !(loop.end > loop.start)) return track;
   const cached = loopTracks.get(track);
-  if (cached?.time === time) return cached.track;
-  const lines: TrackLine[] = Array.from({ length: track.lines.count }, (_, index) => ({
-    time: track.lines.instances[index * GRID_LINE_INSTANCE_FLOATS],
-    strength: track.lines.instances[index * GRID_LINE_INSTANCE_FLOATS + 1],
-  }));
-  lines.push({ time, strength: LOOP_LINE_STRENGTH });
-  const looped = { notes: track.notes, lines: packLines(lines) };
-  loopTracks.set(track, { time, track: looped });
+  if (cached?.loop.start === loop.start && cached.loop.end === loop.end && cached.window === window) {
+    return cached.track;
+  }
+  const length = loop.end - loop.start;
+  const passes = Math.max(1, Math.ceil(window / length));
+  const loopNotes: TrackNote[] = [];
+  for (let index = 0; index < track.notes.count; index += 1) {
+    const start = track.notes.starts[index];
+    if (start < loop.start - 1e-9 || start >= loop.end - 1e-9) continue;
+    loopNotes.push({
+      midi: track.notes.midis[index],
+      start,
+      end: Math.min(loop.end, track.notes.ends[index]),
+      ghost: track.notes.ghosts[index] === 1,
+    });
+  }
+  const loopLines: TrackLine[] = [];
+  for (let index = 0; index < track.lines.count; index += 1) {
+    const time = track.lines.times[index];
+    if (time <= loop.start + 1e-9 || time >= loop.end - 1e-9) continue;
+    loopLines.push({ time, strength: track.lines.instances[index * GRID_LINE_INSTANCE_FLOATS + 1] });
+  }
+  const notes: TrackNote[] = [];
+  const lines: TrackLine[] = [];
+  for (let pass = -1; pass <= passes; pass += 1) {
+    const shift = pass * length;
+    notes.push(...loopNotes.map((note) => ({ ...note, start: note.start + shift, end: note.end + shift })));
+    lines.push({ time: loop.start + shift, strength: LOOP_LINE_STRENGTH });
+    lines.push(...loopLines.map((line) => ({ ...line, time: line.time + shift })));
+  }
+  lines.push({ time: loop.start + (passes + 1) * length, strength: LOOP_LINE_STRENGTH });
+  const looped = { notes: packNotes(notes), lines: packLines(lines) };
+  loopTracks.set(track, { loop: { ...loop }, window, track: looped });
   return looped;
 }
 

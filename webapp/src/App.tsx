@@ -565,17 +565,21 @@ export function App() {
     practiceHand,
     getRealtimeRouteLoops,
   );
-  const noteByNoteLoopEndStep = useMemo(() => {
+  // The loop in the highway's note-by-note steps: from its first practised moment up to
+  // the step after its last.
+  const noteByNoteLoopSteps = useMemo(() => {
     if (!loop) return null;
+    const first = playbackTimeline.findIndex((moment) => measureInLoop(moment.measureIndex, loop));
+    if (first < 0) return null;
     let last = playbackTimeline.length - 1;
-    while (last >= 0 && !measureInLoop(playbackTimeline[last].measureIndex, loop)) last -= 1;
-    return last < 0 ? null : last + 1;
+    while (!measureInLoop(playbackTimeline[last].measureIndex, loop)) last -= 1;
+    return { start: first, end: last + 1 };
   }, [loop?.startMeasure, loop?.endMeasure, playbackTimeline]);
   const noteByNoteHighwayFrame = useNoteByNoteHighwaySource(
     fullPlaybackTimeline,
     notePlaybackMoment ? Math.max(0, playbackTimeline.indexOf(notePlaybackMoment)) : 0,
     practiceHand,
-    noteByNoteLoopEndStep,
+    noteByNoteLoopSteps,
   );
   // Both hands sound in ordinary playback. Practising one hand, each hand follows
   // its own switch; accompaniment by the other hand exists in realtime only,

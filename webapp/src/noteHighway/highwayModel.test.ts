@@ -217,18 +217,54 @@ test("fits the hit line to the canvas bottom and the far end to its top", () => 
   }
 });
 
-test("a loop's end is a loop-coloured line across the highway, cached per track", async () => {
-  const { highwayTrackWithLoopEnd, LOOP_LINE_STRENGTH } = await import("./highwayModel");
+test("a looped track repeats the loop's notes past its end, with a loop line at each start-over", async () => {
+  const { highwayTrackLooped, LOOP_LINE_STRENGTH } = await import("./highwayModel");
+  // Steps 0–3: C4, then the loop D4 E4 (bars 2 and 3), then F4 after it.
   const track = highwayTrackForSteps([
     { pitches: ["C4"], keyboardNotes: [{ pitch: "C4" }], barKey: "b1" },
     { pitches: ["D4"], keyboardNotes: [{ pitch: "D4" }], barKey: "b2" },
+    { pitches: ["E4"], keyboardNotes: [{ pitch: "E4" }], barKey: "b3" },
+    { pitches: ["F4"], keyboardNotes: [{ pitch: "F4" }], barKey: "b4" },
   ]);
-  assert.equal(highwayTrackWithLoopEnd(track, null), track);
-  const looped = highwayTrackWithLoopEnd(track, 2);
-  assert.equal(looped.notes, track.notes);
-  assert.equal(looped.lines.count, track.lines.count + 1);
-  const last = (looped.lines.count - 1) * 2;
-  assert.deepEqual([looped.lines.instances[last], looped.lines.instances[last + 1]], [2, LOOP_LINE_STRENGTH]);
-  assert.equal(highwayTrackWithLoopEnd(track, 2), looped);
-  assert.notEqual(highwayTrackWithLoopEnd(track, 1), looped);
+  assert.equal(highwayTrackLooped(track, null, 4), track);
+  const looped = highwayTrackLooped(track, { start: 1, end: 3 }, 4);
+  const notes = Array.from({ length: looped.notes.count }, (_, index) => [
+    looped.notes.midis[index],
+    looped.notes.starts[index],
+    looped.notes.ends[index],
+  ]);
+  // After the loop's last note comes its first again, never F4 or C4, one pass behind
+  // and as far ahead as the window reaches.
+  assert.deepEqual(notes, [
+    [62, -1, 0], [64, 0, 1],
+    [62, 1, 2], [64, 2, 3],
+    [62, 3, 4], [64, 4, 5],
+    [62, 5, 6], [64, 6, 7],
+  ]);
+  const lines = Array.from({ length: looped.lines.count }, (_, index) => [
+    looped.lines.times[index],
+    looped.lines.instances[index * 2 + 1],
+  ]);
+  // Bar 3's line repeats inside each pass; every start-over is a loop line.
+  assert.deepEqual(lines, [
+    [-1, LOOP_LINE_STRENGTH], [0, 1],
+    [1, LOOP_LINE_STRENGTH], [2, 1],
+    [3, LOOP_LINE_STRENGTH], [4, 1],
+    [5, LOOP_LINE_STRENGTH], [6, 1],
+    [7, LOOP_LINE_STRENGTH],
+  ]);
+  assert.equal(highwayTrackLooped(track, { start: 1, end: 3 }, 4), looped);
+  assert.notEqual(highwayTrackLooped(track, { start: 1, end: 2 }, 4), looped);
+});
+
+test("a looped realtime route shows its start again after its end", async () => {
+  const { highwayTrackLooped } = await import("./highwayModel");
+  // Two quarters at 120 BPM: the loop lasts one second.
+  const track = highwayTrackForRoute({ ...route([note("a", "C4", 0, 1), note("b", "D4", 1, 2)]), totalQuarters: 2 });
+  const looped = highwayTrackLooped(track, { start: 0, end: 1 }, 3.2);
+  const ahead = Array.from({ length: looped.notes.count }, (_, index) => [looped.notes.midis[index], looped.notes.starts[index]])
+    .filter(([, start]) => start >= 1 && start < 2);
+  assert.deepEqual(ahead, [[60, 1], [62, 1.5]]);
+  // The window reaches past one pass, so more passes follow.
+  assert.ok(looped.notes.starts[looped.notes.count - 1] >= 1 + 3.2 - 1);
 });
