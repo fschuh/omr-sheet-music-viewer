@@ -403,8 +403,8 @@ export function App() {
     () => buildRealtimeVisualMap(noteGeometry),
     [noteGeometry],
   );
-  // Loop mode is per document. Turning it on always loops the bar being played, and
-  // turning it off forgets the bars it looped.
+  // Loop mode belongs to one run of playback. Turning it on always loops the bar being
+  // played; turning it off, or stopping playback, forgets the bars it looped.
   const [loopMode, setLoopMode] = useState(false);
   const [loopRegion, setLoopRegion] = useState<LoopRegion | null>(null);
   const [loopPass, setLoopPass] = useState(1);
@@ -456,6 +456,12 @@ export function App() {
   const playbackActive = playbackStatus !== "inactive";
   const playbackActiveRef = useRef(playbackActive);
   playbackActiveRef.current = playbackActive;
+  useEffect(() => {
+    if (playbackActive) return;
+    setLoopMode(false);
+    setLoopRegion(null);
+    setLoopPass(1);
+  }, [playbackActive]);
   const notePlaybackMoment = currentPlaybackMoment(playbackTimeline, playbackState);
   const realtimePlayhead = realtimeFrame && realtimeRouteRef.current && document
     ? realtimePlayheadAt(

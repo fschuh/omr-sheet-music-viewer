@@ -77,7 +77,8 @@ and a handle held near the edge of the view scrolls it on. Playback that
 starts or is moved outside the loop jumps to its first bar. Note-by-note wraps
 from the loop's last note to its first, and realtime starts the loop over without
 a gap; the button counts the passes, and the note highway marks where the loop
-starts over. Turning loop mode on again starts over from the bar being played.
+starts over. Stopping playback turns loop mode off, and turning it on again starts
+over from the bar being played.
 **Settings** can stop the bars outside the loop from being dimmed. On a recognized PDF, homr records no barlines, so the
 handles stand between the notes and rests of neighbouring bars and can sit a
 little away from the printed barline.
