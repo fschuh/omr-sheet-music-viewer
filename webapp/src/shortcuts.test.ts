@@ -44,39 +44,6 @@ test("old persisted settings receive the new listen and audition defaults", () =
   assert.equal(commandForKeyboardEvent(parsed, keyEvent("KeyL")), "toggleLoopMode");
 });
 
-const keyL = { code: "KeyL", ctrl: false, alt: false, shift: false, meta: false };
-const keyK = { code: "KeyK", ctrl: false, alt: false, shift: false, meta: false };
-const keyI = { code: "KeyI", ctrl: false, alt: false, shift: false, meta: false };
-
-test("settings saved before loop mode move listen mode off L, which loop mode now uses", () => {
-  const parsed = parsePlaybackShortcuts({ toggleListenMode: { keyboard: keyL, midi: null } });
-  assert.equal(commandForKeyboardEvent(parsed, keyEvent("KeyL")), "toggleLoopMode");
-  assert.equal(commandForKeyboardEvent(parsed, keyEvent("KeyI")), "toggleListenMode");
-});
-
-test("a listen key chosen away from L, or L saved alongside a loop key, is kept", () => {
-  const custom = parsePlaybackShortcuts({ toggleListenMode: { keyboard: keyK, midi: null } });
-  assert.equal(commandForKeyboardEvent(custom, keyEvent("KeyK")), "toggleListenMode");
-  assert.equal(commandForKeyboardEvent(custom, keyEvent("KeyL")), "toggleLoopMode");
-
-  const chosen = parsePlaybackShortcuts({
-    toggleListenMode: { keyboard: keyL, midi: null },
-    toggleLoopMode: { keyboard: keyK, midi: null },
-  });
-  assert.equal(commandForKeyboardEvent(chosen, keyEvent("KeyL")), "toggleListenMode");
-  assert.equal(commandForKeyboardEvent(chosen, keyEvent("KeyK")), "toggleLoopMode");
-});
-
-test("listen mode stays on L when another command already holds its new default", () => {
-  const parsed = parsePlaybackShortcuts({
-    toggleListenMode: { keyboard: keyL, midi: null },
-    playCurrentNotes: { keyboard: keyI, midi: null },
-  });
-  // Listen mode keeps L and wins it over loop mode, which comes later; I stays with audition.
-  assert.equal(commandForKeyboardEvent(parsed, keyEvent("KeyL")), "toggleListenMode");
-  assert.equal(commandForKeyboardEvent(parsed, keyEvent("KeyI")), "playCurrentNotes");
-});
-
 test("keyboard matching includes modifiers", () => {
   const shortcuts = defaultPlaybackShortcuts();
   shortcuts.forwardNote.keyboard = { code: "KeyN", ctrl: true, alt: false, shift: true, meta: false };

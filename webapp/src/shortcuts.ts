@@ -63,9 +63,6 @@ export function defaultPlaybackShortcuts(): PlaybackShortcuts {
   };
 }
 
-/** Listen mode's default before loop mode took L. */
-const FORMER_LISTEN_DEFAULT = keyboard("KeyL");
-
 function validKeyboardShortcut(value: unknown): value is KeyboardShortcut {
   if (!value || typeof value !== "object") return false;
   const candidate = value as Partial<KeyboardShortcut>;
@@ -113,19 +110,6 @@ export function parsePlaybackShortcuts(value: unknown): PlaybackShortcuts {
       result[command].keyboard = { ...candidate.keyboard };
     }
     result[command].midi = sanitizedMidiShortcut(candidate.midi);
-  }
-  // Settings saved before loop mode existed hold listen mode on its old default, L, which
-  // is now loop mode's: listen mode moves to its new default unless it was chosen on purpose.
-  if (
-    !stored.toggleLoopMode &&
-    keyboardShortcutsEqual(result.toggleListenMode.keyboard, FORMER_LISTEN_DEFAULT) &&
-    !playbackCommandNames.some((command) => (
-      command !== "toggleListenMode" &&
-      command !== "toggleLoopMode" &&
-      keyboardShortcutsEqual(result[command].keyboard, defaultPlaybackShortcuts().toggleListenMode.keyboard)
-    ))
-  ) {
-    result.toggleListenMode.keyboard = defaultPlaybackShortcuts().toggleListenMode.keyboard;
   }
   return result;
 }

@@ -78,8 +78,7 @@ loop from being dimmed. On a recognized PDF, homr records no barlines, so the
 handles stand between the notes and rests of neighbouring bars and can sit a
 little away from the printed barline.
 
-Listen mode is opt-in during note-by-note playback. Its default shortcut is `I`;
-settings saved while it was `L` move to `I` unless `I` is taken. **Settings** selects either
+Listen mode is opt-in during note-by-note playback, toggled with `I`. **Settings** selects either
 the system-default microphone (the default) or MIDI keyboard input, and remembers
 the choice. The microphone path runs the local `online_amt` recognizer: an
 AudioWorklet captures 512-sample mono chunks at 16 kHz and a dedicated worker runs
