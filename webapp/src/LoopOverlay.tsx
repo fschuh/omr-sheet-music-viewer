@@ -46,10 +46,8 @@ const TOOLTIP_HEIGHT = 26;
 const TOOLTIP_GAP = 8;
 
 export interface LoopHandleEvents {
+  /** Starts a drag, which the viewer then follows to the pointer's release. */
   onPointerDown(handle: LoopHandle, event: PointerEvent<SVGElement>): void;
-  onPointerMove(event: PointerEvent<SVGElement>): void;
-  onPointerUp(event: PointerEvent<SVGElement>): void;
-  onPointerCancel(event: PointerEvent<SVGElement>): void;
   onKeyDown(handle: LoopHandle, event: KeyboardEvent<SVGElement>): void;
   onHover(handle: LoopHandle | null): void;
 }
@@ -237,9 +235,6 @@ function Handle({
         width={HIT_WIDTH * unit}
         height={barBottom - tabTop}
         onPointerDown={(event) => events.onPointerDown(handle, event)}
-        onPointerMove={events.onPointerMove}
-        onPointerUp={events.onPointerUp}
-        onPointerCancel={events.onPointerCancel}
         onPointerEnter={() => events.onHover(handle)}
         onPointerLeave={() => events.onHover(null)}
         onFocus={() => events.onHover(handle)}

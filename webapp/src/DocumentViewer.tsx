@@ -945,17 +945,18 @@ export function DocumentViewer({
   const loopPointer = useRef<{ x: number; y: number } | null>(null);
   const loopScrollFrame = useRef<number | null>(null);
   const followLoopPointer = useRef(() => undefined as void);
+  // Detaches the listeners of the drag under way; ends that drag.
+  const endLoopDrag = useRef(() => undefined as void);
+  const finishLoopDrag = useRef((_commit: boolean) => undefined as void);
   const revealLoopBoundary = useRef((_region: LoopRegion, _handle: LoopHandle) => undefined as void);
   const shownLoopBefore = useRef<LoopRegion | null>(null);
   useEffect(() => {
     if (!loop) {
-      setLoopDrag(null);
+      finishLoopDrag.current(false);
       setLoopHover(null);
     }
   }, [loop]);
-  useEffect(() => () => {
-    if (loopScrollFrame.current !== null) cancelAnimationFrame(loopScrollFrame.current);
-  }, []);
+  useEffect(() => () => finishLoopDrag.current(false), []);
   // The view moved under a held handle, by edge scrolling or the wheel: the handle
   // follows the pointer to the barline now beneath it.
   useEffect(() => {
@@ -1056,15 +1057,16 @@ export function DocumentViewer({
       if (dx !== 0 || dy !== 0) schedule((latest) => ({ ...latest, x: latest.x + dx, y: latest.y + dy }));
     };
     revealLoopBoundary.current = revealBoundary;
-    const finish = (event: ReactPointerEvent<SVGElement>, commit: boolean) => {
+    /** Ends the drag, keeping the dragged region when `commit` is set. */
+    const finish = (commit: boolean) => {
       const { loop: current, loopDrag: drag, onLoopChange: change } = loopLatest.current;
-      if (!drag || drag.pointerId !== event.pointerId) return;
-      event.stopPropagation();
       stopScrolling();
       loopPointer.current = null;
-      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-        event.currentTarget.releasePointerCapture(event.pointerId);
-      }
+      endLoopDrag.current();
+      if (!drag) return;
+      const stage = stageRef.current;
+      if (stage?.hasPointerCapture(drag.pointerId)) stage.releasePointerCapture(drag.pointerId);
+      loopLatest.current.loopDrag = null;
       setLoopDrag(null);
       if (
         commit && current &&
@@ -1073,32 +1075,52 @@ export function DocumentViewer({
         change?.(drag.region);
       }
     };
+    finishLoopDrag.current = finish;
     return {
       onPointerDown(handle: LoopHandle, event: ReactPointerEvent<SVGElement>) {
         const { loop: current } = loopLatest.current;
-        if (!current || event.button !== 0) return;
+        const stage = stageRef.current;
+        if (!current || !stage || event.button !== 0) return;
         // The handle takes the pointer; the score must not pan or select under it.
         event.stopPropagation();
         event.preventDefault();
-        event.currentTarget.setPointerCapture(event.pointerId);
-        const drag = { handle, pointerId: event.pointerId, region: current };
+        finish(false);
+        // The handle is redrawn on whichever page its barline lies, which can unmount the
+        // element pressed, so the stage holds the pointer and the window follows it.
+        const pointerId = event.pointerId;
+        stage.setPointerCapture(pointerId);
+        const drag = { handle, pointerId, region: current };
         loopLatest.current.loopDrag = drag;
         loopPointer.current = { x: event.clientX, y: event.clientY };
         setLoopDrag(drag);
-      },
-      onPointerMove(event: ReactPointerEvent<SVGElement>) {
-        const { loopDrag: drag } = loopLatest.current;
-        if (!drag || drag.pointerId !== event.pointerId) return;
-        event.stopPropagation();
-        loopPointer.current = { x: event.clientX, y: event.clientY };
-        followPointer();
-        if (loopScrollFrame.current === null) scrollFrame();
-      },
-      onPointerUp(event: ReactPointerEvent<SVGElement>) {
-        finish(event, true);
-      },
-      onPointerCancel(event: ReactPointerEvent<SVGElement>) {
-        finish(event, false);
+        const move = (moved: PointerEvent) => {
+          if (moved.pointerId !== pointerId) return;
+          // A release the window never saw: the button is already up.
+          if (moved.pointerType === "mouse" && (moved.buttons & 1) === 0) {
+            finish(true);
+            return;
+          }
+          loopPointer.current = { x: moved.clientX, y: moved.clientY };
+          followPointer();
+          if (loopScrollFrame.current === null) scrollFrame();
+        };
+        const up = (released: PointerEvent) => {
+          if (released.pointerId === pointerId) finish(true);
+        };
+        const cancel = (cancelled: PointerEvent) => {
+          if (cancelled.pointerId === pointerId) finish(false);
+        };
+        window.addEventListener("pointermove", move);
+        window.addEventListener("pointerup", up);
+        window.addEventListener("pointercancel", cancel);
+        stage.addEventListener("lostpointercapture", up);
+        endLoopDrag.current = () => {
+          endLoopDrag.current = () => undefined;
+          window.removeEventListener("pointermove", move);
+          window.removeEventListener("pointerup", up);
+          window.removeEventListener("pointercancel", cancel);
+          stage.removeEventListener("lostpointercapture", up);
+        };
       },
       onKeyDown(handle: LoopHandle, event: ReactKeyboardEvent<SVGElement>) {
         const { loop: current, onLoopChange: change, scoreMeasureCount: count } = loopLatest.current;
