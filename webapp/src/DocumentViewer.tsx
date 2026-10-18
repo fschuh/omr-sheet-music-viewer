@@ -356,7 +356,7 @@ const LOOP_EDGE_MAX_SPEED = 18;
  * How long realtime playback leaves the view where a moved loop end put it before
  * following the playhead again, in milliseconds.
  */
-const LOOP_EDIT_FOLLOW_HOLD_MS = 1000;
+const LOOP_EDIT_FOLLOW_HOLD_MS = 500;
 /** How far past the document's edge a loop handle may scroll, and the room kept around one it reveals, in screen pixels. */
 const LOOP_SCROLL_PADDING = 32;
 
