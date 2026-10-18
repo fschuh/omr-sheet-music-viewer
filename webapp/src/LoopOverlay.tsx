@@ -37,6 +37,8 @@ const PILL_WIDTH = 140;
 const PILL_HEIGHT = 28;
 /** The label is left out of a loop narrower than this on screen. */
 const PILL_MIN_REGION_WIDTH = 200;
+/** How far, in screen pixels, a handle reaches above and below its system's staves. */
+export const LOOP_HANDLE_REACH = { above: BAR_OVERHANG + TAB_HEIGHT, below: BAR_OVERHANG };
 const CHEVRON_OFFSET = 10;
 const CHEVRON_HALF_HEIGHT = 6;
 const CHEVRON_DEPTH = 6;

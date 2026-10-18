@@ -6,9 +6,11 @@ import {
   committedTempoPercentage,
   constrainViewportTransform,
   DocumentViewer,
+  loopEdgeScrollStep,
   noteheadAt,
   pageDiagnosticNoteheads,
   playbackMomentExtents,
+  revealOffset,
   shouldScrollPlaybackHorizontally,
   steppedTempoMultiplier,
   validTempoPercentage,
@@ -35,6 +37,32 @@ test("tempo input accepts partial edits and validates only complete percentages"
   assert.equal(committedTempoPercentage("301"), 300);
   assert.equal(committedTempoPercentage("45.6"), 46);
   assert.equal(committedTempoPercentage("invalid"), null);
+});
+
+test("a loop handle dragged near an edge of the view scrolls the score while there is more of it", () => {
+  // A 600-pixel view onto a document from -500 to 1500.
+  assert.equal(loopEdgeScrollStep(300, 0, 600, -500, 1500), 0);
+  // Near the bottom the document moves up, faster the closer the pointer gets.
+  const slow = loopEdgeScrollStep(560, 0, 600, -500, 1500);
+  const fast = loopEdgeScrollStep(590, 0, 600, -500, 1500);
+  assert.ok(slow < 0 && fast < slow);
+  // At and past the edge it scrolls at full speed, no faster.
+  assert.equal(loopEdgeScrollStep(600, 0, 600, -500, 1500), -18);
+  assert.equal(loopEdgeScrollStep(900, 0, 600, -500, 1500), -18);
+  // Near the top it moves down.
+  assert.ok(loopEdgeScrollStep(10, 0, 600, -500, 1500) > 0);
+  // It stops where the document ends, and never scrolls past it.
+  assert.equal(loopEdgeScrollStep(598, 0, 600, -500, 600), 0);
+  assert.equal(loopEdgeScrollStep(598, 0, 600, -500, 605), -5);
+  assert.equal(loopEdgeScrollStep(10, 0, 600, 0, 1500), 0);
+});
+
+test("a boundary moved by the keyboard is brought into view, its start first", () => {
+  assert.equal(revealOffset(100, 200, 0, 600), 0);
+  assert.equal(revealOffset(700, 800, 0, 600), -200);
+  assert.equal(revealOffset(-150, -50, 0, 600), 150);
+  // Taller than the view: its top goes to the top of the view.
+  assert.equal(revealOffset(700, 1500, 0, 600), -700);
 });
 
 test("tempo shortcuts step by one percentage point within the tempo range", () => {
