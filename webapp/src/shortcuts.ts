@@ -42,6 +42,10 @@ export const playbackCommandDetails: ReadonlyArray<{
   { command: "toggleLoopMode", label: "Loop", description: "Turn loop mode on, looping the bar being played, or off." },
   { command: "tempoUp", label: "Faster", description: "Raise the realtime tempo by 1%." },
   { command: "tempoDown", label: "Slower", description: "Lower the realtime tempo by 1%." },
+  { command: "loopEndLater", label: "Loop end later", description: "Move the end of the loop one bar later." },
+  { command: "loopEndEarlier", label: "Loop end earlier", description: "Move the end of the loop one bar earlier." },
+  { command: "loopStartEarlier", label: "Loop start earlier", description: "Move the start of the loop one bar earlier." },
+  { command: "loopStartLater", label: "Loop start later", description: "Move the start of the loop one bar later." },
 ];
 
 function keyboard(code: string): KeyboardShortcut {
@@ -64,6 +68,10 @@ export function defaultPlaybackShortcuts(): PlaybackShortcuts {
     toggleLoopMode: { keyboard: keyboard("KeyL"), midi: null },
     tempoUp: { keyboard: { ...keyboard("ArrowUp"), shift: true }, midi: null },
     tempoDown: { keyboard: { ...keyboard("ArrowDown"), shift: true }, midi: null },
+    loopEndLater: { keyboard: { ...keyboard("ArrowRight"), shift: true }, midi: null },
+    loopEndEarlier: { keyboard: { ...keyboard("ArrowLeft"), shift: true }, midi: null },
+    loopStartEarlier: { keyboard: { ...keyboard("ArrowLeft"), ctrl: true, shift: true }, midi: null },
+    loopStartLater: { keyboard: { ...keyboard("ArrowRight"), ctrl: true, shift: true }, midi: null },
   };
 }
 

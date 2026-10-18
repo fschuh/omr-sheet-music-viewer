@@ -12,6 +12,7 @@ import {
   currentPlaybackMoment,
   effectivePlaybackNoteSounds,
   initialPlaybackState,
+  isLoopBoundaryCommand,
   noteInPracticeHand,
   playbackCommandNames,
   playbackGroupIdsByPageForAnchors,
@@ -87,6 +88,7 @@ import {
   loopAroundMeasure,
   loopMeasureCount,
   loopNoteByNoteState,
+  loopRegionAfterCommand,
   loopRouteOffset,
   loopSystems,
   measureInLoop,
@@ -891,7 +893,8 @@ export function App() {
           command === "playCurrentNotes" ||
           command === "toggleLoopMode" ||
           command === "tempoUp" ||
-          command === "tempoDown"
+          command === "tempoDown" ||
+          isLoopBoundaryCommand(command)
         ) return;
         if (realtimeStatus === "inactive" || !realtimeModel.score) return;
         const route = realtimeRouteRef.current;
@@ -1284,6 +1287,14 @@ export function App() {
   }, [applyLoop, documentMeasureCount, loopMode]);
 
   const handlePlaybackCommand = useCallback((command: PlaybackCommand) => {
+    if (isLoopBoundaryCommand(command)) {
+      if (!loopMode || !loopRegion) return;
+      const current = clampLoopRegion(loopRegion, documentMeasureCount);
+      if (!current) return;
+      const next = loopRegionAfterCommand(current, command, documentMeasureCount);
+      if (next !== current) changeLoopRegion(next);
+      return;
+    }
     if (command === "tempoUp" || command === "tempoDown") {
       if (playbackMode !== "realtime") return;
       changeTempoMultiplier(steppedTempoMultiplier(tempoMultiplierRef.current, command === "tempoUp" ? 1 : -1));
@@ -1315,7 +1326,11 @@ export function App() {
   }, [
     applyPlaybackStateCommand,
     auditionCurrentNotes,
+    changeLoopRegion,
     changeTempoMultiplier,
+    documentMeasureCount,
+    loopMode,
+    loopRegion,
     playbackMode,
     startListenMode,
     stopListenMode,

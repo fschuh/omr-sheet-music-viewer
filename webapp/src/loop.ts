@@ -3,7 +3,7 @@
 // re-layout; this module turns it into what the score overlay draws and decides where
 // playback goes next while looping.
 import type { PageNoteGeometry } from "./noteGeometry";
-import type { PlaybackCommand, PlaybackMoment, PlaybackState } from "./playback";
+import type { LoopBoundaryCommand, PlaybackCommand, PlaybackMoment, PlaybackState } from "./playback";
 import type { PerformanceRoute, RouteEndBarline, StructuralPosition } from "./realtime";
 
 /**
@@ -192,6 +192,18 @@ export function moveLoopHandleTo(
   }
   const endMeasure = Math.max(region.startMeasure + 1, Math.min(measureCount, boundary));
   return endMeasure === region.endMeasure ? region : { ...region, endMeasure };
+}
+
+/** The region after a shortcut moves one of its ends by a barline, or the same region when it cannot move. */
+export function loopRegionAfterCommand(
+  region: LoopRegion,
+  command: LoopBoundaryCommand,
+  measureCount: number,
+): LoopRegion {
+  const handle: LoopHandle = command === "loopStartEarlier" || command === "loopStartLater" ? "start" : "end";
+  const step = command === "loopStartEarlier" || command === "loopEndEarlier" ? -1 : 1;
+  const boundary = (handle === "start" ? region.startMeasure : region.endMeasure) + step;
+  return moveLoopHandleTo(region, handle, boundary, measureCount);
 }
 
 function loopMomentIndexes(timeline: readonly PlaybackMoment[], region: LoopRegion): number[] {

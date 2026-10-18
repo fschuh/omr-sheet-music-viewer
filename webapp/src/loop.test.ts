@@ -9,6 +9,7 @@ import {
   loopLabel,
   loopMeasureCount,
   loopNoteByNoteState,
+  loopRegionAfterCommand,
   loopRouteOffset,
   loopSegments,
   loopSystems,
@@ -314,4 +315,19 @@ test("a loop's playhead runs on to the loop's end barline after its last note, n
   // A one-measure loop ends on the barline inside the system.
   const short = expandPerformanceRoute(parsed, { startMeasureIndex: 1, endMeasureIndex: 2, visualMap });
   assert.equal(realtimePlayheadAt(short, 1.5, [], routeEndBarline(systems, short))?.x, 500);
+});
+
+test("loop shortcuts move one end a barline, keeping a bar between the ends and inside the score", () => {
+  const region = { startMeasure: 2, endMeasure: 4 };
+  assert.deepEqual(loopRegionAfterCommand(region, "loopEndLater", 8), { startMeasure: 2, endMeasure: 5 });
+  assert.deepEqual(loopRegionAfterCommand(region, "loopEndEarlier", 8), { startMeasure: 2, endMeasure: 3 });
+  assert.deepEqual(loopRegionAfterCommand(region, "loopStartEarlier", 8), { startMeasure: 1, endMeasure: 4 });
+  assert.deepEqual(loopRegionAfterCommand(region, "loopStartLater", 8), { startMeasure: 3, endMeasure: 4 });
+  // A one-bar loop cannot shrink, and the ends stop at the score's first and last barlines.
+  const bar = { startMeasure: 0, endMeasure: 1 };
+  assert.equal(loopRegionAfterCommand(bar, "loopEndEarlier", 8), bar);
+  assert.equal(loopRegionAfterCommand(bar, "loopStartLater", 8), bar);
+  assert.equal(loopRegionAfterCommand(bar, "loopStartEarlier", 8), bar);
+  const last = { startMeasure: 7, endMeasure: 8 };
+  assert.equal(loopRegionAfterCommand(last, "loopEndLater", 8), last);
 });

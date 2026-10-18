@@ -23,9 +23,23 @@ export const playbackCommandNames = [
   "toggleLoopMode",
   "tempoUp",
   "tempoDown",
+  "loopStartEarlier",
+  "loopStartLater",
+  "loopEndEarlier",
+  "loopEndLater",
 ] as const;
 
 export type PlaybackCommand = (typeof playbackCommandNames)[number];
+
+/** Commands that move one end of the loop by a barline. */
+export type LoopBoundaryCommand = "loopStartEarlier" | "loopStartLater" | "loopEndEarlier" | "loopEndLater";
+
+export function isLoopBoundaryCommand(command: PlaybackCommand): command is LoopBoundaryCommand {
+  return command === "loopStartEarlier" ||
+    command === "loopStartLater" ||
+    command === "loopEndEarlier" ||
+    command === "loopEndLater";
+}
 
 export interface PlaybackMoment {
   id: string;
@@ -497,6 +511,7 @@ function commandDestination(
     | "toggleLoopMode"
     | "tempoUp"
     | "tempoDown"
+    | LoopBoundaryCommand
   >,
 ): number {
   if (command === "forwardNote") return Math.min(timeline.length - 1, index + 1);
@@ -563,7 +578,8 @@ export function runPlaybackCommand(
     command === "playCurrentNotes" ||
     command === "toggleLoopMode" ||
     command === "tempoUp" ||
-    command === "tempoDown"
+    command === "tempoDown" ||
+    isLoopBoundaryCommand(command)
   ) return state;
   if (!state.active || timeline.length === 0) return state;
   const destination = commandDestination(timeline, currentIndex(timeline, state), command);

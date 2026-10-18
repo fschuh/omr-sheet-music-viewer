@@ -70,7 +70,10 @@ platforms use a 400 ms delay and 75 ms interval.
 Loop mode repeats a run of whole bars in either playback mode. The **Loop**
 button or the default `L` shortcut turns it on during playback, looping the bar
 being played; drag either bracket handle on the score to another barline, across
-lines and pages too, or focus a handle and use the arrow keys. Playback that
+lines and pages too, or focus a handle and use the arrow keys. `Shift`+`Left`
+and `Shift`+`Right` move the loop's end a bar, and `Ctrl`+`Shift`+`Left` and
+`Ctrl`+`Shift`+`Right` its start; the score scrolls to keep a moved end in view,
+and a handle held near the edge of the view scrolls it on. Playback that
 starts or is moved outside the loop jumps to its first bar. Note-by-note wraps
 from the loop's last note to its first, and realtime starts the loop over without
 a gap; the button counts the passes, and the note highway marks where the loop

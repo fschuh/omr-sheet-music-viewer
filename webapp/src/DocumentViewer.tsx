@@ -945,6 +945,8 @@ export function DocumentViewer({
   const loopPointer = useRef<{ x: number; y: number } | null>(null);
   const loopScrollFrame = useRef<number | null>(null);
   const followLoopPointer = useRef(() => undefined as void);
+  const revealLoopBoundary = useRef((_region: LoopRegion, _handle: LoopHandle) => undefined as void);
+  const shownLoopBefore = useRef<LoopRegion | null>(null);
   useEffect(() => {
     if (!loop) {
       setLoopDrag(null);
@@ -959,6 +961,15 @@ export function DocumentViewer({
   useEffect(() => {
     if (loopLatest.current.loopDrag) followLoopPointer.current();
   }, [transform]);
+  // A loop end moved from the keyboard, a shortcut or a dropped handle comes into view,
+  // so a loop can be stretched past what the view shows.
+  useEffect(() => {
+    const before = shownLoopBefore.current;
+    shownLoopBefore.current = loop ?? null;
+    if (!loop || !before || loopLatest.current.loopDrag) return;
+    if (loop.endMeasure !== before.endMeasure) revealLoopBoundary.current(loop, "end");
+    else if (loop.startMeasure !== before.startMeasure) revealLoopBoundary.current(loop, "start");
+  }, [loop?.startMeasure, loop?.endMeasure]);
   // Stable, so the page layers re-render only when what they draw changes.
   const loopHandleEvents = useMemo<LoopHandleEvents>(() => {
     const screenSystems = (): ScreenLoopSystem[] => {
@@ -1044,6 +1055,7 @@ export function DocumentViewer({
       );
       if (dx !== 0 || dy !== 0) schedule((latest) => ({ ...latest, x: latest.x + dx, y: latest.y + dy }));
     };
+    revealLoopBoundary.current = revealBoundary;
     const finish = (event: ReactPointerEvent<SVGElement>, commit: boolean) => {
       const { loop: current, loopDrag: drag, onLoopChange: change } = loopLatest.current;
       if (!drag || drag.pointerId !== event.pointerId) return;
@@ -1097,9 +1109,7 @@ export function DocumentViewer({
         const boundary = (handle === "start" ? current.startMeasure : current.endMeasure) +
           (event.key === "ArrowLeft" ? -1 : 1);
         const region = moveLoopHandleTo(current, handle, boundary, count);
-        if (region === current) return;
-        change?.(region);
-        revealBoundary(region, handle);
+        if (region !== current) change?.(region);
       },
       onHover(handle: LoopHandle | null) {
         setLoopHover(handle);
