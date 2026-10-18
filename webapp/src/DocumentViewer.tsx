@@ -1490,7 +1490,7 @@ export function DocumentViewer({
               aria-label={loopMode ? "Turn loop mode off" : "Turn loop mode on"}
               aria-pressed={loopMode}
               title={loopMode
-                ? "Stop looping (L); the bars stay marked for next time"
+                ? "Stop looping (L)"
                 : "Loop the bar being played; drag the handles to loop more (L)"}
               disabled={!effectivelyActive && !loopMode}
               onClick={onLoopToggle}

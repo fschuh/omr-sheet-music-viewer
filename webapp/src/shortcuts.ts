@@ -39,7 +39,7 @@ export const playbackCommandDetails: ReadonlyArray<{
   { command: "backwardBar", label: "Previous bar", description: "Move to the first note of the previous bar." },
   { command: "forwardPage", label: "Next page", description: "Move to the first note of the next page." },
   { command: "backwardPage", label: "Previous page", description: "Move to the first note of the previous page." },
-  { command: "toggleLoopMode", label: "Loop", description: "Turn loop mode on or off; its bars stay marked on the score for the next time." },
+  { command: "toggleLoopMode", label: "Loop", description: "Turn loop mode on, looping the bar being played, or off." },
 ];
 
 function keyboard(code: string): KeyboardShortcut {

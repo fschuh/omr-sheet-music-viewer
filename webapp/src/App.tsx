@@ -392,8 +392,8 @@ export function App() {
     () => buildRealtimeVisualMap(noteGeometry),
     [noteGeometry],
   );
-  // Loop mode is per document. Its region is remembered while it is off, so turning it
-  // back on loops the same bars; playback follows it only while loop mode is on.
+  // Loop mode is per document. Turning it on always loops the bar being played, and
+  // turning it off forgets the bars it looped.
   const [loopMode, setLoopMode] = useState(false);
   const [loopRegion, setLoopRegion] = useState<LoopRegion | null>(null);
   const [loopPass, setLoopPass] = useState(1);
@@ -1235,17 +1235,17 @@ export function App() {
   const toggleLoopMode = useCallback(() => {
     if (loopMode) {
       setLoopMode(false);
+      setLoopRegion(null);
       applyLoop(null);
       return;
     }
     if (!playbackActiveRef.current) return;
-    const remembered = loopRegion ? clampLoopRegion(loopRegion, documentMeasureCount) : null;
-    const region = remembered ?? loopAroundMeasure(playheadMeasure() ?? 0, documentMeasureCount);
+    const region = loopAroundMeasure(playheadMeasure() ?? 0, documentMeasureCount);
     if (!region) return;
     setLoopRegion(region);
     setLoopMode(true);
     applyLoop(region);
-  }, [applyLoop, documentMeasureCount, loopMode, loopRegion, playheadMeasure]);
+  }, [applyLoop, documentMeasureCount, loopMode, playheadMeasure]);
 
   const changeLoopRegion = useCallback((region: LoopRegion) => {
     const next = clampLoopRegion(region, documentMeasureCount);
