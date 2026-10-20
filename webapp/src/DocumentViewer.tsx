@@ -7,6 +7,7 @@ import {
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
+  type RefObject,
 } from "react";
 import { layoutNoteLabels } from "./noteLabels";
 import {
@@ -809,6 +810,28 @@ const EngravedPage = memo(function EngravedPage({
   );
 });
 
+/**
+ * While `open`, a press anywhere outside `area`, the popover with the button that opens
+ * it, calls `close`. A field in it being typed in loses focus first, so what it holds is
+ * taken before the popover goes.
+ */
+function useCloseOnPressOutside(open: boolean, area: RefObject<HTMLElement | null>, close: () => void) {
+  const latestClose = useRef(close);
+  latestClose.current = close;
+  useEffect(() => {
+    if (!open) return;
+    function closeOnPressOutside(event: PointerEvent) {
+      const element = area.current;
+      if (!element || (event.target instanceof Node && element.contains(event.target))) return;
+      const focused = window.document.activeElement;
+      if (focused instanceof HTMLElement && element.contains(focused)) focused.blur();
+      latestClose.current();
+    }
+    window.addEventListener("pointerdown", closeOnPressOutside, true);
+    return () => window.removeEventListener("pointerdown", closeOnPressOutside, true);
+  }, [open, area]);
+}
+
 export function DocumentViewer({
   documentKey,
   pages: documentPages,
@@ -883,6 +906,8 @@ export function DocumentViewer({
   const [isPointerPanning, setIsPointerPanning] = useState(false);
   const [tempoPopoverOpen, setTempoPopoverOpen] = useState(false);
   const [handSoundMenuOpen, setHandSoundMenuOpen] = useState(false);
+  const tempoControlRef = useRef<HTMLDivElement | null>(null);
+  const handSoundControlRef = useRef<HTMLDivElement | null>(null);
   const realtimeUnavailableTooltipId = useId();
   const tempoPercentage = Math.round(tempoMultiplier * 100);
   const [tempoPercentageText, setTempoPercentageText] = useState(String(tempoPercentage));
@@ -1268,6 +1293,9 @@ export function DocumentViewer({
     window.addEventListener("keydown", closeTempoPopover, true);
     return () => window.removeEventListener("keydown", closeTempoPopover, true);
   }, [tempoPopoverOpen]);
+
+  useCloseOnPressOutside(tempoPopoverOpen, tempoControlRef, () => setTempoPopoverOpen(false));
+  useCloseOnPressOutside(handSoundMenuOpen, handSoundControlRef, () => setHandSoundMenuOpen(false));
 
   useEffect(() => {
     if (playbackMode !== "realtime") setTempoPopoverOpen(false);
@@ -1817,7 +1845,7 @@ export function DocumentViewer({
               </span>
             </button>
           ) : null}
-          <div className="hand-sound-control">
+          <div ref={handSoundControlRef} className="hand-sound-control">
             <button
               type="button"
               className={`sound-toggle${playbackNoteSoundsEnabled ? " active" : ""}`}
@@ -1935,7 +1963,7 @@ export function DocumentViewer({
             onClick={() => onPlaybackCommand("forwardPage")}
           >⇥</button>
           {playbackMode === "realtime" ? (
-            <div className="tempo-control">
+            <div ref={tempoControlRef} className="tempo-control">
               <button
                 type="button"
                 className="tempo-button"
