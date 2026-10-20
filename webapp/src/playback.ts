@@ -21,8 +21,10 @@ export const playbackCommandNames = [
   "forwardPage",
   "backwardPage",
   "toggleLoopMode",
+  "toggleNoteHighway",
   "tempoUp",
   "tempoDown",
+  "resetTempo",
   "loopStartEarlier",
   "loopStartLater",
   "loopEndEarlier",
@@ -509,8 +511,10 @@ function commandDestination(
     | "toggleListenMode"
     | "playCurrentNotes"
     | "toggleLoopMode"
+    | "toggleNoteHighway"
     | "tempoUp"
     | "tempoDown"
+    | "resetTempo"
     | LoopBoundaryCommand
   >,
 ): number {
@@ -577,8 +581,10 @@ export function runPlaybackCommand(
   if (
     command === "playCurrentNotes" ||
     command === "toggleLoopMode" ||
+    command === "toggleNoteHighway" ||
     command === "tempoUp" ||
     command === "tempoDown" ||
+    command === "resetTempo" ||
     isLoopBoundaryCommand(command)
   ) return state;
   if (!state.active || timeline.length === 0) return state;

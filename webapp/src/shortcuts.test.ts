@@ -33,6 +33,8 @@ test("default shortcuts reproduce the existing playback keys", () => {
   assert.equal(commandForKeyboardEvent(shortcuts, keyEvent("ArrowUp", { shiftKey: true })), "tempoUp");
   assert.equal(commandForKeyboardEvent(shortcuts, keyEvent("ArrowDown", { shiftKey: true })), "tempoDown");
   assert.equal(formatKeyboardShortcut(shortcuts.tempoUp.keyboard), "Shift + Up Arrow");
+  assert.equal(commandForKeyboardEvent(shortcuts, keyEvent("KeyR")), "resetTempo");
+  assert.equal(commandForKeyboardEvent(shortcuts, keyEvent("KeyD")), "toggleNoteHighway");
   // Shift with the note arrows moves the loop's end, as a selection grows; Ctrl adds its start.
   assert.equal(commandForKeyboardEvent(shortcuts, keyEvent("ArrowRight", { shiftKey: true })), "loopEndLater");
   assert.equal(commandForKeyboardEvent(shortcuts, keyEvent("ArrowLeft", { shiftKey: true })), "loopEndEarlier");

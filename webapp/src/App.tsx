@@ -248,7 +248,9 @@ function isPlaybackToggleCommand(command: PlaybackCommand): boolean {
     command === "toggleNoteSounds" ||
     command === "toggleListenMode" ||
     command === "playCurrentNotes" ||
-    command === "toggleLoopMode";
+    command === "toggleLoopMode" ||
+    command === "toggleNoteHighway" ||
+    command === "resetTempo";
 }
 
 /** Commands that do something before playback starts. */
@@ -256,7 +258,8 @@ function commandWorksWhileStopped(command: PlaybackCommand): boolean {
   return command === "togglePlayback" ||
     command === "stopPlayback" ||
     command === "tempoUp" ||
-    command === "tempoDown";
+    command === "tempoDown" ||
+    command === "resetTempo";
 }
 
 function RefreshRateDiagnostic() {
@@ -902,8 +905,10 @@ export function App() {
           command === "toggleListenMode" ||
           command === "playCurrentNotes" ||
           command === "toggleLoopMode" ||
+          command === "toggleNoteHighway" ||
           command === "tempoUp" ||
           command === "tempoDown" ||
+          command === "resetTempo" ||
           isLoopBoundaryCommand(command)
         ) return;
         if (realtimeStatus === "inactive" || !realtimeModel.score) return;
@@ -1310,6 +1315,15 @@ export function App() {
       changeTempoMultiplier(steppedTempoMultiplier(tempoMultiplierRef.current, command === "tempoUp" ? 1 : -1));
       return;
     }
+    if (command === "resetTempo") {
+      if (playbackMode !== "realtime") return;
+      changeTempoMultiplier(1);
+      return;
+    }
+    if (command === "toggleNoteHighway") {
+      toggleNoteHighway();
+      return;
+    }
     if (command === "toggleLoopMode") {
       toggleLoopMode();
       return;
@@ -1345,6 +1359,7 @@ export function App() {
     startListenMode,
     stopListenMode,
     toggleLoopMode,
+    toggleNoteHighway,
   ]);
   handlePlaybackCommandRef.current = handlePlaybackCommand;
 
