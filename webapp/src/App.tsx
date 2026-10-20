@@ -802,7 +802,7 @@ export function App() {
       : null;
     return routeForPosition(position);
   }, [realtimeModel.score, realtimeVisualMap, routeForPosition]);
-  const startRealtime = useCallback((group: VisualGroupRef | null) => {
+  const startRealtime = useCallback((group: VisualGroupRef | null, status: "playing" | "paused" = "playing") => {
     let start: RealtimeStart | null;
     try {
       start = routeForGroup(group);
@@ -819,7 +819,7 @@ export function App() {
     realtimeRouteLoopsRef.current = start.loops;
     realtimeLatestFrameRef.current = null;
     realtimeRenderSignatureRef.current = "";
-    setRealtimeStatus("playing");
+    setRealtimeStatus(status);
     setLoopPass(1);
     const routeLayers = Array.from(new Set(
       route.notes.map((note) => pianoLayerForDynamic(playbackPiano, note.dynamic)),
@@ -832,7 +832,7 @@ export function App() {
         controller.setTempoMultiplier(tempoMultiplier);
         controller.setMuted(!playbackStateRef.current.noteSoundsEnabled);
         controller.setLooping(start!.loops);
-        controller.play(route, start!.offset);
+        controller.seek(route, status, start!.offset);
         setPlaybackAudioError(null);
       })
       .catch((audioError: unknown) => {
@@ -1002,7 +1002,8 @@ export function App() {
     const group = playheadVisual
       ? { pageIndex: playheadVisual.pageIndex, visualGroupId: playheadVisual.visualGroupId }
       : selectedGroup;
-    if (mode === "realtime") startRealtime(group);
+    // Realtime waits, paused on the note-by-note position, for the play button.
+    if (mode === "realtime") startRealtime(group, "paused");
     else commitPlaybackState(
       applyPlaybackCommand(
         playbackTimeline,
