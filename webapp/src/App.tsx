@@ -245,6 +245,7 @@ function isEditableKeyboardTarget(target: EventTarget | null): boolean {
 function isPlaybackToggleCommand(command: PlaybackCommand): boolean {
   return command === "togglePlayback" ||
     command === "stopPlayback" ||
+    command === "togglePlaybackMode" ||
     command === "toggleNoteSounds" ||
     command === "toggleListenMode" ||
     command === "playCurrentNotes" ||
@@ -257,6 +258,7 @@ function isPlaybackToggleCommand(command: PlaybackCommand): boolean {
 function commandWorksWhileStopped(command: PlaybackCommand): boolean {
   return command === "togglePlayback" ||
     command === "stopPlayback" ||
+    command === "togglePlaybackMode" ||
     command === "tempoUp" ||
     command === "tempoDown" ||
     command === "resetTempo";
@@ -904,6 +906,7 @@ export function App() {
         if (
           command === "toggleListenMode" ||
           command === "playCurrentNotes" ||
+          command === "togglePlaybackMode" ||
           command === "toggleLoopMode" ||
           command === "toggleNoteHighway" ||
           command === "tempoUp" ||
@@ -1325,6 +1328,10 @@ export function App() {
       toggleNoteHighway();
       return;
     }
+    if (command === "togglePlaybackMode") {
+      handlePlaybackModeChange(playbackMode === "realtime" ? "note-by-note" : "realtime");
+      return;
+    }
     if (command === "toggleLoopMode") {
       toggleLoopMode();
       return;
@@ -1354,6 +1361,7 @@ export function App() {
     changeLoopRegion,
     changeTempoMultiplier,
     documentMeasureCount,
+    handlePlaybackModeChange,
     loopMode,
     loopRegion,
     playbackMode,

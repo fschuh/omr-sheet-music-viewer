@@ -1757,6 +1757,7 @@ export function DocumentViewer({
               type="button"
               className={playbackMode === "note-by-note" ? "selected" : ""}
               aria-pressed={playbackMode === "note-by-note"}
+              title="Step through the notes yourself (N)"
               onClick={() => onPlaybackModeChange?.("note-by-note")}
             >Note-by-note</button>
             <div className={`realtime-mode-control${realtimeAvailable ? "" : " unavailable"}`}>
@@ -1765,7 +1766,7 @@ export function DocumentViewer({
                 className={playbackMode === "realtime" ? "selected" : ""}
                 aria-pressed={playbackMode === "realtime"}
                 aria-describedby={!realtimeAvailable ? realtimeUnavailableTooltipId : undefined}
-                title={realtimeAvailable ? "Use audio-clock playback" : undefined}
+                title={realtimeAvailable ? "Use audio-clock playback (N)" : undefined}
                 disabled={!realtimeAvailable}
                 onClick={() => onPlaybackModeChange?.("realtime")}
               >Realtime</button>

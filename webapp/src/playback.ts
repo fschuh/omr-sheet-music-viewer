@@ -11,6 +11,7 @@ import type { MusicalDynamic } from "./pianoRegistry";
 export const playbackCommandNames = [
   "togglePlayback",
   "stopPlayback",
+  "togglePlaybackMode",
   "toggleNoteSounds",
   "toggleListenMode",
   "playCurrentNotes",
@@ -507,6 +508,7 @@ function commandDestination(
     PlaybackCommand,
     | "togglePlayback"
     | "stopPlayback"
+    | "togglePlaybackMode"
     | "toggleNoteSounds"
     | "toggleListenMode"
     | "playCurrentNotes"
@@ -580,6 +582,7 @@ export function runPlaybackCommand(
   }
   if (
     command === "playCurrentNotes" ||
+    command === "togglePlaybackMode" ||
     command === "toggleLoopMode" ||
     command === "toggleNoteHighway" ||
     command === "tempoUp" ||

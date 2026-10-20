@@ -30,6 +30,7 @@ export const playbackCommandDetails: ReadonlyArray<{
 }> = [
   { command: "togglePlayback", label: "Primary playback action", description: "Start or exit note-by-note playback, or pause and resume realtime playback." },
   { command: "stopPlayback", label: "Stop playback", description: "Stop either playback mode and clear its playhead." },
+  { command: "togglePlaybackMode", label: "Switch playback mode", description: "Switch between note-by-note and realtime playback." },
   { command: "toggleNoteSounds", label: "Play or mute notes", description: "Toggle piano sound for the current note or chord." },
   { command: "toggleListenMode", label: "Listen for notes", description: "Use the microphone to advance after the current chord is played." },
   { command: "playCurrentNotes", label: "Play current notes", description: "Audition the current note or chord even while playback sounds are muted." },
@@ -58,6 +59,7 @@ export function defaultPlaybackShortcuts(): PlaybackShortcuts {
   return {
     togglePlayback: { keyboard: keyboard("Space"), midi: null },
     stopPlayback: { keyboard: keyboard("Escape"), midi: null },
+    togglePlaybackMode: { keyboard: keyboard("KeyN"), midi: null },
     toggleNoteSounds: { keyboard: keyboard("KeyM"), midi: null },
     toggleListenMode: { keyboard: keyboard("KeyI"), midi: null },
     playCurrentNotes: { keyboard: keyboard("KeyP"), midi: null },
