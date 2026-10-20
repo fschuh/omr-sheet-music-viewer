@@ -7,6 +7,8 @@ import {
   constrainViewportTransform,
   DocumentViewer,
   loopEdgeScrollStep,
+  loopScrollStepWithinReach,
+  nextLoopHeading,
   noteheadAt,
   pageDiagnosticNoteheads,
   playbackMomentExtents,
@@ -41,20 +43,57 @@ test("tempo input accepts partial edits and validates only complete percentages"
 
 test("a loop handle dragged near an edge of the view scrolls the score while there is more of it", () => {
   // A 600-pixel view onto a document from -500 to 1500.
-  assert.equal(loopEdgeScrollStep(300, 0, 600, -500, 1500), 0);
+  assert.equal(loopEdgeScrollStep(300, 0, 600, -500, 1500, 1), 0);
   // Near the bottom the document moves up, faster the closer the pointer gets.
-  const slow = loopEdgeScrollStep(560, 0, 600, -500, 1500);
-  const fast = loopEdgeScrollStep(590, 0, 600, -500, 1500);
+  const slow = loopEdgeScrollStep(560, 0, 600, -500, 1500, 1);
+  const fast = loopEdgeScrollStep(590, 0, 600, -500, 1500, 1);
   assert.ok(slow < 0 && fast < slow);
   // At and past the edge it scrolls at full speed, no faster.
-  assert.equal(loopEdgeScrollStep(600, 0, 600, -500, 1500), -18);
-  assert.equal(loopEdgeScrollStep(900, 0, 600, -500, 1500), -18);
+  assert.equal(loopEdgeScrollStep(600, 0, 600, -500, 1500, 1), -18);
+  assert.equal(loopEdgeScrollStep(900, 0, 600, -500, 1500, 1), -18);
   // Near the top it moves down.
-  assert.ok(loopEdgeScrollStep(10, 0, 600, -500, 1500) > 0);
+  assert.ok(loopEdgeScrollStep(10, 0, 600, -500, 1500, -1) > 0);
   // It stops where the document ends, and never scrolls past it.
-  assert.equal(loopEdgeScrollStep(598, 0, 600, -500, 600), 0);
-  assert.equal(loopEdgeScrollStep(598, 0, 600, -500, 605), -5);
-  assert.equal(loopEdgeScrollStep(10, 0, 600, 0, 1500), 0);
+  assert.equal(loopEdgeScrollStep(598, 0, 600, -500, 600, 1), 0);
+  assert.equal(loopEdgeScrollStep(598, 0, 600, -500, 605, 1), -5);
+  assert.equal(loopEdgeScrollStep(10, 0, 600, 0, 1500, -1), 0);
+});
+
+test("a loop handle scrolls no further than to show the barline a measure from the other handle", () => {
+  // The start handle's furthest barline spans 500 to 640 in a 600-pixel view: the view
+  // moves up only the 40 pixels that bring it in, and not at all once it is in.
+  assert.equal(loopScrollStepWithinReach(-18, "start", 500, 640, 0, 600), -18);
+  assert.equal(loopScrollStepWithinReach(-18, "start", 500, 610, 0, 600), -10);
+  assert.equal(loopScrollStepWithinReach(-18, "start", 400, 560, 0, 600), 0);
+  // Back toward the loop's start it is free to go.
+  assert.equal(loopScrollStepWithinReach(18, "start", 400, 560, 0, 600), 18);
+  // The end handle, the same toward the start.
+  assert.equal(loopScrollStepWithinReach(18, "end", -10, 120, 0, 600), 10);
+  assert.equal(loopScrollStepWithinReach(18, "end", 20, 160, 0, 600), 0);
+  assert.equal(loopScrollStepWithinReach(-18, "end", 20, 160, 0, 600), -18);
+});
+
+test("a dragged handle's heading turns only when the pointer comes back a few pixels", () => {
+  const start = { heading: 0, turn: 300 };
+  // A press that wobbles has no heading yet; a real move sets one.
+  assert.equal(nextLoopHeading(start, 297), start);
+  const up = nextLoopHeading(start, 290);
+  assert.deepEqual(up, { heading: -1, turn: 290 });
+  // Further up, it remembers how far it got.
+  const higher = nextLoopHeading(up, 40);
+  assert.deepEqual(higher, { heading: -1, turn: 40 });
+  // Settling back a few pixels, as against the screen's edge, keeps it heading up.
+  assert.equal(nextLoopHeading(higher, 45), higher);
+  // Coming back further turns it.
+  assert.deepEqual(nextLoopHeading(higher, 48), { heading: 1, turn: 48 });
+});
+
+test("a loop handle dragged away from an edge never scrolls toward it", () => {
+  // Moving up near the bottom, or down near the top, leaves the view still.
+  assert.equal(loopEdgeScrollStep(590, 0, 600, -500, 1500, -1), 0);
+  assert.equal(loopEdgeScrollStep(10, 0, 600, -500, 1500, 1), 0);
+  // Nor does a pointer that has not moved yet.
+  assert.equal(loopEdgeScrollStep(590, 0, 600, -500, 1500, 0), 0);
 });
 
 test("a boundary moved by the keyboard is brought into view, its start first", () => {

@@ -145,16 +145,19 @@ export function loopDimSpans(system: LoopSystem, region: LoopRegion): Array<[num
 
 /** A system as it lies on screen, for following a dragged handle. */
 export interface ScreenLoopSystem {
-  /** Midway between the system's first and last staff. */
-  centerY: number;
+  /** The top of the system's first staff and the bottom of its last, in screen y. */
+  top: number;
+  bottom: number;
   firstMeasure: number;
   /** The system's barlines in screen x. */
   barlines: number[];
 }
 
 /**
- * The barline a handle dragged to (x, y) snaps to: the pointer's height picks the system
- * whose centre is nearest, and its x the nearest barline on that system. The handle then
+ * The barline a handle dragged to (x, y) snaps to. A handle covers its system's staves
+ * and `reach` above and below them, grip and all; the pointer's height picks the system
+ * whose handle span it is in or nearest to, the one the handle is on while the pointer is
+ * still within its span. Its x then picks the nearest barline on that system. The handle
  * keeps at least one measure between itself and the other handle.
  */
 export function draggedLoopRegion(
@@ -164,11 +167,19 @@ export function draggedLoopRegion(
   x: number,
   y: number,
   measureCount: number,
+  reach: { above: number; below: number },
 ): LoopRegion {
-  let nearestSystem: ScreenLoopSystem | null = null;
-  for (const system of systems) {
-    if (!nearestSystem || Math.abs(system.centerY - y) < Math.abs(nearestSystem.centerY - y)) {
-      nearestSystem = system;
+  const distance = (system: ScreenLoopSystem) =>
+    Math.max(0, system.top - reach.above - y, y - (system.bottom + reach.below));
+  const boundary = handle === "start" ? region.startMeasure : region.endMeasure;
+  const measure = handle === "start" ? boundary : boundary - 1;
+  const holding = systems.find((system) =>
+    measure >= system.firstMeasure && measure < system.firstMeasure + system.barlines.length - 1,
+  );
+  let nearestSystem: ScreenLoopSystem | null = holding && distance(holding) === 0 ? holding : null;
+  if (!nearestSystem) {
+    for (const system of systems) {
+      if (!nearestSystem || distance(system) < distance(nearestSystem)) nearestSystem = system;
     }
   }
   if (!nearestSystem) return region;

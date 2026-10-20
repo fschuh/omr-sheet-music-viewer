@@ -107,30 +107,46 @@ test("the bars outside the loop are dimmed on every system", () => {
   assert.deepEqual(loopDimSpans(systems[0], { startMeasure: 0, endMeasure: 3 }), []);
 });
 
+// Staves 200 pixels tall, 400 apart; a handle reaching 64 above them and 24 below.
 const screen = systems.map((system: LoopSystem, index) => ({
-  centerY: 200 + index * 400,
+  top: 100 + index * 400,
+  bottom: 300 + index * 400,
   firstMeasure: system.firstMeasure,
   barlines: system.barlines,
 }));
+const reach = { above: 64, below: 24 };
 
 test("a dragged handle snaps to the nearest barline of the system the pointer is level with", () => {
   const region: LoopRegion = { startMeasure: 1, endMeasure: 2 };
   // Along the line: the end handle jumps barline to barline.
-  assert.deepEqual(draggedLoopRegion(region, "end", screen, 700, 210, 8), { startMeasure: 1, endMeasure: 3 });
+  assert.deepEqual(draggedLoopRegion(region, "end", screen, 700, 210, 8, reach), { startMeasure: 1, endMeasure: 3 });
   // Down one line: every remaining bar of the first line, then the next line up to the pointer.
-  assert.deepEqual(draggedLoopRegion(region, "end", screen, 320, 590, 8), { startMeasure: 1, endMeasure: 4 });
+  assert.deepEqual(draggedLoopRegion(region, "end", screen, 320, 590, 8, reach), { startMeasure: 1, endMeasure: 4 });
   // Down two lines, onto the next page.
-  assert.deepEqual(draggedLoopRegion(region, "end", screen, 790, 1010, 8), { startMeasure: 1, endMeasure: 8 });
+  assert.deepEqual(draggedLoopRegion(region, "end", screen, 790, 1010, 8, reach), { startMeasure: 1, endMeasure: 8 });
   // The start handle dragged down stays a measure before the end.
-  assert.deepEqual(draggedLoopRegion(region, "start", screen, 800, 600, 8), { startMeasure: 1, endMeasure: 2 });
+  assert.deepEqual(draggedLoopRegion(region, "start", screen, 800, 600, 8, reach), { startMeasure: 1, endMeasure: 2 });
   assert.deepEqual(
-    draggedLoopRegion({ startMeasure: 1, endMeasure: 7 }, "start", screen, 790, 600, 8),
+    draggedLoopRegion({ startMeasure: 1, endMeasure: 7 }, "start", screen, 790, 600, 8, reach),
     { startMeasure: 6, endMeasure: 7 },
   );
   // The end handle dragged left of the start stops one measure after it.
-  assert.deepEqual(draggedLoopRegion(region, "end", screen, 40, 210, 8), { startMeasure: 1, endMeasure: 2 });
+  assert.deepEqual(draggedLoopRegion(region, "end", screen, 40, 210, 8, reach), { startMeasure: 1, endMeasure: 2 });
   // An unchanged region is the same object, so nothing re-renders.
-  assert.equal(draggedLoopRegion(region, "start", screen, 290, 200, 8), region);
+  assert.equal(draggedLoopRegion(region, "start", screen, 290, 200, 8, reach), region);
+});
+
+test("a dragged handle leaves its system only once the pointer is past the whole handle", () => {
+  // The end handle on the second system, whose handle spans 436 to 724.
+  const region: LoopRegion = { startMeasure: 1, endMeasure: 4 };
+  // Over the grip above the staff, nearer the first system's centre than its own, it stays.
+  assert.equal(draggedLoopRegion(region, "end", screen, 320, 440, 8, reach), region);
+  assert.equal(draggedLoopRegion(region, "end", screen, 320, 390, 8, reach), region);
+  // Past the middle of the gap between the two handles' spans, it moves up.
+  assert.deepEqual(draggedLoopRegion(region, "end", screen, 320, 370, 8, reach), { startMeasure: 1, endMeasure: 2 });
+  // Below its foot, the same: it moves down past the middle of the gap.
+  assert.equal(draggedLoopRegion(region, "end", screen, 320, 770, 8, reach), region);
+  assert.deepEqual(draggedLoopRegion(region, "end", screen, 790, 790, 8, reach), { startMeasure: 1, endMeasure: 8 });
 });
 
 test("arrow keys move a focused handle one barline, never past the other handle or the score", () => {

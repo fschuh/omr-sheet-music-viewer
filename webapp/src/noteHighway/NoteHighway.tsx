@@ -14,13 +14,15 @@ interface NoteHighwayProps {
    * are drawn on the next frame without re-rendering this component.
    */
   getFrame: HighwayFrameSource;
+  /** Out of sight for a while, keeping its size and WebGL context. */
+  hidden?: boolean;
 }
 
 /**
  * Notes travel toward the keyboard and reach its top edge when they sound. The
  * layer is decorative and never takes pointer input, like the keyboard below it.
  */
-export function NoteHighway({ getFrame }: NoteHighwayProps) {
+export function NoteHighway({ getFrame, hidden = false }: NoteHighwayProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const latestGetFrame = useRef(getFrame);
   latestGetFrame.current = getFrame;
@@ -87,7 +89,7 @@ export function NoteHighway({ getFrame }: NoteHighwayProps) {
     <div
       ref={containerRef}
       className="note-highway"
-      style={{ top: `${NOTE_HIGHWAY_TOP_FRACTION * 100}%` }}
+      style={{ top: `${NOTE_HIGHWAY_TOP_FRACTION * 100}%`, visibility: hidden ? "hidden" : undefined }}
       aria-hidden="true"
     />
   );

@@ -186,6 +186,8 @@ interface DocumentViewerProps {
   onLoopToggle?: () => void;
   /** A handle was moved to another barline, by dragging or with the arrow keys. */
   onLoopChange?: (region: LoopRegion) => void;
+  /** A loop handle was picked up, or dropped. */
+  onLoopDragChange?: (dragging: boolean) => void;
   initialViewportTransform?: ViewportTransform;
   onViewportTransformChange?: (transform: ViewportTransform) => void;
   onPlaybackCommand: (command: PlaybackCommand) => void;
@@ -365,6 +367,9 @@ const LOOP_SCROLL_PADDING = 32;
  * nearer an edge of the view [start, end] it is, the faster the document moves to show
  * what lies past that edge, as long as the document [contentStart, contentEnd] reaches
  * past it. Positive moves the document down or right, showing what lies above or left.
+ * It scrolls only toward the edge the pointer last travelled toward, its `heading`
+ * (negative toward start, positive toward end), so dragging away from an edge never
+ * scrolls toward it.
  */
 export function loopEdgeScrollStep(
   pointer: number,
@@ -372,18 +377,63 @@ export function loopEdgeScrollStep(
   end: number,
   contentStart: number,
   contentEnd: number,
+  heading: number,
 ): number {
   const zone = Math.min(LOOP_EDGE_ZONE, (end - start) / 4);
   if (zone <= 0) return 0;
-  if (pointer < start + zone && contentStart < start) {
+  if (heading < 0 && pointer < start + zone && contentStart < start) {
     const depth = Math.min(1, (start + zone - pointer) / zone);
     return Math.min(start - contentStart, Math.ceil(depth * LOOP_EDGE_MAX_SPEED));
   }
-  if (pointer > end - zone && contentEnd > end) {
+  if (heading > 0 && pointer > end - zone && contentEnd > end) {
     const depth = Math.min(1, (pointer - (end - zone)) / zone);
     return -Math.min(contentEnd - end, Math.ceil(depth * LOOP_EDGE_MAX_SPEED));
   }
   return 0;
+}
+
+/**
+ * How far, in screen pixels, a dragged loop handle's pointer must turn back before it
+ * counts as heading the other way, so a hand settling or a cursor held against the
+ * screen's edge does not stop the scrolling.
+ */
+const LOOP_HEADING_TOLERANCE = 6;
+
+/** Which way a dragged handle's pointer is heading along one axis, and how far it got that way. */
+export interface LoopHeading {
+  /** -1 toward the start, 1 toward the end, 0 before it has gone either way. */
+  heading: number;
+  /** Where the pointer turned or furthest went in the heading. */
+  turn: number;
+}
+
+/** The heading after the pointer moved to `position`. */
+export function nextLoopHeading(previous: LoopHeading, position: number): LoopHeading {
+  const { heading, turn } = previous;
+  if (heading !== 0 && (position - turn) * heading >= 0) {
+    return position === turn ? previous : { heading, turn: position };
+  }
+  if (Math.abs(position - turn) <= LOOP_HEADING_TOLERANCE) return previous;
+  return { heading: Math.sign(position - turn), turn: position };
+}
+
+/**
+ * A frame's scroll `step` along one axis, cut short once the furthest a dragged handle can
+ * go, [low, high] on screen, is inside the view [start, end]: the start handle stops a
+ * measure before the end handle, so the view scrolls no further toward the end than to
+ * show that, and likewise the end handle toward the start.
+ */
+export function loopScrollStepWithinReach(
+  step: number,
+  handle: LoopHandle,
+  low: number,
+  high: number,
+  start: number,
+  end: number,
+): number {
+  if (handle === "start" && step < 0) return Math.max(step, Math.min(0, end - high));
+  if (handle === "end" && step > 0) return Math.min(step, Math.max(0, start - low));
+  return step;
 }
 
 /**
@@ -798,6 +848,7 @@ export function DocumentViewer({
   loopDimOutside = true,
   onLoopToggle,
   onLoopChange,
+  onLoopDragChange,
   initialViewportTransform,
   onViewportTransformChange,
   onPlaybackCommand,
@@ -948,6 +999,11 @@ export function DocumentViewer({
   };
   // Where a dragged handle's pointer is, and the frame that scrolls the view under it.
   const loopPointer = useRef<{ x: number; y: number } | null>(null);
+  // Which way the pointer is heading along each axis.
+  const loopHeading = useRef<{ x: LoopHeading; y: LoopHeading }>({
+    x: { heading: 0, turn: 0 },
+    y: { heading: 0, turn: 0 },
+  });
   const loopScrollFrame = useRef<number | null>(null);
   const followLoopPointer = useRef(() => undefined as void);
   // Detaches the listeners of the drag under way; ends that drag.
@@ -957,6 +1013,17 @@ export function DocumentViewer({
   const shownLoopBefore = useRef<LoopRegion | null>(null);
   // When a loop end last moved, so realtime following leaves the view on it a while.
   const loopEditedAt = useRef(Number.NEGATIVE_INFINITY);
+  // When a handle was last dropped: the highway coming back must not pull the view away.
+  const loopDroppedAt = useRef(Number.NEGATIVE_INFINITY);
+  const loopDragging = loopDrag !== null;
+  const loopDraggingBefore = useRef(false);
+  useEffect(() => {
+    if (loopDragging === loopDraggingBefore.current) return;
+    loopDraggingBefore.current = loopDragging;
+    if (!loopDragging) loopDroppedAt.current = performance.now();
+    onLoopDragChange?.(loopDragging);
+  }, [loopDragging]);
+  useEffect(() => () => onLoopDragChange?.(false), []);
   useEffect(() => {
     if (!loop) {
       finishLoopDrag.current(false);
@@ -991,7 +1058,8 @@ export function DocumentViewer({
         if (!rect || !page || page.width <= 0) return [];
         const pixels = rect.width / page.width;
         return [{
-          centerY: rect.top + ((system.top + system.bottom) / 2) * pixels,
+          top: rect.top + system.top * pixels,
+          bottom: rect.top + system.bottom * pixels,
           firstMeasure: system.firstMeasure,
           barlines: system.barlines.map((x) => rect.left + x * pixels),
         }];
@@ -1001,7 +1069,15 @@ export function DocumentViewer({
       const { loopDrag: drag, scoreMeasureCount: count } = loopLatest.current;
       const pointer = loopPointer.current;
       if (!drag || !pointer) return;
-      const region = draggedLoopRegion(drag.region, drag.handle, screenSystems(), pointer.x, pointer.y, count);
+      const region = draggedLoopRegion(
+        drag.region,
+        drag.handle,
+        screenSystems(),
+        pointer.x,
+        pointer.y,
+        count,
+        LOOP_HANDLE_REACH,
+      );
       if (region !== drag.region) {
         const next = { ...drag, region };
         loopLatest.current.loopDrag = next;
@@ -1013,6 +1089,24 @@ export function DocumentViewer({
       if (loopScrollFrame.current !== null) cancelAnimationFrame(loopScrollFrame.current);
       loopScrollFrame.current = null;
     };
+    // The whole of a handle on `boundary`, grip tab and all, with some room around it,
+    // from the stage's corner, and the system it is drawn on.
+    const handleOnScreen = (boundary: number, handle: LoopHandle, stage: DOMRect) => {
+      const { scoreSystems: systems, displayPages: shown } = loopLatest.current;
+      const placement = loopBoundaryPlacement(systems, boundary, handle);
+      const rect = placement ? pageRefs.current.get(placement.system.pageIndex)?.getBoundingClientRect() : null;
+      const page = placement ? shown.find((candidate) => candidate.page.index === placement.system.pageIndex) : null;
+      if (!placement || !rect || !page || page.width <= 0) return null;
+      const pixels = rect.width / page.width;
+      const x = rect.left - stage.left + placement.x * pixels;
+      return {
+        system: placement.system,
+        left: x - LOOP_SCROLL_PADDING,
+        right: x + LOOP_SCROLL_PADDING,
+        top: rect.top - stage.top + placement.system.top * pixels - LOOP_HANDLE_REACH.above - LOOP_SCROLL_PADDING / 2,
+        bottom: rect.top - stage.top + placement.system.bottom * pixels + LOOP_HANDLE_REACH.below + LOOP_SCROLL_PADDING / 2,
+      };
+    };
     // While the pointer holds a handle near an edge of the view, the score scrolls on
     // under it, and the handle follows to the barlines that come into view.
     const scrollFrame = () => {
@@ -1023,20 +1117,35 @@ export function DocumentViewer({
       if (!drag || !pointer || !stage) return;
       const current = transformRef.current;
       const { width, height } = layoutRef.current;
-      const dx = loopEdgeScrollStep(
+      let dx = loopEdgeScrollStep(
         pointer.x - stage.left,
         0,
         stage.width,
         current.x - LOOP_SCROLL_PADDING,
         current.x + width * current.scale + LOOP_SCROLL_PADDING,
+        loopHeading.current.x.heading,
       );
-      const dy = loopEdgeScrollStep(
+      let dy = loopEdgeScrollStep(
         pointer.y - stage.top,
         0,
         viewBottom(),
         current.y - LOOP_SCROLL_PADDING,
         current.y + height * current.scale + LOOP_SCROLL_PADDING,
+        loopHeading.current.y.heading,
       );
+      // Past the barline a measure from the other handle there is nothing to drag to.
+      const { region, handle } = drag;
+      const limit = handle === "start" ? region.endMeasure - 1 : region.startMeasure + 1;
+      const reach = handleOnScreen(limit, handle, stage);
+      if (reach) {
+        dy = loopScrollStepWithinReach(dy, handle, reach.top, reach.bottom, 0, viewBottom());
+        // Across, only while the handle is on that barline's system: on another, all of
+        // its own system's width is still within reach.
+        const held = handleOnScreen(handle === "start" ? region.startMeasure : region.endMeasure, handle, stage);
+        if (held?.system === reach.system) {
+          dx = loopScrollStepWithinReach(dx, handle, reach.left, reach.right, 0, stage.width);
+        }
+      }
       if (dx === 0 && dy === 0) return;
       schedule((latest) => ({ ...latest, x: latest.x + dx, y: latest.y + dy }));
       followPointer();
@@ -1044,26 +1153,13 @@ export function DocumentViewer({
     };
     // Moves the document so a boundary the keyboard moved, and its system, are in view.
     const revealBoundary = (region: LoopRegion, handle: LoopHandle) => {
-      const { scoreSystems: systems, displayPages: shown, scheduleTransform: schedule, scoreViewBottom: viewBottom } =
-        loopLatest.current;
-      const boundary = handle === "start" ? region.startMeasure : region.endMeasure;
-      const placement = loopBoundaryPlacement(systems, boundary, handle);
+      const { scheduleTransform: schedule, scoreViewBottom: viewBottom } = loopLatest.current;
       const stage = stageRef.current?.getBoundingClientRect();
-      const rect = placement ? pageRefs.current.get(placement.system.pageIndex)?.getBoundingClientRect() : null;
-      const page = placement ? shown.find((candidate) => candidate.page.index === placement.system.pageIndex) : null;
-      if (!placement || !stage || !rect || !page || page.width <= 0) return;
-      const pixels = rect.width / page.width;
-      const x = rect.left - stage.left + placement.x * pixels;
-      const top = rect.top - stage.top + placement.system.top * pixels;
-      const bottom = rect.top - stage.top + placement.system.bottom * pixels;
-      const dx = revealOffset(x - LOOP_SCROLL_PADDING, x + LOOP_SCROLL_PADDING, 0, stage.width);
-      // The whole handle, grip tab and all, with some room around it.
-      const dy = revealOffset(
-        top - LOOP_HANDLE_REACH.above - LOOP_SCROLL_PADDING / 2,
-        bottom + LOOP_HANDLE_REACH.below + LOOP_SCROLL_PADDING / 2,
-        0,
-        viewBottom(),
-      );
+      const boundary = handle === "start" ? region.startMeasure : region.endMeasure;
+      const shown = stage ? handleOnScreen(boundary, handle, stage) : null;
+      if (!stage || !shown) return;
+      const dx = revealOffset(shown.left, shown.right, 0, stage.width);
+      const dy = revealOffset(shown.top, shown.bottom, 0, viewBottom());
       if (dx !== 0 || dy !== 0) schedule((latest) => ({ ...latest, x: latest.x + dx, y: latest.y + dy }));
     };
     revealLoopBoundary.current = revealBoundary;
@@ -1102,6 +1198,10 @@ export function DocumentViewer({
         const drag = { handle, pointerId, region: current };
         loopLatest.current.loopDrag = drag;
         loopPointer.current = { x: event.clientX, y: event.clientY };
+        loopHeading.current = {
+          x: { heading: 0, turn: event.clientX },
+          y: { heading: 0, turn: event.clientY },
+        };
         setLoopDrag(drag);
         const move = (moved: PointerEvent) => {
           if (moved.pointerId !== pointerId) return;
@@ -1110,6 +1210,11 @@ export function DocumentViewer({
             finish(true);
             return;
           }
+          const heading = loopHeading.current;
+          loopHeading.current = {
+            x: nextLoopHeading(heading.x, moved.clientX),
+            y: nextLoopHeading(heading.y, moved.clientY),
+          };
           loopPointer.current = { x: moved.clientX, y: moved.clientY };
           followPointer();
           if (loopScrollFrame.current === null) scrollFrame();
@@ -1510,6 +1615,7 @@ export function DocumentViewer({
     // The view is the loop handle's while one is dragged, and in realtime, where the
     // playhead moves on regardless, for a moment after a loop end moved.
     if (loopLatest.current.loopDrag) return;
+    if (performance.now() - loopDroppedAt.current < LOOP_EDIT_FOLLOW_HOLD_MS) return;
     if (
       (effectiveStatus === "playing" || effectiveStatus === "paused") &&
       performance.now() - loopEditedAt.current < LOOP_EDIT_FOLLOW_HOLD_MS

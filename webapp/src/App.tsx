@@ -441,6 +441,7 @@ export function App() {
     realtimeControllerRef.current?.setTempoMultiplier(multiplier);
   }, []);
   const [noteHighwayEnabled, setNoteHighwayEnabled] = useState(loadNoteHighwayEnabled);
+  const [loopDragging, setLoopDragging] = useState(false);
   const realtimeRouteRef = useRef<PerformanceRoute | null>(null);
   /** The realtime route is a loop's, which starts over at its end. */
   const realtimeRouteLoopsRef = useRef(false);
@@ -574,7 +575,10 @@ export function App() {
       },
     );
   }
-  const noteHighwayVisible = noteHighwayEnabled && playbackActive;
+  const noteHighwayShown = noteHighwayEnabled && playbackActive;
+  // A dragged loop handle needs the score the highway covers, so the highway steps
+  // aside until it is dropped; it stays mounted to keep its WebGL context.
+  const noteHighwayVisible = noteHighwayShown && !loopDragging;
   const getRealtimeRoute = useCallback(() => realtimeRouteRef.current, []);
   const getRealtimeOffset = useCallback(
     () => realtimeControllerRef.current?.getOffset() ?? 0,
@@ -2367,7 +2371,7 @@ export function App() {
 
       <section
         className={`workspace${diagnosticsShown ? "" : " debug-panel-hidden"}${
-          noteHighwayVisible ? " note-highway-active" : ""
+          noteHighwayShown ? " note-highway-active" : ""
         }`}
       >
         {document && document.pages.length > 0 ? (
@@ -2425,6 +2429,7 @@ export function App() {
               loopDimOutside={loopDimOutside}
               onLoopToggle={() => handlePlaybackCommand("toggleLoopMode")}
               onLoopChange={changeLoopRegion}
+              onLoopDragChange={setLoopDragging}
               onNoteHighwayToggle={toggleNoteHighway}
               listenFeedback={listenFeedback}
               initialViewportTransform={
@@ -2554,14 +2559,15 @@ export function App() {
               </dl>
               {workerInfo ? <p className="worker-info">{workerInfo}</p> : null}
             </aside> : null}
-            {noteHighwayVisible ? (
+            {noteHighwayShown ? (
               <NoteHighway
                 getFrame={playbackMode === "realtime" ? realtimeHighwayFrame : noteByNoteHighwayFrame}
+                hidden={!noteHighwayVisible}
               />
             ) : null}
             {playbackActive ? (
               <PianoKeyboard
-                highwayAttached={noteHighwayVisible}
+                highwayAttached={noteHighwayShown}
                 notes={playbackMode === "realtime"
                   ? realtimeDisplayNotes
                   : playbackMoment?.keyboardNotes ?? []}
