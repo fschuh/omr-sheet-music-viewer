@@ -977,6 +977,10 @@ button:disabled {
 
 .viewer-stage.is-pointer-panning { cursor: grabbing; }
 
+/* The stage holds the pointer while a loop handle is dragged, so it keeps the handle's cursor. */
+.viewer-stage.is-loop-dragging,
+.viewer-stage.is-loop-dragging * { cursor: ew-resize; }
+
 .benchmark-page {
   height: 100%;
   margin: 0 auto;
@@ -1194,8 +1198,6 @@ button:disabled {
   pointer-events: all;
   touch-action: none;
 }
-
-.loop-handle.dragging .loop-handle-hit { cursor: grabbing; }
 
 .overlay .realtime-playhead {
   filter: drop-shadow(0 0 2px rgb(255 255 255 / 95%));

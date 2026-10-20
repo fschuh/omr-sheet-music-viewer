@@ -2005,7 +2005,7 @@ export function DocumentViewer({
       </div>
       <div
         ref={stageRef}
-        className={`viewer-stage${isPointerPanning ? " is-pointer-panning" : ""}`}
+        className={`viewer-stage${isPointerPanning ? " is-pointer-panning" : ""}${loopDragging ? " is-loop-dragging" : ""}`}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
