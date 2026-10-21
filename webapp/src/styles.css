@@ -155,6 +155,13 @@ button:disabled {
   color: #fff;
 }
 
+/* Beats the light hover every button gets, which would leave the white text unreadable. */
+.log-button.active:hover:not(:disabled),
+.settings-button.active:hover:not(:disabled) {
+  background: #24201c;
+  border-color: #24201c;
+}
+
 .progress-track {
   background: #dedad3;
   height: 3px;
