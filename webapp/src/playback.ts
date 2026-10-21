@@ -23,6 +23,8 @@ export const playbackCommandNames = [
   "backwardPage",
   "toggleLoopMode",
   "toggleNoteHighway",
+  "practiceLeftHand",
+  "practiceRightHand",
   "tempoUp",
   "tempoDown",
   "resetTempo",
@@ -514,6 +516,8 @@ function commandDestination(
     | "playCurrentNotes"
     | "toggleLoopMode"
     | "toggleNoteHighway"
+    | "practiceLeftHand"
+    | "practiceRightHand"
     | "tempoUp"
     | "tempoDown"
     | "resetTempo"
@@ -585,6 +589,8 @@ export function runPlaybackCommand(
     command === "togglePlaybackMode" ||
     command === "toggleLoopMode" ||
     command === "toggleNoteHighway" ||
+    command === "practiceLeftHand" ||
+    command === "practiceRightHand" ||
     command === "tempoUp" ||
     command === "tempoDown" ||
     command === "resetTempo" ||

@@ -64,10 +64,11 @@ const PRACTICE_HAND_OPTIONS: ReadonlyArray<{
   hand: PracticeHand;
   label: string;
   description: string;
+  shortcut?: string;
 }> = [
-  { hand: "left", label: "LH", description: "Practice the left hand" },
+  { hand: "left", label: "LH", description: "Practice the left hand", shortcut: "[" },
   { hand: "both", label: "Both", description: "Play both hands" },
-  { hand: "right", label: "RH", description: "Practice the right hand" },
+  { hand: "right", label: "RH", description: "Practice the right hand", shortcut: "]" },
 ];
 const NO_GROUP_IDS: ReadonlySet<string> = new Set();
 
@@ -1785,14 +1786,14 @@ export function DocumentViewer({
               role="group"
               aria-label="Practice hand"
             >
-              {PRACTICE_HAND_OPTIONS.map(({ hand, label, description }) => (
+              {PRACTICE_HAND_OPTIONS.map(({ hand, label, description, shortcut }) => (
                 <button
                   key={hand}
                   type="button"
                   className={practiceHand === hand ? "selected" : ""}
                   aria-label={description}
                   aria-pressed={practiceHand === hand}
-                  title={description}
+                  title={shortcut ? `${description} (${shortcut})` : description}
                   onClick={() => onPracticeHandChange(hand)}
                 >{label}</button>
               ))}

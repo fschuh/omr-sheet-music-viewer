@@ -251,6 +251,8 @@ function isPlaybackToggleCommand(command: PlaybackCommand): boolean {
     command === "playCurrentNotes" ||
     command === "toggleLoopMode" ||
     command === "toggleNoteHighway" ||
+    command === "practiceLeftHand" ||
+    command === "practiceRightHand" ||
     command === "resetTempo";
 }
 
@@ -259,6 +261,8 @@ function commandWorksWhileStopped(command: PlaybackCommand): boolean {
   return command === "togglePlayback" ||
     command === "stopPlayback" ||
     command === "togglePlaybackMode" ||
+    command === "practiceLeftHand" ||
+    command === "practiceRightHand" ||
     command === "tempoUp" ||
     command === "tempoDown" ||
     command === "resetTempo";
@@ -909,6 +913,8 @@ export function App() {
           command === "togglePlaybackMode" ||
           command === "toggleLoopMode" ||
           command === "toggleNoteHighway" ||
+          command === "practiceLeftHand" ||
+          command === "practiceRightHand" ||
           command === "tempoUp" ||
           command === "tempoDown" ||
           command === "resetTempo" ||
@@ -1328,6 +1334,12 @@ export function App() {
       toggleNoteHighway();
       return;
     }
+    if (command === "practiceLeftHand" || command === "practiceRightHand") {
+      const hand = command === "practiceLeftHand" ? "left" : "right";
+      // The hand already practised goes back to both.
+      handlePracticeHandChange(practiceHand === hand ? "both" : hand);
+      return;
+    }
     if (command === "togglePlaybackMode") {
       handlePlaybackModeChange(playbackMode === "realtime" ? "note-by-note" : "realtime");
       return;
@@ -1362,9 +1374,11 @@ export function App() {
     changeTempoMultiplier,
     documentMeasureCount,
     handlePlaybackModeChange,
+    handlePracticeHandChange,
     loopMode,
     loopRegion,
     playbackMode,
+    practiceHand,
     startListenMode,
     stopListenMode,
     toggleLoopMode,
