@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { playbackCommandNames, type PlaybackCommand } from "./playback";
 import { PIANO_IDS, PIANO_REGISTRY, type PianoId } from "./pianoRegistry";
 import {
@@ -80,7 +80,18 @@ function formatListenMatcherThresholds(profileId: ListenMatcherProfileId): strin
     `active ${profile.activeTargetThreshold} · unexpected ${profile.extraNoteThreshold}`;
 }
 
+const SETTINGS_SECTIONS = [
+  { id: "playback", label: "Playback", hint: "Piano, listen input and loop" },
+  { id: "shortcuts", label: "Shortcuts", hint: "Keyboard keys and MIDI" },
+  { id: "repairs", label: "Repairs", hint: "Corrections to recognition" },
+  { id: "debug", label: "Debug", hint: "Troubleshooting tools" },
+] as const;
+
+export type SettingsSectionId = (typeof SETTINGS_SECTIONS)[number]["id"];
+
 interface SettingsPageProps {
+  /** The section shown first. */
+  initialSection?: SettingsSectionId;
   shortcuts: PlaybackShortcuts;
   playbackPiano: PianoId;
   listenInputSource: ListenInputSource;
@@ -112,6 +123,7 @@ interface SettingsPageProps {
 }
 
 export function SettingsPage({
+  initialSection = "playback",
   shortcuts,
   playbackPiano,
   listenInputSource,
@@ -142,6 +154,8 @@ export function SettingsPage({
 }: SettingsPageProps) {
   const [keyboardCaptureCommand, setKeyboardCaptureCommand] = useState<PlaybackCommand | null>(null);
   const [keyboardError, setKeyboardError] = useState<string | null>(null);
+  const [section, setSection] = useState<SettingsSectionId>(initialSection);
+  const sectionTabs = useRef(new Map<SettingsSectionId, HTMLButtonElement>());
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -193,6 +207,39 @@ export function SettingsPage({
     onBeginMidiCapture(command);
   }
 
+  function showSection(next: SettingsSectionId) {
+    if (next === section) return;
+    // A key or MIDI message being learned belongs to the section left behind.
+    setKeyboardCaptureCommand(null);
+    setKeyboardError(null);
+    onCancelMidiCapture();
+    setSection(next);
+  }
+
+  /** Up and Down move through the sections, Home and End go to the first and last. */
+  function moveBetweenSections(event: ReactKeyboardEvent<HTMLButtonElement>) {
+    const index = SETTINGS_SECTIONS.findIndex(({ id }) => id === section);
+    const last = SETTINGS_SECTIONS.length - 1;
+    const target = event.key === "ArrowDown" ? (index + 1) % SETTINGS_SECTIONS.length
+      : event.key === "ArrowUp" ? (index + last) % SETTINGS_SECTIONS.length
+      : event.key === "Home" ? 0
+      : event.key === "End" ? last
+      : null;
+    if (target === null) return;
+    event.preventDefault();
+    const next = SETTINGS_SECTIONS[target].id;
+    showSection(next);
+    sectionTabs.current.get(next)?.focus();
+  }
+
+  function sectionPanel(id: SettingsSectionId) {
+    return {
+      id: `settings-panel-${id}`,
+      role: "tabpanel",
+      hidden: section !== id,
+    } as const;
+  }
+
   function clearMidi(command: PlaybackCommand) {
     if (midiCaptureCommand === command) onCancelMidiCapture();
     onChangeShortcuts({
@@ -209,304 +256,334 @@ export function SettingsPage({
         <p>Customize playback controls and optional diagnostics.</p>
       </div>
 
-      <section className="settings-card" aria-labelledby="playback-piano-title">
-        <header className="settings-card-header">
-          <div>
-            <h3 id="playback-piano-title">Playback</h3>
-            <p>Select the recorded piano used for score playback and note audition.</p>
-          </div>
-        </header>
-        <label className="settings-select-row">
-          <span>
-            <strong>Playback piano</strong>
-            <small>MusicXML without a dynamic marking uses mezzo-piano (mp).</small>
-          </span>
-          <select
-            aria-label="Playback piano"
-            value={playbackPiano}
-            onChange={(event) => onChangePlaybackPiano(event.target.value as PianoId)}
-          >
-            {PIANO_IDS.map((pianoId) => (
-              <option key={pianoId} value={pianoId}>{PIANO_REGISTRY[pianoId].displayName}</option>
+      <div className="settings-layout">
+        <nav className="settings-nav" aria-label="Settings sections">
+          <div role="tablist" aria-orientation="vertical" aria-label="Settings sections">
+            {SETTINGS_SECTIONS.map(({ id, label, hint }) => (
+              <button
+                key={id}
+                ref={(element) => {
+                  if (element) sectionTabs.current.set(id, element);
+                  else sectionTabs.current.delete(id);
+                }}
+                type="button"
+                role="tab"
+                id={`settings-tab-${id}`}
+                className={`settings-nav-item${section === id ? " selected" : ""}`}
+                aria-selected={section === id}
+                aria-controls={`settings-panel-${id}`}
+                tabIndex={section === id ? 0 : -1}
+                onClick={() => showSection(id)}
+                onKeyDown={moveBetweenSections}
+              >
+                <strong>{label}</strong>
+                <small>{hint}</small>
+              </button>
             ))}
-          </select>
-        </label>
-        <label className="settings-select-row">
-          <span>
-            <strong>Listen input</strong>
-            <small>
-              MIDI uses Note On/Off messages from every connected input. While MIDI listen mode
-              is active, note messages play the score; other MIDI shortcut messages continue to
-              work.
-            </small>
-          </span>
-          <select
-            aria-label="Listen input"
-            value={listenInputSource}
-            onChange={(event) => (
-              onChangeListenInputSource(event.target.value as ListenInputSource)
-            )}
-          >
-            <option value="microphone">Microphone (default)</option>
-            <option value="midi" disabled={!nativeAvailable}>MIDI keyboard</option>
-          </select>
-        </label>
-        {onChangeLoopDimOutside ? (
-          <label className="settings-toggle-row">
-            <input
-              type="checkbox"
-              aria-label="Dim bars outside the loop"
-              checked={loopDimOutside}
-              onChange={(event) => onChangeLoopDimOutside(event.target.checked)}
-            />
-            <span>
-              <strong>Dim bars outside the loop</strong>
-              <small>While loop mode is on, the bars it does not play are faded on the score.</small>
-            </span>
-          </label>
-        ) : null}
-      </section>
-
-      <section className="settings-card" aria-labelledby="shortcuts-title">
-        <header className="settings-card-header">
-          <div>
-            <h3 id="shortcuts-title">Shortcuts</h3>
-            <p>Select a shortcut to replace it. MIDI assignments accept channel voice messages from any connected input and any channel. Hold Note or Control Change inputs to repeat navigation commands.</p>
           </div>
-          <button
-            type="button"
-            className="secondary-button"
-            onClick={() => {
-              setKeyboardCaptureCommand(null);
-              onCancelMidiCapture();
-              setKeyboardError(null);
-              onChangeShortcuts(defaultPlaybackShortcuts());
-            }}
-          >
-            Reset defaults
-          </button>
-        </header>
+        </nav>
 
-        <div className="midi-status" aria-live="polite">
-          <span className={`midi-status-dot${midiError ? " unavailable" : midiPorts.length ? " connected" : ""}`} />
-          <div>
-            <strong>
-              {!nativeAvailable
-                ? "MIDI is available in the desktop app"
-                : midiRefreshing
-                  ? "Looking for MIDI inputs…"
-                  : midiError
-                    ? "MIDI unavailable"
-                    : midiPorts.length
-                      ? `${midiPorts.length} MIDI input${midiPorts.length === 1 ? "" : "s"} connected`
-                      : "No MIDI inputs found"}
-            </strong>
-            <span>{midiError ?? (midiPorts.length ? midiPorts.join(" · ") : "Connect or start your Windows MIDI bridge, then scan again.")}</span>
-          </div>
-          <button type="button" disabled={!nativeAvailable || midiRefreshing} onClick={onRefreshMidiInputs}>
-            Scan again
-          </button>
-        </div>
-
-        {(keyboardCaptureCommand || midiCaptureCommand) ? (
-          <div className="capture-banner" role="status">
-            <span className="capture-pulse" />
-            {keyboardCaptureCommand ? "Press the new key combination" : "Press a button on your MIDI page turner"}
-            <kbd>Esc</kbd><span>to cancel</span>
-          </div>
-        ) : null}
-        {keyboardError ? <div className="shortcut-error" role="alert">{keyboardError}</div> : null}
-
-        <div className="shortcuts-table" role="table" aria-label="Playback shortcut assignments">
-          <div className="shortcuts-row shortcuts-header" role="row">
-            <span role="columnheader">Playback command</span>
-            <span role="columnheader">Keyboard</span>
-            <span role="columnheader">MIDI message</span>
-          </div>
-          {playbackCommandDetails
-            .filter(({ command }) => showStopPlayback || command !== "stopPlayback")
-            .map(({ command, label, description }) => {
-            const learningKeyboard = keyboardCaptureCommand === command;
-            const learningMidi = midiCaptureCommand === command;
-            const midi = shortcuts[command].midi;
-            return (
-              <div className="shortcuts-row" role="row" key={command}>
-                <div className="shortcut-command" role="cell">
-                  <strong>{label}</strong>
-                  <span>{description}</span>
-                </div>
-                <div role="cell">
-                  <button
-                    type="button"
-                    className={`shortcut-binding${learningKeyboard ? " listening" : ""}`}
-                    aria-label={`Keyboard shortcut for ${label}`}
-                    aria-pressed={learningKeyboard}
-                    onClick={() => beginKeyboardCapture(command)}
-                  >
-                    {learningKeyboard ? "Press keys…" : formatKeyboardShortcut(shortcuts[command].keyboard)}
-                  </button>
-                </div>
-                <div className="midi-binding-cell" role="cell">
-                  <button
-                    type="button"
-                    className={`shortcut-binding midi-binding${learningMidi ? " listening" : ""}${midi ? " assigned" : ""}`}
-                    aria-label={`MIDI shortcut for ${label}`}
-                    aria-pressed={learningMidi}
-                    disabled={!nativeAvailable || midiRefreshing || Boolean(midiError)}
-                    onClick={() => beginMidiCapture(command)}
-                  >
-                    {learningMidi ? "Waiting for MIDI…" : midi ? formatMidiShortcut(midi) : "Not assigned"}
-                  </button>
-                  {midi ? (
-                    <button type="button" className="clear-binding" aria-label={`Clear MIDI shortcut for ${label}`} onClick={() => clearMidi(command)}>×</button>
-                  ) : null}
-                </div>
+        <div className="settings-content">
+          <section className="settings-card" aria-labelledby="playback-piano-title" {...sectionPanel("playback")}>
+            <header className="settings-card-header">
+              <div>
+                <h3 id="playback-piano-title">Playback</h3>
+                <p>Select the recorded piano used for score playback and note audition.</p>
               </div>
-            );
-          })}
-        </div>
-      </section>
+            </header>
+            <label className="settings-select-row">
+              <span>
+                <strong>Playback piano</strong>
+                <small>MusicXML without a dynamic marking uses mezzo-piano (mp).</small>
+              </span>
+              <select
+                aria-label="Playback piano"
+                value={playbackPiano}
+                onChange={(event) => onChangePlaybackPiano(event.target.value as PianoId)}
+              >
+                {PIANO_IDS.map((pianoId) => (
+                  <option key={pianoId} value={pianoId}>{PIANO_REGISTRY[pianoId].displayName}</option>
+                ))}
+              </select>
+            </label>
+            <label className="settings-select-row">
+              <span>
+                <strong>Listen input</strong>
+                <small>
+                  MIDI uses Note On/Off messages from every connected input. While MIDI listen mode
+                  is active, note messages play the score; other MIDI shortcut messages continue to
+                  work.
+                </small>
+              </span>
+              <select
+                aria-label="Listen input"
+                value={listenInputSource}
+                onChange={(event) => (
+                  onChangeListenInputSource(event.target.value as ListenInputSource)
+                )}
+              >
+                <option value="microphone">Microphone (default)</option>
+                <option value="midi" disabled={!nativeAvailable}>MIDI keyboard</option>
+              </select>
+            </label>
+            {onChangeLoopDimOutside ? (
+              <label className="settings-toggle-row">
+                <input
+                  type="checkbox"
+                  aria-label="Dim bars outside the loop"
+                  checked={loopDimOutside}
+                  onChange={(event) => onChangeLoopDimOutside(event.target.checked)}
+                />
+                <span>
+                  <strong>Dim bars outside the loop</strong>
+                  <small>While loop mode is on, the bars it does not play are faded on the score.</small>
+                </span>
+              </label>
+            ) : null}
+          </section>
 
-      <section className="settings-card" aria-labelledby="repairs-title">
-        <header className="settings-card-header">
-          <div>
-            <h3 id="repairs-title">Repairs</h3>
-            <p>
-              Corrections made while a score is recognized, where the page shows what the
-              recognizer missed. After a change, a score is recognized again the next time
-              it is opened.
-            </p>
-          </div>
-        </header>
-        <label className="settings-toggle-row">
-          <input
-            type="checkbox"
-            aria-label="Note timing at shared noteheads"
-            checked={sharedNoteheadTimingRepair}
-            onChange={(event) => onChangeSharedNoteheadTimingRepair(event.target.checked)}
-          />
-          <span>
-            <strong>Note timing at shared noteheads</strong>
-            <small>
-              Where two voices share one notehead, such as an eighth note on the first note
-              of a 16th run, the notes after it start when the shorter note ends, as printed.
-              Only applied where the bar then adds up to its time signature.
-            </small>
-          </span>
-        </label>
-        <label className="settings-toggle-row">
-          <input
-            type="checkbox"
-            aria-label="Time signatures from the page"
-            checked={timeSignatureRepair}
-            onChange={(event) => onChangeTimeSignatureRepair(event.target.checked)}
-          />
-          <span>
-            <strong>Time signatures from the page</strong>
-            <small>
-              Writes the time signature printed on the page instead of guessing it from the
-              bar lengths, which misread notes throw off, and carries it from page to page
-              where it is not printed again. A time signature the recognizer sees where none
-              is printed is left out.
-            </small>
-          </span>
-        </label>
-        <label className="settings-toggle-row">
-          <input
-            type="checkbox"
-            aria-label="Tuplets from beams and brackets"
-            checked={timeSignatureRepair && tupletRepair}
-            disabled={!timeSignatureRepair}
-            onChange={(event) => onChangeTupletRepair(event.target.checked)}
-          />
-          <span>
-            <strong>Tuplets from beams and brackets</strong>
-            <small>
-              Writes notes read as plain values as a triplet where a beam or a bracketed
-              number on the page shows one, such as three eighths under one beam in a beat.
-              Only applied where the bar then adds up to its time signature, so it needs the
-              time signatures from the page.
-            </small>
-          </span>
-        </label>
-      </section>
+          <section className="settings-card" aria-labelledby="shortcuts-title" {...sectionPanel("shortcuts")}>
+            <header className="settings-card-header">
+              <div>
+                <h3 id="shortcuts-title">Shortcuts</h3>
+                <p>Select a shortcut to replace it. MIDI assignments accept channel voice messages from any connected input and any channel. Hold Note or Control Change inputs to repeat navigation commands.</p>
+              </div>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => {
+                  setKeyboardCaptureCommand(null);
+                  onCancelMidiCapture();
+                  setKeyboardError(null);
+                  onChangeShortcuts(defaultPlaybackShortcuts());
+                }}
+              >
+                Reset defaults
+              </button>
+            </header>
 
-      <section className="settings-card" aria-labelledby="debug-title">
-        <header className="settings-card-header">
-          <div>
-            <h3 id="debug-title">Debug</h3>
-            <p>Show troubleshooting tools and recognition details alongside the score.</p>
-          </div>
-        </header>
-        <label className="settings-toggle-row">
-          <input
-            type="checkbox"
-            checked={debugPanelEnabled}
-            onChange={(event) => onChangeDebugPanelEnabled(event.target.checked)}
-          />
-          <span>
-            <strong>Enable debug panel</strong>
-            <small>Displays the right-side panel with note highlighting, overlays, diagnostics, and document data.</small>
-          </span>
-        </label>
-        {debugPanelEnabled ? (
-          <fieldset className="settings-profile-override">
-            <legend>Listen matcher profile</legend>
-            <p className="settings-profile-note">
-              Overrides the profile listen mode runs with, for this session only. It is not
-              saved, and it is cleared when the debug panel is switched off. Timing and
-              advancement rules are the same for every profile; only confidence thresholds
-              change.
-            </p>
-            <label className="settings-profile-row">
+            <div className="midi-status" aria-live="polite">
+              <span className={`midi-status-dot${midiError ? " unavailable" : midiPorts.length ? " connected" : ""}`} />
+              <div>
+                <strong>
+                  {!nativeAvailable
+                    ? "MIDI is available in the desktop app"
+                    : midiRefreshing
+                      ? "Looking for MIDI inputs…"
+                      : midiError
+                        ? "MIDI unavailable"
+                        : midiPorts.length
+                          ? `${midiPorts.length} MIDI input${midiPorts.length === 1 ? "" : "s"} connected`
+                          : "No MIDI inputs found"}
+                </strong>
+                <span>{midiError ?? (midiPorts.length ? midiPorts.join(" · ") : "Connect or start your Windows MIDI bridge, then scan again.")}</span>
+              </div>
+              <button type="button" disabled={!nativeAvailable || midiRefreshing} onClick={onRefreshMidiInputs}>
+                Scan again
+              </button>
+            </div>
+
+            {(keyboardCaptureCommand || midiCaptureCommand) ? (
+              <div className="capture-banner" role="status">
+                <span className="capture-pulse" />
+                {keyboardCaptureCommand ? "Press the new key combination" : "Press a button on your MIDI page turner"}
+                <kbd>Esc</kbd><span>to cancel</span>
+              </div>
+            ) : null}
+            {keyboardError ? <div className="shortcut-error" role="alert">{keyboardError}</div> : null}
+
+            <div className="shortcuts-table" role="table" aria-label="Playback shortcut assignments">
+              <div className="shortcuts-row shortcuts-header" role="row">
+                <span role="columnheader">Playback command</span>
+                <span role="columnheader">Keyboard</span>
+                <span role="columnheader">MIDI message</span>
+              </div>
+              {playbackCommandDetails
+                .filter(({ command }) => showStopPlayback || command !== "stopPlayback")
+                .map(({ command, label, description }) => {
+                const learningKeyboard = keyboardCaptureCommand === command;
+                const learningMidi = midiCaptureCommand === command;
+                const midi = shortcuts[command].midi;
+                return (
+                  <div className="shortcuts-row" role="row" key={command}>
+                    <div className="shortcut-command" role="cell">
+                      <strong>{label}</strong>
+                      <span>{description}</span>
+                    </div>
+                    <div role="cell">
+                      <button
+                        type="button"
+                        className={`shortcut-binding${learningKeyboard ? " listening" : ""}`}
+                        aria-label={`Keyboard shortcut for ${label}`}
+                        aria-pressed={learningKeyboard}
+                        onClick={() => beginKeyboardCapture(command)}
+                      >
+                        {learningKeyboard ? "Press keys…" : formatKeyboardShortcut(shortcuts[command].keyboard)}
+                      </button>
+                    </div>
+                    <div className="midi-binding-cell" role="cell">
+                      <button
+                        type="button"
+                        className={`shortcut-binding midi-binding${learningMidi ? " listening" : ""}${midi ? " assigned" : ""}`}
+                        aria-label={`MIDI shortcut for ${label}`}
+                        aria-pressed={learningMidi}
+                        disabled={!nativeAvailable || midiRefreshing || Boolean(midiError)}
+                        onClick={() => beginMidiCapture(command)}
+                      >
+                        {learningMidi ? "Waiting for MIDI…" : midi ? formatMidiShortcut(midi) : "Not assigned"}
+                      </button>
+                      {midi ? (
+                        <button type="button" className="clear-binding" aria-label={`Clear MIDI shortcut for ${label}`} onClick={() => clearMidi(command)}>×</button>
+                      ) : null}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+
+          <section className="settings-card" aria-labelledby="repairs-title" {...sectionPanel("repairs")}>
+            <header className="settings-card-header">
+              <div>
+                <h3 id="repairs-title">Repairs</h3>
+                <p>
+                  Corrections made while a score is recognized, where the page shows what the
+                  recognizer missed. After a change, a score is recognized again the next time
+                  it is opened.
+                </p>
+              </div>
+            </header>
+            <label className="settings-toggle-row">
               <input
-                type="radio"
-                name="listen-matcher-profile"
-                value=""
-                checked={listenMatcherProfileOverride === null}
-                onChange={() => onChangeListenMatcherProfileOverride(null)}
+                type="checkbox"
+                aria-label="Note timing at shared noteheads"
+                checked={sharedNoteheadTimingRepair}
+                onChange={(event) => onChangeSharedNoteheadTimingRepair(event.target.checked)}
               />
               <span>
-                <strong>No override</strong>
-                <small>Use the production default ({DEFAULT_LISTEN_MATCHER_PROFILE_ID}).</small>
+                <strong>Note timing at shared noteheads</strong>
+                <small>
+                  Where two voices share one notehead, such as an eighth note on the first note
+                  of a 16th run, the notes after it start when the shorter note ends, as printed.
+                  Only applied where the bar then adds up to its time signature.
+                </small>
               </span>
             </label>
-            {LISTEN_MATCHER_PROFILE_IDS.map((profileId) => {
-              const status = LISTEN_MATCHER_PROFILE_STATUS[profileId];
-              return (
-                <label
-                  key={profileId}
-                  className={status.rejected
-                    ? "settings-profile-row settings-profile-rejected"
-                    : "settings-profile-row"}
-                >
+            <label className="settings-toggle-row">
+              <input
+                type="checkbox"
+                aria-label="Time signatures from the page"
+                checked={timeSignatureRepair}
+                onChange={(event) => onChangeTimeSignatureRepair(event.target.checked)}
+              />
+              <span>
+                <strong>Time signatures from the page</strong>
+                <small>
+                  Writes the time signature printed on the page instead of guessing it from the
+                  bar lengths, which misread notes throw off, and carries it from page to page
+                  where it is not printed again. A time signature the recognizer sees where none
+                  is printed is left out.
+                </small>
+              </span>
+            </label>
+            <label className="settings-toggle-row">
+              <input
+                type="checkbox"
+                aria-label="Tuplets from beams and brackets"
+                checked={timeSignatureRepair && tupletRepair}
+                disabled={!timeSignatureRepair}
+                onChange={(event) => onChangeTupletRepair(event.target.checked)}
+              />
+              <span>
+                <strong>Tuplets from beams and brackets</strong>
+                <small>
+                  Writes notes read as plain values as a triplet where a beam or a bracketed
+                  number on the page shows one, such as three eighths under one beam in a beat.
+                  Only applied where the bar then adds up to its time signature, so it needs the
+                  time signatures from the page.
+                </small>
+              </span>
+            </label>
+          </section>
+
+          <section className="settings-card" aria-labelledby="debug-title" {...sectionPanel("debug")}>
+            <header className="settings-card-header">
+              <div>
+                <h3 id="debug-title">Debug</h3>
+                <p>Show troubleshooting tools and recognition details alongside the score.</p>
+              </div>
+            </header>
+            <label className="settings-toggle-row">
+              <input
+                type="checkbox"
+                checked={debugPanelEnabled}
+                onChange={(event) => onChangeDebugPanelEnabled(event.target.checked)}
+              />
+              <span>
+                <strong>Enable debug panel</strong>
+                <small>Displays the right-side panel with note highlighting, overlays, diagnostics, and document data.</small>
+              </span>
+            </label>
+            {debugPanelEnabled ? (
+              <fieldset className="settings-profile-override">
+                <legend>Listen matcher profile</legend>
+                <p className="settings-profile-note">
+                  Overrides the profile listen mode runs with, for this session only. It is not
+                  saved, and it is cleared when the debug panel is switched off. Timing and
+                  advancement rules are the same for every profile; only confidence thresholds
+                  change.
+                </p>
+                <label className="settings-profile-row">
                   <input
                     type="radio"
                     name="listen-matcher-profile"
-                    value={profileId}
-                    checked={listenMatcherProfileOverride === profileId}
-                    onChange={() => onChangeListenMatcherProfileOverride(profileId)}
+                    value=""
+                    checked={listenMatcherProfileOverride === null}
+                    onChange={() => onChangeListenMatcherProfileOverride(null)}
                   />
                   <span>
-                    <strong>
-                      {profileId}
-                      {status.rejected ? " ⚠" : ""}
-                    </strong>
-                    <small>{status.label} — {status.detail}</small>
-                    <small className="settings-profile-thresholds">
-                      {formatListenMatcherThresholds(profileId)}
-                    </small>
+                    <strong>No override</strong>
+                    <small>Use the production default ({DEFAULT_LISTEN_MATCHER_PROFILE_ID}).</small>
                   </span>
                 </label>
-              );
-            })}
-            <p className="settings-profile-note">
-              Selecting a profile stops listen mode and rebuilds the matcher, so a passage in
-              progress is never judged by two profiles at once.
-            </p>
-          </fieldset>
-        ) : null}
-      </section>
+                {LISTEN_MATCHER_PROFILE_IDS.map((profileId) => {
+                  const status = LISTEN_MATCHER_PROFILE_STATUS[profileId];
+                  return (
+                    <label
+                      key={profileId}
+                      className={status.rejected
+                        ? "settings-profile-row settings-profile-rejected"
+                        : "settings-profile-row"}
+                    >
+                      <input
+                        type="radio"
+                        name="listen-matcher-profile"
+                        value={profileId}
+                        checked={listenMatcherProfileOverride === profileId}
+                        onChange={() => onChangeListenMatcherProfileOverride(profileId)}
+                      />
+                      <span>
+                        <strong>
+                          {profileId}
+                          {status.rejected ? " ⚠" : ""}
+                        </strong>
+                        <small>{status.label} — {status.detail}</small>
+                        <small className="settings-profile-thresholds">
+                          {formatListenMatcherThresholds(profileId)}
+                        </small>
+                      </span>
+                    </label>
+                  );
+                })}
+                <p className="settings-profile-note">
+                  Selecting a profile stops listen mode and rebuilds the matcher, so a passage in
+                  progress is never judged by two profiles at once.
+                </p>
+              </fieldset>
+            ) : null}
+          </section>
+        </div>
+      </div>
     </section>
   );
 }

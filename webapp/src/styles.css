@@ -1733,10 +1733,72 @@ button:disabled {
 }
 
 .settings-heading,
-.settings-card {
+.settings-layout {
   margin-left: auto;
   margin-right: auto;
   max-width: 1120px;
+}
+
+/* The section list beside the one section shown. */
+.settings-layout {
+  align-items: start;
+  display: grid;
+  gap: 26px;
+  grid-template-columns: 210px minmax(0, 1fr);
+}
+
+.settings-nav {
+  position: sticky;
+  top: 24px;
+}
+
+.settings-nav [role="tablist"] {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.settings-nav-item {
+  align-items: flex-start;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  color: #4a423b;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  height: auto;
+  justify-content: flex-start;
+  padding: 10px 14px;
+  text-align: left;
+}
+
+.settings-nav-item strong {
+  font-size: 0.95rem;
+  font-weight: 650;
+}
+
+.settings-nav-item small {
+  color: #857c72;
+  font-size: 0.75rem;
+}
+
+.settings-nav-item:hover:not(:disabled) {
+  background: rgb(255 255 255 / 55%);
+  border-color: transparent;
+}
+
+.settings-nav-item.selected,
+.settings-nav-item.selected:hover:not(:disabled) {
+  background: #fcfbf8;
+  border-color: #d5cfc6;
+  box-shadow: 0 6px 16px rgb(58 47 36 / 7%);
+  color: #92502c;
+}
+
+.settings-nav-item:focus-visible {
+  outline: 2px solid #92502c;
+  outline-offset: 2px;
 }
 
 .settings-heading { margin-bottom: 26px; }
@@ -1773,10 +1835,6 @@ button:disabled {
   border-radius: 13px;
   box-shadow: 0 14px 34px rgb(58 47 36 / 8%);
   overflow: hidden;
-}
-
-.settings-card + .settings-card {
-  margin-top: 22px;
 }
 
 .settings-card-header {
@@ -2161,6 +2219,12 @@ button:disabled {
   .piano-keyboard-current { justify-content: flex-end; }
   .piano-keyboard-current strong { font-size: 0.61rem; padding: 3px 5px; }
 
+  /* The section list runs across the top. */
+  .settings-layout { gap: 16px; grid-template-columns: minmax(0, 1fr); }
+  .settings-nav { position: static; }
+  .settings-nav [role="tablist"] { flex-direction: row; overflow-x: auto; }
+  .settings-nav-item { flex: 0 0 auto; padding: 8px 12px; }
+  .settings-nav-item small { display: none; }
   .settings-card-header { align-items: stretch; flex-direction: column; }
   .settings-card-header .secondary-button { align-self: flex-start; }
   .midi-status { grid-template-columns: auto minmax(0, 1fr); padding-left: 18px; padding-right: 18px; }

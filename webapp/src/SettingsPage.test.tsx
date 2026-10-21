@@ -79,6 +79,21 @@ test("renders every playback command with its default keyboard key and empty MID
   assert.doesNotMatch(markup, /type="checkbox" checked=""/);
 });
 
+test("lists the sections and shows only the chosen one", () => {
+  const playback = renderSettings();
+  assert.equal(playback.match(/role="tab"/g)?.length, 4);
+  for (const label of ["Playback", "Shortcuts", "Repairs", "Debug"]) {
+    assert.match(playback, new RegExp(`role="tab"[^>]*><strong>${label}</strong>`));
+  }
+  // Playback is first: its panel shows, and the others are hidden.
+  assert.match(playback, /id="settings-tab-playback"[^>]*aria-selected="true"/);
+  assert.match(playback, /<section[^>]*id="settings-panel-playback" role="tabpanel">/);
+  assert.match(playback, /<section[^>]*id="settings-panel-shortcuts" role="tabpanel" hidden="">/);
+  const shortcuts = renderSettings({ initialSection: "shortcuts" });
+  assert.match(shortcuts, /<section[^>]*id="settings-panel-shortcuts" role="tabpanel">/);
+  assert.match(shortcuts, /<section[^>]*id="settings-panel-playback" role="tabpanel" hidden="">/);
+});
+
 test("disables MIDI assignment when initialization fails", () => {
   const markup = renderToStaticMarkup(
     <SettingsPage
