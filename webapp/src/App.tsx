@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { DocumentViewer, steppedTempoMultiplier } from "./DocumentViewer";
+import { DocumentViewer, heldTempoStep, steppedTempoMultiplier } from "./DocumentViewer";
 import { printedValueSummary } from "./noteValues";
 import {
   addPredictedFingeringsToMusicXml,
@@ -1034,7 +1034,7 @@ export function App() {
     startRealtime,
     stopRealtime,
   ]);
-  const handlePlaybackCommandRef = useRef<(command: PlaybackCommand) => void>(() => undefined);
+  const handlePlaybackCommandRef = useRef<(command: PlaybackCommand, heldSince?: number) => void>(() => undefined);
 
   const stopListenMode = useCallback((preserveError = false) => {
     listenOperationRef.current += 1;
@@ -1311,7 +1311,8 @@ export function App() {
     if (loopMode) applyLoop(next);
   }, [applyLoop, documentMeasureCount, loopMode]);
 
-  const handlePlaybackCommand = useCallback((command: PlaybackCommand) => {
+  /** `heldSince` is when the key or MIDI control repeating `command` went down. */
+  const handlePlaybackCommand = useCallback((command: PlaybackCommand, heldSince?: number) => {
     if (isLoopBoundaryCommand(command)) {
       if (!loopMode || !loopRegion) return;
       const current = clampLoopRegion(loopRegion, documentMeasureCount);
@@ -1322,7 +1323,8 @@ export function App() {
     }
     if (command === "tempoUp" || command === "tempoDown") {
       if (playbackMode !== "realtime") return;
-      changeTempoMultiplier(steppedTempoMultiplier(tempoMultiplierRef.current, command === "tempoUp" ? 1 : -1));
+      const step = heldSince === undefined ? 1 : heldTempoStep(performance.now() - heldSince);
+      changeTempoMultiplier(steppedTempoMultiplier(tempoMultiplierRef.current, command === "tempoUp" ? step : -step));
       return;
     }
     if (command === "resetTempo") {
@@ -1413,6 +1415,7 @@ export function App() {
       intervalId: null,
     };
     const repeatTiming = midiRepeatTimingRef.current;
+    const heldSince = performance.now();
     const repeatCommand = () => {
       if (
         activeMidiRepeatRef.current !== activeRepeat ||
@@ -1422,7 +1425,7 @@ export function App() {
         if (activeMidiRepeatRef.current === activeRepeat) stopMidiRepeat();
         return;
       }
-      handlePlaybackCommandRef.current(command);
+      handlePlaybackCommandRef.current(command, heldSince);
     };
     activeMidiRepeatRef.current = activeRepeat;
     activeRepeat.delayId = window.setTimeout(() => {
@@ -1572,6 +1575,8 @@ export function App() {
     pianoSampler.stop();
   }, [document?.jobId]);
 
+  // The key held down, and since when, so its repeats can speed up.
+  const heldKeyRef = useRef<{ code: string; since: number } | null>(null);
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
       if (activePage !== "viewer") return;
@@ -1580,7 +1585,10 @@ export function App() {
       if (!command || (!commandWorksWhileStopped(command) && !playbackActive)) return;
       if (isPlaybackToggleCommand(command) && event.repeat) return;
       event.preventDefault();
-      handlePlaybackCommand(command);
+      if (!event.repeat || heldKeyRef.current?.code !== event.code) {
+        heldKeyRef.current = { code: event.code, since: performance.now() };
+      }
+      handlePlaybackCommand(command, heldKeyRef.current.since);
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);

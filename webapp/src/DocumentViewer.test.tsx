@@ -6,6 +6,7 @@ import {
   committedTempoPercentage,
   constrainViewportTransform,
   DocumentViewer,
+  heldTempoStep,
   loopEdgeScrollStep,
   loopScrollStepWithinReach,
   nextLoopHeading,
@@ -111,6 +112,15 @@ test("tempo shortcuts step by one percentage point within the tempo range", () =
   assert.equal(steppedTempoMultiplier(0.456, 1), 0.47);
   assert.equal(steppedTempoMultiplier(3, 1), 3);
   assert.equal(steppedTempoMultiplier(0.1, -1), 0.1);
+});
+
+test("a held tempo shortcut steps one point for a second, then speeds up to three", () => {
+  assert.equal(heldTempoStep(0), 1);
+  assert.equal(heldTempoStep(999), 1);
+  assert.equal(heldTempoStep(1000), 2);
+  assert.equal(heldTempoStep(1499), 2);
+  assert.equal(heldTempoStep(1500), 3);
+  assert.equal(heldTempoStep(60_000), 3);
 });
 
 function group(id: string, physicalStaffIndex: number, x: number, y: number): VisualGroup {

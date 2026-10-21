@@ -120,6 +120,22 @@ export function validTempoPercentage(value: string): number | null {
     : null;
 }
 
+/** How long a tempo shortcut is held at one percentage point a step before it speeds up, in milliseconds. */
+const TEMPO_RAMP_START_MS = 1000;
+/** How long each further percentage point of a held tempo shortcut's step takes, in milliseconds. */
+const TEMPO_RAMP_STEP_MS = 500;
+/** The largest step of a held tempo shortcut, in percentage points. */
+const TEMPO_RAMP_MAX_STEP = 3;
+
+/**
+ * How many percentage points a tempo shortcut held for `heldMs` steps the tempo: one at
+ * first, so short holds stay precise, then one more every half second up to three.
+ */
+export function heldTempoStep(heldMs: number): number {
+  if (heldMs < TEMPO_RAMP_START_MS) return 1;
+  return Math.min(TEMPO_RAMP_MAX_STEP, 2 + Math.floor((heldMs - TEMPO_RAMP_START_MS) / TEMPO_RAMP_STEP_MS));
+}
+
 /** The tempo multiplier `step` percentage points from `multiplier`, kept in range. */
 export function steppedTempoMultiplier(multiplier: number, step: number): number {
   const percentage = Math.round(multiplier * 100) + step;
