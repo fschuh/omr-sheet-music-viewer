@@ -250,9 +250,28 @@ test("a loop's route follows repeats inside it, and stops where navigation leave
     <measure number="2">${quarters("b", ["D"])}<barline location="right"><repeat direction="backward"/></barline></measure>
     <measure number="3">${quarters("c", ["E"])}</measure>
   `));
-  // A repeat that begins before the loop repeats from the loop's start, as playback started there does.
+  // A repeat that begins before the loop repeats from the loop's start, so it stays in the loop.
   const route = expandPerformanceRoute(repeated, { startMeasureIndex: 1, endMeasureIndex: 3 });
   assert.deepEqual(route.occurrences.map((occurrence) => occurrence.measureNumber), ["2", "2", "3"]);
+  const endings = parseRealtimeMusicXml(score(`
+    <measure number="1"><attributes><divisions>4</divisions></attributes>
+      <barline location="left"><repeat direction="forward"/></barline>${quarters("a", ["C"])}</measure>
+    <measure number="2">${quarters("b", ["D"])}</measure>
+    <measure number="3"><barline location="left"><ending number="1" type="start"/></barline>${quarters("c", ["E"])}<barline location="right"><ending number="1" type="stop"/><repeat direction="backward"/></barline></measure>
+    <measure number="4"><barline location="left"><ending number="2" type="start"/></barline>${quarters("d", ["F"])}</measure>
+  `));
+  // A loop ending on the first ending plays its bars once; the loop itself repeats them.
+  assert.deepEqual(
+    expandPerformanceRoute(endings, { startMeasureIndex: 1, endMeasureIndex: 3 }).occurrences
+      .map((occurrence) => occurrence.measureNumber),
+    ["2", "3"],
+  );
+  // One that goes on into the second ending takes the repeat to reach it.
+  assert.deepEqual(
+    expandPerformanceRoute(endings, { startMeasureIndex: 1, endMeasureIndex: 4 }).occurrences
+      .map((occurrence) => occurrence.measureNumber),
+    ["2", "3", "2", "4"],
+  );
   const dacapo = parseRealtimeMusicXml(score(`
     <measure number="1"><attributes><divisions>4</divisions></attributes>${quarters("a", ["C"])}</measure>
     <measure number="2">${quarters("b", ["D"])}<sound dacapo="yes"/></measure>

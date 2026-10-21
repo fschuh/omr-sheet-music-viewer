@@ -1453,7 +1453,12 @@ export function expandPerformanceRoute(
     }
     const pairEnding = pairs.get(index);
     if (pairEnding && !activeRepeats.some((repeat) => repeat.end === index)) {
-      activeRepeats.push({ ...pairEnding, start: Math.max(startMeasure, pairEnding.start), pass: 1 });
+      // Playback started inside a repeat goes back to where the repeat begins; a loop,
+      // whose route ends before its first bar, repeats from that bar instead.
+      const start = options.endMeasureIndex === undefined
+        ? pairEnding.start
+        : Math.max(startMeasure, pairEnding.start);
+      activeRepeats.push({ ...pairEnding, start, pass: 1 });
     }
     const repeat = [...activeRepeats].reverse().find((candidate) =>
       index >= candidate.start && index <= candidate.end,
@@ -1542,7 +1547,10 @@ export function expandPerformanceRoute(
     if (pairEnding) {
       const active = activeRepeats.find((candidate) => candidate.end === index);
       const repeatAllowedAfterJump = !jumped || measure.endingNumbers.size > 0 || measure.backwardRepeat?.afterJump;
-      if (include && active && repeatAllowedAfterJump && active.pass < (measure.backwardRepeat?.times ?? 2)) {
+      // A loop that ends on the repeat's last bar repeats it already; going round again
+      // would only replay the bars before an ending the next pass skips.
+      const loopGoesOn = options.endMeasureIndex === undefined || index + 1 < endMeasure;
+      if (include && active && repeatAllowedAfterJump && loopGoesOn && active.pass < (measure.backwardRepeat?.times ?? 2)) {
         active.pass += 1;
         index = active.start;
         continue;

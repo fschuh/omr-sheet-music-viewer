@@ -580,6 +580,25 @@ test("starts structurally after skipped repeats and reports malformed loops", ()
   );
 });
 
+test("playback started inside a repeat goes back to where the repeat begins", () => {
+  const parsed = parseRealtimeMusicXml(score(`
+    <measure number="1"><attributes><divisions>4</divisions></attributes>${quarter("a")}</measure>
+    <measure number="2"><barline location="left"><repeat direction="forward"/></barline>${quarter("b")}</measure>
+    <measure number="3">${quarter("c")}${quarter("d")}</measure>
+    <measure number="4"><barline location="left"><ending number="1" type="start"/></barline>${quarter("e")}<barline location="right"><ending number="1" type="stop"/><repeat direction="backward"/></barline></measure>
+    <measure number="5"><barline location="left"><ending number="2" type="start"/></barline>${quarter("f")}</measure>
+  `));
+  // Started part way through bar 3, the repeat goes back to bar 2 and all of bar 3 plays the second time.
+  const route = expandPerformanceRoute(parsed, { startMeasureIndex: 2, startOffset: 1 });
+  assert.deepEqual(route.occurrences.map((item) => item.measureNumber), ["3", "4", "2", "3", "5"]);
+  assert.deepEqual(route.occurrences.map((item) => item.localStart), [1, 0, 0, 0, 0]);
+  // Started in the first ending, the same.
+  assert.deepEqual(
+    expandPerformanceRoute(parsed, { startMeasureIndex: 3 }).occurrences.map((item) => item.measureNumber),
+    ["4", "2", "3", "5"],
+  );
+});
+
 test("seeks notes, bars, and pages in structural score order", () => {
   const parsed = parseRealtimeMusicXml(score(`
     <measure number="1"><print new-page="yes" page-number="1"/><attributes><divisions>4</divisions></attributes>${quarter("a")}${quarter("b", "D")}</measure>
