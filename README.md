@@ -83,23 +83,27 @@ over from the bar being played.
 handles stand between the notes and rests of neighbouring bars and can sit a
 little away from the printed barline.
 
-Listen mode is opt-in during note-by-note playback, toggled with `I`. **Settings** selects either
-the system-default microphone (the default) or MIDI keyboard input, and remembers
-the choice. The microphone path runs the local `online_amt` recognizer: an
-AudioWorklet captures 512-sample mono chunks at 16 kHz and a dedicated worker runs
+Listen mode is opt-in during playback, toggled with `I`. It shows the notes being played
+on the on-screen keyboard; note-by-note also advances on them, while realtime only shows
+them. **Settings** selects either the system-default microphone (the default) or MIDI
+keyboard input, and remembers the choice. The microphone path runs the local
+`online_amt` recognizer: an AudioWorklet captures 512-sample mono chunks at 16 kHz and a dedicated worker runs
 the stateful model through ONNX Runtime Web's single-threaded WASM backend. The
 72 MB model is loaded only when microphone listen mode is started. Audio is
 analyzed in memory and is never saved or transmitted. MIDI listen mode accepts
 Note On/Off messages from every connected input. While it is active, note messages
 are reserved for playing the score; Control Change and other MIDI shortcut types
 continue to work. Note-message shortcuts work normally outside MIDI listen mode.
-An exact fresh note or chord advances the playhead; extra notes prevent advancement.
+In note-by-note, an exact fresh note or chord advances the playhead; extra notes prevent
+advancement. Listen mode stays on when `N` switches between the two modes.
 The original Web Audio FFT and harmonic-sieve implementation remains in the
 source tree and in the benchmark page for future experiments, but it is not the
 application default.
-Normal playhead sounds are suppressed while listening without changing the saved
-speaker preference. The audition button or default `P` shortcut explicitly plays
-the current chord, including while muted; matching pauses through the sample decay.
+Note-by-note playhead sounds are suppressed while listening without changing the saved
+speaker preference. Realtime keeps sounding while listening to MIDI and is muted only
+while listening through the microphone, which would otherwise hear it. The audition
+button or default `P` shortcut explicitly plays the current chord, including while
+muted; matching pauses through the sample decay.
 
 Advancement thresholds come from one named matcher profile in the versioned
 registry the engine package owns. Timing, target ordering, and

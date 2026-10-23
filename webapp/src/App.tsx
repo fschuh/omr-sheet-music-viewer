@@ -315,6 +315,14 @@ function listenTargetKey(momentId: string | null | undefined, targetPitches: rea
   return `${momentId ?? ""}:${targetPitches.join(",")}`;
 }
 
+/**
+ * Realtime keeps sounding while listening to a MIDI keyboard, but a microphone would
+ * hear the playback as notes the player pressed.
+ */
+function realtimeMuted(state: PlaybackState, inputSource: ListenInputSource): boolean {
+  return !state.noteSoundsEnabled || (state.listenModeEnabled && inputSource === "microphone");
+}
+
 export function App() {
   const nativeAvailable = nativeViewerAvailable();
   const activeJobId = useRef<string | null>(null);
@@ -427,6 +435,8 @@ export function App() {
     .filter((tempo) => tempo.onset <= 0)
     .at(-1)?.bpm ?? 120;
   const [playbackMode, setPlaybackMode] = useState<PlaybackMode>("note-by-note");
+  const playbackModeRef = useRef(playbackMode);
+  playbackModeRef.current = playbackMode;
   const [realtimeStatus, setRealtimeStatus] = useState<"inactive" | "playing" | "paused">("inactive");
   const [realtimeFrame, setRealtimeFrame] = useState<{
     status: "playing" | "paused";
@@ -690,7 +700,10 @@ export function App() {
   const retargetListenMode = useCallback((state: PlaybackState) => {
     const recognizer = recognizerRef.current;
     if (!state.listenModeEnabled || !recognizer) return;
-    const moment = currentPlaybackMoment(playbackTimeline, state);
+    // Only note-by-note waits for a chord; realtime listens without a target.
+    const moment = playbackMode === "note-by-note"
+      ? currentPlaybackMoment(playbackTimeline, state)
+      : null;
     const target = midiPitches(moment?.pitches ?? []);
     const targetKey = listenTargetKey(moment?.id, target);
     if (listenTargetKeyRef.current === targetKey) return;
@@ -710,7 +723,7 @@ export function App() {
       attackPitches: [],
       processingTimeMs: null,
     }));
-  }, [playbackTimeline]);
+  }, [playbackMode, playbackTimeline]);
   /**
    * `command` is what moved playback, when a command did: leaving the loop forwards
    * from inside it starts the loop's next pass.
@@ -836,7 +849,7 @@ export function App() {
         const controller = realtimeControllerRef.current;
         if (!controller) return;
         controller.setTempoMultiplier(tempoMultiplier);
-        controller.setMuted(!playbackStateRef.current.noteSoundsEnabled);
+        controller.setMuted(realtimeMuted(playbackStateRef.current, listenInputSourceRef.current));
         controller.setLooping(start!.loops);
         controller.seek(route, status, start!.offset);
         setPlaybackAudioError(null);
@@ -904,7 +917,7 @@ export function App() {
           };
           playbackStateRef.current = next;
           setPlaybackState(next);
-          realtimeControllerRef.current?.setMuted(!next.noteSoundsEnabled);
+          realtimeControllerRef.current?.setMuted(realtimeMuted(next, listenInputSourceRef.current));
           return;
         }
         if (
@@ -983,9 +996,7 @@ export function App() {
   );
   const handlePlaybackModeChange = useCallback((mode: PlaybackMode) => {
     if (mode === playbackMode || (mode === "realtime" && !realtimeModel.score)) return;
-    if (playbackStateRef.current.listenModeEnabled) {
-      handlePlaybackCommandRef.current("toggleListenMode");
-    }
+    // Listen mode carries over; it retargets once the new mode renders.
     const wasActive = playbackActive;
     const playheadVisual = playbackMode === "realtime"
       ? realtimeRouteRef.current?.notes
@@ -1036,6 +1047,21 @@ export function App() {
   ]);
   const handlePlaybackCommandRef = useRef<(command: PlaybackCommand, heldSince?: number) => void>(() => undefined);
 
+  /**
+   * Note-by-note commits the flag, silencing its playhead sounds; realtime keeps
+   * playing and re-mutes only for the microphone.
+   */
+  const setListenModeEnabled = useCallback((enabled: boolean) => {
+    const next = { ...playbackStateRef.current, listenModeEnabled: enabled };
+    if (playbackModeRef.current === "note-by-note") {
+      commitPlaybackState(next, false);
+      return;
+    }
+    playbackStateRef.current = next;
+    setPlaybackState(next);
+    realtimeControllerRef.current?.setMuted(realtimeMuted(next, listenInputSourceRef.current));
+  }, [commitPlaybackState]);
+
   const stopListenMode = useCallback((preserveError = false) => {
     listenOperationRef.current += 1;
     auditionOperationRef.current += 1;
@@ -1045,10 +1071,7 @@ export function App() {
     keyboardRecognitionRef.current.reset();
     const generation = ++playheadGenerationRef.current;
     chordMatcherRef.current.setTarget([], generation, performance.now());
-    const current = playbackStateRef.current;
-    if (current.listenModeEnabled) {
-      commitPlaybackState({ ...current, listenModeEnabled: false }, false);
-    }
+    if (playbackStateRef.current.listenModeEnabled) setListenModeEnabled(false);
     setListenFeedback((feedback) => ({
       lifecycle: preserveError && feedback.lifecycle.state === "error"
         ? feedback.lifecycle
@@ -1062,10 +1085,21 @@ export function App() {
       successPitches: [],
       processingTimeMs: null,
     }));
-  }, [commitPlaybackState]);
+  }, [setListenModeEnabled]);
 
   const handleRecognizerResult = useCallback((result: RecognizerResult) => {
     if (!playbackStateRef.current.listenModeEnabled) return;
+    if (playbackModeRef.current === "realtime") {
+      // Realtime only shows what is being played; nothing waits on a chord.
+      const keyboardRecognition = keyboardRecognitionRef.current.consume(result);
+      setListenFeedback((feedback) => ({
+        ...feedback,
+        recognizedActivePitches: keyboardRecognition.activePitches,
+        attackPitches: keyboardRecognition.attacks,
+        processingTimeMs: result.processingTimeMs,
+      }));
+      return;
+    }
     const update = chordMatcherRef.current.consume(result);
     if (update.stale) return;
     const activeConfidence = new Map(
@@ -1096,20 +1130,18 @@ export function App() {
   }, []);
 
   const startListenMode = useCallback(async () => {
-    if (!playbackStateRef.current.active || recognizerRef.current) return;
+    if (!playbackActiveRef.current || recognizerRef.current) return;
     const inputSource = listenInputSourceRef.current;
     const operation = ++listenOperationRef.current;
     const generation = ++playheadGenerationRef.current;
     keyboardRecognitionRef.current.reset();
     // Mute before microphone/model initialization so navigation during startup
     // cannot play samples into the recognizer when it becomes ready.
-    commitPlaybackState(
-      { ...playbackStateRef.current, listenModeEnabled: true },
-      false,
-    );
-    const target = midiPitches(
-      currentPlaybackMoment(playbackTimeline, playbackStateRef.current)?.pitches ?? [],
-    );
+    setListenModeEnabled(true);
+    const moment = playbackModeRef.current === "note-by-note"
+      ? currentPlaybackMoment(playbackTimeline, playbackStateRef.current)
+      : null;
+    const target = midiPitches(moment?.pitches ?? []);
     chordMatcherRef.current.setTarget(target, generation, performance.now());
     setListenFeedback({
       lifecycle: {
@@ -1134,10 +1166,7 @@ export function App() {
       const message = !nativeAvailable
         ? "MIDI input is available in the desktop app."
         : midiErrorRef.current ?? "No MIDI inputs are connected. Open Settings and scan again.";
-      commitPlaybackState(
-        { ...playbackStateRef.current, listenModeEnabled: false },
-        false,
-      );
+      setListenModeEnabled(false);
       setListenFeedback((feedback) => ({
         ...feedback,
         lifecycle: {
@@ -1154,10 +1183,7 @@ export function App() {
       ? new MidiNoteRecognizer()
       : createBrowserOnlineAmtRecognizer();
     recognizer.setTarget(target);
-    listenTargetKeyRef.current = listenTargetKey(
-      currentPlaybackMoment(playbackTimeline, playbackStateRef.current)?.id,
-      target,
-    );
+    listenTargetKeyRef.current = listenTargetKey(moment?.id, target);
     recognizerRef.current = recognizer;
     try {
       await recognizer.start(generation, {
@@ -1166,12 +1192,7 @@ export function App() {
           setListenFeedback((feedback) => ({ ...feedback, lifecycle }));
           if (lifecycle.state === "error") {
             recognizerRef.current = null;
-            if (playbackStateRef.current.listenModeEnabled) {
-              commitPlaybackState(
-                { ...playbackStateRef.current, listenModeEnabled: false },
-                false,
-              );
-            }
+            if (playbackStateRef.current.listenModeEnabled) setListenModeEnabled(false);
           }
         },
         onResult: handleRecognizerResult,
@@ -1179,7 +1200,7 @@ export function App() {
       if (
         operation !== listenOperationRef.current ||
         recognizerRef.current !== recognizer ||
-        !playbackStateRef.current.active ||
+        !playbackActiveRef.current ||
         activePageRef.current !== "viewer"
       ) {
         recognizer.stop();
@@ -1188,16 +1209,11 @@ export function App() {
     } catch {
       if (recognizerRef.current === recognizer) {
         recognizerRef.current = null;
-        if (playbackStateRef.current.listenModeEnabled) {
-          commitPlaybackState(
-            { ...playbackStateRef.current, listenModeEnabled: false },
-            false,
-          );
-        }
+        if (playbackStateRef.current.listenModeEnabled) setListenModeEnabled(false);
       }
       // The lifecycle callback exposes the specific analyzer/device error.
     }
-  }, [commitPlaybackState, handleRecognizerResult, nativeAvailable, playbackTimeline]);
+  }, [handleRecognizerResult, nativeAvailable, playbackTimeline, setListenModeEnabled]);
 
   const auditionCurrentNotes = useCallback(async () => {
     const moment = currentPlaybackMoment(playbackTimeline, playbackStateRef.current);
@@ -1228,13 +1244,13 @@ export function App() {
         listening &&
         operation === auditionOperationRef.current &&
         recognizerRef.current === recognizer &&
-        playbackStateRef.current.active &&
         playbackStateRef.current.listenModeEnabled
       ) {
+        // Listening may have carried over into realtime while the notes sounded.
         const generation = ++playheadGenerationRef.current;
-        const target = midiPitches(
-          currentPlaybackMoment(playbackTimeline, playbackStateRef.current)?.pitches ?? [],
-        );
+        const target = playbackModeRef.current === "note-by-note"
+          ? midiPitches(currentPlaybackMoment(playbackTimeline, playbackStateRef.current)?.pitches ?? [])
+          : [];
         recognizer.flush();
         recognizer.setTarget(target);
         chordMatcherRef.current.setTarget(
@@ -1351,7 +1367,6 @@ export function App() {
       return;
     }
     if (command === "toggleListenMode") {
-      if (playbackMode !== "note-by-note") return;
       if (recognizerRef.current) stopListenMode();
       else void startListenMode();
       return;
@@ -1387,6 +1402,12 @@ export function App() {
     toggleNoteHighway,
   ]);
   handlePlaybackCommandRef.current = handlePlaybackCommand;
+
+  // Listening belongs to a run of playback, including realtime stopping or reaching
+  // the end on its own.
+  useEffect(() => {
+    if (!playbackActive && recognizerRef.current) stopListenMode();
+  }, [playbackActive, stopListenMode]);
 
   useEffect(() => {
     retargetListenMode(playbackState);
@@ -2441,7 +2462,7 @@ export function App() {
               playbackNoteSoundsEnabled={
                 playbackMode === "note-by-note"
                   ? effectivePlaybackNoteSounds(playbackState)
-                  : playbackState.noteSoundsEnabled
+                  : !realtimeMuted(playbackState, listenInputSource)
               }
               playbackAvailable={playbackTimeline.length > 0}
               playbackMoment={playbackMoment}

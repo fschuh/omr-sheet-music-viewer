@@ -983,6 +983,12 @@ export function DocumentViewer({
     }
     if (lifecycle.state === "paused") return "Listening paused while the target chord plays";
     if (lifecycle.state !== "listening") return null;
+    if (playbackMode === "realtime") {
+      const playing = listenFeedback.recognizedActivePitches
+        .map(({ midi }) => midiToPitchName(midi))
+        .join(" ");
+      return `${inputLabel} ready · ${playing ? `Playing ${playing}` : "Waiting for notes"}`;
+    }
     const target = listenFeedback.targetPitches.map(midiToPitchName).join(" ") || "no pitched notes";
     const heard = listenFeedback.detectedTargetPitches.map(midiToPitchName).join(" ");
     const extras = listenFeedback.extraPitches.map(midiToPitchName).join(" ");
@@ -998,7 +1004,7 @@ export function DocumentViewer({
       extras ? `Extra ${extras}` : "",
       targetSignals ? `Signal ${targetSignals}` : "",
     ].filter(Boolean).join(" · ") + processing;
-  }, [listenFeedback]);
+  }, [listenFeedback, playbackMode]);
   const scoreSystems = useMemo(() => loopSystems(noteGeometry), [noteGeometry]);
   const scoreMeasureCount = loopMeasureCount(scoreSystems);
   const [loopDrag, setLoopDrag] = useState<{
@@ -1922,8 +1928,12 @@ export function DocumentViewer({
             className={`listen-toggle${listenActive ? " active" : ""}`}
             aria-label={listenActive ? "Disable listen mode" : "Enable listen mode"}
             aria-pressed={listenActive}
-            title={listenActive ? "Disable listen mode (I)" : "Listen and advance when the chord is played (I)"}
-            disabled={playbackMode !== "note-by-note" || !playbackActive}
+            title={listenActive
+              ? "Disable listen mode (I)"
+              : playbackMode === "realtime"
+                ? "Listen and show the notes you play (I)"
+                : "Listen and advance when the chord is played (I)"}
+            disabled={!playbackActive}
             onClick={() => onPlaybackCommand("toggleListenMode")}
           >🎙</button>
           <button

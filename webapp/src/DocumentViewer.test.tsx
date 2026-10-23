@@ -578,6 +578,68 @@ test("labels MIDI listen feedback as MIDI input", () => {
   assert.doesNotMatch(markup, /Microphone ready/);
 });
 
+function renderRealtimeListen(feedback: ListenModeFeedback): string {
+  return renderToStaticMarkup(
+    <DocumentViewer
+      documentKey="fixture"
+      pages={[page]}
+      noteGeometry={pdfNoteGeometry([page])}
+      selectedGroup={null}
+      highlightAllNotes={false}
+      showOriginalNoteheadContours={false}
+      showDetectedNoteheadContours={false}
+      showRefinedNoteheadContours={false}
+      showRawStemContours={false}
+      playbackActive
+      playbackNoteSoundsEnabled
+      playbackAvailable
+      playbackMoment={moment}
+      playbackMode="realtime"
+      playbackStatus="playing"
+      realtimeAvailable
+      listenFeedback={feedback}
+      onPlaybackModeChange={() => undefined}
+      onPlaybackCommand={() => undefined}
+      onSelectGroup={() => undefined}
+      onRetryPage={() => undefined}
+    />,
+  );
+}
+
+test("listen mode can be turned on in realtime", () => {
+  const markup = renderRealtimeListen(listenFeedback);
+  const toggle = markup.match(/<button[^>]*aria-label="Enable listen mode"[^>]*>/)?.[0];
+
+  assert.ok(toggle);
+  assert.doesNotMatch(toggle, /disabled=""/);
+  assert.match(toggle, /title="Listen and show the notes you play \(I\)"/);
+});
+
+test("realtime listen feedback shows the notes being played, not a target", () => {
+  const listening = {
+    ...listenFeedback,
+    lifecycle: {
+      state: "listening" as const,
+      inputSource: "midi" as const,
+      input: "ready" as const,
+      analysis: "ready" as const,
+    },
+  };
+
+  const playing = renderRealtimeListen({
+    ...listening,
+    recognizedActivePitches: [
+      { midi: 60, confidence: 1 },
+      { midi: 64, confidence: 1 },
+    ],
+  });
+  assert.match(playing, /MIDI input ready · Playing C4 E4/);
+  assert.doesNotMatch(playing, /Target/);
+
+  const waiting = renderRealtimeListen(listening);
+  assert.match(waiting, /MIDI input ready · Waiting for notes/);
+});
+
 test("omits pages that were skipped because they contain no music", () => {
   const skippedPage: DocumentPage = {
     index: 0,

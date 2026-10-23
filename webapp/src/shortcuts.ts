@@ -32,7 +32,7 @@ export const playbackCommandDetails: ReadonlyArray<{
   { command: "stopPlayback", label: "Stop playback", description: "Stop either playback mode and clear its playhead." },
   { command: "togglePlaybackMode", label: "Switch playback mode", description: "Switch between note-by-note and realtime playback." },
   { command: "toggleNoteSounds", label: "Play or mute notes", description: "Toggle piano sound for the current note or chord." },
-  { command: "toggleListenMode", label: "Listen for notes", description: "Use the microphone to advance after the current chord is played." },
+  { command: "toggleListenMode", label: "Listen for notes", description: "Show the notes you play on the keyboard; note-by-note also advances once the current chord is played." },
   { command: "playCurrentNotes", label: "Play current notes", description: "Audition the current note or chord even while playback sounds are muted." },
   { command: "forwardNote", label: "Next note", description: "Move to the next note or chord." },
   { command: "backwardNote", label: "Previous note", description: "Move to the previous note or chord." },
