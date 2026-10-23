@@ -308,6 +308,41 @@ test("suppresses a latched online-AMT sustain until release or a fresh attack", 
   assert.deepEqual(released.attacks, []);
 });
 
+test("keeps a held MIDI key shown past the online-AMT sustain limit", () => {
+  const tracker = new KeyboardRecognitionTracker(null);
+  tracker.consume(recognizerResult(100, [48], [{
+    midi: 48,
+    type: "onset",
+    confidence: 1,
+    eventTimeMs: 100,
+  }]));
+
+  const melody = tracker.consume(recognizerResult(
+    100 + KEYBOARD_STALE_SUSTAIN_MS,
+    [48, 64],
+    [{
+      midi: 64,
+      type: "onset",
+      confidence: 1,
+      eventTimeMs: 100 + KEYBOARD_STALE_SUSTAIN_MS,
+    }],
+  ));
+  assert.deepEqual(melody.activePitches.map(({ midi }) => midi), [48, 64]);
+  assert.deepEqual(melody.attacks.map(({ midi }) => midi), [48, 64]);
+
+  const released = tracker.consume(recognizerResult(
+    200 + KEYBOARD_STALE_SUSTAIN_MS,
+    [64],
+    [{
+      midi: 48,
+      type: "offset",
+      confidence: 1,
+      eventTimeMs: 200 + KEYBOARD_STALE_SUSTAIN_MS,
+    }],
+  ));
+  assert.deepEqual(released.activePitches.map(({ midi }) => midi), [64]);
+});
+
 test("does not time-limit the spectral detector's refreshed active snapshots", () => {
   const tracker = new KeyboardRecognitionTracker();
   const result = (onsets: RecognizerResult["onsets"]): RecognizerResult => ({

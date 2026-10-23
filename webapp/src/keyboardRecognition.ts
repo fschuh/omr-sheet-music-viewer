@@ -7,7 +7,8 @@ import type {
  * online_amt can occasionally leave a pitch in its autoregressive sustain
  * state after its acoustic evidence has disappeared. This limit applies only
  * to the keyboard visualization; ExactChordMatcher still receives the
- * recognizer's unmodified output.
+ * recognizer's unmodified output. MIDI reports every release, so a held MIDI
+ * key is never stale and is not limited.
  */
 export const KEYBOARD_STALE_SUSTAIN_MS = 1_500;
 
@@ -24,6 +25,12 @@ export class KeyboardRecognitionTracker {
   >();
   private readonly suppressedUntilRelease = new Set<number>();
   private readonly visiblePitches = new Set<number>();
+  private readonly staleSustainMs: number | null;
+
+  /** `staleSustainMs` is null to show held notes for as long as they are held. */
+  constructor(staleSustainMs: number | null = KEYBOARD_STALE_SUSTAIN_MS) {
+    this.staleSustainMs = staleSustainMs;
+  }
 
   reset(): void {
     this.activeSince.clear();
@@ -112,7 +119,10 @@ export class KeyboardRecognitionTracker {
     }
 
     for (const [midi, startedAtMs] of this.activeSince) {
-      if (result.capturedAtMs - startedAtMs < KEYBOARD_STALE_SUSTAIN_MS) continue;
+      if (
+        this.staleSustainMs === null ||
+        result.capturedAtMs - startedAtMs < this.staleSustainMs
+      ) continue;
       this.activeSince.delete(midi);
       this.attacks.delete(midi);
       this.suppressedUntilRelease.add(midi);

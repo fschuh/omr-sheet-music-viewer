@@ -48,7 +48,7 @@ import {
   stoppedRecognizerLifecycle,
   type ListenModeFeedback,
 } from "./noteRecognizer";
-import { KeyboardRecognitionTracker } from "./keyboardRecognition";
+import { KEYBOARD_STALE_SUSTAIN_MS, KeyboardRecognitionTracker } from "./keyboardRecognition";
 import {
   buildRealtimeVisualMap,
   expandPerformanceRoute,
@@ -1134,7 +1134,10 @@ export function App() {
     const inputSource = listenInputSourceRef.current;
     const operation = ++listenOperationRef.current;
     const generation = ++playheadGenerationRef.current;
-    keyboardRecognitionRef.current.reset();
+    // Only the microphone's recognizer can latch a released note.
+    keyboardRecognitionRef.current = new KeyboardRecognitionTracker(
+      inputSource === "microphone" ? KEYBOARD_STALE_SUSTAIN_MS : null,
+    );
     // Mute before microphone/model initialization so navigation during startup
     // cannot play samples into the recognizer when it becomes ready.
     setListenModeEnabled(true);
