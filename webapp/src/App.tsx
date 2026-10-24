@@ -64,7 +64,14 @@ import {
   type StructuralPosition,
 } from "./realtime";
 import {
+  handColorProperties,
+  handColors,
+  keyboardRangeForSetting,
+  type KeyboardViewSettings,
+} from "./keyboardView";
+import {
   loadDebugPanelEnabled,
+  loadKeyboardViewSettings,
   loadListenInputSource,
   loadLoopDimOutside,
   loadNoteHighwayEnabled,
@@ -74,6 +81,7 @@ import {
   loadTupletRepair,
   repairSettings,
   saveDebugPanelEnabled,
+  saveKeyboardViewSettings,
   saveListenInputSource,
   saveLoopDimOutside,
   saveNoteHighwayEnabled,
@@ -343,6 +351,15 @@ export function App() {
   const [playbackPiano, setPlaybackPiano] = useState(loadPlaybackPiano);
   const [listenInputSource, setListenInputSource] = useState(loadListenInputSource);
   const [loopDimOutside, setLoopDimOutside] = useState(loadLoopDimOutside);
+  const [keyboardView, setKeyboardView] = useState<KeyboardViewSettings>(loadKeyboardViewSettings);
+  const changeKeyboardView = useCallback((next: KeyboardViewSettings) => {
+    setKeyboardView(next);
+    saveKeyboardViewSettings(next);
+  }, []);
+  const keyboardHandColors = useMemo(
+    () => handColors(keyboardView),
+    [keyboardView.leftHandColor, keyboardView.rightHandColor],
+  );
   const listenInputSourceRef = useRef<ListenInputSource>(listenInputSource);
   listenInputSourceRef.current = listenInputSource;
   const activePageRef = useRef(activePage);
@@ -509,7 +526,7 @@ export function App() {
           ? note.musicXmlId
           : note.fingeringMusicXmlId;
         const predicted = fingeringId ? document?.predictedFingerings?.[fingeringId] : undefined;
-        return { pitch: note.pitch, ...predicted };
+        return { pitch: note.pitch, ...(note.left === undefined ? {} : { left: note.left }), ...predicted };
       });
   }, [document?.predictedFingerings, practiceHand, realtimeFrame]);
   const realtimeGroupIdsByPage = useMemo(() => {
@@ -610,7 +627,41 @@ export function App() {
     tempoMultiplier,
     practiceHand,
     getRealtimeRouteLoops,
+    document?.predictedFingerings,
   );
+  // The keys the keyboard and highway show, from every note of the score, so the
+  // range holds still for the whole piece.
+  const keyboardRange = useMemo(
+    () => keyboardRangeForSetting(
+      keyboardView.range,
+      keyboardView.minimumWhiteKeys,
+      fullPlaybackTimeline.flatMap((moment) => moment.keyboardNotes),
+      practiceHand,
+    ),
+    [fullPlaybackTimeline, keyboardView.minimumWhiteKeys, keyboardView.range, practiceHand],
+  );
+  const keyboardSolid = noteHighwayShown && keyboardView.keyboard3d;
+  const highwayView = useMemo(() => ({
+    range: keyboardRange,
+    tilt: keyboardView.tilt,
+    keyboard3d: keyboardSolid,
+    colors: keyboardHandColors,
+    noteStyle: keyboardView.noteStyle,
+    fingerNumbers: keyboardView.highwayFingerNumbers,
+  }), [
+    keyboardHandColors,
+    keyboardRange,
+    keyboardSolid,
+    keyboardView.highwayFingerNumbers,
+    keyboardView.noteStyle,
+    keyboardView.tilt,
+  ]);
+  const keyboardDisplay = useMemo(() => ({
+    octaveLabels: keyboardView.octaveLabels,
+    fingerNumbers: keyboardView.fingerNumbers,
+    noteNames: keyboardView.noteNames,
+    upcomingEffect: keyboardView.upcomingEffect,
+  }), [keyboardView.fingerNumbers, keyboardView.noteNames, keyboardView.octaveLabels, keyboardView.upcomingEffect]);
   // The loop in the highway's note-by-note steps: from its first practised moment up to
   // the step after its last.
   const noteByNoteLoopSteps = useMemo(() => {
@@ -2378,6 +2429,8 @@ export function App() {
             setLoopDimOutside(enabled);
             saveLoopDimOutside(enabled);
           }}
+          keyboardView={keyboardView}
+          onChangeKeyboardView={changeKeyboardView}
           onChangeListenInputSource={(inputSource) => {
             stopListenMode();
             setListenInputSource(inputSource);
@@ -2443,6 +2496,7 @@ export function App() {
         className={`workspace${diagnosticsShown ? "" : " debug-panel-hidden"}${
           noteHighwayShown ? " note-highway-active" : ""
         }`}
+        style={handColorProperties(keyboardHandColors)}
       >
         {document && document.pages.length > 0 ? (
           <>
@@ -2633,11 +2687,16 @@ export function App() {
               <NoteHighway
                 getFrame={playbackMode === "realtime" ? realtimeHighwayFrame : noteByNoteHighwayFrame}
                 hidden={!noteHighwayVisible}
+                view={highwayView}
+                upcomingLead={keyboardView.upcomingLead}
               />
             ) : null}
             {playbackActive ? (
               <PianoKeyboard
                 highwayAttached={noteHighwayShown}
+                range={keyboardRange}
+                display={keyboardDisplay}
+                solidTilt={keyboardSolid ? keyboardView.tilt : null}
                 notes={playbackMode === "realtime"
                   ? realtimeDisplayNotes
                   : playbackMoment?.keyboardNotes ?? []}

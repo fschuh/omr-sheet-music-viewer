@@ -1,6 +1,7 @@
 import { DEFAULT_PIANO_ID, isPianoId, type PianoId } from "./pianoRegistry";
 import type { ListenInputSource } from "@fschuh/piano-transcription-engine";
 import type { RepairSettings } from "./native";
+import { normalizeKeyboardViewSettings, type KeyboardViewSettings } from "./keyboardView";
 
 export const DEBUG_PANEL_STORAGE_KEY = "homr.debug-panel-enabled.v1";
 export const PLAYBACK_PIANO_STORAGE_KEY = "homr.playback-piano.v1";
@@ -10,6 +11,7 @@ export const LOOP_DIM_OUTSIDE_STORAGE_KEY = "homr.loop-dim-outside.v1";
 export const SHARED_NOTEHEAD_TIMING_STORAGE_KEY = "homr.repair-shared-notehead-timing.v1";
 export const TIME_SIGNATURE_REPAIR_STORAGE_KEY = "homr.repair-time-signatures.v1";
 export const TUPLET_REPAIR_STORAGE_KEY = "homr.repair-tuplets.v1";
+export const KEYBOARD_VIEW_STORAGE_KEY = "homr.keyboard-view.v1";
 
 export function loadDebugPanelEnabled(): boolean {
   if (typeof window === "undefined") return false;
@@ -153,6 +155,26 @@ export function saveListenInputSource(inputSource: ListenInputSource): void {
   if (typeof window === "undefined") return;
   try {
     window.localStorage.setItem(LISTEN_INPUT_SOURCE_STORAGE_KEY, inputSource);
+  } catch {
+    // A disabled/full local store should not prevent changing the current session.
+  }
+}
+
+/** The keyboard and highway look; defaults for anything missing or unreadable. */
+export function loadKeyboardViewSettings(): KeyboardViewSettings {
+  if (typeof window === "undefined") return normalizeKeyboardViewSettings(null);
+  try {
+    const stored = window.localStorage.getItem(KEYBOARD_VIEW_STORAGE_KEY);
+    return normalizeKeyboardViewSettings(stored ? JSON.parse(stored) : null);
+  } catch {
+    return normalizeKeyboardViewSettings(null);
+  }
+}
+
+export function saveKeyboardViewSettings(settings: KeyboardViewSettings): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(KEYBOARD_VIEW_STORAGE_KEY, JSON.stringify(settings));
   } catch {
     // A disabled/full local store should not prevent changing the current session.
   }

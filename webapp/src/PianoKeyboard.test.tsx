@@ -7,6 +7,14 @@ import {
 } from "./keyboardRecognition";
 import type { RecognizerResult } from "@fschuh/piano-transcription-engine";
 import { formatKeyboardPitch, PIANO_KEYS, PianoKeyboard } from "./PianoKeyboard";
+import { DEFAULT_KEYBOARD_VIEW_SETTINGS } from "./keyboardView";
+
+const NAMES_AND_FINGERS = {
+  octaveLabels: false,
+  fingerNumbers: true,
+  noteNames: true,
+  upcomingEffect: "growing-tint",
+} as const;
 
 function recognizerResult(
   capturedAtMs: number,
@@ -36,12 +44,22 @@ test("builds the complete 88-key piano range", () => {
   assert.equal(PIANO_KEYS.at(-1)?.name, "C8");
 });
 
-test("gives every key an approach overlay only under the note highway", () => {
+test("gives every key an approach overlay only under the note highway, with an effect on", () => {
   const attached = renderToStaticMarkup(<PianoKeyboard notes={[]} highwayAttached />);
   assert.equal(attached.match(/class="piano-key-approach"/g)?.length, 88);
-  assert.match(attached, /piano-keyboard-overlay highway-attached/);
+  assert.match(attached, /piano-keyboard-overlay highway-attached upcoming-growing-tint/);
   const plain = renderToStaticMarkup(<PianoKeyboard notes={[]} />);
-  assert.doesNotMatch(plain, /piano-key-approach|highway-attached/);
+  assert.doesNotMatch(plain, /piano-key-approach|highway-attached|upcoming-/);
+  const off = renderToStaticMarkup(
+    <PianoKeyboard notes={[]} highwayAttached display={{ ...NAMES_AND_FINGERS, upcomingEffect: "off" }} />,
+  );
+  assert.doesNotMatch(off, /piano-key-approach|upcoming-/);
+  for (const effect of ["top-edge", "tint", "filling-meter"] as const) {
+    const markup = renderToStaticMarkup(
+      <PianoKeyboard notes={[]} highwayAttached display={{ ...NAMES_AND_FINGERS, upcomingEffect: effect }} />,
+    );
+    assert.match(markup, new RegExp(`highway-attached upcoming-${effect}"`));
+  }
 });
 
 test("highlights every distinct in-range playhead pitch and labels its key", () => {
@@ -53,14 +71,14 @@ test("highlights every distinct in-range playhead pitch and labels its key", () 
       { pitch: "C4", finger: 1, left: false },
       { pitch: "C9" },
       { pitch: "rest" },
-    ]} />,
+    ]} display={NAMES_AND_FINGERS} />,
   );
 
   assert.equal(markup.match(/data-piano-key=/g)?.length, 88);
   assert.equal(markup.match(/data-active="true"/g)?.length, 3);
-  assert.match(markup, /data-midi="60" data-active="true"/);
-  assert.match(markup, /data-midi="64" data-active="true"/);
-  assert.match(markup, /data-midi="56" data-active="true"/);
+  assert.match(markup, /data-midi="60" data-active="true" data-hand="right"/);
+  assert.match(markup, /data-midi="64" data-active="true" data-hand="right"/);
+  assert.match(markup, /data-midi="56" data-active="true" data-hand="left"/);
   assert.match(markup, />C4<\/span>/);
   assert.match(markup, />E4<\/span>/);
   assert.match(markup, />A♭3<\/span>/);
@@ -70,16 +88,52 @@ test("highlights every distinct in-range playhead pitch and labels its key", () 
   assert.match(markup, /C4, right hand finger 1/);
 });
 
-test("lights the pressing finger of the hand icon and repeats it as a digit", () => {
-  const markup = renderToStaticMarkup(
-    <PianoKeyboard notes={[{ pitch: "E4", finger: 3, left: false }]} />,
-  );
+test("marks the finger with a numbered circle in its hand's colour, and only when asked", () => {
+  const notes = [{ pitch: "E4", finger: 3, left: false }];
+  const markup = renderToStaticMarkup(<PianoKeyboard notes={notes} />);
+  assert.match(markup, /class="piano-key-finger" data-hand="right" data-finger="3">3<\/span>/);
+  assert.doesNotMatch(markup, /<svg|hand-part/, "no hand drawing any more");
+  assert.doesNotMatch(markup, /piano-key-note-name/, "note names are off by default");
 
-  // The middle finger is the tallest rect, x=19 in the shared hand drawing.
-  assert.match(markup, /<rect x="19" y="3" width="6" height="32" rx="3" class="hand-part lit"/);
-  assert.equal(markup.match(/class="hand-part lit"/g)?.length, 1);
-  assert.equal(markup.match(/class="hand-part"/g)?.length, 5);
-  assert.match(markup, /class="piano-key-fingering-digit">3<\/span>/);
+  const plain = renderToStaticMarkup(
+    <PianoKeyboard notes={notes} display={{ ...NAMES_AND_FINGERS, fingerNumbers: false, noteNames: false }} />,
+  );
+  assert.doesNotMatch(plain, /class="piano-key-label[ "]|piano-key-finger/, "nothing to mark, so no marker");
+  assert.match(plain, /data-midi="64" data-active="true"/, "the key is still lit");
+
+  const unfingered = renderToStaticMarkup(<PianoKeyboard notes={[{ pitch: "E4" }]} />);
+  assert.doesNotMatch(unfingered, /class="piano-key-label[ "]/, "no fingering known, no circle");
+});
+
+test("names every C on its key unless a marker covers it", () => {
+  const markup = renderToStaticMarkup(
+    <PianoKeyboard notes={[{ pitch: "C4", finger: 1, left: false }]} />,
+  );
+  assert.equal(markup.match(/class="piano-key-octave"/g)?.length, 7, "C1 to C8 but the marked C4");
+  assert.match(markup, /data-midi="24"[^>]*>(?:<span[^>]*><\/span>)*<span class="piano-key-octave">C1<\/span>/);
+  assert.doesNotMatch(markup, /piano-key-octave">C4</);
+  const off = renderToStaticMarkup(
+    <PianoKeyboard notes={[]} display={{ ...NAMES_AND_FINGERS, octaveLabels: false }} />,
+  );
+  assert.doesNotMatch(off, /piano-key-octave/);
+});
+
+test("shows only the keys of its range, laid out across the full width", () => {
+  // B3 to D5: B3 C4 D4 E4 F4 G4 A4 B4 C5 D5, ten white keys.
+  const markup = renderToStaticMarkup(
+    <PianoKeyboard
+      notes={[{ pitch: "C♯4", finger: 2, left: false }]}
+      range={{ low: 59, high: 74 }}
+      display={DEFAULT_KEYBOARD_VIEW_SETTINGS}
+    />,
+  );
+  assert.equal(markup.match(/data-piano-key=/g)?.length, 16);
+  assert.match(markup, /--white-keys:10/);
+  assert.match(markup, /16 keys · B3–D5/);
+  assert.match(markup, /aria-label="16-key piano keyboard/);
+  // C♯4 straddles the C4/D4 boundary, two white keys in.
+  assert.match(markup, /data-piano-key="C♯4"[^>]*style="left:16\.(?:8|79)[0-9]*%;width:6\.4[0-9]*%"/);
+  assert.match(markup, /class="piano-key-label piano-key-label-black" style="left:20%"/);
 });
 
 test("draws every label in one layer above the keys, not inside them", () => {
@@ -87,6 +141,7 @@ test("draws every label in one layer above the keys, not inside them", () => {
     <PianoKeyboard
       notes={[{ pitch: "F♯3", finger: 4, left: true }, { pitch: "C6", finger: 5, left: false }]}
       recognizedPitches={[54]}
+      display={NAMES_AND_FINGERS}
     />,
   );
 
@@ -113,7 +168,7 @@ test("stacks one marker per distinct fingering on a shared key", () => {
     ]} />,
   );
 
-  assert.equal(markup.match(/class="piano-key-fingering"/g)?.length, 2);
+  assert.equal(markup.match(/class="piano-key-finger"/g)?.length, 2);
   assert.match(markup, /data-hand="left" data-finger="5"/);
   assert.match(markup, /data-hand="right" data-finger="3"/);
   assert.match(markup, /C4, left hand finger 5 or right hand finger 3/);
@@ -142,7 +197,7 @@ test("distinguishes correct partial-chord notes from wrong pressed notes", () =>
 
   assert.match(
     markup,
-    /class="piano-key piano-key-white active user-active user-correct" data-piano-key="C4" data-midi="60" data-active="true" data-recognized="true" data-result="correct" data-attack="125"/,
+    /class="piano-key piano-key-white active user-active user-correct" data-piano-key="C4" data-midi="60" data-active="true" data-hand="right" data-recognized="true" data-result="correct" data-attack="125"/,
   );
   assert.match(
     markup,

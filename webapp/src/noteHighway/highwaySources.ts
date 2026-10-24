@@ -1,4 +1,5 @@
 import { useCallback, useLayoutEffect, useRef } from "react";
+import type { PredictedFingering } from "../fingering";
 import type { PracticeHand } from "../playback";
 import { scoreOffsetToSeconds, type PerformanceRoute } from "../realtime";
 import {
@@ -30,6 +31,7 @@ const STEP_GLIDE_MS = 160;
  * multiplier so notes take the same real time to reach the keys at any tempo.
  * While one hand is practised, the other hand's notes are ghosts. A looping route
  * starts over at its end, so the highway shows its start coming again after it.
+ * Notes carry their finger from `fingerings`.
  */
 export function useRealtimeHighwaySource(
   getRoute: () => PerformanceRoute | null,
@@ -37,16 +39,21 @@ export function useRealtimeHighwaySource(
   tempoMultiplier: number,
   hand: PracticeHand,
   getLooping: () => boolean = () => false,
+  fingerings?: Readonly<Record<string, PredictedFingering>>,
 ): HighwayFrameSource {
-  const latest = useRef({ tempoMultiplier, hand });
-  latest.current = { tempoMultiplier, hand };
+  const latest = useRef({ tempoMultiplier, hand, fingerings });
+  latest.current = { tempoMultiplier, hand, fingerings };
   return useCallback(() => {
     const window = HIGHWAY_LOOKAHEAD_SECONDS * latest.current.tempoMultiplier;
     const route = getRoute();
     if (!route) return { track: null, now: 0, window };
     const loop = getLooping() ? { start: 0, end: scoreOffsetToSeconds(route, route.totalQuarters, 1) } : null;
     return {
-      track: highwayTrackLooped(highwayTrackForRoute(route, latest.current.hand), loop, window),
+      track: highwayTrackLooped(
+        highwayTrackForRoute(route, latest.current.hand, latest.current.fingerings),
+        loop,
+        window,
+      ),
       now: scoreOffsetToSeconds(route, getOffset(), 1),
       window,
     };

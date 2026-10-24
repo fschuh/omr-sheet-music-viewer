@@ -1,11 +1,15 @@
-import { pitchToMidi } from "../piano";
+import type { PredictedFingering } from "../fingering";
 import {
   BLACK_KEY_WIDTH_IN_WHITE_KEYS,
   FIRST_PIANO_MIDI,
   LAST_PIANO_MIDI,
   PIANO_KEYS,
+  pianoKeyWhiteIndex,
   WHITE_KEY_COUNT,
-} from "../PianoKeyboard";
+  type HighwayNoteStyle,
+  type KeyboardRange,
+} from "../keyboardView";
+import { pitchToMidi } from "../piano";
 import {
   momentHasPracticeHandAttack,
   noteInPracticeHand,
@@ -14,9 +18,10 @@ import {
 import { scoreOffsetToSeconds, type PerformanceRoute } from "../realtime";
 
 /**
- * World units are white-key widths, with x = 0 at the middle of the keyboard so
- * the highway's near edge spans exactly the 88 keys drawn by PianoKeyboard. The
+ * World units are white-key widths, with x = 0 at the middle of the 88-key
+ * keyboard; the highway spans the keys PianoKeyboard shows, all 88 or fewer. The
  * floor is the y = 0 plane, the hit line is z = 0 and the far end is z = -length.
+ * A 3D keyboard lies on the floor in front of the hit line, from z = 0 to its depth.
  */
 export const HIGHWAY_HALF_WIDTH = WHITE_KEY_COUNT / 2;
 export const BLACK_KEY_LANE_HALF_WIDTH = BLACK_KEY_WIDTH_IN_WHITE_KEYS / 2;
@@ -33,24 +38,29 @@ export const HIGHWAY_LOOKAHEAD_SECONDS = 3.2;
 export const HIGHWAY_LOOKAHEAD_STEPS = 8;
 
 /**
- * Camera pitch below the horizon and vertical field of view. Steeper than a
- * game highway so the score stays readable above and behind it; together they
- * set how much the far end narrows (about 0.7 of the keyboard width).
+ * How far the highway leans back by default, and the camera's vertical field of
+ * view. The tilt is 90° less the camera's pitch below the horizon: 0 looks
+ * straight down at the floor. The default is steeper than a game highway so the
+ * score stays readable above and behind it, and narrows the far end to about
+ * 0.7 of the keyboard width.
  */
-const CAMERA_PITCH_DEGREES = 56;
+export const DEFAULT_HIGHWAY_TILT_DEGREES = 34;
 const CAMERA_FOV_DEGREES = 30;
 
 /**
- * Notes on white keys are wide, low slabs; notes on black keys are narrow, tall
- * blocks, so the two read apart by shape before colour.
+ * Notes on white keys are wide, notes on black keys as narrow as their key, and
+ * darker; both stand the same height. Black-key notes stand a hair taller, so a
+ * black-key note beside a white-key one at the same time is drawn over it.
  */
-export const WHITE_NOTE_HALF_WIDTH = 0.4;
-export const WHITE_NOTE_HEIGHT = 0.3;
-export const BLACK_NOTE_HALF_WIDTH = 0.27;
-export const BLACK_NOTE_HEIGHT = 0.9;
+export const WHITE_NOTE_HALF_WIDTH = 0.42;
+export const BLACK_NOTE_HALF_WIDTH = 0.3;
+export const NOTE_HEIGHTS: Readonly<Record<HighwayNoteStyle, { white: number; black: number }>> = {
+  raised: { white: 0.3, black: 0.315 },
+  flat: { white: 0.004, black: 0.012 },
+};
 
-/** Floats per note instance: centre x, half width, height, black, start, end, ghost. */
-export const NOTE_INSTANCE_FLOATS = 7;
+/** Floats per note instance: centre x, half width, black, left hand, start, end, ghost, finger. */
+export const NOTE_INSTANCE_FLOATS = 8;
 /** Floats per grid line instance: time, strength. */
 export const GRID_LINE_INSTANCE_FLOATS = 2;
 
@@ -90,6 +100,8 @@ export interface HighwayNotes {
   midis: Uint8Array;
   /** 1 for the other hand's notes while one hand is practised: drawn faintly, never lighting keys. */
   ghosts: Uint8Array;
+  /** 1 for left-hand notes; notes of an unknown hand count as the right hand's. */
+  lefts: Uint8Array;
   count: number;
   /** Longest note, so a binary search on starts can find every note still sounding. */
   maxDuration: number;
@@ -116,6 +128,9 @@ interface TrackNote {
   start: number;
   end: number;
   ghost: boolean;
+  left: boolean;
+  /** 1 to 5, or 0 when no fingering is known. */
+  finger: number;
 }
 
 interface TrackLine {
@@ -135,23 +150,26 @@ function packNotes(source: TrackNote[]): HighwayNotes {
   const ends = new Float64Array(notes.length);
   const midis = new Uint8Array(notes.length);
   const ghosts = new Uint8Array(notes.length);
+  const lefts = new Uint8Array(notes.length);
   let maxDuration = 0;
-  notes.forEach(({ lane, start, end, ghost }, index) => {
+  notes.forEach(({ lane, start, end, ghost, left, finger }, index) => {
     const offset = index * NOTE_INSTANCE_FLOATS;
     instances[offset] = lane.center;
     instances[offset + 1] = lane.black ? BLACK_NOTE_HALF_WIDTH : WHITE_NOTE_HALF_WIDTH;
-    instances[offset + 2] = lane.black ? BLACK_NOTE_HEIGHT : WHITE_NOTE_HEIGHT;
-    instances[offset + 3] = lane.black ? 1 : 0;
+    instances[offset + 2] = lane.black ? 1 : 0;
+    instances[offset + 3] = left ? 1 : 0;
     instances[offset + 4] = start;
     instances[offset + 5] = end;
     instances[offset + 6] = ghost ? 1 : 0;
+    instances[offset + 7] = finger;
     starts[index] = start;
     ends[index] = end;
     midis[index] = lane.midi;
     ghosts[index] = ghost ? 1 : 0;
+    lefts[index] = left ? 1 : 0;
     maxDuration = Math.max(maxDuration, end - start);
   });
-  return { instances, starts, ends, midis, ghosts, count: notes.length, maxDuration };
+  return { instances, starts, ends, midis, ghosts, lefts, count: notes.length, maxDuration };
 }
 
 function packLines(source: TrackLine[]): HighwayGridLines {
@@ -171,32 +189,47 @@ function pianoMidi(pitch: string): number | null {
   return midi !== null && midi >= FIRST_PIANO_MIDI && midi <= LAST_PIANO_MIDI ? midi : null;
 }
 
-const routeTracks = new WeakMap<PerformanceRoute, Map<PracticeHand, HighwayTrack>>();
+function validFinger(finger: number | undefined): number {
+  return finger !== undefined && finger >= 1 && finger <= 5 ? finger : 0;
+}
+
+const routeTracks = new WeakMap<
+  PerformanceRoute,
+  Map<PracticeHand, { fingerings: FingeringsById | undefined; track: HighwayTrack }>
+>();
+
+type FingeringsById = Readonly<Record<string, PredictedFingering>>;
 
 /**
  * Realtime track in unscaled score seconds (tempo map applied, tempo multiplier
  * not), so it survives tempo-multiplier changes; the caller scales the lookahead
  * window instead. A strong line marks every bar start and a faint one each
- * quarter. While one hand is practised the other hand's notes are ghosts.
- * Cached per route, which is rebuilt on every seek, and hand.
+ * quarter. While one hand is practised the other hand's notes are ghosts. Each
+ * note keeps its hand, and its finger from `fingerings` where one is predicted.
+ * Cached per route, which is rebuilt on every seek, hand and fingerings.
  */
 export function highwayTrackForRoute(
   route: PerformanceRoute,
   hand: PracticeHand = "both",
+  fingerings?: FingeringsById,
 ): HighwayTrack {
-  const byHand = routeTracks.get(route) ?? new Map<PracticeHand, HighwayTrack>();
+  const byHand = routeTracks.get(route) ?? new Map();
   routeTracks.set(route, byHand);
   const cached = byHand.get(hand);
-  if (cached) return cached;
+  if (cached && cached.fingerings === fingerings) return cached.track;
   const notes: TrackNote[] = [];
   for (const note of route.notes) {
     const midi = pianoMidi(note.pitch);
     if (midi === null) continue;
+    const fingeringId = note.fingeringMusicXmlId === undefined ? note.musicXmlId : note.fingeringMusicXmlId;
+    const predicted = fingeringId ? fingerings?.[fingeringId] : undefined;
     notes.push({
       midi,
       start: scoreOffsetToSeconds(route, note.onset, 1),
       end: scoreOffsetToSeconds(route, note.release, 1),
       ghost: !noteInPracticeHand(note.left, hand),
+      left: (predicted?.left ?? note.left) === true,
+      finger: validFinger(predicted?.finger),
     });
   }
   const lines: TrackLine[] = [];
@@ -210,7 +243,7 @@ export function highwayTrackForRoute(
     }
   }
   const track = { notes: packNotes(notes), lines: packLines(lines) };
-  byHand.set(hand, track);
+  byHand.set(hand, { fingerings, track });
   return track;
 }
 
@@ -249,6 +282,8 @@ export function highwayTrackLooped(
       start,
       end: Math.min(loop.end, track.notes.ends[index]),
       ghost: track.notes.ghosts[index] === 1,
+      left: track.notes.lefts[index] === 1,
+      finger: track.notes.instances[index * NOTE_INSTANCE_FLOATS + 7],
     });
   }
   const loopLines: TrackLine[] = [];
@@ -276,7 +311,7 @@ export interface HighwayStepMoment {
   /** Pitches attacked at this moment. */
   pitches: readonly string[];
   /** Every pitch shown on the keyboard here, including tied notes held over. */
-  keyboardNotes: readonly { pitch: string; left?: boolean }[];
+  keyboardNotes: readonly { pitch: string; left?: boolean; finger?: number }[];
   /** Per-note hands, when known; see PlaybackMoment.notes. */
   notes?: readonly { pitch: string; left?: boolean; startsAttack: boolean }[];
   barKey: string;
@@ -336,8 +371,8 @@ export function highwayTrackForSteps(
     if (index === 0 || moment.barKey !== moments[index - 1].barKey) {
       lines.push({ time: position, strength: MEASURE_LINE_STRENGTH });
     }
-    // midi -> ghost; a key both hands strike at once is drawn as the practised hand's.
-    const attacked = new Map<number, boolean>();
+    // A key both hands strike at once is drawn as the practised hand's.
+    const attacked = new Map<number, { ghost: boolean; left: boolean }>();
     const attacks = moment.notes
       ? moment.notes.filter((note) => note.startsAttack)
       : moment.pitches.map((pitch) => ({ pitch, left: undefined }));
@@ -345,7 +380,8 @@ export function highwayTrackForSteps(
       const midi = pianoMidi(pitch);
       if (midi === null) continue;
       const ghost = !noteInPracticeHand(left, hand);
-      attacked.set(midi, (attacked.get(midi) ?? true) && ghost);
+      const previous = attacked.get(midi);
+      if (!previous || (previous.ghost && !ghost)) attacked.set(midi, { ghost, left: left === true });
     }
     const next = new Map<number, TrackNote>();
     for (const { pitch } of moment.keyboardNotes) {
@@ -357,8 +393,13 @@ export function highwayTrackForSteps(
         next.set(midi, held);
       }
     }
-    for (const [midi, ghost] of attacked) {
-      const note = { midi, start: position, end: endFor(ghost), ghost };
+    for (const [midi, { ghost, left }] of attacked) {
+      const shown = moment.keyboardNotes.find((candidate) =>
+        candidate.finger !== undefined &&
+        (candidate.left === undefined || candidate.left === left) &&
+        pianoMidi(candidate.pitch) === midi,
+      );
+      const note = { midi, start: position, end: endFor(ghost), ghost, left, finger: validFinger(shown?.finger) };
       notes.push(note);
       next.set(midi, note);
     }
@@ -418,14 +459,17 @@ const APPROACH_HOLD = 0.08;
  * Writes, per key (index = midi - 21), how close that key's next note is: just
  * above 0 as it enters the far end of the window, 1 when it is due. Keys with no
  * note in the window get 0. Ghost notes of the other hand never light a key.
+ * `hands`, when given, gets that note's hand per key: 1 right, 2 left, 0 none.
  */
 export function keyApproachProgress(
   notes: HighwayNotes,
   now: number,
   window: number,
   out: Float32Array,
+  hands?: Uint8Array,
 ): void {
   out.fill(0);
+  hands?.fill(0);
   if (!(window > 0)) return;
   const begin = lowerBound(notes.starts, notes.count, now - APPROACH_HOLD);
   const end = upperBound(notes.starts, notes.count, now + window);
@@ -436,6 +480,7 @@ export function keyApproachProgress(
     if (out[key] > 0) continue;
     const remaining = notes.starts[index] - now;
     out[key] = Math.max(1e-6, Math.min(1, 1 - remaining / window));
+    if (hands) hands[key] = notes.lefts[index] ? 2 : 1;
   }
 }
 
@@ -444,6 +489,91 @@ export interface HighwayCamera {
   viewProjection: Float32Array;
   /** World length of the highway from the hit line to the far end. */
   length: number;
+}
+
+/** The keys of a 3D keyboard as solids lying on the floor, in world units. */
+export interface KeyboardSolid {
+  /** Length of the white keys, from the hit line toward the viewer. */
+  depth: number;
+  /** How far the white keys' front faces drop below the floor. */
+  frontFace: number;
+  /** How high the black keys stand above the white ones. */
+  blackHeight: number;
+}
+
+/** Where the highway and its keys sit in the world, for one canvas size. */
+export interface HighwayLayout {
+  /** World x of the middle of the keys shown. */
+  center: number;
+  halfWidth: number;
+  tilt: number;
+  /** Null for a flat keyboard drawn below the canvas. */
+  keyboard: KeyboardSolid | null;
+}
+
+export interface HighwayViewOptions {
+  range: KeyboardRange;
+  tilt: number;
+  keyboard3d: boolean;
+}
+
+export const FULL_HIGHWAY_LAYOUT: Readonly<HighwayLayout> = Object.freeze({
+  center: 0,
+  halfWidth: HIGHWAY_HALF_WIDTH,
+  tilt: DEFAULT_HIGHWAY_TILT_DEGREES,
+  keyboard: null,
+});
+
+/** A real white key is about six times as long as it is wide. */
+const MAX_KEY_DEPTH = 6;
+/** Most of the canvas a 3D keyboard may take, so the highway keeps the rest. */
+const MAX_KEYBOARD_SHARE = 0.42;
+
+function keyboardSolid(depth: number): KeyboardSolid {
+  return { depth, frontFace: Math.min(0.45, 0.12 * depth), blackHeight: Math.min(0.4, 0.1 * depth) };
+}
+
+/** The share of the canvas height, from its bottom, a layout's 3D keyboard covers. */
+function keyboardShare(aspect: number, layout: HighwayLayout): number {
+  const camera = highwayCamera(aspect, layout);
+  const [, hitY] = projectToNdc(camera.viewProjection, [layout.center, 0, 0]);
+  return camera.length > 0 ? (hitY + 1) / 2 : 1;
+}
+
+/**
+ * The highway over the keys of `range`. A 3D keyboard is as deep as the flat
+ * keyboard is tall (about a third of the canvas, in canvas pixels at its front
+ * edge), but no longer than a real key, and shortened until the highway keeps
+ * most of the canvas at the chosen tilt.
+ */
+export function highwayLayout(
+  options: HighwayViewOptions,
+  cssWidth: number,
+  cssHeight: number,
+): HighwayLayout {
+  const low = pianoKeyWhiteIndex(options.range.low);
+  const high = pianoKeyWhiteIndex(options.range.high) + 1;
+  const base: HighwayLayout = {
+    center: (low + high) / 2 - HIGHWAY_HALF_WIDTH,
+    halfWidth: (high - low) / 2,
+    tilt: options.tilt,
+    keyboard: null,
+  };
+  if (!options.keyboard3d || !(cssWidth > 0) || !(cssHeight > 0)) return base;
+  const pixelsPerUnit = cssWidth / (2 * base.halfWidth);
+  const aspect = cssWidth / cssHeight;
+  let depth = Math.min(MAX_KEY_DEPTH, Math.min(220, Math.max(110, cssHeight * 0.34)) / pixelsPerUnit);
+  if (keyboardShare(aspect, { ...base, keyboard: keyboardSolid(depth) }) > MAX_KEYBOARD_SHARE) {
+    let shorter = 0;
+    let longer = depth;
+    for (let step = 0; step < 24; step += 1) {
+      const middle = (shorter + longer) / 2;
+      if (keyboardShare(aspect, { ...base, keyboard: keyboardSolid(middle) }) > MAX_KEYBOARD_SHARE) longer = middle;
+      else shorter = middle;
+    }
+    depth = shorter;
+  }
+  return { ...base, keyboard: keyboardSolid(depth) };
 }
 
 function perspective(fovY: number, aspect: number, near: number, far: number): Float32Array {
@@ -456,7 +586,7 @@ function perspective(fovY: number, aspect: number, near: number, far: number): F
   ]);
 }
 
-function multiply(a: Float32Array, b: Float32Array): Float32Array {
+function multiply(a: ArrayLike<number>, b: ArrayLike<number>): Float32Array {
   const out = new Float32Array(16);
   for (let column = 0; column < 4; column += 1) {
     for (let row = 0; row < 4; row += 1) {
@@ -469,29 +599,36 @@ function multiply(a: Float32Array, b: Float32Array): Float32Array {
 }
 
 /**
- * Places the camera so the hit line lands exactly on the canvas bottom edge,
- * spanning its full width (the keyboard's width), and the far end of the floor
- * lands exactly on the canvas top edge, whatever the canvas aspect ratio.
+ * Places the camera so the near edge of the scene lands exactly on the canvas
+ * bottom edge, spanning its full width, and the far end of the floor lands
+ * exactly on the canvas top edge, whatever the canvas aspect ratio. The near
+ * edge is the hit line, or with a 3D keyboard the bottom of its front faces.
  */
-export function highwayCamera(aspect: number): HighwayCamera {
-  const pitch = (CAMERA_PITCH_DEGREES * Math.PI) / 180;
+export function highwayCamera(
+  aspect: number,
+  layout: HighwayLayout = FULL_HIGHWAY_LAYOUT,
+): HighwayCamera {
+  const pitch = ((90 - layout.tilt) * Math.PI) / 180;
   const fov = (CAMERA_FOV_DEGREES * Math.PI) / 180;
   const bottomRay = pitch + fov / 2;
   const topRay = pitch - fov / 2;
-  // With the eye at height 1, the bottom frustum ray must meet the floor at z = 0.
-  const unitEyeZ = 1 / Math.tan(bottomRay);
+  const anchorZ = layout.keyboard?.depth ?? 0;
+  const anchorY = -(layout.keyboard?.frontFace ?? 0);
+  // With the eye one unit above the near edge, the bottom frustum ray must meet it.
+  const unitEyeZ = Math.cos(bottomRay) / Math.sin(bottomRay);
   const unitNearDepth = Math.sin(pitch) + unitEyeZ * Math.cos(pitch);
-  // Scale the eye height so the hit line's half width fills the horizontal half-FOV.
-  const eyeY = HIGHWAY_HALF_WIDTH / (Math.tan(fov / 2) * aspect * unitNearDepth);
-  const eyeZ = eyeY * unitEyeZ;
-  const length = eyeY * (1 / Math.tan(topRay) - unitEyeZ);
+  // Scale the eye height so the near edge's half width fills the horizontal half-FOV.
+  const eyeHeight = layout.halfWidth / (Math.tan(fov / 2) * aspect * unitNearDepth);
+  const eyeY = anchorY + eyeHeight;
+  const eyeZ = anchorZ + eyeHeight * unitEyeZ;
+  const length = eyeY / Math.tan(topRay) - eyeZ;
   const farDepth = eyeY * Math.sin(pitch) + (eyeZ + length) * Math.cos(pitch);
 
-  // View basis for a camera at (0, eyeY, eyeZ) looking down by `pitch`.
+  // View basis for a camera at (center, eyeY, eyeZ) looking down by `pitch`.
   const forward = [0, -Math.sin(pitch), -Math.cos(pitch)];
   const back = [0, -forward[1], -forward[2]];
   const up = [0, Math.cos(pitch), -Math.sin(pitch)];
-  const eye = [0, eyeY, eyeZ];
+  const eye = [layout.center, eyeY, eyeZ];
   const dot = (left: number[], right: number[]) =>
     left[0] * right[0] + left[1] * right[1] + left[2] * right[2];
   const view = new Float32Array([
@@ -503,10 +640,57 @@ export function highwayCamera(aspect: number): HighwayCamera {
   const projection = perspective(
     fov,
     aspect,
-    eyeY * unitNearDepth * 0.25,
-    farDepth * 4,
+    eyeHeight * unitNearDepth * 0.25,
+    Math.max(farDepth, eyeHeight * unitNearDepth) * 4,
   );
   return { viewProjection: multiply(projection, view), length };
+}
+
+/** Depth scale for CSS: the browser only orders the keyboard's faces by it. */
+const CSS_DEPTH_SCALE = 1000;
+
+/**
+ * A CSS matrix3d, column-major, that lays an element `cssWidth` wide (the
+ * canvas width) flat on the floor between the hit line and the keyboard's front
+ * edge, as the camera sees it: its top edge on the hit line, its left edge at the
+ * first key shown, one world unit `cssWidth / (2 halfWidth)` pixels, and CSS z
+ * (toward the viewer) pointing up from the floor. Place the element at the
+ * canvas's top-left corner with transform-origin 0 0.
+ */
+export function keyboardSurfaceMatrix(
+  camera: HighwayCamera,
+  layout: HighwayLayout,
+  cssWidth: number,
+  cssHeight: number,
+): Float32Array {
+  const unit = (2 * layout.halfWidth) / cssWidth;
+  const surface = [
+    unit, 0, 0, 0,
+    0, 0, unit, 0,
+    0, unit, 0, 0,
+    layout.center - layout.halfWidth, 0, 0, 1,
+  ];
+  const screen = [
+    cssWidth / 2, 0, 0, 0,
+    0, -cssHeight / 2, 0, 0,
+    0, 0, -CSS_DEPTH_SCALE, 0,
+    cssWidth / 2, cssHeight / 2, 0, 1,
+  ];
+  return multiply(screen, multiply(camera.viewProjection, surface));
+}
+
+/** Where a point of the keyboard surface (CSS px, z up) lands on the canvas, in CSS px. */
+export function projectSurfacePoint(
+  matrix: ArrayLike<number>,
+  x: number,
+  y: number,
+  z = 0,
+): [number, number] {
+  const w = matrix[3] * x + matrix[7] * y + matrix[11] * z + matrix[15];
+  return [
+    (matrix[0] * x + matrix[4] * y + matrix[8] * z + matrix[12]) / w,
+    (matrix[1] * x + matrix[5] * y + matrix[9] * z + matrix[13]) / w,
+  ];
 }
 
 /** Projects a world point to normalized device coordinates. */

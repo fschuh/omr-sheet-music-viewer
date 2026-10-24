@@ -196,6 +196,11 @@ button:disabled {
   /* Shared by the keyboard overlay and the note highway that sits on it. */
   --piano-keyboard-height: clamp(150px, 24vh, 210px);
   --piano-keyboard-inset-x: 14px;
+  /* Each hand's colour, darker on black keys; set from the settings. */
+  --hand-right: #2fbfa5;
+  --hand-right-dark: #1b6f60;
+  --hand-left: #f28c38;
+  --hand-left-dark: #915421;
 
   display: grid;
   flex: 1;
@@ -215,12 +220,18 @@ button:disabled {
 }
 
 .piano-keyboard-overlay {
+  /* Key markers are sized from a white key's width: the keys fill the content
+     box, and --white-keys (set inline) is how many white keys are shown. */
+  --white-key: calc(100cqw / var(--white-keys, 52));
+  --hand-marker: clamp(16px, calc(var(--white-key) * 0.62), 34px);
+
   animation: piano-keyboard-enter 180ms ease-out;
   background: linear-gradient(180deg, #2d2a27 0%, #171614 100%);
   border-top: 1px solid rgb(255 255 255 / 18%);
   bottom: 0;
   box-shadow: 0 -10px 30px rgb(20 17 14 / 38%);
   color: #f7f3ec;
+  container-type: inline-size;
   height: var(--piano-keyboard-height);
   left: 0;
   padding: 8px var(--piano-keyboard-inset-x) 12px;
@@ -250,6 +261,104 @@ button:disabled {
 }
 
 .piano-keyboard-overlay.highway-attached .piano-keys { height: 100%; }
+
+/* A 3D keyboard covers the note highway's box, which runs down to the bottom of
+   the workspace (its top is set inline, as the highway's is), and lays its keys
+   on the highway's floor with one matrix3d, also set inline. */
+.piano-keyboard-overlay.keyboard-3d {
+  animation: none;
+  background: none;
+  bottom: 0;
+  height: auto;
+  left: var(--piano-keyboard-inset-x);
+  padding: 0;
+  pointer-events: none;
+  right: var(--piano-keyboard-inset-x);
+}
+
+.keyboard-3d .piano-keys {
+  left: 0;
+  position: absolute;
+  top: 0;
+  transform-origin: 0 0;
+}
+
+.keyboard-3d .piano-keys,
+.keyboard-3d .piano-white-keys,
+.keyboard-3d .piano-black-keys,
+.keyboard-3d .piano-key {
+  transform-style: preserve-3d;
+}
+
+/* Hidden key faces of a solid key: the front of a white key drops from its
+   front edge to below the floor; a black key stands on three walls. */
+.piano-key-face {
+  pointer-events: none;
+  position: absolute;
+}
+
+.piano-key-white .piano-key-face-front {
+  background: linear-gradient(180deg, #e3e0d9 0%, #a9a59d 100%);
+  border: 1px solid #393633;
+  border-top: 0;
+  height: var(--key-front-face);
+  left: -1px;
+  right: -1px;
+  top: 100%;
+  transform: rotateX(-90deg);
+  transform-origin: 50% 0;
+}
+
+.piano-key-black .piano-key-face {
+  background: #17191d;
+}
+
+.piano-key-black .piano-key-face-front {
+  height: var(--key-black-height);
+  left: -1px;
+  right: -1px;
+  top: 100%;
+  transform: rotateX(-90deg);
+  transform-origin: 50% 0;
+}
+
+.piano-key-black .piano-key-face-left,
+.piano-key-black .piano-key-face-right {
+  bottom: -1px;
+  top: -1px;
+  width: var(--key-black-height);
+}
+
+.piano-key-black .piano-key-face-left {
+  right: 100%;
+  transform: rotateY(-90deg);
+  transform-origin: 100% 50%;
+}
+
+.piano-key-black .piano-key-face-right {
+  left: 100%;
+  transform: rotateY(90deg);
+  transform-origin: 0 50%;
+}
+
+/* Black keys stand on the white ones; a played key sinks part of the way. */
+.keyboard-3d .piano-key-black {
+  box-shadow: none;
+  transform: translateZ(var(--key-black-height));
+}
+
+.keyboard-3d .piano-key-black.user-correct,
+.keyboard-3d .piano-key-black.user-wrong {
+  transform: translateZ(calc(var(--key-black-height) * 0.7));
+}
+
+.keyboard-3d .piano-key-white.user-correct,
+.keyboard-3d .piano-key-white.user-wrong {
+  transform: translateZ(-2px);
+}
+
+.piano-key-white.active .piano-key-face-front { background: var(--key-hand-dark); }
+.piano-key-black.active .piano-key-face { background: color-mix(in srgb, var(--key-hand-dark) 70%, #000); }
 
 @keyframes piano-keyboard-enter {
   from { opacity: 0; transform: translateY(22px); }
@@ -323,6 +432,9 @@ button:disabled {
 .piano-black-keys { pointer-events: none; }
 
 .piano-key {
+  --key-hand: var(--hand-right);
+  --key-hand-dark: var(--hand-right-dark);
+
   position: relative;
   transition:
     background 100ms ease,
@@ -340,10 +452,17 @@ button:disabled {
   min-width: 0;
 }
 
+.piano-key[data-hand="left"] {
+  --key-hand: var(--hand-left);
+  --key-hand-dark: var(--hand-left-dark);
+}
+
 .piano-key-white.active {
-  background: linear-gradient(180deg, #b9eee4 0%, #42baa4 63%, #16806c 100%);
-  border-color: #075d50;
-  box-shadow: inset 0 0 0 2px rgb(255 255 255 / 35%), 0 0 12px rgb(55 215 186 / 58%);
+  background: linear-gradient(180deg, var(--key-hand) 0%, var(--key-hand) 70%, var(--key-hand-dark) 100%);
+  border-color: var(--key-hand-dark);
+  box-shadow:
+    inset 0 0 0 2px rgb(255 255 255 / 35%),
+    0 0 12px color-mix(in srgb, var(--key-hand) 58%, transparent);
   z-index: 1;
 }
 
@@ -359,9 +478,16 @@ button:disabled {
 }
 
 .piano-key-black.active {
-  background: linear-gradient(180deg, #44cbb3 0%, #0f8b76 72%, #075b4e 100%);
-  border-color: #75ddca;
-  box-shadow: 0 0 13px rgb(63 229 199 / 78%), inset 0 0 0 1px rgb(255 255 255 / 32%);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--key-hand) 45%, var(--key-hand-dark)) 0%,
+    var(--key-hand-dark) 72%,
+    color-mix(in srgb, var(--key-hand-dark) 75%, #000) 100%
+  );
+  border-color: var(--key-hand);
+  box-shadow:
+    0 0 13px color-mix(in srgb, var(--key-hand) 78%, transparent),
+    inset 0 0 0 1px rgb(255 255 255 / 32%);
   z-index: 3;
 }
 
@@ -407,23 +533,73 @@ button:disabled {
   z-index: 4;
 }
 
-/* Fades in as the key's next note travels down the note highway; the key's
-   own playing highlight replaces it once the note sounds. */
+/* Shows the key's next note travelling down the note highway, in that note's
+   hand colour; the key's own playing highlight replaces it once the note
+   sounds. The note highway writes --approach (0 to 1, how close the note is)
+   and data-approach (its hand) on the key; the effect is the keyboard's
+   upcoming-* class. */
 .piano-key-approach {
-  background: linear-gradient(180deg, #b9eee4 0%, #42baa4 63%, #16806c 100%);
+  --approach-color: var(--hand-right);
+
   border-radius: inherit;
+  display: none;
   inset: 0;
-  opacity: var(--approach, 0);
   pointer-events: none;
   position: absolute;
 }
 
-.piano-key-black .piano-key-approach {
-  background: linear-gradient(180deg, #44cbb3 0%, #0f8b76 72%, #075b4e 100%);
-}
+.piano-key[data-approach] > .piano-key-approach { display: block; }
+.piano-key[data-approach="left"] > .piano-key-approach { --approach-color: var(--hand-left); }
 
 .piano-key.active .piano-key-approach,
 .piano-key.user-active .piano-key-approach { display: none; }
+
+/* A bar of the hand's colour along the key's back edge. */
+.upcoming-top-edge .piano-key-approach {
+  background: var(--approach-color);
+  bottom: auto;
+  height: max(4px, 7%);
+}
+
+/* An even tint on white keys; a coloured rim and glow on black keys. */
+.upcoming-tint .piano-key-approach {
+  background: var(--approach-color);
+  opacity: 0.3;
+}
+
+.upcoming-tint .piano-key-black .piano-key-approach {
+  background: none;
+  box-shadow:
+    inset 0 0 0 2px var(--approach-color),
+    0 0 10px color-mix(in srgb, var(--approach-color) 55%, transparent);
+  opacity: 1;
+}
+
+/* Faint while the note is far away, gathering quickly over its last stretch,
+   and still well short of the solid playing colour. */
+.upcoming-growing-tint .piano-key-approach {
+  background: var(--approach-color);
+  opacity: calc(0.06 + 0.5 * var(--approach, 0) * var(--approach, 0));
+}
+
+.upcoming-growing-tint .piano-key-black .piano-key-approach {
+  background: none;
+  box-shadow:
+    inset 0 0 0 2px var(--approach-color),
+    0 0 10px var(--approach-color);
+  opacity: calc(0.25 + 0.75 * var(--approach, 0));
+}
+
+/* Fills from the back edge toward the front, reaching it as the note is due. */
+.upcoming-filling-meter .piano-key-approach {
+  background: var(--approach-color);
+  border-radius: 0;
+  bottom: auto;
+  height: calc(var(--approach, 0) * 100%);
+  opacity: 0.45;
+}
+
+.upcoming-filling-meter .piano-key-black .piano-key-approach { opacity: 0.75; }
 
 .piano-key-attack {
   animation: piano-key-attack 280ms ease-out both;
@@ -503,11 +679,6 @@ button:disabled {
 }
 
 .piano-key-label {
-  /* A white key is 100vw / 52 wide, so the marker tracks vw to keep the designed
-     proportions instead of swamping the key on a narrow window. Everything
-     inside the marker is a fraction of it. */
-  --hand-marker: clamp(20px, 2vw, 40px);
-
   align-items: center;
   bottom: 13%;
   display: flex;
@@ -525,52 +696,49 @@ button:disabled {
 /* A black key stops short of the keybed, so its label sits above that gap. */
 .piano-key-label-black { bottom: calc(100% - var(--black-key-height) + 8px); }
 
-.piano-key-fingering {
+/* On a 3D keyboard each label is placed where its key is seen, by its bottom centre. */
+.keyboard-3d .piano-key-label,
+.keyboard-3d .piano-key-label[data-pressed="true"] {
+  bottom: auto;
+  transform: translate(-50%, -100%);
+}
+
+/* The finger number in the hand's colour; a key both hands play shows both. */
+.piano-key-finger {
   align-items: center;
-  background: #0e3b33;
-  border: calc(var(--hand-marker) * 0.05) solid #fff;
+  background: var(--hand-right-dark);
+  border: max(2px, calc(var(--hand-marker) * 0.08)) solid #fff;
   border-radius: 50%;
   box-shadow: 0 2px 6px rgb(0 0 0 / 35%);
   box-sizing: border-box;
+  color: #fff;
   display: flex;
   flex: none;
+  font-size: calc(var(--hand-marker) * 0.55);
+  font-weight: 700;
   height: var(--hand-marker);
   justify-content: center;
-  position: relative;
   width: var(--hand-marker);
 }
 
-.piano-key-hand {
-  display: block;
-  height: calc(var(--hand-marker) * 0.715);
-  width: calc(var(--hand-marker) * 0.7);
-}
+.piano-key-finger[data-hand="left"] { background: var(--hand-left-dark); }
 
-.piano-key-hand[data-hand="left"] { transform: scaleX(-1); }
-
-.piano-key-hand .hand-part { fill: #6d9b91; }
-
-.piano-key-hand .hand-part.lit { fill: #fff; }
-
-.piano-key-fingering-digit {
-  align-items: center;
-  background: #fff;
-  border: calc(var(--hand-marker) * 0.0375) solid #0e3b33;
-  border-radius: 50%;
-  bottom: calc(var(--hand-marker) * -0.125);
-  box-sizing: border-box;
-  color: #0e3b33;
-  display: flex;
-  font-size: calc(var(--hand-marker) * 0.2875);
+/* Every C is named on its key, so an octave can be found at a glance. */
+.piano-key-octave {
+  bottom: 6px;
+  color: #77716a;
+  font-size: clamp(8px, calc(var(--white-key) * 0.3), 13px);
   font-weight: 700;
-  height: calc(var(--hand-marker) * 0.425);
-  justify-content: center;
+  left: 0;
+  letter-spacing: 0.01em;
   line-height: 1;
+  pointer-events: none;
   position: absolute;
-  right: calc(var(--hand-marker) * -0.125);
-  text-shadow: none;
-  width: calc(var(--hand-marker) * 0.425);
+  right: 0;
+  text-align: center;
 }
+
+.piano-key.active .piano-key-octave { color: rgb(255 255 255 / 85%); }
 
 .piano-key-note-name {
   background: #075f51;
@@ -1982,6 +2150,69 @@ button:disabled {
 .settings-select-row strong { color: #342e29; font-size: 0.9rem; }
 .settings-select-row small { color: #746c63; font-size: 0.79rem; line-height: 1.45; }
 .settings-select-row select { min-width: 230px; }
+
+.settings-group-title {
+  border-top: 1px solid #ddd7cf;
+  color: #8f4d2a;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  margin: 0;
+  padding: 18px 26px 0;
+  text-transform: uppercase;
+}
+
+.settings-group-title + .settings-select-row,
+.settings-group-title + .settings-toggle-row { border-top: 0; }
+
+.settings-select-row > .settings-range-control {
+  align-items: center;
+  display: flex;
+  flex-direction: row;
+  flex: 0 0 auto;
+  gap: 12px;
+  min-width: 230px;
+}
+
+.settings-range-control input {
+  accent-color: #8f4d2a;
+  flex: 1;
+}
+
+.settings-range-control output {
+  color: #342e29;
+  font-size: 0.84rem;
+  font-variant-numeric: tabular-nums;
+  min-width: 7.5em;
+  text-align: right;
+}
+
+.settings-select-row > .settings-color-controls {
+  align-items: center;
+  display: flex;
+  flex-direction: row;
+  flex: 0 0 auto;
+  gap: 16px;
+}
+
+.settings-color-controls label {
+  align-items: center;
+  color: #342e29;
+  cursor: pointer;
+  display: flex;
+  font-size: 0.84rem;
+  gap: 8px;
+}
+
+.settings-color-controls input[type="color"] {
+  background: none;
+  border: 1px solid #c9c2b8;
+  border-radius: 8px;
+  cursor: pointer;
+  height: 34px;
+  padding: 2px;
+  width: 44px;
+}
 
 .midi-status {
   align-items: center;

@@ -81,8 +81,8 @@ test("renders every playback command with its default keyboard key and empty MID
 
 test("lists the sections and shows only the chosen one", () => {
   const playback = renderSettings();
-  assert.equal(playback.match(/role="tab"/g)?.length, 4);
-  for (const label of ["Playback", "Shortcuts", "Repairs", "Debug"]) {
+  assert.equal(playback.match(/role="tab"/g)?.length, 5);
+  for (const label of ["Playback", "Keyboard &amp; highway", "Shortcuts", "Repairs", "Debug"]) {
     assert.match(playback, new RegExp(`role="tab"[^>]*><strong>${label}</strong>`));
   }
   // Playback is first: its panel shows, and the others are hidden.
