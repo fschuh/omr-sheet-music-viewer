@@ -912,38 +912,40 @@ test("a MusicXML page draws its engraved surface in place of an image", () => {
   assert.doesNotMatch(recognized, /musicxml-page/);
 });
 
-test("a selected MusicXML note is coloured on its page and labelled by the overlay", () => {
-  const engraved: DocumentPage = {
+const engravedChordPage: DocumentPage = {
+  index: 0,
+  status: "complete",
+  width: 1000,
+  height: 1400,
+  surface: {
     index: 0,
-    status: "complete",
+    firstMeasure: 0,
     width: 1000,
     height: 1400,
-    surface: {
-      index: 0,
-      firstMeasure: 0,
-      width: 1000,
-      height: 1400,
-      staffSpace: 20,
-      systems: [],
+    staffSpace: 20,
+    systems: [],
+    items: [],
+    chords: [{
+      id: "P1-m1-s1-v1-t0",
+      systemIndex: 0,
+      momentId: "m1-t0",
       items: [],
-      chords: [{
-        id: "P1-m1-s1-v1-t0",
-        systemIndex: 0,
-        momentId: "m1-t0",
+      stemBounds: null,
+      notes: ["C5", "E5"].map((pitch, index) => ({
+        key: `P1-m1-s1-v1-t0-${pitch}`,
+        pitch,
+        grace: false,
+        measure: 1,
+        center: [213, 230 - index * 20] as [number, number],
+        headBounds: [200, 220 - index * 20, 226, 240 - index * 20] as [number, number, number, number],
         items: [],
-        stemBounds: null,
-        notes: ["C5", "E5"].map((pitch, index) => ({
-          key: `P1-m1-s1-v1-t0-${pitch}`,
-          pitch,
-          grace: false,
-          measure: 1,
-          center: [213, 230 - index * 20] as [number, number],
-          headBounds: [200, 220 - index * 20, 226, 240 - index * 20] as [number, number, number, number],
-          items: [],
-        })),
-      }],
-    },
-  };
+      })),
+    }],
+  },
+};
+
+test("a selected MusicXML note is coloured on its page and labelled by the overlay", () => {
+  const engraved = engravedChordPage;
   const markup = renderToStaticMarkup(
     <DocumentViewer
       documentKey="fixture"
@@ -969,6 +971,47 @@ test("a selected MusicXML note is coloured on its page and labelled by the overl
   assert.match(markup, /class="mx-note mx-selected" data-notehead="P1-m1-s1-v1-t0-C5"/);
   assert.match(markup, /class="mx-note mx-selected" data-notehead="P1-m1-s1-v1-t0-E5"/);
   assert.match(markup, /class="note-label" data-musicxml-id="page-1-P1-m1-s1-v1-t0-C5"/);
+});
+
+test("realtime playback highlights notes without naming them; note-by-note names them", () => {
+  const renderPlayback = (playbackMode: "note-by-note" | "realtime") => renderToStaticMarkup(
+    <DocumentViewer
+      documentKey="fixture"
+      pages={[engravedChordPage]}
+      noteGeometry={documentNoteGeometry("musicxml", [engravedChordPage])}
+      selectedGroup={null}
+      highlightAllNotes={false}
+      showOriginalNoteheadContours={false}
+      showDetectedNoteheadContours={false}
+      showRefinedNoteheadContours={false}
+      showRawStemContours={false}
+      playbackActive
+      playbackNoteSoundsEnabled
+      playbackAvailable
+      playbackMoment={{
+        ...moment,
+        visualGroupIds: ["P1-m1-s1-v1-t0-C5", "P1-m1-s1-v1-t0-E5"],
+      }}
+      playbackMode={playbackMode}
+      playbackStatus={playbackMode === "realtime" ? "playing" : "note-by-note"}
+      realtimeAvailable
+      realtimeGroupIdsByPage={playbackMode === "realtime"
+        ? { 0: ["P1-m1-s1-v1-t0-C5", "P1-m1-s1-v1-t0-E5"] }
+        : undefined}
+      listenFeedback={listenFeedback}
+      onPlaybackModeChange={() => undefined}
+      onPlaybackCommand={() => undefined}
+      onSelectGroup={() => undefined}
+      onRetryPage={() => undefined}
+    />,
+  );
+
+  const realtime = renderPlayback("realtime");
+  assert.match(realtime, /class="mx-note mx-playback" data-notehead="P1-m1-s1-v1-t0-C5"/);
+  assert.doesNotMatch(realtime, /class="note-label"/);
+
+  const noteByNote = renderPlayback("note-by-note");
+  assert.match(noteByNote, /class="note-label" data-musicxml-id="page-1-P1-m1-s1-v1-t0-C5"/);
 });
 
 test("debug mode haloes the notes whose printed value disagrees", () => {

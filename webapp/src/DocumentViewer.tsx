@@ -309,7 +309,7 @@ export interface PlaybackMomentExtents {
   system: Bounds;
   momentLeft: number;
   momentRight: number;
-  /** The moment's noteheads together with their pitch labels. */
+  /** The moment's noteheads together with any pitch labels shown beside them. */
   contentLeft: number;
   contentRight: number;
 }
@@ -318,6 +318,7 @@ export function playbackMomentExtents(
   geometry: PageNoteGeometry | undefined,
   page: Pick<DocumentPage, "width" | "height">,
   moment: PlaybackMoment,
+  withNoteLabels = true,
 ): PlaybackMomentExtents | null {
   if (!geometry) return null;
   const systemNoteheads = geometry.noteheads.filter(
@@ -329,7 +330,9 @@ export function playbackMomentExtents(
 
   const systemBoxes = systemNoteheads.map((notehead) => notehead.bounds);
   const momentBoxes = momentNoteheads.map((notehead) => notehead.bounds);
-  const momentLabels = layoutNoteLabels(geometry, momentIds, page.width, page.height);
+  const momentLabels = withNoteLabels
+    ? layoutNoteLabels(geometry, momentIds, page.width, page.height)
+    : [];
   return {
     system: [
       Math.min(...systemBoxes.map((box) => box[0])),
@@ -489,6 +492,8 @@ interface PageOverlayProps {
   playbackGroupIds: readonly string[];
   realtimePlayhead?: RealtimePlayhead | null;
   realtimePlayheadEnabled?: boolean;
+  /** Pitch names beside the highlighted notes. */
+  showNoteLabels?: boolean;
 }
 
 interface VisualGroupLayerProps {
@@ -589,6 +594,7 @@ const PageOverlay = memo(function PageOverlay({
   playbackGroupIds,
   realtimePlayhead,
   realtimePlayheadEnabled = false,
+  showNoteLabels = true,
 }: PageOverlayProps) {
   const diagnosticGroups = useMemo(
     () => pageDiagnosticNoteheads(page, showDiagnosticVisualGroups),
@@ -635,10 +641,10 @@ const PageOverlay = memo(function PageOverlay({
   );
   const noteLabels = useMemo(
     () =>
-      geometry
+      geometry && showNoteLabels
         ? layoutNoteLabels(geometry, selectedIds, page.width, page.height)
         : [],
-    [geometry, page.height, page.width, selectedIds],
+    [geometry, page.height, page.width, selectedIds, showNoteLabels],
   );
   const visualGroupsById = useMemo(
     () => new Map(
@@ -932,6 +938,8 @@ export function DocumentViewer({
   const effectiveStatus: PlaybackStatus = playbackStatus ??
     (playbackActive ? "note-by-note" : "inactive");
   const effectivelyActive = effectiveStatus !== "inactive";
+  // Realtime highlights notes as they sound; their names would only clutter the score.
+  const realtimeRunning = playbackMode === "realtime" && effectivelyActive;
   const primaryLabel = effectiveStatus === "playing"
     ? "Pause"
     : effectiveStatus === "paused"
@@ -1675,7 +1683,12 @@ export function DocumentViewer({
     const page = pages.find((candidate) => candidate.index === playbackMoment.pageIndex);
     const rect = stage?.getBoundingClientRect();
     if (!stage || !page || !rect) return;
-    const extents = playbackMomentExtents(geometryByPage.get(page.index), page, playbackMoment);
+    const extents = playbackMomentExtents(
+      geometryByPage.get(page.index),
+      page,
+      playbackMoment,
+      !realtimeRunning,
+    );
     if (!extents) return;
 
     const pageTop = pages
@@ -1724,7 +1737,15 @@ export function DocumentViewer({
     if (Math.abs(x - current.x) > 0.5 || Math.abs(y - current.y) > 0.5) {
       commitTransform({ ...current, x, y });
     }
-  }, [geometryByPage, layout.width, noteHighwayVisible, pages, playbackActive, playbackMoment]);
+  }, [
+    geometryByPage,
+    layout.width,
+    noteHighwayVisible,
+    pages,
+    playbackActive,
+    playbackMoment,
+    realtimeRunning,
+  ]);
 
   return (
     <div className="viewer">
@@ -2141,6 +2162,7 @@ export function DocumentViewer({
                 }
                 realtimePlayhead={realtimePlayhead}
                 realtimePlayheadEnabled={Boolean(getRealtimePlayhead)}
+                showNoteLabels={!realtimeRunning}
                 showOriginalNoteheadContours={showOriginalNoteheadContours}
                 showDetectedNoteheadContours={showDetectedNoteheadContours}
                 showRefinedNoteheadContours={showRefinedNoteheadContours}
