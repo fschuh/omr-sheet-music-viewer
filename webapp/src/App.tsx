@@ -65,6 +65,7 @@ import {
 } from "./realtime";
 import {
   loadDebugPanelEnabled,
+  loadLastScorePath,
   loadListenInputSource,
   loadLoopDimOutside,
   loadNoteHighwayEnabled,
@@ -74,6 +75,7 @@ import {
   loadTupletRepair,
   repairSettings,
   saveDebugPanelEnabled,
+  saveLastScorePath,
   saveListenInputSource,
   saveLoopDimOutside,
   saveNoteHighwayEnabled,
@@ -2175,8 +2177,9 @@ export function App() {
     if (!nativeAvailable) return;
     setError(null);
     try {
-      const path = await chooseScore();
+      const path = await chooseScore(loadLastScorePath());
       if (!path) return;
+      saveLastScorePath(path);
       resetForNewDocument();
       if (isMusicXmlPath(path)) await openMusicXmlDocument(path);
       else await openPdfDocument(path);

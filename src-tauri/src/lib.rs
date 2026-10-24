@@ -563,10 +563,23 @@ struct PageArtifactData {
     visual_sidecar: Value,
 }
 
+/// The folder of the last score opened, so the dialog starts there on every platform
+/// (Windows remembers it on its own; the Linux dialogs do not).
+fn score_dialog_directory(last_score: Option<&str>) -> Option<PathBuf> {
+    Path::new(last_score?)
+        .parent()
+        .filter(|folder| folder.is_dir())
+        .map(Path::to_path_buf)
+}
+
 #[tauri::command]
-async fn choose_score() -> Option<String> {
-    tauri::async_runtime::spawn_blocking(|| {
-        rfd::FileDialog::new()
+async fn choose_score(last_score: Option<String>) -> Option<String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut dialog = rfd::FileDialog::new();
+        if let Some(folder) = score_dialog_directory(last_score.as_deref()) {
+            dialog = dialog.set_directory(folder);
+        }
+        dialog
             .set_title("Open score")
             .add_filter("All supported scores", &["pdf", "musicxml", "xml", "mxl"])
             .add_filter("PDF", &["pdf"])
@@ -860,9 +873,22 @@ mod tests {
 
     use super::{
         has_music_xml_extension, is_channel_voice_message, missing_webkit_gpu_environment,
-        repeat_timing_from_windows_settings, strip_ansi_codes, BackgroundScan,
-        KeyboardRepeatTiming, RepairSettings, MIDI_SCAN_PANICKED_ERROR,
+        repeat_timing_from_windows_settings, score_dialog_directory, strip_ansi_codes,
+        BackgroundScan, KeyboardRepeatTiming, RepairSettings, MIDI_SCAN_PANICKED_ERROR,
     };
+
+    #[test]
+    fn score_dialog_starts_in_the_last_scores_folder_while_it_exists() {
+        let root = tempfile::tempdir().unwrap();
+        let score = root.path().join("scores/song.pdf");
+        assert_eq!(score_dialog_directory(None), None);
+        assert_eq!(score_dialog_directory(score.to_str()), None);
+        std::fs::create_dir(root.path().join("scores")).unwrap();
+        assert_eq!(
+            score_dialog_directory(score.to_str()),
+            Some(root.path().join("scores"))
+        );
+    }
 
     #[test]
     fn repair_settings_use_the_field_names_the_worker_reads() {
