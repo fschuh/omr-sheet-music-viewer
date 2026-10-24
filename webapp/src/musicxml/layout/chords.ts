@@ -172,43 +172,53 @@ function accidentalWidth(glyph: GlyphName, parentheses: boolean): number {
   return glyphWidth(glyph) + (parentheses ? PAREN_LEFT + PAREN_RIGHT : 0);
 }
 
-function placeAccidentals(
-  notes: NoteShape[],
-  glyphs: (GlyphName | null)[],
-  parentheses: boolean[],
-  rightEdge: number,
-  scale: number,
-): void {
-  const columns: { width: number; spans: [number, number][]; members: NoteShape[] }[] = [];
-  const withAccidentals = notes
-    .filter((note) => glyphs[note.index])
-    .sort((a, b) => a.position - b.position);
-  for (const note of withAccidentals) {
-    const glyph = glyphs[note.index]!;
+interface AccidentalEntry {
+  note: NoteShape;
+  glyph: GlyphName;
+  parentheses: boolean;
+  scale: number;
+}
+
+function placeAccidentals(entries: AccidentalEntry[], rightEdge: number): void {
+  const columns: { width: number; scale: number; spans: [number, number][]; members: AccidentalEntry[] }[] = [];
+  for (const entry of [...entries].sort((a, b) => a.note.position - b.note.position)) {
+    const { note, glyph, parentheses, scale } = entry;
     const box = glyphBox(glyph);
     const span: [number, number] = [note.y + box.top * scale, note.y + box.bottom * scale];
     let column = columns.find((candidate) =>
       candidate.spans.every(([top, bottom]) => span[1] <= top + 0.05 || span[0] >= bottom - 0.05),
     );
     if (!column) {
-      column = { width: 0, spans: [], members: [] };
+      column = { width: 0, scale: 0, spans: [], members: [] };
       columns.push(column);
     }
     column.spans.push(span);
-    column.members.push(note);
-    const parens = parentheses[note.index] ?? false;
-    column.width = Math.max(column.width, accidentalWidth(glyph, parens) * scale);
-    note.accidental = { glyph, x: 0, y: note.y, parentheses: parens };
+    column.members.push(entry);
+    column.width = Math.max(column.width, accidentalWidth(glyph, parentheses) * scale);
+    column.scale = Math.max(column.scale, scale);
+    note.accidental = { glyph, x: 0, y: note.y, parentheses };
   }
   let right = rightEdge;
   for (const column of columns) {
-    for (const note of column.members) {
-      const glyph = note.accidental!.glyph;
-      const closing = note.accidental!.parentheses ? PAREN_RIGHT * scale : 0;
+    for (const { note, glyph, parentheses, scale } of column.members) {
+      const closing = parentheses ? PAREN_RIGHT * scale : 0;
       note.accidental!.x = right - closing - glyphBox(glyph).right * scale;
     }
-    right -= column.width + ACCIDENTAL_DISTANCE * scale;
+    right -= column.width + ACCIDENTAL_DISTANCE * column.scale;
   }
+}
+
+/** How far a chord's noteheads, accidentals, ledger lines and arpeggio reach left of its origin. */
+function leftExtent(shape: Pick<ChordShape, "notes" | "ledgers" | "scale">, arpeggiated: boolean): number {
+  const leftmostHead = Math.min(...shape.notes.map((note) => note.x));
+  const accidentalLeft = Math.min(
+    leftmostHead,
+    ...shape.notes.filter((note) => note.accidental).map((note) =>
+      note.accidental!.x - (note.accidental!.parentheses ? PAREN_LEFT * shape.scale : 0)),
+  );
+  const ledgerLeft = Math.min(leftmostHead, ...shape.ledgers.map((ledger) => ledger.x1));
+  // An arpeggio sign stands left of everything else.
+  return -Math.min(accidentalLeft, ledgerLeft) + (arpeggiated ? ARPEGGIO_WIDTH : 0);
 }
 
 /**
@@ -267,11 +277,13 @@ export function layoutChord(
 
   const leftmostHead = Math.min(...notes.map((note) => note.x));
   placeAccidentals(
-    notes,
-    chord.accidentals,
-    chord.model.notes.map((note) => note.accidentalParentheses),
+    notes.filter((note) => chord.accidentals[note.index]).map((note) => ({
+      note,
+      glyph: chord.accidentals[note.index]!,
+      parentheses: model.notes[note.index].accidentalParentheses ?? false,
+      scale,
+    })),
     leftmostHead - ACCIDENTAL_NOTE_DISTANCE * scale,
-    scale,
   );
 
   const ledgers: ChordShape["ledgers"] = [];
@@ -333,13 +345,7 @@ export function layoutChord(
     if (!beamed) flag = flagGlyph(type, up);
   }
 
-  const accidentalLeft = Math.min(
-    leftmostHead,
-    ...notes.filter((note) => note.accidental).map((note) =>
-      note.accidental!.x - (note.accidental!.parentheses ? PAREN_LEFT * scale : 0)),
-  );
   const flagRight = flag && stem ? stem.x + glyphBox(flag).right * scale : -Infinity;
-  const ledgerLeft = Math.min(leftmostHead, ...ledgers.map((ledger) => ledger.x1));
   const ledgerRight = Math.max(headsRight, ...ledgers.map((ledger) => ledger.x2));
   const ys = notes.map((note) => note.y);
   return {
@@ -350,8 +356,7 @@ export function layoutChord(
     flag,
     dots,
     ledgers,
-    // An arpeggio sign stands left of everything else.
-    left: -Math.min(accidentalLeft, ledgerLeft) + (model.arpeggiate ? ARPEGGIO_WIDTH : 0),
+    left: leftExtent({ notes, ledgers, scale }, model.arpeggiate !== null),
     right: Math.max(
       headsRight,
       ledgerRight,
@@ -361,6 +366,36 @@ export function layoutChord(
     top: Math.min(...ys.map((y) => y - 0.5), stem ? Math.min(stem.yStart, stem.yEnd) : Infinity),
     bottom: Math.max(...ys.map((y) => y + 0.5), stem ? Math.max(stem.yStart, stem.yEnd) : -Infinity),
   };
+}
+
+/**
+ * Voices sharing a staff at one moment stand at the same x, so their accidentals stack in
+ * one set of columns, left of every voice's noteheads, as MuseScore stacks a segment's.
+ */
+export function stackSharedAccidentals(chords: PreparedChord[], shapes: Map<PreparedChord, ChordShape>): void {
+  for (const staff of new Set(chords.map((chord) => chord.staff))) {
+    const onStaff = chords.filter((chord) => chord.staff === staff && shapes.get(chord)!.notes.length > 0);
+    if (onStaff.length < 2) continue;
+    const entries = onStaff.flatMap((chord) => {
+      const shape = shapes.get(chord)!;
+      return shape.notes.filter((note) => note.accidental).map((note) => ({
+        note,
+        glyph: note.accidental!.glyph,
+        parentheses: note.accidental!.parentheses,
+        scale: shape.scale,
+      }));
+    });
+    if (entries.length === 0) continue;
+    const rightEdge = Math.min(...onStaff.map((chord) => {
+      const shape = shapes.get(chord)!;
+      return Math.min(...shape.notes.map((note) => note.x)) - ACCIDENTAL_NOTE_DISTANCE * shape.scale;
+    }));
+    placeAccidentals(entries, rightEdge);
+    for (const chord of onStaff) {
+      const shape = shapes.get(chord)!;
+      shape.left = leftExtent(shape, chord.model.arpeggiate !== null);
+    }
+  }
 }
 
 const REST_CLEARANCE = 0.25;

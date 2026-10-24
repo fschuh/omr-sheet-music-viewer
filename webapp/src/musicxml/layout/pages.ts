@@ -4,7 +4,7 @@
 import type { LayoutModel, PageFormat } from "../model/layout";
 import type { ScoreModel } from "../model/score";
 import { beamGroups, crossStaffBeamGaps, layoutBeam, stemDirections, type BeamDrawing, type BeamGroup, type PlacedChord } from "./beams";
-import { avoidRestCollisions, layoutChord, type ChordShape } from "./chords";
+import { avoidRestCollisions, layoutChord, stackSharedAccidentals, type ChordShape } from "./chords";
 import { layoutDirections, type Box } from "./directions";
 import { titleBlock } from "./credits";
 import { drawPage } from "./drawing";
@@ -235,6 +235,7 @@ export function layoutScore(score: ScoreModel, format: PageFormat): LayoutModel 
       for (const chord of [...segment.graces, ...segment.chords]) {
         shapes.set(chord, layoutChord(chord, directions.get(chord) ?? true, beamed.has(chord), measure.duration));
       }
+      stackSharedAccidentals(segment.chords, shapes);
       avoidRestCollisions(segment.chords, shapes);
     }
   }

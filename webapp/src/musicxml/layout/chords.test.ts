@@ -4,7 +4,7 @@ import { glyphWidth } from "../fonts/smufl";
 import { parseMusicXml } from "../import/parseMusicXml";
 import { fraction } from "../model/fraction";
 import { attributes, backup, measure, note, part, score, type NoteOptions } from "../testScores";
-import { layoutChord, noteType, SMALL_SCALE, stemLength } from "./chords";
+import { layoutChord, noteType, SMALL_SCALE, stackSharedAccidentals, stemLength } from "./chords";
 import { prepareScore, type PreparedChord } from "./measureContent";
 
 /** The prepared chords of a one-measure treble score, in time order. */
@@ -43,6 +43,19 @@ test("accidentals stack in columns only where they would overlap", () => {
   const octave = layoutChord(chord(["C#4", "C#5"]), true, false, WHOLE);
   assert.equal(octave.notes[0].accidental!.x, octave.notes[1].accidental!.x);
   assert.ok(close.left > octave.left, "a second column widens the chord to the left");
+});
+
+test("voices at the same moment stack their accidentals together", () => {
+  const [upper, lower] = chords(
+    note("C#5", 4, { type: "quarter", voice: 1 }) + backup(4) + note("A#4", 8, { type: "half", voice: 2 }),
+  );
+  const shapes = new Map([[upper, layoutChord(upper, true, false, WHOLE)], [lower, layoutChord(lower, false, false, WHOLE)]]);
+  const alone = shapes.get(lower)!.left;
+  stackSharedAccidentals([upper, lower], shapes);
+  const [above, below] = [upper, lower].map((chord) => shapes.get(chord)!.notes[0].accidental!.x);
+  assert.ok(Math.abs(above - below) >= glyphWidth("accidentalSharp"), "the sharps a third apart take separate columns");
+  assert.ok(Math.max(above, below) + glyphWidth("accidentalSharp") <= 0, "both sit left of the noteheads");
+  assert.ok(shapes.get(lower)!.left > alone, "the voice in the second column reaches further left");
 });
 
 test("dots sit in the space beside the note, above a line note unless a lower voice", () => {
