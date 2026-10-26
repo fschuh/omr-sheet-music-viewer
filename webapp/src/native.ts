@@ -83,9 +83,9 @@ export function nativeViewerAvailable(): boolean {
   return isTauri();
 }
 
-/** Asks for a PDF or MusicXML file to open. */
-export async function chooseScore(): Promise<string | null> {
-  return invoke<string | null>("choose_score");
+/** Asks for a PDF or MusicXML file to open, starting in the folder of `lastScore`. */
+export async function chooseScore(lastScore: string | null): Promise<string | null> {
+  return invoke<string | null>("choose_score", { lastScore });
 }
 
 export async function openPdf(path: string, repairs: RepairSettings): Promise<string> {

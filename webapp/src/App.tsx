@@ -72,6 +72,7 @@ import {
 import {
   loadDebugPanelEnabled,
   loadKeyboardViewSettings,
+  loadLastScorePath,
   loadListenInputSource,
   loadLoopDimOutside,
   loadNoteHighwayEnabled,
@@ -82,6 +83,7 @@ import {
   repairSettings,
   saveDebugPanelEnabled,
   saveKeyboardViewSettings,
+  saveLastScorePath,
   saveListenInputSource,
   saveLoopDimOutside,
   saveNoteHighwayEnabled,
@@ -2226,8 +2228,9 @@ export function App() {
     if (!nativeAvailable) return;
     setError(null);
     try {
-      const path = await chooseScore();
+      const path = await chooseScore(loadLastScorePath());
       if (!path) return;
+      saveLastScorePath(path);
       resetForNewDocument();
       if (isMusicXmlPath(path)) await openMusicXmlDocument(path);
       else await openPdfDocument(path);

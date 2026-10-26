@@ -12,6 +12,7 @@ export const SHARED_NOTEHEAD_TIMING_STORAGE_KEY = "homr.repair-shared-notehead-t
 export const TIME_SIGNATURE_REPAIR_STORAGE_KEY = "homr.repair-time-signatures.v1";
 export const TUPLET_REPAIR_STORAGE_KEY = "homr.repair-tuplets.v1";
 export const KEYBOARD_VIEW_STORAGE_KEY = "homr.keyboard-view.v1";
+export const LAST_SCORE_PATH_STORAGE_KEY = "homr.last-score-path.v1";
 
 export function loadDebugPanelEnabled(): boolean {
   if (typeof window === "undefined") return false;
@@ -177,5 +178,23 @@ export function saveKeyboardViewSettings(settings: KeyboardViewSettings): void {
     window.localStorage.setItem(KEYBOARD_VIEW_STORAGE_KEY, JSON.stringify(settings));
   } catch {
     // A disabled/full local store should not prevent changing the current session.
+  }
+}
+
+export function loadLastScorePath(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return window.localStorage.getItem(LAST_SCORE_PATH_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function saveLastScorePath(path: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(LAST_SCORE_PATH_STORAGE_KEY, path);
+  } catch {
+    // A disabled/full local store only means the next dialog starts in the default folder.
   }
 }
