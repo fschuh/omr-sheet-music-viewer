@@ -259,6 +259,7 @@ function isPlaybackToggleCommand(command: PlaybackCommand): boolean {
     command === "toggleNoteSounds" ||
     command === "toggleListenMode" ||
     command === "playCurrentNotes" ||
+    command === "rewind" ||
     command === "toggleLoopMode" ||
     command === "toggleNoteHighway" ||
     command === "practiceLeftHand" ||
@@ -987,6 +988,11 @@ export function App() {
           isLoopBoundaryCommand(command)
         ) return;
         if (realtimeStatus === "inactive" || !realtimeModel.score) return;
+        if (command === "rewind") {
+          // No position starts the score, or the loop's own route while looping.
+          seekRealtimePosition(null, realtimeStatus);
+          return;
+        }
         const route = realtimeRouteRef.current;
         const offset = realtimeControllerRef.current?.getOffset() ?? realtimeFrame?.offset ?? 0;
         const current = route ? routeStructuralPosition(route, offset) : null;
@@ -1432,6 +1438,8 @@ export function App() {
       void auditionCurrentNotes();
       return;
     }
+    // Rewinding starts the practice over, loop passes included.
+    if (command === "rewind") setLoopPass(1);
     if (
       (command === "togglePlayback" || command === "stopPlayback") &&
       playbackStateRef.current.active &&

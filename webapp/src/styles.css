@@ -981,6 +981,17 @@ button:disabled {
   opacity: 1;
 }
 
+/* Filled in the play button's colour, at the size of its ▶. */
+.viewer-toolbar .playback-controls .rewind-button {
+  color: #116657;
+}
+
+.viewer-toolbar .playback-controls .rewind-icon {
+  fill: currentColor;
+  height: 10px;
+  width: 12.7px;
+}
+
 .viewer-toolbar .playback-controls .realtime-stop {
   color: #8e2f26;
 }

@@ -22,6 +22,7 @@ test("default shortcuts reproduce the existing playback keys", () => {
   assert.equal(commandForKeyboardEvent(shortcuts, keyEvent("KeyM")), "toggleNoteSounds");
   assert.equal(commandForKeyboardEvent(shortcuts, keyEvent("KeyI")), "toggleListenMode");
   assert.equal(commandForKeyboardEvent(shortcuts, keyEvent("KeyP")), "playCurrentNotes");
+  assert.equal(commandForKeyboardEvent(shortcuts, keyEvent("Backspace")), "rewind");
   assert.equal(commandForKeyboardEvent(shortcuts, keyEvent("KeyL")), "toggleLoopMode");
   assert.equal(commandForKeyboardEvent(shortcuts, keyEvent("ArrowRight")), "forwardNote");
   assert.equal(commandForKeyboardEvent(shortcuts, keyEvent("ArrowLeft")), "backwardNote");

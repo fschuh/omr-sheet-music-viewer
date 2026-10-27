@@ -101,6 +101,15 @@ function LoopIcon() {
   );
 }
 
+function RewindIcon() {
+  return (
+    <svg className="rewind-icon" viewBox="0 0 15.2 12" aria-hidden="true" focusable="false">
+      <path d="M10.5 0 0 6l10.5 6z" />
+      <rect x="12.5" y="0" width="2.7" height="12" />
+    </svg>
+  );
+}
+
 function ResetZoomIcon() {
   return (
     <svg className="toolbar-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -1852,6 +1861,16 @@ export function DocumentViewer({
               onClick={onNoteHighwayToggle}
             >3D</button>
           ) : null}
+          <button
+            type="button"
+            className="rewind-button"
+            aria-label="Rewind"
+            title={loopMode
+              ? "Rewind to the start of the loop (Backspace)"
+              : "Rewind to the start of the score (Backspace)"}
+            disabled={!effectivelyActive}
+            onClick={() => onPlaybackCommand("rewind")}
+          ><RewindIcon /></button>
           <button
             type="button"
             className={`playback-toggle${effectivelyActive ? " active" : ""}`}

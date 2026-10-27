@@ -221,7 +221,8 @@ test("renders compact playback controls disabled outside playback mode", () => {
   const markup = render(false);
   assert.match(markup, /aria-label="Play"/);
   assert.match(markup, /aria-label="Mute note sounds"/);
-  assert.equal(markup.match(/disabled=""/g)?.length, 9);
+  assert.match(markup, /aria-label="Rewind"[^>]*disabled=""[^>]*>.*?<\/button><button type="button" class="playback-toggle/);
+  assert.equal(markup.match(/disabled=""/g)?.length, 10);
   assert.doesNotMatch(markup, /data-playback-selected="true"/);
 });
 

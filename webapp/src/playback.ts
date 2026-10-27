@@ -15,6 +15,7 @@ export const playbackCommandNames = [
   "toggleNoteSounds",
   "toggleListenMode",
   "playCurrentNotes",
+  "rewind",
   "forwardNote",
   "backwardNote",
   "forwardBar",
@@ -514,6 +515,7 @@ function commandDestination(
     | "toggleNoteSounds"
     | "toggleListenMode"
     | "playCurrentNotes"
+    | "rewind"
     | "toggleLoopMode"
     | "toggleNoteHighway"
     | "practiceLeftHand"
@@ -597,6 +599,8 @@ export function runPlaybackCommand(
     isLoopBoundaryCommand(command)
   ) return state;
   if (!state.active || timeline.length === 0) return state;
+  // The first moment of the score; a loop moves it on to the loop's first moment.
+  if (command === "rewind") return { ...state, currentMomentId: timeline[0].id };
   const destination = commandDestination(timeline, currentIndex(timeline, state), command);
   return { ...state, active: true, currentMomentId: timeline[destination].id };
 }

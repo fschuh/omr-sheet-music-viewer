@@ -199,6 +199,12 @@ test("note-by-note never leaves the loop backwards, and starts inside it", () =>
   assert.deepEqual(loopNoteByNoteState(timeline, at("c"), at("e"), null, loop), { state: at("b"), nextPass: false });
 });
 
+test("rewind returns note-by-note to the first moment, or the loop's first while looping", () => {
+  assert.deepEqual(runPlaybackCommand(timeline, at("d"), "rewind"), at("a"));
+  assert.deepEqual(step(at("d"), "rewind"), { state: at("b"), nextPass: false });
+  assert.equal(runPlaybackCommand(timeline, initialPlaybackState, "rewind"), initialPlaybackState);
+});
+
 test("without a loop, or once stopped, note-by-note moves as before", () => {
   const next = runPlaybackCommand(timeline, at("d"), "forwardNote");
   assert.equal(loopNoteByNoteState(timeline, at("d"), next, "forwardNote", null).state, next);
