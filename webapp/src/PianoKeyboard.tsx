@@ -184,6 +184,8 @@ export function PianoKeyboard({
       depth: layout.keyboard.depth * unit,
       frontFace: layout.keyboard.frontFace * unit,
       blackHeight: layout.keyboard.blackHeight * unit,
+      blackSideTaper: layout.keyboard.blackSideTaper * unit,
+      blackFrontTaper: layout.keyboard.blackFrontTaper * unit,
     };
   }, [range, size, solid, solidTilt]);
 
@@ -318,7 +320,7 @@ export function PianoKeyboard({
       ? projectSurfacePoint(
         surface.matrix,
         center * surface.unit,
-        surface.depth * BLACK_KEY_LENGTH - Math.min(8, surface.depth * 0.06),
+        surface.depth * BLACK_KEY_LENGTH - surface.blackFrontTaper - Math.min(8, surface.depth * 0.06),
         surface.blackHeight,
       )
       : projectSurfacePoint(surface.matrix, center * surface.unit, surface.depth * (1 - WHITE_LABEL_LIFT));
@@ -357,6 +359,8 @@ export function PianoKeyboard({
       transform: `matrix3d(${Array.from(surface.matrix, (value) => +value.toPrecision(9)).join(",")})`,
       ["--key-front-face" as string]: `${surface.frontFace}px`,
       ["--key-black-height" as string]: `${surface.blackHeight}px`,
+      ["--key-black-side-taper" as string]: `${surface.blackSideTaper}px`,
+      ["--key-black-front-taper" as string]: `${surface.blackFrontTaper}px`,
     }
     : undefined;
   // Labels sit in a layer above both key rows. Inside a key they were trapped in
@@ -387,8 +391,7 @@ export function PianoKeyboard({
       ].filter(Boolean).join(" ")}
       style={{
         ["--white-keys" as string]: whiteCount,
-        ...(solid ? { top: `${NOTE_HIGHWAY_TOP_FRACTION * 100}%` } : {}),
-      }}
+        ...(solid ? { top: `${NOTE_HIGHWAY_TOP_FRACTION * 100}%` } : {}),      }}
       aria-label={`${keys.length}-key piano keyboard. ${
         activePitchNames.length > 0
           ? `Notes under the playhead: ${accessibleNotes.join("; ")}`
@@ -433,11 +436,19 @@ export function PianoKeyboard({
             {keys.filter((key) => key.black).map((key) => {
               const width = (BLACK_KEY_WIDTH_IN_WHITE_KEYS / whiteCount) * 100;
               const left = ((key.whiteIndex - firstWhite - BLACK_KEY_WIDTH_IN_WHITE_KEYS / 2) / whiteCount) * 100;
+              // A solid black key is its tapered top; its walls slope out to the footprint.
+              const style = surface
+                ? {
+                  left: `calc(${left}% + ${surface.blackSideTaper}px)`,
+                  width: `calc(${width}% - ${2 * surface.blackSideTaper}px)`,
+                }
+                : { left: `${left}%`, width: `${width}%` };
               return (
-                <div key={key.midi} {...keyAttributes(key)} style={{ left: `${left}%`, width: `${width}%` }}>
+                <div key={key.midi} {...keyAttributes(key)} style={style}>
                   {surface ? (
                     <>
                       <span className="piano-key-face piano-key-face-front" />
+                      <span className="piano-key-face piano-key-face-base" />
                       <span className="piano-key-face piano-key-face-left" />
                       <span className="piano-key-face piano-key-face-right" />
                     </>

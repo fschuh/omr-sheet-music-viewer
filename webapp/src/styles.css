@@ -291,7 +291,8 @@ button:disabled {
 }
 
 /* Hidden key faces of a solid key: the front of a white key drops from its
-   front edge to below the floor; a black key stands on three walls. */
+   front edge to below the floor; a black key stands on four walls that slope
+   out from its narrower top to its footprint, as a real piano's do. */
 .piano-key-face {
   pointer-events: none;
   position: absolute;
@@ -309,41 +310,69 @@ button:disabled {
   transform-origin: 50% 0;
 }
 
+/* Each wall is hinged on an edge of the top and leans out to the footprint,
+   cut to a trapezoid so the walls share their sloping front edges. A dark base
+   fills the footprint, so the hairline between two walls never shows the white
+   key beneath. */
 .piano-key-black .piano-key-face {
-  background: #17191d;
+  --side: var(--key-black-side-taper);
+  --front: var(--key-black-front-taper);
+
+  background: #1d1f23;
 }
 
 .piano-key-black .piano-key-face-front {
-  height: var(--key-black-height);
-  left: -1px;
-  right: -1px;
+  clip-path: polygon(var(--side) 0, calc(100% - var(--side)) 0, 100% 100%, 0 100%);
+  height: hypot(var(--key-black-height), var(--front));
+  left: calc(0px - var(--side));
+  right: calc(0px - var(--side));
   top: 100%;
-  transform: rotateX(-90deg);
+  transform: rotateX(calc(-1 * atan2(var(--key-black-height), var(--front))));
   transform-origin: 50% 0;
 }
 
 .piano-key-black .piano-key-face-left,
 .piano-key-black .piano-key-face-right {
-  bottom: -1px;
-  top: -1px;
-  width: var(--key-black-height);
+  bottom: calc(0px - var(--front));
+  top: 0;
+  width: hypot(var(--key-black-height), var(--side));
 }
 
+/* Lit from the left, as the highway's notes are. */
 .piano-key-black .piano-key-face-left {
+  background: #2a2c31;
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - var(--front)), 0 100%);
   right: 100%;
-  transform: rotateY(-90deg);
+  transform: rotateY(calc(-1 * atan2(var(--key-black-height), var(--side))));
   transform-origin: 100% 50%;
 }
 
 .piano-key-black .piano-key-face-right {
+  background: #111216;
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 0 calc(100% - var(--front)));
   left: 100%;
-  transform: rotateY(90deg);
+  transform: rotateY(atan2(var(--key-black-height), var(--side)));
   transform-origin: 0 50%;
 }
 
-/* Black keys stand on the white ones; a played key sinks part of the way. */
+/* Just above the white keys, so it never fights them for the same depth. */
+.piano-key-black .piano-key-face-base {
+  background: #08090b;
+  bottom: calc(0px - var(--front));
+  left: calc(0px - var(--side));
+  right: calc(0px - var(--side));
+  top: 0;
+  transform: translateZ(calc(0.5px - var(--key-black-height)));
+}
+
+/* Black keys stand on the white ones; a played key sinks part of the way. The
+   key element is the top: square-cornered, set back from the footprint at the
+   front, and set in at the sides where it is placed. */
 .keyboard-3d .piano-key-black {
+  border: 0;
+  border-radius: 0;
   box-shadow: none;
+  height: calc(var(--black-key-height) - var(--key-black-front-taper));
   transform: translateZ(var(--key-black-height));
 }
 

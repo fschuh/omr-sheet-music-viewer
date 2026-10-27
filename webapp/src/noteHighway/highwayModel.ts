@@ -499,6 +499,12 @@ export interface KeyboardSolid {
   frontFace: number;
   /** How high the black keys stand above the white ones. */
   blackHeight: number;
+  /**
+   * Black keys taper as a real piano's do: how far each side of the top sits in
+   * from the key's footprint, and how far its front edge sits back.
+   */
+  blackSideTaper: number;
+  blackFrontTaper: number;
 }
 
 /** Where the highway and its keys sit in the world, for one canvas size. */
@@ -530,7 +536,15 @@ const MAX_KEY_DEPTH = 6;
 const MAX_KEYBOARD_SHARE = 0.42;
 
 function keyboardSolid(depth: number): KeyboardSolid {
-  return { depth, frontFace: Math.min(0.45, 0.12 * depth), blackHeight: Math.min(0.4, 0.1 * depth) };
+  const blackHeight = Math.min(0.4, 0.1 * depth);
+  // The top is about two thirds as wide as the footprint, and the front slopes back.
+  return {
+    depth,
+    frontFace: Math.min(0.45, 0.12 * depth),
+    blackHeight,
+    blackSideTaper: 0.25 * blackHeight,
+    blackFrontTaper: 0.5 * blackHeight,
+  };
 }
 
 /** The share of the canvas height, from its bottom, a layout's 3D keyboard covers. */
