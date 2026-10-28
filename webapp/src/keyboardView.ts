@@ -53,6 +53,14 @@ export type UpcomingKeyEffect = "off" | "top-edge" | "tint" | "growing-tint" | "
 /** Note blocks on the highway: boxes with a little volume, or flat tiles on its floor. */
 export type HighwayNoteStyle = "raised" | "flat";
 
+/**
+ * How playback speed shows on the highway. "steady-speed": notes always take the same
+ * real time to reach the keys, so a faster tempo fits more of the score on the highway
+ * and its notes shorten. "fixed-tempo": a beat is always the same length, so notes keep
+ * their size and come down faster or slower with the tempo.
+ */
+export type HighwayTimeScale = "steady-speed" | "fixed-tempo";
+
 export interface KeyboardViewSettings {
   range: KeyboardRangeMode;
   /** The narrowest a song or hand range gets, in white keys. */
@@ -73,6 +81,7 @@ export interface KeyboardViewSettings {
   /** The keys lie on the highway's floor, tilted with it, instead of standing flat below it. */
   keyboard3d: boolean;
   noteStyle: HighwayNoteStyle;
+  timeScale: HighwayTimeScale;
   /** The finger number on each note block of the practised hand. */
   highwayFingerNumbers: boolean;
 }
@@ -82,6 +91,7 @@ export const UPCOMING_KEY_EFFECTS: readonly UpcomingKeyEffect[] = [
   "off", "top-edge", "tint", "growing-tint", "filling-meter",
 ];
 export const HIGHWAY_NOTE_STYLES: readonly HighwayNoteStyle[] = ["raised", "flat"];
+export const HIGHWAY_TIME_SCALES: readonly HighwayTimeScale[] = ["steady-speed", "fixed-tempo"];
 export const UPCOMING_LEADS: readonly number[] = [0.125, 0.25, 0.5, 1];
 
 export const MIN_TILT = 0;
@@ -105,6 +115,7 @@ export const DEFAULT_KEYBOARD_VIEW_SETTINGS: Readonly<KeyboardViewSettings> = Ob
   tilt: 34,
   keyboard3d: false,
   noteStyle: "raised",
+  timeScale: "steady-speed",
   highwayFingerNumbers: true,
 });
 
@@ -147,6 +158,7 @@ export function normalizeKeyboardViewSettings(stored: unknown): KeyboardViewSett
     tilt: Math.round(clampedNumber(raw.tilt, MIN_TILT, MAX_TILT, defaults.tilt)),
     keyboard3d: flag(raw.keyboard3d, defaults.keyboard3d),
     noteStyle: oneOf(HIGHWAY_NOTE_STYLES, raw.noteStyle, defaults.noteStyle),
+    timeScale: oneOf(HIGHWAY_TIME_SCALES, raw.timeScale, defaults.timeScale),
     highwayFingerNumbers: flag(raw.highwayFingerNumbers, defaults.highwayFingerNumbers),
   };
 }

@@ -7,6 +7,7 @@ import {
   highwayCamera,
   highwayKeyLane,
   highwayLayout,
+  highwayLookaheadQuarters,
   highwayTrackForRoute,
   highwayTrackForSteps,
   highwayTrackLooped,
@@ -141,6 +142,25 @@ test("takes note-by-note fingers and hands from the keyboard notes", () => {
     [track.notes.lefts[index], track.notes.instances[index * NOTE_INSTANCE_FLOATS + 7]],
   ]));
   assert.deepEqual(byMidi, { 60: [0, 1], 48: [1, 5] });
+});
+
+test("a fixed-tempo track keeps every beat the same length through a tempo change", () => {
+  const changing = {
+    ...route([note("slow", "C4", 0, 1), note("fast", "D4", 2, 3)], 60),
+    tempoSegments: [{ offset: 0, bpm: 60 }, { offset: 2, bpm: 120 }],
+  };
+  // In seconds the quarter after the change is half as long, so its note is too.
+  const seconds = highwayTrackForRoute(changing).notes;
+  assert.deepEqual(Array.from(seconds.starts), [0, 2]);
+  assert.deepEqual(Array.from(seconds.ends), [1, 2.5]);
+  const quarters = highwayTrackForRoute(changing, "both", undefined, "quarters");
+  assert.notEqual(quarters, highwayTrackForRoute(changing), "cached per axis");
+  assert.deepEqual(Array.from(quarters.notes.starts), [0, 2]);
+  assert.deepEqual(Array.from(quarters.notes.ends), [1, 3]);
+  assert.deepEqual(Array.from(quarters.lines.times), [0, 1, 2, 3]);
+  // The window holds what the usual lookahead plays at the opening tempo.
+  assert.equal(highwayLookaheadQuarters(120), 6.4);
+  assert.equal(highwayLookaheadQuarters(60), 3.2);
 });
 
 test("marks bar starts strongly and quarters faintly", () => {

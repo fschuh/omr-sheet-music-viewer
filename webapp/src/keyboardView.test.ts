@@ -66,6 +66,7 @@ test("stored settings fill in, field by field, whatever is missing or wrong", ()
     leftHandColor: "orange",
     keyboard3d: "yes",
     noteStyle: "flat",
+    timeScale: "bars",
   });
   assert.equal(settings.range, "song");
   assert.equal(settings.minimumWhiteKeys, 52);
@@ -76,6 +77,8 @@ test("stored settings fill in, field by field, whatever is missing or wrong", ()
   assert.equal(settings.leftHandColor, DEFAULT_KEYBOARD_VIEW_SETTINGS.leftHandColor);
   assert.equal(settings.keyboard3d, false);
   assert.equal(settings.noteStyle, "flat");
+  assert.equal(settings.timeScale, DEFAULT_KEYBOARD_VIEW_SETTINGS.timeScale);
+  assert.equal(normalizeKeyboardViewSettings({ timeScale: "fixed-tempo" }).timeScale, "fixed-tempo");
 });
 
 test("each hand's black-key shade is a darker version of its colour", () => {

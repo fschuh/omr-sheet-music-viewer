@@ -5,6 +5,7 @@ import { scoreOffsetToSeconds, type PerformanceRoute } from "../realtime";
 import {
   HIGHWAY_LOOKAHEAD_SECONDS,
   HIGHWAY_LOOKAHEAD_STEPS,
+  highwayLookaheadQuarters,
   highwayTrackForRoute,
   highwayTrackForSteps,
   highwayTrackLooped,
@@ -29,6 +30,10 @@ const STEP_GLIDE_MS = 160;
 /**
  * Realtime: score seconds on the playback clock. The window grows with the tempo
  * multiplier so notes take the same real time to reach the keys at any tempo.
+ * Given `fixedTempoBpm`, the score's opening tempo, the highway runs on the route's
+ * quarters instead, with a window of as many as that tempo plays in the usual
+ * lookahead: notes keep their size and come down faster at a faster tempo, from the
+ * tempo multiplier and the score's own tempo changes alike.
  * While one hand is practised, the other hand's notes are ghosts. A looping route
  * starts over at its end, so the highway shows its start coming again after it.
  * Notes carry their finger from `fingerings`.
@@ -40,21 +45,34 @@ export function useRealtimeHighwaySource(
   hand: PracticeHand,
   getLooping: () => boolean = () => false,
   fingerings?: Readonly<Record<string, PredictedFingering>>,
+  fixedTempoBpm: number | null = null,
 ): HighwayFrameSource {
-  const latest = useRef({ tempoMultiplier, hand, fingerings });
-  latest.current = { tempoMultiplier, hand, fingerings };
+  const latest = useRef({ tempoMultiplier, hand, fingerings, fixedTempoBpm });
+  latest.current = { tempoMultiplier, hand, fingerings, fixedTempoBpm };
   return useCallback(() => {
-    const window = HIGHWAY_LOOKAHEAD_SECONDS * latest.current.tempoMultiplier;
+    const { fixedTempoBpm: bpm } = latest.current;
+    const quarters = bpm !== null;
+    const window = quarters
+      ? highwayLookaheadQuarters(bpm)
+      : HIGHWAY_LOOKAHEAD_SECONDS * latest.current.tempoMultiplier;
     const route = getRoute();
     if (!route) return { track: null, now: 0, window };
-    const loop = getLooping() ? { start: 0, end: scoreOffsetToSeconds(route, route.totalQuarters, 1) } : null;
+    const timeAt = (offset: number) => quarters
+      ? Math.min(route.totalQuarters, Math.max(0, offset))
+      : scoreOffsetToSeconds(route, offset, 1);
+    const loop = getLooping() ? { start: 0, end: timeAt(route.totalQuarters) } : null;
     return {
       track: highwayTrackLooped(
-        highwayTrackForRoute(route, latest.current.hand, latest.current.fingerings),
+        highwayTrackForRoute(
+          route,
+          latest.current.hand,
+          latest.current.fingerings,
+          quarters ? "quarters" : "seconds",
+        ),
         loop,
         window,
       ),
-      now: scoreOffsetToSeconds(route, getOffset(), 1),
+      now: timeAt(getOffset()),
       window,
     };
   }, [getLooping, getOffset, getRoute]);

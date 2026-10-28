@@ -34,6 +34,15 @@ export const NOTE_HIGHWAY_TOP_FRACTION = 0.46;
 
 /** Realtime: real seconds between a note appearing at the far end and reaching the keys. */
 export const HIGHWAY_LOOKAHEAD_SECONDS = 3.2;
+
+/**
+ * Realtime at a fixed tempo: the quarters the highway shows, as many as reach the keys
+ * in HIGHWAY_LOOKAHEAD_SECONDS at the score's opening tempo, so the two time scales
+ * look alike there at full speed.
+ */
+export function highwayLookaheadQuarters(openingBpm: number): number {
+  return HIGHWAY_LOOKAHEAD_SECONDS * (openingBpm > 0 ? openingBpm : 120) / 60;
+}
 /** Note-by-note: how many upcoming moments the highway shows. */
 export const HIGHWAY_LOOKAHEAD_STEPS = 8;
 
@@ -114,8 +123,8 @@ export interface HighwayGridLines {
 }
 
 /**
- * Everything the highway draws, on one time axis: unscaled score seconds in
- * realtime mode, moment steps in note-by-note mode. The renderer only needs the
+ * Everything the highway draws, on one time axis: unscaled score seconds or score
+ * quarters in realtime mode, moment steps in note-by-note mode. The renderer only needs the
  * axis to be monotonic; the caller picks a matching lookahead window.
  */
 export interface HighwayTrack {
@@ -193,9 +202,12 @@ function validFinger(finger: number | undefined): number {
   return finger !== undefined && finger >= 1 && finger <= 5 ? finger : 0;
 }
 
+/** A realtime track's time axis: unscaled score seconds, or the route's quarters. */
+export type RouteTrackAxis = "seconds" | "quarters";
+
 const routeTracks = new WeakMap<
   PerformanceRoute,
-  Map<PracticeHand, { fingerings: FingeringsById | undefined; track: HighwayTrack }>
+  Map<string, { fingerings: FingeringsById | undefined; track: HighwayTrack }>
 >();
 
 type FingeringsById = Readonly<Record<string, PredictedFingering>>;
@@ -203,20 +215,26 @@ type FingeringsById = Readonly<Record<string, PredictedFingering>>;
 /**
  * Realtime track in unscaled score seconds (tempo map applied, tempo multiplier
  * not), so it survives tempo-multiplier changes; the caller scales the lookahead
- * window instead. A strong line marks every bar start and a faint one each
+ * window instead. On the "quarters" axis no tempo applies at all, so every beat is
+ * as long as any other. A strong line marks every bar start and a faint one each
  * quarter. While one hand is practised the other hand's notes are ghosts. Each
  * note keeps its hand, and its finger from `fingerings` where one is predicted.
- * Cached per route, which is rebuilt on every seek, hand and fingerings.
+ * Cached per route, which is rebuilt on every seek, hand, axis and fingerings.
  */
 export function highwayTrackForRoute(
   route: PerformanceRoute,
   hand: PracticeHand = "both",
   fingerings?: FingeringsById,
+  axis: RouteTrackAxis = "seconds",
 ): HighwayTrack {
-  const byHand = routeTracks.get(route) ?? new Map();
-  routeTracks.set(route, byHand);
-  const cached = byHand.get(hand);
+  const byKey = routeTracks.get(route) ?? new Map();
+  routeTracks.set(route, byKey);
+  const key = `${hand}:${axis}`;
+  const cached = byKey.get(key);
   if (cached && cached.fingerings === fingerings) return cached.track;
+  const timeAt = axis === "quarters"
+    ? (offset: number) => Math.min(route.totalQuarters, Math.max(0, offset))
+    : (offset: number) => scoreOffsetToSeconds(route, offset, 1);
   const notes: TrackNote[] = [];
   for (const note of route.notes) {
     const midi = pianoMidi(note.pitch);
@@ -225,8 +243,8 @@ export function highwayTrackForRoute(
     const predicted = fingeringId ? fingerings?.[fingeringId] : undefined;
     notes.push({
       midi,
-      start: scoreOffsetToSeconds(route, note.onset, 1),
-      end: scoreOffsetToSeconds(route, note.release, 1),
+      start: timeAt(note.onset),
+      end: timeAt(note.release),
       ghost: !noteInPracticeHand(note.left, hand),
       left: (predicted?.left ?? note.left) === true,
       finger: validFinger(predicted?.finger),
@@ -235,15 +253,15 @@ export function highwayTrackForRoute(
   const lines: TrackLine[] = [];
   for (const occurrence of route.occurrences) {
     lines.push({
-      time: scoreOffsetToSeconds(route, occurrence.scoreStart, 1),
+      time: timeAt(occurrence.scoreStart),
       strength: MEASURE_LINE_STRENGTH,
     });
     for (let beat = occurrence.scoreStart + 1; beat < occurrence.scoreEnd - 1e-6; beat += 1) {
-      lines.push({ time: scoreOffsetToSeconds(route, beat, 1), strength: BEAT_LINE_STRENGTH });
+      lines.push({ time: timeAt(beat), strength: BEAT_LINE_STRENGTH });
     }
   }
   const track = { notes: packNotes(notes), lines: packLines(lines) };
-  byHand.set(hand, { fingerings, track });
+  byKey.set(key, { fingerings, track });
   return track;
 }
 

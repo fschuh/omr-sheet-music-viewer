@@ -631,6 +631,7 @@ export function App() {
     practiceHand,
     getRealtimeRouteLoops,
     document?.predictedFingerings,
+    keyboardView.timeScale === "fixed-tempo" ? realtimeOpeningBpm : null,
   );
   // The keys the keyboard and highway show, from every note of the score, so the
   // range holds still for the whole piece.

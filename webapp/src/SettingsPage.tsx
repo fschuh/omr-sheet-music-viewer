@@ -7,6 +7,7 @@ import {
   MIN_WHITE_KEYS,
   UPCOMING_LEADS,
   type HighwayNoteStyle,
+  type HighwayTimeScale,
   type KeyboardRangeMode,
   type KeyboardViewSettings,
   type UpcomingKeyEffect,
@@ -116,6 +117,11 @@ const UPCOMING_LEAD_LABELS: Readonly<Record<number, string>> = {
 const NOTE_STYLE_LABELS: Readonly<Record<HighwayNoteStyle, string>> = {
   raised: "Raised blocks",
   flat: "Flat tiles",
+};
+
+const TIME_SCALE_LABELS: Readonly<Record<HighwayTimeScale, string>> = {
+  "steady-speed": "Steady speed, notes resize",
+  "fixed-tempo": "Fixed tempo, notes keep their size",
 };
 
 const SETTINGS_SECTIONS = [
@@ -626,6 +632,27 @@ export function SettingsPage({
               >
                 {(Object.keys(NOTE_STYLE_LABELS) as HighwayNoteStyle[]).map((style) => (
                   <option key={style} value={style}>{NOTE_STYLE_LABELS[style]}</option>
+                ))}
+              </select>
+            </label>
+            <label className="settings-select-row">
+              <span>
+                <strong>When the tempo changes</strong>
+                <small>
+                  Steady speed: notes take the same time to reach the keys at any tempo, so a
+                  faster tempo packs them closer and shorter. Fixed tempo: every beat keeps the
+                  length it has at the score&apos;s opening tempo, and the notes come down faster
+                  or slower instead. Applies to realtime playback.
+                </small>
+              </span>
+              <select
+                aria-label="Highway time scale"
+                value={keyboardView.timeScale}
+                disabled={keyboardViewLocked}
+                onChange={(event) => changeKeyboardView({ timeScale: event.target.value as HighwayTimeScale })}
+              >
+                {(Object.keys(TIME_SCALE_LABELS) as HighwayTimeScale[]).map((scale) => (
+                  <option key={scale} value={scale}>{TIME_SCALE_LABELS[scale]}</option>
                 ))}
               </select>
             </label>
