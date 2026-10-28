@@ -8,6 +8,7 @@ import {
   highwayKeyLane,
   highwayLayout,
   highwayLookaheadQuarters,
+  highwayNoteInstances,
   highwayTrackForRoute,
   highwayTrackForSteps,
   highwayTrackLooped,
@@ -87,6 +88,47 @@ test("lanes tile the keyboard edge to edge, as the floor draws them", () => {
   // With no black key beyond them, A0 and C8 reach the keyboard's ends.
   assert.ok(Math.abs(width(21) - 6 / 7) < 1e-9, "A0");
   assert.equal(width(108), 1, "C8");
+});
+
+test("wider or narrower black keys take their lanes with them, the white backs sharing the rest", () => {
+  for (const blackKeyWidth of [0.5, 1.5]) {
+    const lane = (midi: number) => highwayKeyLane(midi, blackKeyWidth)!;
+    const width = (midi: number) => lane(midi).right - lane(midi).left;
+    const lanes = PIANO_KEYS.map((key) => lane(key.midi)).sort((a, b) => a.left - b.left);
+    assert.equal(lanes[0].left, -HIGHWAY_HALF_WIDTH);
+    assert.equal(lanes.at(-1)!.right, HIGHWAY_HALF_WIDTH);
+    for (let index = 1; index < lanes.length; index += 1) {
+      assert.ok(Math.abs(lanes[index].left - lanes[index - 1].right) < 1e-9,
+        `${blackKeyWidth}: ${lanes[index - 1].midi} meets ${lanes[index].midi}`);
+    }
+    for (const midi of [61, 63]) assert.ok(Math.abs(width(midi) - blackKeyWidth * 3 / 5) < 1e-9, `${midi}`);
+    for (const midi of [66, 68, 70]) assert.ok(Math.abs(width(midi) - blackKeyWidth * 4 / 7) < 1e-9, `${midi}`);
+    for (const midi of [60, 62, 64]) assert.ok(Math.abs(width(midi) - width(60)) < 1e-9, `${midi}`);
+    for (const midi of [65, 67, 69, 71]) assert.ok(Math.abs(width(midi) - width(65)) < 1e-9, `${midi}`);
+    assert.ok(Math.abs(lane(64).right - (lane(64).center + 0.5)) < 1e-9, "E4/F4");
+    assert.ok(Math.abs(lane(72).left - (lane(72).center - 0.5)) < 1e-9, "B4/C5");
+    // Each white key's track stays inside the key, where a whole-key note finds it.
+    for (const key of PIANO_KEYS.filter((candidate) => !candidate.black)) {
+      const { left, right } = lane(key.midi);
+      assert.ok(Math.abs(wholeKeyNoteSpan((left + right) / 2).center - lane(key.midi).center) < 1e-9, key.name);
+    }
+  }
+});
+
+test("a track's notes move into the lanes of wider or narrower black keys", () => {
+  const notes = highwayTrackForRoute(route(PIANO_KEYS.map((key) => note(key.name, key.name, 0, 1)))).notes;
+  assert.equal(highwayNoteInstances(notes, 1), notes.instances);
+  const instances = highwayNoteInstances(notes, 1.5);
+  assert.notEqual(instances, notes.instances);
+  for (let index = 0; index < notes.count; index += 1) {
+    const offset = index * NOTE_INSTANCE_FLOATS;
+    const lane = highwayKeyLane(notes.midis[index], 1.5)!;
+    assert.ok(Math.abs(instances[offset] - (lane.left + lane.right) / 2) < 1e-6, `${lane.midi} centre`);
+    assert.ok(Math.abs(instances[offset + 1] - ((lane.right - lane.left) / 2 - NOTE_LANE_INSET)) < 1e-6);
+    for (let field = 2; field < NOTE_INSTANCE_FLOATS; field += 1) {
+      assert.equal(instances[offset + field], notes.instances[offset + field]);
+    }
+  }
 });
 
 test("each note fills its key's lane, short of the edges, so neighbours never overlap", () => {

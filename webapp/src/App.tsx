@@ -654,10 +654,12 @@ export function App() {
     noteStyle: keyboardView.noteStyle,
     whiteNoteWidth: keyboardView.whiteNoteWidth,
     fingerNumbers: keyboardView.highwayFingerNumbers,
+    blackKeyWidth: keyboardView.blackKeyWidth,
   }), [
     keyboardHandColors,
     keyboardRange,
     keyboardSolid,
+    keyboardView.blackKeyWidth,
     keyboardView.highwayFingerNumbers,
     keyboardView.noteStyle,
     keyboardView.tilt,
@@ -2712,6 +2714,7 @@ export function App() {
                 highwayAttached={noteHighwayShown}
                 range={keyboardRange}
                 display={keyboardDisplay}
+                blackKeyWidth={keyboardView.blackKeyWidth}
                 solidTilt={keyboardSolid ? keyboardView.tilt : null}
                 notes={playbackMode === "realtime"
                   ? realtimeDisplayNotes

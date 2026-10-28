@@ -85,6 +85,10 @@ test("stored settings fill in, field by field, whatever is missing or wrong", ()
   assert.equal(normalizeKeyboardViewSettings({ whiteNoteWidth: "wide" }).whiteNoteWidth, "track");
   assert.equal(normalizeKeyboardViewSettings({ timeZoom: 1.26 }).timeZoom, 1.3);
   assert.equal(normalizeKeyboardViewSettings({ timeScale: "fixed-tempo" }).timeScale, "fixed-tempo");
+  assert.equal(normalizeKeyboardViewSettings({ blackKeyWidth: 1.23 }).blackKeyWidth, 1.25);
+  assert.equal(normalizeKeyboardViewSettings({ blackKeyWidth: 3 }).blackKeyWidth, 1.5);
+  assert.equal(normalizeKeyboardViewSettings({ blackKeyWidth: 0.1 }).blackKeyWidth, 0.5);
+  assert.equal(normalizeKeyboardViewSettings({ blackKeyWidth: "wide" }).blackKeyWidth, 1);
 });
 
 test("each hand's black-key shade is a darker version of its colour", () => {

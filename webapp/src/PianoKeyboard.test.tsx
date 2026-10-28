@@ -44,6 +44,17 @@ test("builds the complete 88-key piano range", () => {
   assert.equal(PIANO_KEYS.at(-1)?.name, "C8");
 });
 
+test("draws black keys as wide as the black-key width asks", () => {
+  const blackKeyWidth = (markup: string) => Number(
+    /data-piano-key="C♯4"[^>]*style="left:[\d.]+%;width:([\d.]+)%"/.exec(markup)?.[1],
+  );
+  // C♯ is a fifth of C to E, three of the 52 white keys.
+  const real = blackKeyWidth(renderToStaticMarkup(<PianoKeyboard notes={[]} />));
+  assert.ok(Math.abs(real - (3 / 5 / 52) * 100) < 1e-9);
+  const wide = blackKeyWidth(renderToStaticMarkup(<PianoKeyboard notes={[]} blackKeyWidth={1.5} />));
+  assert.ok(Math.abs(wide - 1.5 * real) < 1e-9);
+});
+
 test("gives every key an approach overlay only under the note highway, with an effect on", () => {
   const attached = renderToStaticMarkup(<PianoKeyboard notes={[]} highwayAttached />);
   assert.equal(attached.match(/class="piano-key-approach"/g)?.length, 88);

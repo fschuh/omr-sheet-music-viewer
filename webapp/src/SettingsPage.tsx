@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import {
   DEFAULT_KEYBOARD_VIEW_SETTINGS,
+  MAX_BLACK_KEY_WIDTH,
   MAX_TILT,
   MAX_TIME_ZOOM,
   MAX_WHITE_KEYS,
+  MIN_BLACK_KEY_WIDTH,
   MIN_TILT,
   MIN_TIME_ZOOM,
   MIN_WHITE_KEYS,
@@ -461,6 +463,28 @@ export function SettingsPage({
                   onChange={(event) => changeKeyboardView({ minimumWhiteKeys: Number(event.target.value) })}
                 />
                 <output>{keyboardView.minimumWhiteKeys} white keys</output>
+              </span>
+            </label>
+            <label className="settings-select-row">
+              <span>
+                <strong>Black key width</strong>
+                <small>
+                  Thinner or thicker black keys, next to the white ones. 100% is a real
+                  piano&apos;s, about three fifths of a white key. The highway&apos;s tracks follow.
+                </small>
+              </span>
+              <span className="settings-range-control">
+                <input
+                  type="range"
+                  aria-label="Black key width"
+                  min={MIN_BLACK_KEY_WIDTH}
+                  max={MAX_BLACK_KEY_WIDTH}
+                  step={0.05}
+                  value={keyboardView.blackKeyWidth}
+                  disabled={keyboardViewLocked}
+                  onChange={(event) => changeKeyboardView({ blackKeyWidth: Number(event.target.value) })}
+                />
+                <output>{Math.round(keyboardView.blackKeyWidth * 100)}%</output>
               </span>
             </label>
             <label className="settings-toggle-row">

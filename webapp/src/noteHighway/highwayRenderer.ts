@@ -14,6 +14,7 @@ import {
   HIGHWAY_HALF_WIDTH,
   highwayCamera,
   highwayLayout,
+  highwayNoteInstances,
   keyApproachProgress,
   lowerBound,
   NOTE_HEIGHTS,
@@ -43,6 +44,8 @@ export interface HighwayRenderView {
   noteStyle: HighwayNoteStyle;
   whiteNoteWidth: WhiteNoteWidth;
   fingerNumbers: boolean;
+  /** The black keys' width as a share of a real piano's; the lanes follow it. */
+  blackKeyWidth: number;
 }
 
 export const DEFAULT_HIGHWAY_RENDER_VIEW: Readonly<HighwayRenderView> = Object.freeze({
@@ -53,6 +56,7 @@ export const DEFAULT_HIGHWAY_RENDER_VIEW: Readonly<HighwayRenderView> = Object.f
   noteStyle: "raised",
   whiteNoteWidth: "track",
   fingerNumbers: true,
+  blackKeyWidth: 1,
 });
 
 /** Glyph cells of the finger-number atlas, 1 to 5 left to right. */
@@ -218,6 +222,7 @@ uniform float u_center;
 uniform float u_halfWidth;
 uniform float u_keyboardHalfWidth;
 uniform float u_length;
+uniform float u_blackKeyWidth;
 // Per key: 0 dark, 1 lit by the right hand, 2 by the left.
 uniform vec4 u_glow[22];
 uniform vec3 u_rightColor;
@@ -235,15 +240,24 @@ void main() {
   float pixel = fwidth(keyX);
 
   // The key whose lane this is, as pianoKeyBackSpan lays the keys' backs out: C to E
-  // in five equal parts, F to B in seven. Past A0 and C8 there is no black key, so
-  // the lanes there are theirs.
+  // three white backs and two black keys taking turns, F to B four and three, the
+  // black keys u_blackKeyWidth times a fifth or seventh of their group. Past A0 and
+  // C8 there is no black key, so the lanes there are theirs.
   int whiteIndex = int(clamp(floor(keyX), 0.0, 51.0));
   float laneX = clamp(keyX, 0.0, 51.999);
   float octave = floor((laneX + 12.0) / 7.0);
   float fromC = laneX + 12.0 - 7.0 * octave;
-  int pitchClass = fromC < 3.0
-    ? min(4, int(floor(fromC / 0.6)))
-    : 5 + min(6, int(floor((fromC - 3.0) * 7.0 / 4.0)));
+  bool lowGroup = fromC < 3.0;
+  float whites = lowGroup ? 3.0 : 4.0;
+  float black = u_blackKeyWidth * whites / (2.0 * whites - 1.0);
+  float white = black + 1.0 - u_blackKeyWidth;
+  float inGroup = lowGroup ? fromC : fromC - 3.0;
+  float pair = floor(inGroup / (white + black));
+  int part = min(
+    int(2.0 * whites) - 2,
+    2 * int(pair) + (inGroup - pair * (white + black) >= white ? 1 : 0)
+  );
+  int pitchClass = lowGroup ? part : 5 + part;
   int midi = clamp(12 * int(octave) + pitchClass, 21, 108);
   bool blackLane = blackPitchClass(midi % 12);
 
@@ -396,7 +410,7 @@ const NOTE_UNIFORMS = [
 ] as const;
 const FLOOR_UNIFORMS = [
   "u_viewProjection", "u_center", "u_halfWidth", "u_keyboardHalfWidth", "u_length",
-  "u_glow", "u_rightColor", "u_leftColor",
+  "u_blackKeyWidth", "u_glow", "u_rightColor", "u_leftColor",
 ] as const;
 const LINE_UNIFORMS = [
   "u_viewProjection", "u_now", "u_unitsPerTime", "u_center", "u_halfWidth", "u_length",
@@ -585,7 +599,11 @@ export class NoteHighwayRenderer {
     const gl = this.gl;
     const empty = new Float32Array(0);
     gl.bindBuffer(gl.ARRAY_BUFFER, resources.noteInstanceBuffer);
-    gl.bufferData(gl.ARRAY_BUFFER, this.track?.notes.instances ?? empty, gl.STATIC_DRAW);
+    gl.bufferData(
+      gl.ARRAY_BUFFER,
+      this.track ? highwayNoteInstances(this.track.notes, this.view.blackKeyWidth) : empty,
+      gl.STATIC_DRAW,
+    );
     gl.bindBuffer(gl.ARRAY_BUFFER, resources.lineInstanceBuffer);
     gl.bufferData(gl.ARRAY_BUFFER, this.track?.lines.instances ?? empty, gl.STATIC_DRAW);
     gl.bindBuffer(gl.ARRAY_BUFFER, null);
@@ -618,7 +636,9 @@ export class NoteHighwayRenderer {
     if (view === this.view) return;
     const moved = view.range.low !== this.view.range.low || view.range.high !== this.view.range.high ||
       view.tilt !== this.view.tilt || view.keyboard3d !== this.view.keyboard3d;
+    const relaned = view.blackKeyWidth !== this.view.blackKeyWidth;
     this.view = view;
+    if (relaned) this.uploadTrack();
     if (moved) this.placeCamera();
     else {
       this.sizeVersion += 1;
@@ -672,6 +692,7 @@ export class NoteHighwayRenderer {
     gl.uniform1f(floor.u_halfWidth, layout.halfWidth);
     gl.uniform1f(floor.u_keyboardHalfWidth, HIGHWAY_HALF_WIDTH);
     gl.uniform1f(floor.u_length, camera.length);
+    gl.uniform1f(floor.u_blackKeyWidth, this.view.blackKeyWidth);
     gl.uniform4fv(floor.u_glow, this.glow);
     gl.uniform3fv(floor.u_rightColor, colorChannels(colors.right.base));
     gl.uniform3fv(floor.u_leftColor, colorChannels(colors.left.base));

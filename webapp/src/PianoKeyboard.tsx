@@ -4,8 +4,8 @@ import {
   FIRST_PIANO_MIDI,
   FULL_KEYBOARD_RANGE,
   LAST_PIANO_MIDI,
-  PIANO_KEYS,
   pianoKeyName,
+  pianoKeys,
   pianoKeyWhiteIndex,
   type KeyboardRange,
   type KeyboardViewSettings,
@@ -58,6 +58,8 @@ interface PianoKeyboardProps {
   /** The keys shown; all 88 when absent. */
   range?: KeyboardRange;
   display?: KeyboardDisplayOptions;
+  /** The black keys' width as a share of a real piano's; see KeyboardViewSettings. */
+  blackKeyWidth?: number;
   /**
    * Lay the keys on the note highway's floor, seen through its camera at this
    * tilt; only under the highway. The keyboard then covers the highway's box.
@@ -154,6 +156,7 @@ export function PianoKeyboard({
   highwayAttached = false,
   range = FULL_KEYBOARD_RANGE,
   display = DEFAULT_DISPLAY,
+  blackKeyWidth = DEFAULT_KEYBOARD_VIEW_SETTINGS.blackKeyWidth,
   solidTilt = null,
 }: PianoKeyboardProps) {
   const solid = highwayAttached && solidTilt !== null;
@@ -161,8 +164,8 @@ export function PianoKeyboard({
   const firstWhite = pianoKeyWhiteIndex(range.low);
   const whiteCount = pianoKeyWhiteIndex(range.high) + 1 - firstWhite;
   const keys = useMemo(
-    () => PIANO_KEYS.filter((key) => key.midi >= range.low && key.midi <= range.high),
-    [range.high, range.low],
+    () => pianoKeys(blackKeyWidth).filter((key) => key.midi >= range.low && key.midi <= range.high),
+    [blackKeyWidth, range.high, range.low],
   );
 
   // The keys as the highway camera sees them: one matrix to place labels by, the same

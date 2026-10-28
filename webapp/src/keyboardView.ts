@@ -38,31 +38,49 @@ export function pianoKeyName(midi: number): string {
  * into seven, so within each group the black keys and the white keys' backs between
  * them are equally wide, and the E–F and B–C edges run straight from front to back.
  * A0 and C8 have no black key beyond them and keep their full width at that side.
+ * `blackKeyWidth` scales the black keys from that width; the white keys' backs in
+ * each group share what is left equally.
  */
-export function pianoKeyBackSpan(midi: number): KeySpan {
+export function pianoKeyBackSpan(midi: number, blackKeyWidth = 1): KeySpan {
   const pitchClass = ((midi % 12) + 12) % 12;
   // C of this octave, in white keys from A0: C1 (MIDI 24) is the third white key.
   const c = 7 * Math.floor(midi / 12) - 12;
-  const [start, part, index] = pitchClass <= 4
-    ? [c, 3 / 5, pitchClass]
-    : [c + 3, 4 / 7, pitchClass - 5];
-  const left = midi === FIRST_PIANO_MIDI ? 0 : start + index * part;
-  const right = midi === LAST_PIANO_MIDI ? WHITE_KEY_COUNT : start + (index + 1) * part;
+  const [start, whites, index] = pitchClass <= 4
+    ? [c, 3, pitchClass]
+    : [c + 3, 4, pitchClass - 5];
+  // White backs and black keys take turns, so before part i come i parts, ceil(i/2) of
+  // them white backs, each 1 - blackKeyWidth wider than a black key.
+  const black = (blackKeyWidth * whites) / (2 * whites - 1);
+  const edge = (part: number) => start + part * black + Math.ceil(part / 2) * (1 - blackKeyWidth);
+  const left = midi === FIRST_PIANO_MIDI ? 0 : edge(index);
+  const right = midi === LAST_PIANO_MIDI ? WHITE_KEY_COUNT : edge(index + 1);
   return { left, right };
 }
 
-function buildPianoKeys(): PianoKey[] {
+function buildPianoKeys(blackKeyWidth: number): PianoKey[] {
   const keys: PianoKey[] = [];
   let whiteIndex = 0;
   for (let midi = FIRST_PIANO_MIDI; midi <= LAST_PIANO_MIDI; midi += 1) {
     const black = isBlackKey(midi);
-    keys.push({ midi, name: pianoKeyName(midi), black, whiteIndex, back: pianoKeyBackSpan(midi) });
+    keys.push({ midi, name: pianoKeyName(midi), black, whiteIndex, back: pianoKeyBackSpan(midi, blackKeyWidth) });
     if (!black) whiteIndex += 1;
   }
   return keys;
 }
 
-export const PIANO_KEYS: readonly PianoKey[] = buildPianoKeys();
+const pianoKeyLayouts = new Map<number, readonly PianoKey[]>();
+
+/** The 88 keys, with black keys `blackKeyWidth` times a real piano's; see pianoKeyBackSpan. */
+export function pianoKeys(blackKeyWidth = 1): readonly PianoKey[] {
+  let keys = pianoKeyLayouts.get(blackKeyWidth);
+  if (!keys) {
+    keys = buildPianoKeys(blackKeyWidth);
+    pianoKeyLayouts.set(blackKeyWidth, keys);
+  }
+  return keys;
+}
+
+export const PIANO_KEYS: readonly PianoKey[] = pianoKeys();
 
 /** The key's whiteIndex; see PianoKey. */
 export function pianoKeyWhiteIndex(midi: number): number {
@@ -98,6 +116,11 @@ export interface KeyboardViewSettings {
   range: KeyboardRangeMode;
   /** The narrowest a song or hand range gets, in white keys. */
   minimumWhiteKeys: number;
+  /**
+   * The black keys' width as a share of a real piano's, about three fifths of a white
+   * key; the highway's tracks follow the keys.
+   */
+  blackKeyWidth: number;
   /** Names every C (C1, C2…) on its key, so an octave can be found at a glance. */
   octaveLabels: boolean;
   /** A circle with the finger number on each played key. */
@@ -140,6 +163,8 @@ export const MIN_TILT = 0;
 export const MAX_TILT = 65;
 export const MIN_WHITE_KEYS = 7;
 export const MAX_WHITE_KEYS = 52;
+export const MIN_BLACK_KEY_WIDTH = 0.5;
+export const MAX_BLACK_KEY_WIDTH = 1.5;
 
 export const DEFAULT_RIGHT_HAND_COLOR = "#2fbfa5";
 export const DEFAULT_LEFT_HAND_COLOR = "#f28c38";
@@ -147,6 +172,7 @@ export const DEFAULT_LEFT_HAND_COLOR = "#f28c38";
 export const DEFAULT_KEYBOARD_VIEW_SETTINGS: Readonly<KeyboardViewSettings> = Object.freeze({
   range: "full",
   minimumWhiteKeys: 15,
+  blackKeyWidth: 1,
   octaveLabels: true,
   fingerNumbers: true,
   noteNames: false,
@@ -192,6 +218,9 @@ export function normalizeKeyboardViewSettings(stored: unknown): KeyboardViewSett
     minimumWhiteKeys: Math.round(
       clampedNumber(raw.minimumWhiteKeys, MIN_WHITE_KEYS, MAX_WHITE_KEYS, defaults.minimumWhiteKeys),
     ),
+    blackKeyWidth: Math.round(
+      20 * clampedNumber(raw.blackKeyWidth, MIN_BLACK_KEY_WIDTH, MAX_BLACK_KEY_WIDTH, defaults.blackKeyWidth),
+    ) / 20,
     octaveLabels: flag(raw.octaveLabels, defaults.octaveLabels),
     fingerNumbers: flag(raw.fingerNumbers, defaults.fingerNumbers),
     noteNames: flag(raw.noteNames, defaults.noteNames),

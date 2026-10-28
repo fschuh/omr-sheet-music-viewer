@@ -3,6 +3,7 @@ import {
   FIRST_PIANO_MIDI,
   LAST_PIANO_MIDI,
   PIANO_KEYS,
+  pianoKeys,
   pianoKeyWhiteIndex,
   WHITE_KEY_COUNT,
   type HighwayNoteStyle,
@@ -56,7 +57,8 @@ const CAMERA_FOV_DEGREES = 30;
 
 /**
  * A note fills its key's lane, the width its key has at the back, where it meets the
- * hit line: nearly the same for every key (see pianoKeyBackSpan). It
+ * hit line: at a real piano's black-key width, nearly the same for every key (see
+ * pianoKeyBackSpan). It
  * stays this far inside each lane edge, so the lane's border shows between notes
  * on neighbouring keys as the gap between the keys does.
  */
@@ -113,12 +115,22 @@ function keyLane(key: (typeof PIANO_KEYS)[number]): HighwayKeyLane {
   };
 }
 
-const KEY_LANES: ReadonlyMap<number, HighwayKeyLane> = new Map(
-  PIANO_KEYS.map((key) => [key.midi, keyLane(key)]),
-);
+const keyLaneLayouts = new Map<number, ReadonlyMap<number, HighwayKeyLane>>();
 
-export function highwayKeyLane(midi: number): HighwayKeyLane | null {
-  return KEY_LANES.get(midi) ?? null;
+/** Every key's lane, with black keys `blackKeyWidth` times a real piano's; see pianoKeyBackSpan. */
+function keyLanes(blackKeyWidth: number): ReadonlyMap<number, HighwayKeyLane> {
+  let lanes = keyLaneLayouts.get(blackKeyWidth);
+  if (!lanes) {
+    lanes = new Map(pianoKeys(blackKeyWidth).map((key) => [key.midi, keyLane(key)]));
+    keyLaneLayouts.set(blackKeyWidth, lanes);
+  }
+  return lanes;
+}
+
+const KEY_LANES = keyLanes(1);
+
+export function highwayKeyLane(midi: number, blackKeyWidth = 1): HighwayKeyLane | null {
+  return keyLanes(blackKeyWidth).get(midi) ?? null;
 }
 
 export interface HighwayNotes {
@@ -167,6 +179,12 @@ interface TrackLine {
   strength: number;
 }
 
+function writeLane(instances: Float32Array, offset: number, lane: HighwayKeyLane): void {
+  instances[offset] = (lane.left + lane.right) / 2;
+  instances[offset + 1] = (lane.right - lane.left) / 2 - NOTE_LANE_INSET;
+}
+
+/** Tracks are packed in a real piano's lanes. */
 function packNotes(source: TrackNote[]): HighwayNotes {
   const notes = source
     .flatMap((note) => {
@@ -183,8 +201,7 @@ function packNotes(source: TrackNote[]): HighwayNotes {
   let maxDuration = 0;
   notes.forEach(({ lane, start, end, ghost, left, finger }, index) => {
     const offset = index * NOTE_INSTANCE_FLOATS;
-    instances[offset] = (lane.left + lane.right) / 2;
-    instances[offset + 1] = (lane.right - lane.left) / 2 - NOTE_LANE_INSET;
+    writeLane(instances, offset, lane);
     instances[offset + 2] = lane.black ? 1 : 0;
     instances[offset + 3] = left ? 1 : 0;
     instances[offset + 4] = start;
@@ -199,6 +216,20 @@ function packNotes(source: TrackNote[]): HighwayNotes {
     maxDuration = Math.max(maxDuration, end - start);
   });
   return { instances, starts, ends, midis, ghosts, lefts, count: notes.length, maxDuration };
+}
+
+/**
+ * The notes' instances with every note in its key's lane for black keys
+ * `blackKeyWidth` times a real piano's: the track's own at 1, otherwise a copy.
+ */
+export function highwayNoteInstances(notes: HighwayNotes, blackKeyWidth: number): Float32Array {
+  if (blackKeyWidth === 1) return notes.instances;
+  const lanes = keyLanes(blackKeyWidth);
+  const instances = notes.instances.slice();
+  for (let index = 0; index < notes.count; index += 1) {
+    writeLane(instances, index * NOTE_INSTANCE_FLOATS, lanes.get(notes.midis[index])!);
+  }
+  return instances;
 }
 
 function packLines(source: TrackLine[]): HighwayGridLines {
