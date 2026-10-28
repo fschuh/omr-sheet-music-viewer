@@ -1,6 +1,5 @@
 import type { PredictedFingering } from "../fingering";
 import {
-  BLACK_KEY_WIDTH_IN_WHITE_KEYS,
   FIRST_PIANO_MIDI,
   LAST_PIANO_MIDI,
   PIANO_KEYS,
@@ -24,7 +23,6 @@ import { scoreOffsetToSeconds, type PerformanceRoute } from "../realtime";
  * A 3D keyboard lies on the floor in front of the hit line, from z = 0 to its depth.
  */
 export const HIGHWAY_HALF_WIDTH = WHITE_KEY_COUNT / 2;
-export const BLACK_KEY_LANE_HALF_WIDTH = BLACK_KEY_WIDTH_IN_WHITE_KEYS / 2;
 
 /**
  * Where the far end of the highway sits, as a fraction of the workspace height.
@@ -57,12 +55,27 @@ export const DEFAULT_HIGHWAY_TILT_DEGREES = 34;
 const CAMERA_FOV_DEGREES = 30;
 
 /**
- * Notes on white keys are wide, notes on black keys as narrow as their key, and
- * darker; both stand the same height. Black-key notes stand a hair taller, so a
- * black-key note beside a white-key one at the same time is drawn over it.
+ * A note fills its key's lane, the width its key has at the back, where it meets the
+ * hit line: nearly the same for every key (see pianoKeyBackSpan). It
+ * stays this far inside each lane edge, so the lane's border shows between notes
+ * on neighbouring keys as the gap between the keys does.
  */
-export const WHITE_NOTE_HALF_WIDTH = 0.42;
-export const BLACK_NOTE_HALF_WIDTH = 0.3;
+export const NOTE_LANE_INSET = 0.03;
+
+/**
+ * A white-key note drawn as wide as its whole key, from its instance's centre (its
+ * track's middle): a white key's track lies inside the key, and keys start on whole
+ * world x, so the key's middle is half a key past the track middle's floor. The note
+ * shader does the same; black-key notes, drawn over, keep their track.
+ */
+export function wholeKeyNoteSpan(trackCenter: number): { center: number; halfWidth: number } {
+  return { center: Math.floor(trackCenter) + 0.5, halfWidth: 0.5 - NOTE_LANE_INSET };
+}
+
+/**
+ * Notes on black keys are darker; both stand the same height. Black-key notes
+ * stand a hair taller, so where two touch the black-key note is drawn over.
+ */
 export const NOTE_HEIGHTS: Readonly<Record<HighwayNoteStyle, { white: number; black: number }>> = {
   raised: { white: 0.3, black: 0.315 },
   flat: { white: 0.004, black: 0.012 },
@@ -81,20 +94,27 @@ export const LOOP_LINE_STRENGTH = 2;
 export interface HighwayKeyLane {
   midi: number;
   black: boolean;
-  /** Lane centre in world x. */
+  /** The key's middle in world x: a white key's at its front, a black key's anywhere. */
   center: number;
+  /** World x of the lane's edges, as the floor draws it: the key's back. */
+  left: number;
+  right: number;
+}
+
+function keyLane(key: (typeof PIANO_KEYS)[number]): HighwayKeyLane {
+  const left = key.back.left - HIGHWAY_HALF_WIDTH;
+  const right = key.back.right - HIGHWAY_HALF_WIDTH;
+  return {
+    midi: key.midi,
+    black: key.black,
+    center: key.black ? (left + right) / 2 : key.whiteIndex + 0.5 - HIGHWAY_HALF_WIDTH,
+    left,
+    right,
+  };
 }
 
 const KEY_LANES: ReadonlyMap<number, HighwayKeyLane> = new Map(
-  PIANO_KEYS.map((key) => [
-    key.midi,
-    {
-      midi: key.midi,
-      black: key.black,
-      // Black keys straddle a white-key boundary; white keys sit on their own middle.
-      center: (key.black ? key.whiteIndex : key.whiteIndex + 0.5) - HIGHWAY_HALF_WIDTH,
-    },
-  ]),
+  PIANO_KEYS.map((key) => [key.midi, keyLane(key)]),
 );
 
 export function highwayKeyLane(midi: number): HighwayKeyLane | null {
@@ -163,8 +183,8 @@ function packNotes(source: TrackNote[]): HighwayNotes {
   let maxDuration = 0;
   notes.forEach(({ lane, start, end, ghost, left, finger }, index) => {
     const offset = index * NOTE_INSTANCE_FLOATS;
-    instances[offset] = lane.center;
-    instances[offset + 1] = lane.black ? BLACK_NOTE_HALF_WIDTH : WHITE_NOTE_HALF_WIDTH;
+    instances[offset] = (lane.left + lane.right) / 2;
+    instances[offset + 1] = (lane.right - lane.left) / 2 - NOTE_LANE_INSET;
     instances[offset + 2] = lane.black ? 1 : 0;
     instances[offset + 3] = left ? 1 : 0;
     instances[offset + 4] = start;
@@ -761,6 +781,20 @@ export function projectSurfacePoint(
 }
 
 /** Projects a world point to normalized device coordinates. */
+/**
+ * Where a point `height` above the floor at (x, z) must sit for the camera to see it
+ * straight above (x, 0, z). The camera looks along the highway without turning
+ * sideways, so only x needs moving. A raised note's top, put here, keeps its sides
+ * upright on screen instead of leaning out over the next lane toward the edges;
+ * the note shader does the same.
+ */
+export function uprightX(viewProjection: Float32Array, x: number, height: number, z: number): number {
+  const [floorX] = projectToNdc(viewProjection, [x, 0, z]);
+  const clipX = viewProjection[0] * x + viewProjection[4] * height + viewProjection[8] * z + viewProjection[12];
+  const clipW = viewProjection[3] * x + viewProjection[7] * height + viewProjection[11] * z + viewProjection[15];
+  return x + (floorX * clipW - clipX) / viewProjection[0];
+}
+
 export function projectToNdc(
   viewProjection: Float32Array,
   point: readonly [number, number, number],

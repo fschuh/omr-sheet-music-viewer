@@ -16,10 +16,13 @@ import {
   keyboardSurfaceTransform,
   NOTE_HEIGHTS,
   NOTE_INSTANCE_FLOATS,
+  NOTE_LANE_INSET,
   practiceStepPositions,
   projectSurfacePoint,
   projectToNdc,
+  uprightX,
   visibleNoteRange,
+  wholeKeyNoteSpan,
 } from "./highwayModel";
 import { approachLevel } from "./keyApproachPainter";
 import { FULL_KEYBOARD_RANGE } from "../keyboardView";
@@ -57,15 +60,83 @@ test("puts every key's lane under that key on the 88-key keyboard", () => {
   }
   assert.equal(highwayKeyLane(21)?.center, 0.5 - HIGHWAY_HALF_WIDTH);
   assert.equal(highwayKeyLane(108)?.center, HIGHWAY_HALF_WIDTH - 0.5);
-  // C#4 straddles the C4/D4 boundary.
+  // C#4 is the second of five equal parts across C4 to E4, a tenth of a white key
+  // left of the C4/D4 edge.
   const c4 = highwayKeyLane(60)!;
   const d4 = highwayKeyLane(62)!;
-  assert.equal(highwayKeyLane(61)?.center, (c4.center + d4.center) / 2);
+  assert.ok(Math.abs(highwayKeyLane(61)!.center - ((c4.center + d4.center) / 2 - 0.1)) < 1e-9);
   assert.equal(highwayKeyLane(20), null);
   assert.equal(highwayKeyLane(109), null);
 });
 
-test("builds note instances in score seconds, black-key notes narrower but as tall", () => {
+test("lanes tile the keyboard edge to edge, as the floor draws them", () => {
+  const lanes = PIANO_KEYS.map((key) => highwayKeyLane(key.midi)!).sort((a, b) => a.left - b.left);
+  assert.equal(lanes[0].left, -HIGHWAY_HALF_WIDTH);
+  assert.equal(lanes.at(-1)!.right, HIGHWAY_HALF_WIDTH);
+  for (let index = 1; index < lanes.length; index += 1) {
+    assert.ok(Math.abs(lanes[index].left - lanes[index - 1].right) < 1e-9,
+      `${lanes[index - 1].midi} meets ${lanes[index].midi}`);
+  }
+  // Each lane is its key's back: a fifth of C to E, or a seventh of F to B.
+  const width = (midi: number) => highwayKeyLane(midi)!.right - highwayKeyLane(midi)!.left;
+  for (const midi of [60, 61, 62, 63, 64]) assert.ok(Math.abs(width(midi) - 3 / 5) < 1e-9, `${midi}`);
+  for (const midi of [65, 66, 67, 68, 69, 70, 71]) assert.ok(Math.abs(width(midi) - 4 / 7) < 1e-9, `${midi}`);
+  // The white keys' straight edges run on to the back.
+  assert.ok(Math.abs(highwayKeyLane(64)!.right - (highwayKeyLane(64)!.center + 0.5)) < 1e-9, "E4/F4");
+  assert.ok(Math.abs(highwayKeyLane(72)!.left - (highwayKeyLane(72)!.center - 0.5)) < 1e-9, "B4/C5");
+  // With no black key beyond them, A0 and C8 reach the keyboard's ends.
+  assert.ok(Math.abs(width(21) - 6 / 7) < 1e-9, "A0");
+  assert.equal(width(108), 1, "C8");
+});
+
+test("each note fills its key's lane, short of the edges, so neighbours never overlap", () => {
+  const notes = highwayTrackForRoute(route(PIANO_KEYS.map((key) => note(key.name, key.name, 0, 1)))).notes;
+  assert.equal(notes.count, PIANO_KEYS.length);
+  const spans = Array.from(notes.midis, (midi, index) => {
+    const center = notes.instances[index * NOTE_INSTANCE_FLOATS];
+    const half = notes.instances[index * NOTE_INSTANCE_FLOATS + 1];
+    const lane = highwayKeyLane(midi)!;
+    assert.ok(Math.abs(center - half - (lane.left + NOTE_LANE_INSET)) < 1e-6, `${midi} left`);
+    assert.ok(Math.abs(center + half - (lane.right - NOTE_LANE_INSET)) < 1e-6, `${midi} right`);
+    return { midi, left: center - half, right: center + half };
+  }).sort((a, b) => a.left - b.left);
+  for (let index = 1; index < spans.length; index += 1) {
+    assert.ok(spans[index].left - spans[index - 1].right > 2 * NOTE_LANE_INSET - 1e-6,
+      `${spans[index - 1].midi} and ${spans[index].midi} keep apart`);
+  }
+});
+
+test("a white-key note as wide as its whole key finds the key from its track", () => {
+  const notes = highwayTrackForRoute(route(PIANO_KEYS.map((key) => note(key.name, key.name, 0, 1)))).notes;
+  for (let index = 0; index < notes.count; index += 1) {
+    const lane = highwayKeyLane(notes.midis[index])!;
+    if (lane.black) continue;
+    const span = wholeKeyNoteSpan(notes.instances[index * NOTE_INSTANCE_FLOATS]);
+    assert.ok(Math.abs(span.center - lane.center) < 1e-6, `${lane.midi}: the key's middle`);
+    assert.ok(Math.abs(span.halfWidth - (0.5 - NOTE_LANE_INSET)) < 1e-9);
+  }
+});
+
+test("a raised note's top stands straight above its lane on screen", () => {
+  for (const tilt of [0, 34, 65]) {
+    const layout = highwayLayout({ range: FULL_KEYBOARD_RANGE, tilt, keyboard3d: false }, 1600, 480);
+    const camera = highwayCamera(1600 / 480, layout);
+    for (const x of [-25.5, -8.2, 0.3, 17, 26]) {
+      for (const z of [0, -camera.length / 2, -camera.length]) {
+        const floor = projectToNdc(camera.viewProjection, [x, 0, z])[0];
+        const top = projectToNdc(camera.viewProjection, [uprightX(camera.viewProjection, x, 0.3, z), 0.3, z])[0];
+        assert.ok(Math.abs(top - floor) < 1e-5, `tilt ${tilt}, x ${x}, z ${z}`);
+        // Left where it was, the top would lean out at the hit line: the shift is real.
+        if (Math.abs(x) > 8 && z === 0) {
+          const leaning = projectToNdc(camera.viewProjection, [x, 0.3, z])[0];
+          assert.ok(Math.abs(leaning - floor) > 1e-3, `tilt ${tilt}, x ${x}: leans unmoved`);
+        }
+      }
+    }
+  }
+});
+
+test("builds note instances in score seconds, black-key notes as wide and as tall", () => {
   const notes = highwayTrackForRoute(route([
     note("b", "C#4", 2, 3),
     note("a", "C4", 0, 1),
@@ -82,8 +153,8 @@ test("builds note instances in score seconds, black-key notes narrower but as ta
   const black = notes.instances.subarray(NOTE_INSTANCE_FLOATS, NOTE_INSTANCE_FLOATS * 2);
   assert.equal(white[2], 0);
   assert.equal(black[2], 1);
-  assert.ok(black[1] < white[1], "black-key notes are narrower");
-  assert.ok(black[1] * 2 <= 0.64, "and no wider than their key");
+  assert.ok(Math.abs(black[1] - white[1]) < 1e-6, "C4's and C♯4's notes are as wide");
+  assert.ok(black[1] * 2 < 0.6, "and narrower than their key");
   for (const style of ["raised", "flat"] as const) {
     const { white: whiteHeight, black: blackHeight } = NOTE_HEIGHTS[style];
     assert.ok(blackHeight >= whiteHeight, `${style}: drawn over a white-key neighbour`);
@@ -288,7 +359,7 @@ test("fits a range's hit line to the canvas width at any tilt, narrowing less th
   for (const tilt of [0, 20, 34, 50, 65]) {
     const layout = highwayLayout({ ...options, tilt }, 1200, 400);
     assert.equal(layout.halfWidth, 4);
-    assert.equal(layout.center, highwayKeyLane(66)!.center, "centred on the F♯4 boundary");
+    assert.equal(layout.center, highwayKeyLane(65)!.center + 0.5, "centred on the F4/G4 edge");
     const camera = highwayCamera(3, layout);
     const [leftX, leftY] = projectToNdc(camera.viewProjection, [layout.center - 4, 0, 0]);
     const [rightX] = projectToNdc(camera.viewProjection, [layout.center + 4, 0, 0]);

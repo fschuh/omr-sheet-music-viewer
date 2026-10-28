@@ -6,11 +6,16 @@ export const LAST_PIANO_MIDI = 108; // C8
 const BLACK_PITCH_CLASSES = new Set([1, 3, 6, 8, 10]);
 
 export const WHITE_KEY_COUNT = 52;
-export const BLACK_KEY_WIDTH_IN_WHITE_KEYS = 0.64;
 const SHARP_NAMES = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"];
 
 export function isBlackKey(midi: number): boolean {
   return BLACK_PITCH_CLASSES.has(((midi % 12) + 12) % 12);
+}
+
+/** A stretch across the keyboard, in white keys from A0's left edge. */
+export interface KeySpan {
+  left: number;
+  right: number;
 }
 
 export interface PianoKey {
@@ -19,10 +24,31 @@ export interface PianoKey {
   black: boolean;
   /** White keys below this one; a black key shares the index of the white key above it. */
   whiteIndex: number;
+  /** The key's width at the back, where the black keys are; see pianoKeyBackSpan. */
+  back: KeySpan;
 }
 
 export function pianoKeyName(midi: number): string {
   return `${SHARP_NAMES[midi % 12]}${Math.floor(midi / 12) - 1}`;
+}
+
+/**
+ * Where a key sits at the back of the keyboard, in white keys from A0's left edge.
+ * As on a real piano, the back of C to E is split into five equal parts and F to B
+ * into seven, so within each group the black keys and the white keys' backs between
+ * them are equally wide, and the E–F and B–C edges run straight from front to back.
+ * A0 and C8 have no black key beyond them and keep their full width at that side.
+ */
+export function pianoKeyBackSpan(midi: number): KeySpan {
+  const pitchClass = ((midi % 12) + 12) % 12;
+  // C of this octave, in white keys from A0: C1 (MIDI 24) is the third white key.
+  const c = 7 * Math.floor(midi / 12) - 12;
+  const [start, part, index] = pitchClass <= 4
+    ? [c, 3 / 5, pitchClass]
+    : [c + 3, 4 / 7, pitchClass - 5];
+  const left = midi === FIRST_PIANO_MIDI ? 0 : start + index * part;
+  const right = midi === LAST_PIANO_MIDI ? WHITE_KEY_COUNT : start + (index + 1) * part;
+  return { left, right };
 }
 
 function buildPianoKeys(): PianoKey[] {
@@ -30,7 +56,7 @@ function buildPianoKeys(): PianoKey[] {
   let whiteIndex = 0;
   for (let midi = FIRST_PIANO_MIDI; midi <= LAST_PIANO_MIDI; midi += 1) {
     const black = isBlackKey(midi);
-    keys.push({ midi, name: pianoKeyName(midi), black, whiteIndex });
+    keys.push({ midi, name: pianoKeyName(midi), black, whiteIndex, back: pianoKeyBackSpan(midi) });
     if (!black) whiteIndex += 1;
   }
   return keys;
@@ -61,6 +87,13 @@ export type HighwayNoteStyle = "raised" | "flat";
  */
 export type HighwayTimeScale = "steady-speed" | "fixed-tempo";
 
+/**
+ * How wide a white key's notes are on the highway: its track, the key's back between
+ * the black keys, as black-key notes are; or the whole key, reaching under the black
+ * keys' tracks beside it, so white-key notes stand out from black-key ones.
+ */
+export type WhiteNoteWidth = "track" | "whole-key";
+
 export interface KeyboardViewSettings {
   range: KeyboardRangeMode;
   /** The narrowest a song or hand range gets, in white keys. */
@@ -82,6 +115,12 @@ export interface KeyboardViewSettings {
   keyboard3d: boolean;
   noteStyle: HighwayNoteStyle;
   timeScale: HighwayTimeScale;
+  whiteNoteWidth: WhiteNoteWidth;
+  /**
+   * Stretches the highway's time: 2 shows half as much time ahead, with every note
+   * twice as long and twice as far from the next.
+   */
+  timeZoom: number;
   /** The finger number on each note block of the practised hand. */
   highwayFingerNumbers: boolean;
 }
@@ -92,8 +131,11 @@ export const UPCOMING_KEY_EFFECTS: readonly UpcomingKeyEffect[] = [
 ];
 export const HIGHWAY_NOTE_STYLES: readonly HighwayNoteStyle[] = ["raised", "flat"];
 export const HIGHWAY_TIME_SCALES: readonly HighwayTimeScale[] = ["steady-speed", "fixed-tempo"];
+export const WHITE_NOTE_WIDTHS: readonly WhiteNoteWidth[] = ["track", "whole-key"];
 export const UPCOMING_LEADS: readonly number[] = [0.125, 0.25, 0.5, 1];
 
+export const MIN_TIME_ZOOM = 0.5;
+export const MAX_TIME_ZOOM = 4;
 export const MIN_TILT = 0;
 export const MAX_TILT = 65;
 export const MIN_WHITE_KEYS = 7;
@@ -116,6 +158,8 @@ export const DEFAULT_KEYBOARD_VIEW_SETTINGS: Readonly<KeyboardViewSettings> = Ob
   keyboard3d: false,
   noteStyle: "raised",
   timeScale: "steady-speed",
+  whiteNoteWidth: "track",
+  timeZoom: 1,
   highwayFingerNumbers: true,
 });
 
@@ -159,6 +203,8 @@ export function normalizeKeyboardViewSettings(stored: unknown): KeyboardViewSett
     keyboard3d: flag(raw.keyboard3d, defaults.keyboard3d),
     noteStyle: oneOf(HIGHWAY_NOTE_STYLES, raw.noteStyle, defaults.noteStyle),
     timeScale: oneOf(HIGHWAY_TIME_SCALES, raw.timeScale, defaults.timeScale),
+    whiteNoteWidth: oneOf(WHITE_NOTE_WIDTHS, raw.whiteNoteWidth, defaults.whiteNoteWidth),
+    timeZoom: Math.round(10 * clampedNumber(raw.timeZoom, MIN_TIME_ZOOM, MAX_TIME_ZOOM, defaults.timeZoom)) / 10,
     highwayFingerNumbers: flag(raw.highwayFingerNumbers, defaults.highwayFingerNumbers),
   };
 }

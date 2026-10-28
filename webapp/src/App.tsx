@@ -632,6 +632,7 @@ export function App() {
     getRealtimeRouteLoops,
     document?.predictedFingerings,
     keyboardView.timeScale === "fixed-tempo" ? realtimeOpeningBpm : null,
+    keyboardView.timeZoom,
   );
   // The keys the keyboard and highway show, from every note of the score, so the
   // range holds still for the whole piece.
@@ -651,6 +652,7 @@ export function App() {
     keyboard3d: keyboardSolid,
     colors: keyboardHandColors,
     noteStyle: keyboardView.noteStyle,
+    whiteNoteWidth: keyboardView.whiteNoteWidth,
     fingerNumbers: keyboardView.highwayFingerNumbers,
   }), [
     keyboardHandColors,
@@ -659,6 +661,7 @@ export function App() {
     keyboardView.highwayFingerNumbers,
     keyboardView.noteStyle,
     keyboardView.tilt,
+    keyboardView.whiteNoteWidth,
   ]);
   const keyboardDisplay = useMemo(() => ({
     octaveLabels: keyboardView.octaveLabels,
@@ -681,6 +684,7 @@ export function App() {
     notePlaybackMoment ? Math.max(0, playbackTimeline.indexOf(notePlaybackMoment)) : 0,
     practiceHand,
     noteByNoteLoopSteps,
+    keyboardView.timeZoom,
   );
   // Both hands sound in ordinary playback. Practising one hand, each hand follows
   // its own switch; accompaniment by the other hand exists in realtime only,

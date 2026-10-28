@@ -5,10 +5,10 @@ import {
   DEFAULT_KEYBOARD_VIEW_SETTINGS,
   type HandColors,
   type HighwayNoteStyle,
+  type WhiteNoteWidth,
   type KeyboardRange,
 } from "../keyboardView";
 import {
-  BLACK_KEY_LANE_HALF_WIDTH,
   DEFAULT_HIGHWAY_TILT_DEGREES,
   GRID_LINE_INSTANCE_FLOATS,
   HIGHWAY_HALF_WIDTH,
@@ -17,6 +17,7 @@ import {
   keyApproachProgress,
   lowerBound,
   NOTE_HEIGHTS,
+  NOTE_LANE_INSET,
   NOTE_INSTANCE_FLOATS,
   upperBound,
   visibleNoteRange,
@@ -40,6 +41,7 @@ export interface HighwayRenderView {
   keyboard3d: boolean;
   colors: HandColors;
   noteStyle: HighwayNoteStyle;
+  whiteNoteWidth: WhiteNoteWidth;
   fingerNumbers: boolean;
 }
 
@@ -49,6 +51,7 @@ export const DEFAULT_HIGHWAY_RENDER_VIEW: Readonly<HighwayRenderView> = Object.f
   keyboard3d: false,
   colors: handColors(DEFAULT_KEYBOARD_VIEW_SETTINGS),
   noteStyle: "raised",
+  whiteNoteWidth: "track",
   fingerNumbers: true,
 });
 
@@ -70,6 +73,8 @@ uniform float u_minLength;
 uniform float u_gap;
 uniform vec2 u_heights; // white, black
 uniform vec2 u_laneSpan; // the keys shown, as world x from and to
+uniform float u_wholeWhiteKeys; // 1: white-key notes as wide as their key; see wholeKeyNoteSpan
+uniform float u_laneInset;
 
 out vec3 v_normal;
 out vec2 v_uv;
@@ -93,8 +98,18 @@ void main() {
     gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
     return;
   }
-  vec3 size = vec3(2.0 * a_lane.y, mix(u_heights.x, u_heights.y, a_lane.z), nearZ - farZ);
-  vec3 world = vec3(a_lane.x - a_lane.y, 0.0, farZ) + a_corner * size;
+  vec2 span = u_wholeWhiteKeys > 0.5 && a_lane.z < 0.5
+    ? vec2(floor(a_lane.x) + 0.5, 0.5 - u_laneInset)
+    : a_lane.xy;
+  vec3 size = vec3(2.0 * span.y, mix(u_heights.x, u_heights.y, a_lane.z), nearZ - farZ);
+  vec3 world = vec3(span.x - span.y, 0.0, farZ) + a_corner * size;
+  // Seen in perspective, a raised top leans out toward the screen's edges, over the
+  // next lane; moved as uprightX moves it, its sides stand straight above the lane's.
+  if (world.y > 0.0) {
+    vec4 floorClip = u_viewProjection * vec4(world.x, 0.0, world.z, 1.0);
+    vec4 topClip = u_viewProjection * vec4(world, 1.0);
+    world.x += (floorClip.x / floorClip.w * topClip.w - topClip.x) / u_viewProjection[0][0];
+  }
   gl_Position = u_viewProjection * vec4(world, 1.0);
   v_normal = a_normal;
   v_uv = vec2(a_corner[int(a_axes.x)], a_corner[int(a_axes.y)]);
@@ -203,7 +218,6 @@ uniform float u_center;
 uniform float u_halfWidth;
 uniform float u_keyboardHalfWidth;
 uniform float u_length;
-uniform float u_blackHalfWidth;
 // Per key: 0 dark, 1 lit by the right hand, 2 by the left.
 uniform vec4 u_glow[22];
 uniform vec3 u_rightColor;
@@ -211,11 +225,8 @@ uniform vec3 u_leftColor;
 
 out vec4 outColor;
 
-// Semitones above A for the white keys A B C D E F G.
-const int WHITE_OFFSETS[7] = int[7](0, 2, 3, 5, 7, 8, 10);
-
-bool hasSharp(int letter) {
-  return letter == 0 || letter == 2 || letter == 3 || letter == 5 || letter == 6;
+bool blackPitchClass(int pitchClass) {
+  return pitchClass == 1 || pitchClass == 3 || pitchClass == 6 || pitchClass == 8 || pitchClass == 10;
 }
 
 void main() {
@@ -223,18 +234,18 @@ void main() {
   float far = clamp(-v_world.y / u_length, 0.0, 1.0);
   float pixel = fwidth(keyX);
 
+  // The key whose lane this is, as pianoKeyBackSpan lays the keys' backs out: C to E
+  // in five equal parts, F to B in seven. Past A0 and C8 there is no black key, so
+  // the lanes there are theirs.
   int whiteIndex = int(clamp(floor(keyX), 0.0, 51.0));
-  int midi = 21 + 12 * (whiteIndex / 7) + WHITE_OFFSETS[whiteIndex % 7];
-  bool blackLane = false;
-  float boundary = floor(keyX + 0.5);
-  int boundaryIndex = int(boundary);
-  if (boundaryIndex >= 1 && boundaryIndex <= 51 && abs(keyX - boundary) < u_blackHalfWidth) {
-    int previous = boundaryIndex - 1;
-    if (hasSharp(previous % 7)) {
-      blackLane = true;
-      midi = 21 + 12 * (previous / 7) + WHITE_OFFSETS[previous % 7] + 1;
-    }
-  }
+  float laneX = clamp(keyX, 0.0, 51.999);
+  float octave = floor((laneX + 12.0) / 7.0);
+  float fromC = laneX + 12.0 - 7.0 * octave;
+  int pitchClass = fromC < 3.0
+    ? min(4, int(floor(fromC / 0.6)))
+    : 5 + min(6, int(floor((fromC - 3.0) * 7.0 / 4.0)));
+  int midi = clamp(12 * int(octave) + pitchClass, 21, 108);
+  bool blackLane = blackPitchClass(midi % 12);
 
   // Alternate octaves (C to B) so the hand can find its place, as on the keys.
   bool oddOctave = ((whiteIndex + 5) / 7) % 2 == 1;
@@ -379,13 +390,13 @@ function uniforms<Name extends string>(
 }
 
 const NOTE_UNIFORMS = [
-  "u_viewProjection", "u_now", "u_unitsPerTime", "u_length", "u_minLength", "u_gap", "u_heights", "u_laneSpan",
+  "u_viewProjection", "u_now", "u_unitsPerTime", "u_length", "u_minLength", "u_gap", "u_heights", "u_laneSpan", "u_wholeWhiteKeys", "u_laneInset",
   "u_rightColor", "u_rightDark", "u_leftColor", "u_leftDark", "u_ghostColor",
   "u_flat", "u_showFingers", "u_digits",
 ] as const;
 const FLOOR_UNIFORMS = [
   "u_viewProjection", "u_center", "u_halfWidth", "u_keyboardHalfWidth", "u_length",
-  "u_blackHalfWidth", "u_glow", "u_rightColor", "u_leftColor",
+  "u_glow", "u_rightColor", "u_leftColor",
 ] as const;
 const LINE_UNIFORMS = [
   "u_viewProjection", "u_now", "u_unitsPerTime", "u_center", "u_halfWidth", "u_length",
@@ -661,7 +672,6 @@ export class NoteHighwayRenderer {
     gl.uniform1f(floor.u_halfWidth, layout.halfWidth);
     gl.uniform1f(floor.u_keyboardHalfWidth, HIGHWAY_HALF_WIDTH);
     gl.uniform1f(floor.u_length, camera.length);
-    gl.uniform1f(floor.u_blackHalfWidth, BLACK_KEY_LANE_HALF_WIDTH);
     gl.uniform4fv(floor.u_glow, this.glow);
     gl.uniform3fv(floor.u_rightColor, colorChannels(colors.right.base));
     gl.uniform3fv(floor.u_leftColor, colorChannels(colors.left.base));
@@ -707,6 +717,8 @@ export class NoteHighwayRenderer {
       const heights = NOTE_HEIGHTS[this.view.noteStyle];
       gl.uniform2f(note.u_heights, heights.white, heights.black);
       gl.uniform2f(note.u_laneSpan, layout.center - layout.halfWidth, layout.center + layout.halfWidth);
+      gl.uniform1f(note.u_wholeWhiteKeys, this.view.whiteNoteWidth === "whole-key" ? 1 : 0);
+      gl.uniform1f(note.u_laneInset, NOTE_LANE_INSET);
       gl.uniform3fv(note.u_rightColor, colorChannels(colors.right.base));
       gl.uniform3fv(note.u_rightDark, colorChannels(colors.right.dark));
       gl.uniform3fv(note.u_leftColor, colorChannels(colors.left.base));

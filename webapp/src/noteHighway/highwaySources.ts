@@ -36,7 +36,8 @@ const STEP_GLIDE_MS = 160;
  * tempo multiplier and the score's own tempo changes alike.
  * While one hand is practised, the other hand's notes are ghosts. A looping route
  * starts over at its end, so the highway shows its start coming again after it.
- * Notes carry their finger from `fingerings`.
+ * Notes carry their finger from `fingerings`. `timeZoom` divides the window, so
+ * above 1 the highway shows less time with longer notes further apart.
  */
 export function useRealtimeHighwaySource(
   getRoute: () => PerformanceRoute | null,
@@ -46,15 +47,16 @@ export function useRealtimeHighwaySource(
   getLooping: () => boolean = () => false,
   fingerings?: Readonly<Record<string, PredictedFingering>>,
   fixedTempoBpm: number | null = null,
+  timeZoom = 1,
 ): HighwayFrameSource {
-  const latest = useRef({ tempoMultiplier, hand, fingerings, fixedTempoBpm });
-  latest.current = { tempoMultiplier, hand, fingerings, fixedTempoBpm };
+  const latest = useRef({ tempoMultiplier, hand, fingerings, fixedTempoBpm, timeZoom });
+  latest.current = { tempoMultiplier, hand, fingerings, fixedTempoBpm, timeZoom };
   return useCallback(() => {
     const { fixedTempoBpm: bpm } = latest.current;
     const quarters = bpm !== null;
-    const window = quarters
+    const window = (quarters
       ? highwayLookaheadQuarters(bpm)
-      : HIGHWAY_LOOKAHEAD_SECONDS * latest.current.tempoMultiplier;
+      : HIGHWAY_LOOKAHEAD_SECONDS * latest.current.tempoMultiplier) / latest.current.timeZoom;
     const route = getRoute();
     if (!route) return { track: null, now: 0, window };
     const timeAt = (offset: number) => quarters
@@ -90,21 +92,22 @@ function easeOutCubic(progress: number): number {
  * The track is built on first use for each timeline and hand, so a hidden
  * highway costs nothing. `loop`, in the same steps, is what playback repeats: past its
  * end the highway shows its start again, and stepping from its last moment back to its
- * first glides on, as if into the next bar.
+ * first glides on, as if into the next bar. `timeZoom` divides the steps shown.
  */
 export function useNoteByNoteHighwaySource(
   moments: readonly HighwayStepMoment[],
   currentIndex: number,
   hand: PracticeHand,
   loop: HighwayLoop | null = null,
+  timeZoom = 1,
 ): HighwayFrameSource {
   const trackCache = useRef<{
     moments: readonly HighwayStepMoment[];
     hand: PracticeHand;
     track: HighwayTrack;
   } | null>(null);
-  const latest = useRef({ moments, hand, loop });
-  latest.current = { moments, hand, loop };
+  const latest = useRef({ moments, hand, loop, timeZoom });
+  latest.current = { moments, hand, loop, timeZoom };
   const glide = useRef({ from: currentIndex, to: currentIndex, startedAt: 0, hand });
 
   const positionAt = useCallback((time: number) => {
@@ -145,10 +148,11 @@ export function useNoteByNoteHighwaySource(
         track: highwayTrackForSteps(currentMoments, currentHand),
       };
     }
+    const window = HIGHWAY_LOOKAHEAD_STEPS / latest.current.timeZoom;
     return {
-      track: highwayTrackLooped(trackCache.current!.track, latest.current.loop, HIGHWAY_LOOKAHEAD_STEPS),
+      track: highwayTrackLooped(trackCache.current!.track, latest.current.loop, window),
       now: positionAt(performance.now()),
-      window: HIGHWAY_LOOKAHEAD_STEPS,
+      window,
     };
   }, [positionAt]);
 }

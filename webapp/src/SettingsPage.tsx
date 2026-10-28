@@ -2,12 +2,15 @@ import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent }
 import {
   DEFAULT_KEYBOARD_VIEW_SETTINGS,
   MAX_TILT,
+  MAX_TIME_ZOOM,
   MAX_WHITE_KEYS,
   MIN_TILT,
+  MIN_TIME_ZOOM,
   MIN_WHITE_KEYS,
   UPCOMING_LEADS,
   type HighwayNoteStyle,
   type HighwayTimeScale,
+  type WhiteNoteWidth,
   type KeyboardRangeMode,
   type KeyboardViewSettings,
   type UpcomingKeyEffect,
@@ -117,6 +120,11 @@ const UPCOMING_LEAD_LABELS: Readonly<Record<number, string>> = {
 const NOTE_STYLE_LABELS: Readonly<Record<HighwayNoteStyle, string>> = {
   raised: "Raised blocks",
   flat: "Flat tiles",
+};
+
+const WHITE_NOTE_WIDTH_LABELS: Readonly<Record<WhiteNoteWidth, string>> = {
+  track: "As wide as their track",
+  "whole-key": "As wide as the whole key",
 };
 
 const TIME_SCALE_LABELS: Readonly<Record<HighwayTimeScale, string>> = {
@@ -634,6 +642,48 @@ export function SettingsPage({
                   <option key={style} value={style}>{NOTE_STYLE_LABELS[style]}</option>
                 ))}
               </select>
+            </label>
+            <label className="settings-select-row">
+              <span>
+                <strong>White-key notes</strong>
+                <small>
+                  As wide as their track, the back of the key between the black keys, so every
+                  note is about as wide; or as wide as the whole key, reaching under the black
+                  keys&apos; tracks beside it, so white-key notes stand out from black-key ones.
+                </small>
+              </span>
+              <select
+                aria-label="White-key note width"
+                value={keyboardView.whiteNoteWidth}
+                disabled={keyboardViewLocked}
+                onChange={(event) => changeKeyboardView({ whiteNoteWidth: event.target.value as WhiteNoteWidth })}
+              >
+                {(Object.keys(WHITE_NOTE_WIDTH_LABELS) as WhiteNoteWidth[]).map((width) => (
+                  <option key={width} value={width}>{WHITE_NOTE_WIDTH_LABELS[width]}</option>
+                ))}
+              </select>
+            </label>
+            <label className="settings-select-row">
+              <span>
+                <strong>Time zoom</strong>
+                <small>
+                  Stretches the notes along the highway. Higher shows less time ahead, with
+                  longer notes further apart; lower shows more of what is coming.
+                </small>
+              </span>
+              <span className="settings-range-control">
+                <input
+                  type="range"
+                  aria-label="Highway time zoom"
+                  min={MIN_TIME_ZOOM}
+                  max={MAX_TIME_ZOOM}
+                  step={0.1}
+                  value={keyboardView.timeZoom}
+                  disabled={keyboardViewLocked}
+                  onChange={(event) => changeKeyboardView({ timeZoom: Number(event.target.value) })}
+                />
+                <output>{keyboardView.timeZoom.toFixed(1)}×</output>
+              </span>
             </label>
             <label className="settings-select-row">
               <span>

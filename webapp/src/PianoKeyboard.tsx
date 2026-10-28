@@ -1,6 +1,5 @@
 import { Fragment, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
-  BLACK_KEY_WIDTH_IN_WHITE_KEYS,
   DEFAULT_KEYBOARD_VIEW_SETTINGS,
   FIRST_PIANO_MIDI,
   FULL_KEYBOARD_RANGE,
@@ -23,7 +22,6 @@ import {
 import { pitchToMidi } from "./piano";
 
 export {
-  BLACK_KEY_WIDTH_IN_WHITE_KEYS,
   FIRST_PIANO_MIDI,
   LAST_PIANO_MIDI,
   PIANO_KEYS,
@@ -315,9 +313,11 @@ export function PianoKeyboard({
 
   /** Where a key's label is anchored: its bottom centre. */
   function labelPosition(key: PianoKey): CSSProperties {
-    // Black keys are centred on a white-key boundary; white keys on their own
-    // middle. Both are measured in white keys, the unit the layout is built on.
-    const center = key.whiteIndex - firstWhite + (key.black ? 0 : 0.5);
+    // A black key's middle, or a white key's at its front, in white keys: the unit
+    // the layout is built on.
+    const center = key.black
+      ? (key.back.left + key.back.right) / 2 - firstWhite
+      : key.whiteIndex - firstWhite + 0.5;
     if (!surface) return { left: `${(center / whiteCount) * 100}%` };
     const [left, top] = key.black
       ? projectSurfacePoint(
@@ -439,8 +439,8 @@ export function PianoKeyboard({
           </div>
           <div className="piano-black-keys">
             {keys.filter((key) => key.black).map((key) => {
-              const width = (BLACK_KEY_WIDTH_IN_WHITE_KEYS / whiteCount) * 100;
-              const left = ((key.whiteIndex - firstWhite - BLACK_KEY_WIDTH_IN_WHITE_KEYS / 2) / whiteCount) * 100;
+              const width = ((key.back.right - key.back.left) / whiteCount) * 100;
+              const left = ((key.back.left - firstWhite) / whiteCount) * 100;
               // A solid black key is its tapered top; its walls slope out to the footprint.
               const style = surface
                 ? {

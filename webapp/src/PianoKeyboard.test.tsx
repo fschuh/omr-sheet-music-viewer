@@ -131,9 +131,9 @@ test("shows only the keys of its range, laid out across the full width", () => {
   assert.match(markup, /--white-keys:10/);
   assert.match(markup, /16 keys · B3–D5/);
   assert.match(markup, /aria-label="16-key piano keyboard/);
-  // C♯4 straddles the C4/D4 boundary, two white keys in.
-  assert.match(markup, /data-piano-key="C♯4"[^>]*style="left:16\.(?:8|79)[0-9]*%;width:6\.4[0-9]*%"/);
-  assert.match(markup, /class="piano-key-label piano-key-label-black" style="left:20%"/);
+  // C♯4 is the second fifth of C4 to E4: from 1.6 to 2.2 white keys in.
+  assert.match(markup, /data-piano-key="C♯4"[^>]*style="left:16(?:\.0+[0-9]*)?%;width:(?:6|5\.99+[0-9]*)%"/);
+  assert.match(markup, /class="piano-key-label piano-key-label-black" style="left:(?:19|18\.99+[0-9]*)%"/);
 });
 
 test("draws every label in one layer above the keys, not inside them", () => {
@@ -150,11 +150,11 @@ test("draws every label in one layer above the keys, not inside them", () => {
   assert.equal(markup.match(/class="piano-key-label[ "]/g)?.length, 2);
   assert.doesNotMatch(markup, /class="piano-key piano-key-[a-z]+[^>]*>(?:(?!<\/div>).)*piano-key-label/s);
 
-  // F♯3 is midi 54, centred on the F3/G3 boundary, 20 white keys in; C6 is
-  // midi 84, the 38th white key, so its marker centres half a key further on.
+  // F♯3 is midi 54, the second seventh of F3 to B3, centred 19 6/7 white keys in;
+  // C6 is midi 84, the 38th white key, so its marker centres half a key further on.
   assert.match(
     markup,
-    /class="piano-key-label piano-key-label-black" style="left:38\.461[0-9]*%" data-midi="54" data-pressed="true"/,
+    /class="piano-key-label piano-key-label-black" style="left:38\.186[0-9]*%" data-midi="54" data-pressed="true"/,
   );
   assert.match(markup, /class="piano-key-label" style="left:72\.115[0-9]*%" data-midi="84"/);
 });

@@ -67,6 +67,8 @@ test("stored settings fill in, field by field, whatever is missing or wrong", ()
     keyboard3d: "yes",
     noteStyle: "flat",
     timeScale: "bars",
+    timeZoom: 9,
+    whiteNoteWidth: "whole-key",
   });
   assert.equal(settings.range, "song");
   assert.equal(settings.minimumWhiteKeys, 52);
@@ -78,6 +80,10 @@ test("stored settings fill in, field by field, whatever is missing or wrong", ()
   assert.equal(settings.keyboard3d, false);
   assert.equal(settings.noteStyle, "flat");
   assert.equal(settings.timeScale, DEFAULT_KEYBOARD_VIEW_SETTINGS.timeScale);
+  assert.equal(settings.timeZoom, 4);
+  assert.equal(settings.whiteNoteWidth, "whole-key");
+  assert.equal(normalizeKeyboardViewSettings({ whiteNoteWidth: "wide" }).whiteNoteWidth, "track");
+  assert.equal(normalizeKeyboardViewSettings({ timeZoom: 1.26 }).timeZoom, 1.3);
   assert.equal(normalizeKeyboardViewSettings({ timeScale: "fixed-tempo" }).timeScale, "fixed-tempo");
 });
 
