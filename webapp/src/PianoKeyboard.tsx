@@ -16,6 +16,7 @@ import {
   highwayCamera,
   highwayLayout,
   keyboardSurfaceMatrix,
+  keyboardSurfaceTransform,
   NOTE_HIGHWAY_TOP_FRACTION,
   projectSurfacePoint,
 } from "./noteHighway/highwayModel";
@@ -166,8 +167,9 @@ export function PianoKeyboard({
     [range.high, range.low],
   );
 
-  // The keys as the highway camera sees them: one matrix for the key solids, and the
-  // pixel size of a world unit to build them from.
+  // The keys as the highway camera sees them: one matrix to place labels by, the same
+  // placement split into the overlay's perspective and the keys' affine transform
+  // for the key solids, and the pixel size of a world unit to build them from.
   const surface = useMemo(() => {
     if (!solid || !size || !(size.width > 0) || !(size.height > 0)) return null;
     const layout = highwayLayout(
@@ -180,6 +182,7 @@ export function PianoKeyboard({
     const unit = size.width / (2 * layout.halfWidth);
     return {
       matrix: keyboardSurfaceMatrix(camera, layout, size.width, size.height),
+      ...keyboardSurfaceTransform(camera, layout, size.width, size.height),
       unit,
       depth: layout.keyboard.depth * unit,
       frontFace: layout.keyboard.frontFace * unit,
@@ -356,7 +359,7 @@ export function PianoKeyboard({
     ? {
       width: `${whiteCount * surface.unit}px`,
       height: `${surface.depth}px`,
-      transform: `matrix3d(${Array.from(surface.matrix, (value) => +value.toPrecision(9)).join(",")})`,
+      transform: `matrix3d(${Array.from(surface.transform, (value) => +value.toPrecision(9)).join(",")})`,
       ["--key-front-face" as string]: `${surface.frontFace}px`,
       ["--key-black-height" as string]: `${surface.blackHeight}px`,
       ["--key-black-side-taper" as string]: `${surface.blackSideTaper}px`,
@@ -391,7 +394,9 @@ export function PianoKeyboard({
       ].filter(Boolean).join(" ")}
       style={{
         ["--white-keys" as string]: whiteCount,
-        ...(solid ? { top: `${NOTE_HIGHWAY_TOP_FRACTION * 100}%` } : {}),      }}
+        ...(solid ? { top: `${NOTE_HIGHWAY_TOP_FRACTION * 100}%` } : {}),
+        ...(surface ? { perspective: `${+surface.perspective.toPrecision(9)}px` } : {}),
+      }}
       aria-label={`${keys.length}-key piano keyboard. ${
         activePitchNames.length > 0
           ? `Notes under the playhead: ${accessibleNotes.join("; ")}`

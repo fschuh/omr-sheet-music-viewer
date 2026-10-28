@@ -264,7 +264,8 @@ button:disabled {
 
 /* A 3D keyboard covers the note highway's box, which runs down to the bottom of
    the workspace (its top is set inline, as the highway's is), and lays its keys
-   on the highway's floor with one matrix3d, also set inline. */
+   on the highway's floor with its perspective and their matrix3d, both set
+   inline. */
 .piano-keyboard-overlay.keyboard-3d {
   animation: none;
   background: none;

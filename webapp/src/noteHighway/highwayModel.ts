@@ -693,6 +693,41 @@ export function keyboardSurfaceMatrix(
   return multiply(screen, multiply(camera.viewProjection, surface));
 }
 
+/**
+ * keyboardSurfaceMatrix split in two for CSS: a `perspective` distance (CSS px)
+ * for the canvas-sized parent, about its centre (the default perspective-origin),
+ * and an affine matrix3d for the element. Together they place the element exactly
+ * as the single matrix does. WebKitGTK draws the preserve-3d children of an
+ * element whose own transform carries perspective flat at the page's top left;
+ * perspective that comes from the parent it draws correctly.
+ */
+export function keyboardSurfaceTransform(
+  camera: HighwayCamera,
+  layout: HighwayLayout,
+  cssWidth: number,
+  cssHeight: number,
+): { perspective: number; transform: Float32Array } {
+  const matrix = keyboardSurfaceMatrix(camera, layout, cssWidth, cssHeight);
+  // The parent's perspective is P = T(origin) * perspective(d) * T(-origin), whose
+  // rows are x - (ox / d) z, y - (oy / d) z, z and w = 1 - z / d. Solving P * A = s M
+  // for an affine A gives A's z row from M's w row, then its x and y rows. With d
+  // the camera's focal length in px, A is the camera's view scaled into CSS px.
+  const fov = (CAMERA_FOV_DEGREES * Math.PI) / 180;
+  const perspective = cssHeight / 2 / Math.tan(fov / 2);
+  const originX = cssWidth / 2;
+  const originY = cssHeight / 2;
+  const scale = 1 / matrix[15];
+  const transform = new Float32Array(16);
+  for (let column = 0; column < 4; column += 1) {
+    const z = perspective * ((column === 3 ? 1 : 0) - scale * matrix[column * 4 + 3]);
+    transform[column * 4] = scale * matrix[column * 4] + (originX / perspective) * z;
+    transform[column * 4 + 1] = scale * matrix[column * 4 + 1] + (originY / perspective) * z;
+    transform[column * 4 + 2] = z;
+    transform[column * 4 + 3] = column === 3 ? 1 : 0;
+  }
+  return { perspective, transform };
+}
+
 /** Where a point of the keyboard surface (CSS px, z up) lands on the canvas, in CSS px. */
 export function projectSurfacePoint(
   matrix: ArrayLike<number>,

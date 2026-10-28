@@ -12,6 +12,7 @@ import {
   highwayTrackLooped,
   keyApproachProgress,
   keyboardSurfaceMatrix,
+  keyboardSurfaceTransform,
   NOTE_HEIGHTS,
   NOTE_INSTANCE_FLOATS,
   practiceStepPositions,
@@ -313,6 +314,38 @@ test("lays a 3D keyboard on the floor in front of the hit line, inside the canva
     }
   }
   assert.equal(highwayLayout({ range: FULL_KEYBOARD_RANGE, tilt: 34, keyboard3d: false }, 1800, 500).keyboard, null);
+});
+
+test("splits the keyboard matrix into the parent's perspective and an affine transform", () => {
+  for (const [width, height, tilt] of [[1800, 500, 34], [1800, 500, 0], [1800, 500, 65], [900, 700, 34], [2400, 240, 50]]) {
+    const layout = highwayLayout({ range: FULL_KEYBOARD_RANGE, tilt, keyboard3d: true }, width, height);
+    const keyboard = layout.keyboard!;
+    const camera = highwayCamera(width / height, layout);
+    const matrix = keyboardSurfaceMatrix(camera, layout, width, height);
+    const { perspective, transform } = keyboardSurfaceTransform(camera, layout, width, height);
+    // WebKitGTK misdraws preserve-3d children when the element's own transform projects.
+    assert.deepEqual([transform[3], transform[7], transform[11], transform[15]], [0, 0, 0, 1]);
+    assert.ok(perspective > 0);
+    const unitPx = width / (2 * layout.halfWidth);
+    for (const [x, y, z] of [
+      [0, 0, 0],
+      [width, keyboard.depth * unitPx, 0],
+      [width / 2, keyboard.depth * unitPx, -keyboard.frontFace * unitPx],
+      [width / 3, 0, keyboard.blackHeight * unitPx],
+    ]) {
+      // CSS perspective about the parent's centre, after the element's own transform.
+      const ax = transform[0] * x + transform[4] * y + transform[8] * z + transform[12];
+      const ay = transform[1] * x + transform[5] * y + transform[9] * z + transform[13];
+      const az = transform[2] * x + transform[6] * y + transform[10] * z + transform[14];
+      const shrink = perspective / (perspective - az);
+      const [expectedX, expectedY] = projectSurfacePoint(matrix, x, y, z);
+      assert.ok(
+        Math.abs(width / 2 + (ax - width / 2) * shrink - expectedX) < 0.05 &&
+          Math.abs(height / 2 + (ay - height / 2) * shrink - expectedY) < 0.05,
+        `${width}x${height} ${tilt}° at ${x},${y},${z}`,
+      );
+    }
+  }
 });
 
 test("fits the hit line to the canvas bottom and the far end to its top", () => {
