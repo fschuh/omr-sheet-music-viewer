@@ -328,6 +328,92 @@ test("ghosts the other hand's notes and keeps them from lighting keys", () => {
   assert.equal(progress[72 - 21], 0);
 });
 
+function drawnNotes(notes: ReturnType<typeof highwayTrackForRoute>["notes"]) {
+  return Array.from(notes.midis, (midi, index) => ({
+    midi,
+    start: notes.starts[index],
+    end: notes.ends[index],
+    left: notes.lefts[index],
+    layer: notes.instances[index * NOTE_INSTANCE_FLOATS + 8],
+    finger: notes.instances[index * NOTE_INSTANCE_FLOATS + 7],
+  }));
+}
+
+test("a hand striking its own held key again cuts the note there and holds the new one on", () => {
+  const notes = highwayTrackForRoute(route([
+    note("held", "C5", 0, 4),
+    note("again", "C5", 1, 2),
+    note("unison", "E5", 0, 1),
+    note("unison-long", "E5", 0, 2),
+  ]), "both", { held: { finger: 4, left: false } }).notes;
+  assert.deepEqual(drawnNotes(notes).map(({ midi, start, end, layer, finger }) => ({ midi, start, end, layer, finger })), [
+    { midi: 72, start: 0, end: 0.5, layer: 0, finger: 4 },
+    { midi: 76, start: 0, end: 1, layer: 0, finger: 0 },
+    // With no finger of its own, the finger holding the key strikes it again.
+    { midi: 72, start: 0.5, end: 2, layer: 0, finger: 4 },
+  ]);
+  assert.deepEqual(Array.from(notes.writtenEnds), [2, 1, 1]);
+});
+
+test("the other hand striking a held key lays its note over the held one, both whole", () => {
+  const twoHands = route([
+    { ...note("rh", "C5", 0, 4), left: false },
+    { ...note("lh", "C5", 1, 2), left: true },
+    { ...note("rh-again", "C5", 3, 3.5), left: false },
+    { ...note("rh-d", "D5", 0, 2), left: false },
+    { ...note("lh-d", "D5", 1, 4), left: true },
+  ]);
+  const fingerings = {
+    rh: { finger: 2, left: false },
+    lh: { finger: 1, left: true },
+    "rh-again": { finger: 3, left: false },
+  };
+  const notes = highwayTrackForRoute(twoHands, "both", fingerings).notes;
+  assert.deepEqual(drawnNotes(notes).filter(({ midi }) => midi === 72), [
+    // Held until its own hand strikes the key again, which holds it on to the end.
+    { midi: 72, start: 0, end: 1.5, left: 0, layer: 0, finger: 2 },
+    { midi: 72, start: 0.5, end: 1, left: 1, layer: 1, finger: 1 },
+    { midi: 72, start: 1.5, end: 2, left: 0, layer: 0, finger: 3 },
+  ]);
+  assert.deepEqual(drawnNotes(notes).filter(({ midi }) => midi === 74), [
+    { midi: 74, start: 0, end: 1, left: 0, layer: 0, finger: 0 },
+    { midi: 74, start: 0.5, end: 2, left: 1, layer: 1, finger: 0 },
+  ], "a note over a held one stays over it past the held note's end");
+
+  const progress = new Float32Array(88);
+  const hands = new Uint8Array(88);
+  keyApproachProgress(notes, 0.3, 1, progress, hands);
+  assert.equal(hands[72 - 21], 2, "the other hand's strike lights the held key");
+
+  const looped = highwayTrackLooped(highwayTrackForRoute(twoHands, "both", fingerings), { start: 0, end: 2 }, 2);
+  const pass = drawnNotes(looped.notes).filter(({ start }) => start >= 0 && start < 2);
+  assert.deepEqual(pass, drawnNotes(notes), "a loop's pass strikes and layers its keys as the track does");
+});
+
+test("of two hands striking a key together, the shorter note lies over the longer", () => {
+  const notes = highwayTrackForRoute(route([
+    { ...note("lh", "E4", 0, 0.25), left: true },
+    { ...note("rh", "E4", 0, 2), left: false },
+    { ...note("lh-again", "E4", 0.5, 0.75), left: true },
+  ])).notes;
+  assert.deepEqual(drawnNotes(notes).map(({ start, end, left, layer }) => ({ start, end, left, layer })), [
+    { start: 0, end: 0.125, left: 1, layer: 1 },
+    { start: 0, end: 1, left: 0, layer: 0 },
+    { start: 0.25, end: 0.375, left: 1, layer: 1 },
+  ]);
+});
+
+test("the other hand's ghosts never lie over the practised hand's notes", () => {
+  const notes = highwayTrackForRoute(route([
+    { ...note("rh", "C5", 0, 4), left: false },
+    { ...note("lh", "C5", 1, 2), left: true },
+  ]), "left").notes;
+  assert.deepEqual(drawnNotes(notes).map(({ start, end, layer }) => ({ start, end, layer })), [
+    { start: 0, end: 2, layer: 0 },
+    { start: 0.5, end: 1, layer: 0 },
+  ]);
+});
+
 test("spreads moments the practised hand skips between its steps", () => {
   const attack = (pitch: string, left: boolean) => ({ pitch, left, startsAttack: true });
   const moments = [

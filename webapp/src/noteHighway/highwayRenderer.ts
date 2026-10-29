@@ -68,6 +68,15 @@ layout(location = 1) in vec3 a_normal;
 layout(location = 2) in vec2 a_axes;
 layout(location = 3) in vec4 a_lane; // centre, half width, black, left hand
 layout(location = 4) in vec4 a_time; // start, end, ghost, finger
+layout(location = 5) in float a_layer;
+
+// A note struck over the other hand's held note is narrower and a little taller,
+// so the held note shows on each side and under it, whole.
+const float LAYER_WIDTH = 0.72;
+const float LAYER_HEIGHT = 0.12;
+// Where notes share a key, ghosts give way and upper layers come forward, by a
+// depth nudge far too small to change what is in front anywhere else.
+const float LAYER_DEPTH = 2e-5;
 
 uniform mat4 u_viewProjection;
 uniform float u_now;
@@ -105,7 +114,9 @@ void main() {
   vec2 span = u_wholeWhiteKeys > 0.5 && a_lane.z < 0.5
     ? vec2(floor(a_lane.x) + 0.5, 0.5 - u_laneInset)
     : a_lane.xy;
-  vec3 size = vec3(2.0 * span.y, mix(u_heights.x, u_heights.y, a_lane.z), nearZ - farZ);
+  span.y *= pow(LAYER_WIDTH, a_layer);
+  float height = mix(u_heights.x, u_heights.y, a_lane.z) * (1.0 + LAYER_HEIGHT * a_layer);
+  vec3 size = vec3(2.0 * span.y, height, nearZ - farZ);
   vec3 world = vec3(span.x - span.y, 0.0, farZ) + a_corner * size;
   // Seen in perspective, a raised top leans out toward the screen's edges, over the
   // next lane; moved as uprightX moves it, its sides stand straight above the lane's.
@@ -115,6 +126,7 @@ void main() {
     world.x += (floorClip.x / floorClip.w * topClip.w - topClip.x) / u_viewProjection[0][0];
   }
   gl_Position = u_viewProjection * vec4(world, 1.0);
+  gl_Position.z += (a_time.z - a_layer) * LAYER_DEPTH * gl_Position.w;
   v_normal = a_normal;
   v_uv = vec2(a_corner[int(a_axes.x)], a_corner[int(a_axes.y)]);
   v_faceSize = vec2(size[int(a_axes.x)], size[int(a_axes.y)]);
@@ -162,29 +174,37 @@ void main() {
   vec3 base = mix(handColor, u_ghostColor, v_ghost);
   vec3 light = normalize(vec3(-0.35, 0.85, 0.45));
   float diffuse = max(dot(normalize(v_normal), light), 0.0);
-  // Flat tiles are evenly coloured; raised blocks are shaded and edged.
+  // Flat tiles are evenly coloured; raised blocks are shaded.
   vec3 color = mix(base * (0.38 + 0.72 * diffuse), base, u_flat);
   vec2 facePoint = v_uv * v_faceSize;
-  vec2 edgeDistance = min(v_uv, 1.0 - v_uv) * v_faceSize;
-  float edge = 1.0 - smoothstep(0.025, 0.075, min(edgeDistance.x, edgeDistance.y));
-  color = mix(color, vec3(1.0), edge * mix(0.5, 0.2, v_ghost) * (1.0 - u_flat));
-  color = mix(color, min(base * 1.6 + 0.25, vec3(1.0)), v_sounding * 0.55 * (1.0 - v_ghost));
-  float alpha = (1.0 - smoothstep(0.6, 1.0, v_far)) * mix(1.0, 0.3, v_ghost);
 
-  // Flat tiles get rounded corners.
+  // Flat tiles get rounded corners: the signed distance to the rounded edge,
+  // negative inside.
   vec2 halfSize = v_faceSize * 0.5;
   float radius = min(0.14, 0.45 * min(halfSize.x, halfSize.y));
   vec2 corner = abs(facePoint - halfSize) - (halfSize - radius);
-  float cornerDistance = length(max(corner, 0.0)) - radius;
-  // fwidth is 0 away from the corners, and smoothstep needs distinct edges.
+  float cornerDistance = length(max(corner, 0.0)) + min(max(corner.x, corner.y), 0.0) - radius;
+  // smoothstep needs distinct edges.
   float smoothing = max(fwidth(cornerDistance), 1e-4);
   float rounded = 1.0 - smoothstep(-smoothing, smoothing, cornerDistance);
+
+  // Raised blocks are edged along each face, flat tiles along their rounded
+  // outline, so notes that touch or lie over one another stay apart.
+  vec2 edgeDistance = min(v_uv, 1.0 - v_uv) * v_faceSize;
+  float blockEdge = 1.0 - smoothstep(0.025, 0.075, min(edgeDistance.x, edgeDistance.y));
+  float tileEdge = 1.0 - smoothstep(0.045 - smoothing, 0.045 + smoothing, -cornerDistance);
+  float edge = mix(blockEdge, tileEdge, u_flat);
+  color = mix(color, vec3(1.0), edge * mix(0.5, 0.2, v_ghost));
+  color = mix(color, min(base * 1.6 + 0.25, vec3(1.0)), v_sounding * 0.55 * (1.0 - v_ghost));
+  float alpha = (1.0 - smoothstep(0.6, 1.0, v_far)) * mix(1.0, 0.3, v_ghost);
   alpha *= mix(1.0, rounded, u_flat);
 
-  // The finger number sits at the near end of the top face, reading upright.
+  // The finger number sits at the near end of the top face, reading upright. A
+  // digit's ink is about 0.6 of its cell's height, so on a short note the cell
+  // may reach past both ends, centred, as long as the ink keeps clear of them.
   bool top = v_normal.y > 0.5;
-  float side = min(v_faceSize.x * 0.86, v_faceSize.y - 0.16);
-  float fromNear = (1.0 - v_uv.y) * v_faceSize.y - 0.08;
+  float side = min(v_faceSize.x * 0.86, (v_faceSize.y - 0.14) / 0.6);
+  float fromNear = (1.0 - v_uv.y) * v_faceSize.y - min(0.08, (v_faceSize.y - side) * 0.5);
   vec2 cell = vec2(facePoint.x - (v_faceSize.x - side) * 0.5, fromNear) / max(side, 1e-3);
   vec2 digitUv = vec2((clamp(v_finger, 1.0, 5.0) - 1.0 + clamp(cell.x, 0.0, 1.0)) / 5.0, 1.0 - clamp(cell.y, 0.0, 1.0));
   float glyph = texture(u_digits, digitUv).a;
@@ -543,6 +563,8 @@ export class NoteHighwayRenderer {
     gl.vertexAttribDivisor(3, 1);
     gl.enableVertexAttribArray(4);
     gl.vertexAttribDivisor(4, 1);
+    gl.enableVertexAttribArray(5);
+    gl.vertexAttribDivisor(5, 1);
 
     const floorVao = vertexArray();
     buffer(gl.ARRAY_BUFFER, UNIT_QUAD, gl.STATIC_DRAW);
@@ -756,6 +778,7 @@ export class NoteHighwayRenderer {
       const offset = range.start * stride;
       gl.vertexAttribPointer(3, 4, gl.FLOAT, false, stride, offset);
       gl.vertexAttribPointer(4, 4, gl.FLOAT, false, stride, offset + 4 * 4);
+      gl.vertexAttribPointer(5, 1, gl.FLOAT, false, stride, offset + 8 * 4);
       gl.drawElementsInstanced(
         gl.TRIANGLES,
         resources.noteIndexCount,

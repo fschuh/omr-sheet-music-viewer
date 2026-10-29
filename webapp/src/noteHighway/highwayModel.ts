@@ -83,8 +83,8 @@ export const NOTE_HEIGHTS: Readonly<Record<HighwayNoteStyle, { white: number; bl
   flat: { white: 0.004, black: 0.012 },
 };
 
-/** Floats per note instance: centre x, half width, black, left hand, start, end, ghost, finger. */
-export const NOTE_INSTANCE_FLOATS = 8;
+/** Floats per note instance: centre x, half width, black, left hand, start, end, ghost, finger, layer. */
+export const NOTE_INSTANCE_FLOATS = 9;
 /** Floats per grid line instance: time, strength. */
 export const GRID_LINE_INSTANCE_FLOATS = 2;
 
@@ -143,6 +143,8 @@ export interface HighwayNotes {
   ghosts: Uint8Array;
   /** 1 for left-hand notes; notes of an unknown hand count as the right hand's. */
   lefts: Uint8Array;
+  /** Each note's end as written, before its hand struck its key again; see restruckNotes. */
+  writtenEnds: Float64Array;
   count: number;
   /** Longest note, so a binary search on starts can find every note still sounding. */
   maxDuration: number;
@@ -184,22 +186,68 @@ function writeLane(instances: Float32Array, offset: number, lane: HighwayKeyLane
   instances[offset + 1] = (lane.right - lane.left) / 2 - NOTE_LANE_INSET;
 }
 
+interface DrawnNote extends TrackNote {
+  /** 0 on the floor; one more for each note of the other hand it lies over. */
+  layer: number;
+  writtenEnd: number;
+}
+
+/**
+ * A hand striking a key it holds lets it up first, so its held note is cut there and
+ * the new note holds on for as long as either needs; striking it twice at once strikes
+ * it once. A note the other hand strikes on that key lies over the held note, a layer
+ * up, and both last as written; of two struck together, the shorter lies over the
+ * longer. Ghosts of the other hand are kept apart: they neither
+ * cut nor lie over the practised hand's notes.
+ */
+function restruckNotes(source: TrackNote[]): DrawnNote[] {
+  const drawn: DrawnNote[] = [];
+  const soundingByKey = new Map<string, DrawnNote[]>();
+  for (const note of [...source].sort((left, right) => left.start - right.start)) {
+    const id = `${note.midi}:${note.ghost}`;
+    const sounding = (soundingByKey.get(id) ?? []).filter((held) => held.end > note.start);
+    const own = sounding.find((held) => held.left === note.left);
+    if (own && own.start === note.start) {
+      own.end = Math.max(own.end, note.end);
+      own.writtenEnd = Math.max(own.writtenEnd, note.end);
+      own.finger ||= note.finger;
+      soundingByKey.set(id, sounding);
+      continue;
+    }
+    const struck: DrawnNote = { ...note, layer: 0, writtenEnd: note.end };
+    if (own) {
+      struck.end = Math.max(struck.end, own.end);
+      // Unless told otherwise, the finger holding the key strikes it again.
+      struck.finger ||= own.finger;
+      own.end = note.start;
+    }
+    const other = sounding.find((held) => held.left !== note.left);
+    if (other && other.start === note.start && other.end < struck.end) {
+      // Struck together, the shorter note lies over the longer.
+      struck.layer = other.layer;
+      other.layer += 1;
+    } else if (other) {
+      struck.layer = other.layer + 1;
+    }
+    soundingByKey.set(id, other ? [other, struck] : [struck]);
+    drawn.push(struck);
+  }
+  return drawn;
+}
+
 /** Tracks are packed in a real piano's lanes. */
 function packNotes(source: TrackNote[]): HighwayNotes {
-  const notes = source
-    .flatMap((note) => {
-      const lane = KEY_LANES.get(note.midi);
-      return lane && note.end > note.start ? [{ ...note, lane }] : [];
-    })
-    .sort((left, right) => left.start - right.start);
+  const notes = restruckNotes(source.filter((note) => KEY_LANES.has(note.midi) && note.end > note.start))
+    .map((note) => ({ ...note, lane: KEY_LANES.get(note.midi)! }));
   const instances = new Float32Array(notes.length * NOTE_INSTANCE_FLOATS);
   const starts = new Float64Array(notes.length);
   const ends = new Float64Array(notes.length);
   const midis = new Uint8Array(notes.length);
   const ghosts = new Uint8Array(notes.length);
   const lefts = new Uint8Array(notes.length);
+  const writtenEnds = new Float64Array(notes.length);
   let maxDuration = 0;
-  notes.forEach(({ lane, start, end, ghost, left, finger }, index) => {
+  notes.forEach(({ lane, start, end, ghost, left, finger, layer, writtenEnd }, index) => {
     const offset = index * NOTE_INSTANCE_FLOATS;
     writeLane(instances, offset, lane);
     instances[offset + 2] = lane.black ? 1 : 0;
@@ -208,14 +256,16 @@ function packNotes(source: TrackNote[]): HighwayNotes {
     instances[offset + 5] = end;
     instances[offset + 6] = ghost ? 1 : 0;
     instances[offset + 7] = finger;
+    instances[offset + 8] = layer;
     starts[index] = start;
     ends[index] = end;
     midis[index] = lane.midi;
     ghosts[index] = ghost ? 1 : 0;
     lefts[index] = left ? 1 : 0;
+    writtenEnds[index] = writtenEnd;
     maxDuration = Math.max(maxDuration, end - start);
   });
-  return { instances, starts, ends, midis, ghosts, lefts, count: notes.length, maxDuration };
+  return { instances, starts, ends, midis, ghosts, lefts, writtenEnds, count: notes.length, maxDuration };
 }
 
 /**
@@ -342,6 +392,7 @@ export function highwayTrackLooped(
   }
   const length = loop.end - loop.start;
   const passes = Math.max(1, Math.ceil(window / length));
+  // The notes as written: packing the passes strikes their keys again.
   const loopNotes: TrackNote[] = [];
   for (let index = 0; index < track.notes.count; index += 1) {
     const start = track.notes.starts[index];
@@ -349,7 +400,7 @@ export function highwayTrackLooped(
     loopNotes.push({
       midi: track.notes.midis[index],
       start,
-      end: Math.min(loop.end, track.notes.ends[index]),
+      end: Math.min(loop.end, track.notes.writtenEnds[index]),
       ghost: track.notes.ghosts[index] === 1,
       left: track.notes.lefts[index] === 1,
       finger: track.notes.instances[index * NOTE_INSTANCE_FLOATS + 7],
