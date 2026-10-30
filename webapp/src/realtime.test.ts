@@ -6,12 +6,15 @@ import {
   parseRealtimeMusicXml,
   RealtimeController,
   realtimeLeadIn,
+  realtimePlayheadAt,
   scoreOffsetAfterSeconds,
   scoreOffsetToSeconds,
   seekStructuralPosition,
+  type PerformanceNote,
   type PerformanceRoute,
   type RealtimeAudioSink,
   type RealtimeClock,
+  type VisualNoteTarget,
 } from "./realtime";
 import { noteScoreFacts } from "./playback";
 import { pdfNoteGeometry } from "./sidecarNoteGeometry";
@@ -891,6 +894,38 @@ test("a lead-in counts in at the opening tempo before the first note, and a loop
   assert.equal(loops, 1);
   assert.ok(Math.abs(controller.getOffset() - 0.1) < 1e-9, "the next pass starts at once");
   assert.ok(offsets.every((offset) => offset >= -1.5));
+});
+
+test("the playhead meets each note just left of its notehead, a chord's leftmost", () => {
+  const visual = (id: string, x: number, left: number): VisualNoteTarget => ({
+    musicXmlId: id,
+    pageIndex: 0,
+    visualGroupId: id,
+    staffGroupIndex: 0,
+    x,
+    y: 100,
+    left,
+    systemRight: 500,
+    systemTop: 50,
+    systemBottom: 150,
+  });
+  const note = (id: string, onset: number, target: VisualNoteTarget): PerformanceNote =>
+    ({ id, musicXmlId: id, pitch: "C4", dynamic: "mp", onset, release: onset + 1, visual: target });
+  const route: PerformanceRoute = {
+    occurrences: [],
+    notes: [
+      note("a", 0, visual("a", 100, 90)),
+      // A chord's second notehead stands left of the first, as in a cluster.
+      note("b1", 1, visual("b1", 200, 190)),
+      note("b2", 1, visual("b2", 186, 176)),
+    ],
+    events: [],
+    tempoSegments: [{ offset: 0, bpm: 60 }],
+    totalQuarters: 2,
+  };
+  assert.equal(realtimePlayheadAt(route, 0, [])?.x, 90);
+  assert.equal(realtimePlayheadAt(route, 0.5, [])?.x, 133);
+  assert.equal(realtimePlayheadAt(route, 1, [])?.x, 176);
 });
 
 test("a loop that counts in to each pass waits through the count-in at its end", () => {

@@ -137,6 +137,8 @@ export interface VisualNoteTarget extends VisualGroupRef {
   staffGroupIndex: number;
   x: number;
   y: number;
+  /** Where the playhead meets the note, a little left of its notehead; `x` when unknown. */
+  left?: number;
   systemRight: number;
   systemTop: number;
   systemBottom: number;
@@ -1032,6 +1034,9 @@ export function parseRealtimeMusicXml(musicXml: string): RealtimeScore {
   return { measures };
 }
 
+/** How far left of a notehead the playhead meets it, in notehead widths. */
+const PLAYHEAD_NOTEHEAD_LEAD = 0.35;
+
 export function buildRealtimeVisualMap(
   geometry: readonly PageNoteGeometry[],
 ): Map<string, VisualNoteTarget> {
@@ -1058,6 +1063,7 @@ export function buildRealtimeVisualMap(
       const notehead = noteheads.get(note.noteheadId);
       if (!notehead) continue;
       const system = systems.get(notehead.systemIndex)!;
+      const [left, , right] = notehead.bounds;
       result.set(note.id, {
         musicXmlId: note.id,
         pageIndex: page.pageIndex,
@@ -1065,6 +1071,7 @@ export function buildRealtimeVisualMap(
         staffGroupIndex: notehead.systemIndex,
         x: notehead.center[0],
         y: notehead.center[1],
+        left: left - (right - left) * PLAYHEAD_NOTEHEAD_LEAD,
         systemRight: system.right,
         systemTop: system.top,
         systemBottom: system.bottom,
@@ -1881,9 +1888,26 @@ function occurrenceEndAt(route: PerformanceRoute, offset: number): number | null
 }
 
 /**
- * Where the playhead stands at `offset`: on a note, moving toward the next. Before the
- * first note, through the count-in from `startOffset` and any rest the route opens on,
- * it moves from `routeStart`, the barline before it, to the note, arriving as it plays.
+ * Where the playhead meets the notes `visible` starts together at `index`, on its line:
+ * just left of the leftmost notehead, so the note plays as the playhead reaches it.
+ */
+function playheadXAt(visible: readonly PerformanceNote[], index: number): number {
+  const first = visible[index].visual!;
+  let x = first.left ?? first.x;
+  for (let other = index + 1; other < visible.length && visible[other].onset === visible[index].onset; other += 1) {
+    const visual = visible[other].visual!;
+    if (visual.pageIndex === first.pageIndex && visual.staffGroupIndex === first.staffGroupIndex) {
+      x = Math.min(x, visual.left ?? visual.x);
+    }
+  }
+  return x;
+}
+
+/**
+ * Where the playhead stands at `offset`: reaching a note as it plays, then moving
+ * toward the next. Before the first note, through the count-in from `startOffset` and
+ * any rest the route opens on, it moves from `routeStart`, the barline before it, to
+ * the note, arriving as it plays.
  */
 export function realtimePlayheadAt(
   route: PerformanceRoute,
@@ -1912,18 +1936,19 @@ export function realtimePlayheadAt(
   }
   const current = visible[currentIndex];
   const visual = current.visual!;
+  const currentX = playheadXAt(visible, currentIndex);
   if (
     offset < current.onset &&
     routeStart?.pageIndex === visual.pageIndex &&
     routeStart.staffGroupIndex === visual.staffGroupIndex &&
-    routeStart.x < visual.x
+    routeStart.x < currentX
   ) {
     const from = Math.min(startOffset, offset);
     const progress = current.onset > from ? (offset - from) / (current.onset - from) : 1;
     return {
       pageIndex: visual.pageIndex,
       staffGroupIndex: visual.staffGroupIndex,
-      x: routeStart.x + (visual.x - routeStart.x) * progress,
+      x: routeStart.x + (currentX - routeStart.x) * progress,
       y1: visual.systemTop,
       y2: visual.systemBottom,
     };
@@ -1937,14 +1962,14 @@ export function realtimePlayheadAt(
     next?.visual?.pageIndex === visual.pageIndex &&
     next.visual.staffGroupIndex === visual.staffGroupIndex
   ) {
-    destinationX = next.visual.x;
+    destinationX = playheadXAt(visible, nextIndex);
     destinationOffset = next.onset;
   } else if (next) {
     destinationOffset = next.onset;
   } else if (
     routeEnd?.pageIndex === visual.pageIndex &&
     routeEnd.staffGroupIndex === visual.staffGroupIndex &&
-    routeEnd.x > visual.x
+    routeEnd.x > currentX
   ) {
     // The route's last note runs on to the barline the route ends on, not to the end of
     // the line: a loop starts over there.
@@ -1957,7 +1982,7 @@ export function realtimePlayheadAt(
   return {
     pageIndex: visual.pageIndex,
     staffGroupIndex: visual.staffGroupIndex,
-    x: visual.x + (destinationX - visual.x) * progress,
+    x: currentX + (destinationX - currentX) * progress,
     y1: visual.systemTop,
     y2: visual.systemBottom,
   };
