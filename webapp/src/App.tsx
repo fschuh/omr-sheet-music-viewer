@@ -581,10 +581,10 @@ export function App() {
     if (!realtimeFrame || !realtimeRouteRef.current) return null;
     const route = realtimeRouteRef.current;
     const visible = realtimeFrame.activeNotes.filter((note) => note.visual !== null);
-    const nearest = [...(route.playheadNotes ?? route.notes)]
-      .filter((note) => note.visual !== null && note.onset <= realtimeFrame.offset + 1e-6)
-      .at(-1);
-    const anchor = visible[0] ?? nearest;
+    const placed = (route.playheadNotes ?? route.notes).filter((note) => note.visual !== null);
+    const nearest = placed.filter((note) => note.onset <= realtimeFrame.offset + 1e-6).at(-1);
+    // Before the first note, in a count-in, the view waits on the bar it begins.
+    const anchor = visible[0] ?? nearest ?? placed[0];
     if (!anchor?.visual) return null;
     const sameSystem = visible.filter((note) =>
       note.visual?.pageIndex === anchor.visual?.pageIndex &&
@@ -1034,7 +1034,8 @@ export function App() {
         if (command === "togglePlayback") {
           if (realtimeStatus === "playing") realtimeControllerRef.current?.pause();
           else if (realtimeStatus === "paused") realtimeControllerRef.current?.resume();
-          else startRealtime(selectedGroup);
+          // Entering realtime waits, paused, for the play button, as from note-by-note.
+          else startRealtime(selectedGroup, "paused");
           return;
         }
         if (command === "toggleNoteSounds") {
