@@ -66,9 +66,11 @@ import {
   type StructuralPosition,
 } from "./realtime";
 import {
+  DEFAULT_KEYBOARD_VIEW_SETTINGS,
   handColorProperties,
   handColors,
   keyboardRangeForSetting,
+  steppedTimeZoom,
   type KeyboardViewSettings,
 } from "./keyboardView";
 import {
@@ -274,7 +276,8 @@ function isPlaybackToggleCommand(command: PlaybackCommand): boolean {
     command === "toggleNoteHighway" ||
     command === "practiceLeftHand" ||
     command === "practiceRightHand" ||
-    command === "resetTempo";
+    command === "resetTempo" ||
+    command === "resetNoteStretch";
 }
 
 /** Commands that do something before playback starts. */
@@ -286,7 +289,10 @@ function commandWorksWhileStopped(command: PlaybackCommand): boolean {
     command === "practiceRightHand" ||
     command === "tempoUp" ||
     command === "tempoDown" ||
-    command === "resetTempo";
+    command === "resetTempo" ||
+    command === "stretchNotes" ||
+    command === "compressNotes" ||
+    command === "resetNoteStretch";
 }
 
 function RefreshRateDiagnostic() {
@@ -1052,6 +1058,9 @@ export function App() {
           command === "tempoUp" ||
           command === "tempoDown" ||
           command === "resetTempo" ||
+          command === "stretchNotes" ||
+          command === "compressNotes" ||
+          command === "resetNoteStretch" ||
           isLoopBoundaryCommand(command)
         ) return;
         if (realtimeStatus === "inactive" || !realtimeModel.score) return;
@@ -1479,6 +1488,13 @@ export function App() {
       changeTempoMultiplier(1);
       return;
     }
+    if (command === "stretchNotes" || command === "compressNotes" || command === "resetNoteStretch") {
+      const timeZoom = command === "resetNoteStretch"
+        ? DEFAULT_KEYBOARD_VIEW_SETTINGS.timeZoom
+        : steppedTimeZoom(keyboardView.timeZoom, command === "stretchNotes" ? 1 : -1);
+      if (timeZoom !== keyboardView.timeZoom) changeKeyboardView({ ...keyboardView, timeZoom });
+      return;
+    }
     if (command === "toggleNoteHighway") {
       toggleNoteHighway();
       return;
@@ -1520,11 +1536,13 @@ export function App() {
   }, [
     applyPlaybackStateCommand,
     auditionCurrentNotes,
+    changeKeyboardView,
     changeLoopRegion,
     changeTempoMultiplier,
     documentMeasureCount,
     handlePlaybackModeChange,
     handlePracticeHandChange,
+    keyboardView,
     loopMode,
     loopRegion,
     playbackMode,

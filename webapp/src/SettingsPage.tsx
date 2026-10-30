@@ -775,16 +775,17 @@ export function SettingsPage({
             </label>
             <label className="settings-select-row">
               <span>
-                <strong>Time zoom</strong>
+                <strong>Note stretch</strong>
                 <small>
-                  Stretches the notes along the highway. Higher shows less time ahead, with
-                  longer notes further apart; lower shows more of what is coming.
+                  Stretches the notes along the highway, above 1×, or compresses them, below it.
+                  Stretched notes are longer and further apart, with less time ahead; compressed
+                  ones show more of what is coming.
                 </small>
               </span>
               <span className="settings-range-control">
                 <input
                   type="range"
-                  aria-label="Highway time zoom"
+                  aria-label="Note stretch"
                   min={MIN_TIME_ZOOM}
                   max={MAX_TIME_ZOOM}
                   step={0.1}

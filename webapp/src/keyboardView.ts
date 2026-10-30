@@ -158,7 +158,15 @@ export const WHITE_NOTE_WIDTHS: readonly WhiteNoteWidth[] = ["track", "whole-key
 export const UPCOMING_LEADS: readonly number[] = [0.125, 0.25, 0.5, 1];
 
 export const MIN_TIME_ZOOM = 0.5;
-export const MAX_TIME_ZOOM = 4;
+export const MAX_TIME_ZOOM = 8;
+/** One press of the stretch and compress shortcuts, as one notch of the note stretch slider. */
+export const TIME_ZOOM_STEP = 0.1;
+
+/** `zoom` moved `steps` notches, kept on the slider's tenths and within its range. */
+export function steppedTimeZoom(zoom: number, steps: number): number {
+  const stepped = Math.round((zoom + steps * TIME_ZOOM_STEP) / TIME_ZOOM_STEP) * TIME_ZOOM_STEP;
+  return Math.round(10 * Math.min(MAX_TIME_ZOOM, Math.max(MIN_TIME_ZOOM, stepped))) / 10;
+}
 export const MIN_TILT = 0;
 export const MAX_TILT = 65;
 export const MIN_WHITE_KEYS = 7;

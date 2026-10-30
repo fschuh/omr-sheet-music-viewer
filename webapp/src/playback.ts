@@ -29,6 +29,9 @@ export const playbackCommandNames = [
   "tempoUp",
   "tempoDown",
   "resetTempo",
+  "stretchNotes",
+  "compressNotes",
+  "resetNoteStretch",
   "loopStartEarlier",
   "loopStartLater",
   "loopEndEarlier",
@@ -523,6 +526,9 @@ function commandDestination(
     | "tempoUp"
     | "tempoDown"
     | "resetTempo"
+    | "stretchNotes"
+    | "compressNotes"
+    | "resetNoteStretch"
     | LoopBoundaryCommand
   >,
 ): number {
@@ -596,6 +602,9 @@ export function runPlaybackCommand(
     command === "tempoUp" ||
     command === "tempoDown" ||
     command === "resetTempo" ||
+    command === "stretchNotes" ||
+    command === "compressNotes" ||
+    command === "resetNoteStretch" ||
     isLoopBoundaryCommand(command)
   ) return state;
   if (!state.active || timeline.length === 0) return state;

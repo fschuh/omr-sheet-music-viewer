@@ -9,6 +9,7 @@ import {
   normalizeKeyboardViewSettings,
   pianoKeyName,
   shadeColor,
+  steppedTimeZoom,
   whiteKeyCount,
 } from "./keyboardView";
 
@@ -80,7 +81,7 @@ test("stored settings fill in, field by field, whatever is missing or wrong", ()
   assert.equal(settings.keyboard3d, false);
   assert.equal(settings.noteStyle, "flat");
   assert.equal(settings.timeScale, DEFAULT_KEYBOARD_VIEW_SETTINGS.timeScale);
-  assert.equal(settings.timeZoom, 4);
+  assert.equal(settings.timeZoom, 8);
   assert.equal(settings.whiteNoteWidth, "whole-key");
   assert.equal(normalizeKeyboardViewSettings({ whiteNoteWidth: "wide" }).whiteNoteWidth, "track");
   assert.equal(normalizeKeyboardViewSettings({ timeZoom: 1.26 }).timeZoom, 1.3);
@@ -97,4 +98,13 @@ test("each hand's black-key shade is a darker version of its colour", () => {
   assert.equal(colors.right.base, "#2fbfa5");
   assert.equal(colors.right.dark, shadeColor("#2fbfa5", 0.58));
   assert.equal(colors.left.dark, shadeColor("#f28c38", 0.6));
+});
+
+test("stretching and compressing the notes step by tenths, from 0.5 up to 8", () => {
+  assert.equal(steppedTimeZoom(1, 1), 1.1);
+  assert.equal(steppedTimeZoom(1.1, -1), 1);
+  assert.equal(steppedTimeZoom(0.3 + 0.4, 1), 0.8, "on the tenths, whatever the sum");
+  assert.equal(steppedTimeZoom(4, 1), 4.1, "beyond the old 4");
+  assert.equal(steppedTimeZoom(8, 1), 8);
+  assert.equal(steppedTimeZoom(0.5, -1), 0.5);
 });
