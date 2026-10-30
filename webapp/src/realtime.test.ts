@@ -623,6 +623,26 @@ test("seeks notes, bars, and pages in structural score order", () => {
   });
 });
 
+test("moves by bars from a bar whose only note starts on its first beat", () => {
+  // Bar 2 holds one chord tied over from bar 1, then rests: past its first beat the
+  // next note start is already in bar 3, but the playhead is still in bar 2.
+  const parsed = parseRealtimeMusicXml(score(`
+    <measure number="1"><attributes><divisions>4</divisions></attributes>
+      ${quarter("a")}${quarter("b", "D")}${quarter("c", "E")}
+      <note id="tied"><pitch><step>F</step><octave>4</octave></pitch><duration>4</duration><tie type="start"/><voice>1</voice><type>quarter</type></note>
+    </measure>
+    <measure number="2">
+      <note id="held"><pitch><step>F</step><octave>4</octave></pitch><duration>12</duration><tie type="stop"/><voice>1</voice><type>half</type><dot/></note>
+      <note><rest/><duration>4</duration><voice>1</voice><type>quarter</type></note>
+    </measure>
+    <measure number="3">${quarter("d", "G")}</measure>
+  `));
+  const inBar2 = { measureIndex: 1, onset: 0.05 };
+  assert.deepEqual(seekStructuralPosition(parsed, inBar2, "backwardBar"), { measureIndex: 0, onset: 0 });
+  assert.deepEqual(seekStructuralPosition(parsed, inBar2, "forwardBar"), { measureIndex: 2, onset: 0 });
+  assert.deepEqual(seekStructuralPosition(parsed, { measureIndex: 1, onset: 3 }, "backwardBar"), { measureIndex: 0, onset: 0 });
+});
+
 test("converts score offsets through tempo changes and a live multiplier", () => {
   const route: PerformanceRoute = {
     occurrences: [],

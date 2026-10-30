@@ -1689,7 +1689,9 @@ export function seekStructuralPosition(
   if (command === "forwardNote") return positions[Math.min(positions.length - 1, currentIndex + 1)];
   if (command === "backwardNote") return positions[Math.max(0, currentIndex - 1)];
 
-  const currentMeasure = positions[currentIndex].measureIndex;
+  // The bar the playhead is in, even past its last note start, as in a bar holding one
+  // tied chord: the next note start is already in the bar after.
+  const currentMeasure = current.measureIndex;
   if (command === "forwardBar" || command === "backwardBar") {
     const direction = command === "forwardBar" ? 1 : -1;
     let measureIndex = currentMeasure + direction;
