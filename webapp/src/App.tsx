@@ -53,6 +53,8 @@ import {
   buildRealtimeVisualMap,
   expandPerformanceRoute,
   parseRealtimeMusicXml,
+  REALTIME_COUNT_IN_SECONDS,
+  realtimeLeadIn,
   realtimePlayheadAt,
   RealtimeController,
   seekStructuralPosition,
@@ -77,6 +79,7 @@ import {
   loadLoopDimOutside,
   loadNoteHighwayEnabled,
   loadPlaybackPiano,
+  loadRealtimeCountIn,
   loadSharedNoteheadTimingRepair,
   loadTimeSignatureRepair,
   loadTupletRepair,
@@ -88,6 +91,7 @@ import {
   saveLoopDimOutside,
   saveNoteHighwayEnabled,
   savePlaybackPiano,
+  saveRealtimeCountIn,
   saveSharedNoteheadTimingRepair,
   saveTimeSignatureRepair,
   saveTupletRepair,
@@ -104,6 +108,7 @@ import {
   measureInLoop,
   noteByNoteInLoop,
   routeEndBarline,
+  routeStartBarline,
   routeStructuralPosition,
   type LoopRegion,
 } from "./loop";
@@ -170,6 +175,8 @@ import { isLinkedVisualGroup, isSelectableVisualGroup } from "./types";
 interface RealtimeStart {
   route: PerformanceRoute;
   offset: number;
+  /** Quarters counted in before `offset`, when playback begins at the top of the score or loop. */
+  leadIn: number;
   loops: boolean;
 }
 
@@ -354,6 +361,7 @@ export function App() {
   const [playbackPiano, setPlaybackPiano] = useState(loadPlaybackPiano);
   const [listenInputSource, setListenInputSource] = useState(loadListenInputSource);
   const [loopDimOutside, setLoopDimOutside] = useState(loadLoopDimOutside);
+  const [realtimeCountIn, setRealtimeCountIn] = useState(loadRealtimeCountIn);
   const [keyboardView, setKeyboardView] = useState<KeyboardViewSettings>(loadKeyboardViewSettings);
   const changeKeyboardView = useCallback((next: KeyboardViewSettings) => {
     setKeyboardView(next);
@@ -484,6 +492,8 @@ export function App() {
   const realtimeRouteRef = useRef<PerformanceRoute | null>(null);
   /** The realtime route is a loop's, which starts over at its end. */
   const realtimeRouteLoopsRef = useRef(false);
+  /** Quarters counted in before the realtime route's first pass; see RealtimeStart. */
+  const realtimeLeadInRef = useRef(0);
   const realtimeStartGenerationRef = useRef(0);
   const documentPagesRef = useRef(document?.pages ?? []);
   documentPagesRef.current = document?.pages ?? [];
@@ -509,6 +519,8 @@ export function App() {
         realtimeFrame.offset,
         document.pages,
         routeEndBarline(scoreSystems, realtimeRouteRef.current),
+        routeStartBarline(scoreSystems, realtimeRouteRef.current),
+        -realtimeLeadInRef.current,
       )
     : null;
   const scoreSystemsRef = useRef(scoreSystems);
@@ -516,8 +528,16 @@ export function App() {
   const getRealtimePlayhead = useCallback(() => {
     const frame = realtimeLatestFrameRef.current;
     const route = realtimeRouteRef.current;
+    const systems = scoreSystemsRef.current;
     return frame && route
-      ? realtimePlayheadAt(route, frame.offset, documentPagesRef.current, routeEndBarline(scoreSystemsRef.current, route))
+      ? realtimePlayheadAt(
+          route,
+          frame.offset,
+          documentPagesRef.current,
+          routeEndBarline(systems, route),
+          routeStartBarline(systems, route),
+          -realtimeLeadInRef.current,
+        )
       : null;
   }, []);
   const realtimeDisplayNotes = useMemo(() => {
@@ -597,10 +617,14 @@ export function App() {
             setRealtimeFrame(frame);
           }
         },
-        onLoop: () => setLoopPass((pass) => pass + 1),
+        onLoop: () => {
+          realtimeLeadInRef.current = 0;
+          setLoopPass((pass) => pass + 1);
+        },
         onComplete: () => {
           realtimeRouteRef.current = null;
           realtimeRouteLoopsRef.current = false;
+          realtimeLeadInRef.current = 0;
           realtimeLatestFrameRef.current = null;
           realtimeRenderSignatureRef.current = "";
           setRealtimeStatus("inactive");
@@ -823,6 +847,7 @@ export function App() {
     realtimeControllerRef.current?.stop();
     realtimeRouteRef.current = null;
     realtimeRouteLoopsRef.current = false;
+    realtimeLeadInRef.current = 0;
     realtimeLatestFrameRef.current = null;
     realtimeRenderSignatureRef.current = "";
     setRealtimeStatus("inactive");
@@ -851,12 +876,24 @@ export function App() {
     );
     setListenMatcherProfileOverride(profileId);
   }, [listenMatcherProfileOverride, stopRealtime]);
+  /** The count-in before `offset`, in quarters, at the tempo playing as it starts. */
+  const leadInFor = useCallback(
+    (route: PerformanceRoute, offset: number) =>
+      realtimeLeadIn(route, offset, REALTIME_COUNT_IN_SECONDS[realtimeCountIn], tempoMultiplierRef.current),
+    [realtimeCountIn],
+  );
   /**
    * The route realtime plays from a position, and where in it to begin. While looping it
    * is the loop's own route, which starts over at its end; a position outside the loop
-   * begins at the loop's start.
+   * begins at the loop's start. No position, from the play button with nothing selected
+   * or a rewind, begins at the top with a count-in, and so does a loop begun from outside
+   * it; a chosen note plays at once, unless `countIn` asks for one, and a loop starting
+   * over plays straight on.
    */
-  const routeForPosition = useCallback((position: StructuralPosition | null): RealtimeStart | null => {
+  const routeForPosition = useCallback((
+    position: StructuralPosition | null,
+    countIn = false,
+  ): RealtimeStart | null => {
     if (!realtimeModel.score) return null;
     const loopRegion = loopRef.current;
     if (loopRegion) {
@@ -866,7 +903,10 @@ export function App() {
         visualMap: realtimeVisualMap,
       });
       if (route.totalQuarters > 0) {
-        return { route, offset: position ? loopRouteOffset(route, position) ?? 0 : 0, loops: true };
+        const inLoop = position ? loopRouteOffset(route, position) : null;
+        return inLoop === null
+          ? { route, offset: 0, leadIn: leadInFor(route, 0), loops: true }
+          : { route, offset: inLoop, leadIn: countIn ? leadInFor(route, inLoop) : 0, loops: true };
       }
     }
     const route = expandPerformanceRoute(realtimeModel.score, {
@@ -874,8 +914,8 @@ export function App() {
       startOffset: position?.onset ?? 0,
       visualMap: realtimeVisualMap,
     });
-    return { route, offset: 0, loops: false };
-  }, [realtimeModel.score, realtimeVisualMap]);
+    return { route, offset: 0, leadIn: position && !countIn ? 0 : leadInFor(route, 0), loops: false };
+  }, [leadInFor, realtimeModel.score, realtimeVisualMap]);
   const routeForGroup = useCallback((group: VisualGroupRef | null): RealtimeStart | null => {
     const position = realtimeModel.score
       ? structuralPositionForGroup(realtimeModel.score, realtimeVisualMap, group)
@@ -897,6 +937,7 @@ export function App() {
     const generation = ++realtimeStartGenerationRef.current;
     realtimeRouteRef.current = route;
     realtimeRouteLoopsRef.current = start.loops;
+    realtimeLeadInRef.current = start.leadIn;
     realtimeLatestFrameRef.current = null;
     realtimeRenderSignatureRef.current = "";
     setRealtimeStatus(status);
@@ -912,7 +953,7 @@ export function App() {
         controller.setTempoMultiplier(tempoMultiplier);
         controller.setMuted(realtimeMuted(playbackStateRef.current, listenInputSourceRef.current));
         controller.setLooping(start!.loops);
-        controller.seek(route, status, start!.offset);
+        controller.seek(route, status, start!.offset, start!.leadIn);
         setPlaybackAudioError(null);
       })
       .catch((audioError: unknown) => {
@@ -925,10 +966,11 @@ export function App() {
   const seekRealtimeStart = useCallback((start: RealtimeStart, status: "playing" | "paused") => {
     realtimeRouteRef.current = start.route;
     realtimeRouteLoopsRef.current = start.loops;
+    realtimeLeadInRef.current = start.leadIn;
     realtimeLatestFrameRef.current = null;
     realtimeRenderSignatureRef.current = "";
     realtimeControllerRef.current?.setLooping(start.loops);
-    realtimeControllerRef.current?.seek(start.route, status, start.offset);
+    realtimeControllerRef.current?.seek(start.route, status, start.offset, start.leadIn);
     setPlaybackAudioError(null);
   }, []);
   const seekRealtime = useCallback((group: VisualGroupRef, status: "playing" | "paused") => {
@@ -946,9 +988,10 @@ export function App() {
   const seekRealtimePosition = useCallback((
     position: StructuralPosition | null,
     status: "playing" | "paused",
+    countIn = false,
   ) => {
     try {
-      const start = routeForPosition(position);
+      const start = routeForPosition(position, countIn);
       if (!start) return;
       seekRealtimeStart(start, status);
     } catch (routeError) {
@@ -1365,7 +1408,9 @@ export function App() {
       if (realtimeStatus === "inactive") return;
       const route = realtimeRouteRef.current;
       const offset = realtimeControllerRef.current?.getOffset() ?? 0;
-      seekRealtimePosition(route ? routeStructuralPosition(route, offset) : null, realtimeStatus);
+      // In a count-in the playhead is before the route's first note: the new route
+      // counts in to the same place rather than starting on it.
+      seekRealtimePosition(route ? routeStructuralPosition(route, offset) : null, realtimeStatus, offset < 0);
       return;
     }
     const current = playbackStateRef.current;
@@ -2447,6 +2492,11 @@ export function App() {
             setLoopDimOutside(enabled);
             saveLoopDimOutside(enabled);
           }}
+          realtimeCountIn={realtimeCountIn}
+          onChangeRealtimeCountIn={(countIn) => {
+            setRealtimeCountIn(countIn);
+            saveRealtimeCountIn(countIn);
+          }}
           keyboardView={keyboardView}
           onChangeKeyboardView={changeKeyboardView}
           onChangeListenInputSource={(inputSource) => {
@@ -2551,6 +2601,7 @@ export function App() {
                   : undefined
               }
               realtimePlayheadAnimating={playbackMode === "realtime" && realtimeStatus === "playing"}
+              realtimePlayheadRevision={realtimeStatus === "playing" ? null : realtimeFrame}
               realtimeGroupIdsByPage={playbackMode === "realtime" ? realtimeGroupIdsByPage : undefined}
               tempoBpm={realtimeFrame?.bpm ?? realtimeOpeningBpm * tempoMultiplier}
               tempoMultiplier={tempoMultiplier}

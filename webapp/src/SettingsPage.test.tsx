@@ -6,15 +6,18 @@ import { defaultPlaybackShortcuts } from "./shortcuts";
 import { LISTEN_MATCHER_PROFILE_IDS } from "@fschuh/piano-transcription-engine";
 import {
   LISTEN_INPUT_SOURCE_STORAGE_KEY,
+  REALTIME_COUNT_IN_STORAGE_KEY,
   SHARED_NOTEHEAD_TIMING_STORAGE_KEY,
   TIME_SIGNATURE_REPAIR_STORAGE_KEY,
   TUPLET_REPAIR_STORAGE_KEY,
   loadListenInputSource,
+  loadRealtimeCountIn,
   loadSharedNoteheadTimingRepair,
   loadTimeSignatureRepair,
   loadTupletRepair,
   repairSettings,
   saveListenInputSource,
+  saveRealtimeCountIn,
   saveSharedNoteheadTimingRepair,
   saveTimeSignatureRepair,
   saveTupletRepair,
@@ -211,6 +214,45 @@ test("no override is selected by default, and an active override is the checked 
   assert.match(overridden, /checked="" value="early-open-v2"/);
   assert.doesNotMatch(overridden, /checked="" value=""/);
   assert.equal(overridden.match(/name="listen-matcher-profile" checked=""/g)?.length, 1);
+});
+
+test("the count-in offers none, short and long, short by default, and persists a valid choice", () => {
+  assert.doesNotMatch(renderSettings(), /aria-label="Count-in"/, "hidden where it cannot be changed");
+  const markup = renderSettings({ onChangeRealtimeCountIn: () => undefined });
+  assert.match(markup, /aria-label="Count-in"/);
+  assert.equal(markup.match(/<option value="(none|short|long)"/g)?.length, 3);
+  assert.match(markup, /<option value="none">None<\/option>/);
+  assert.match(markup, /<option value="short" selected="">Short, about 2 s \(default\)<\/option>/);
+  assert.match(markup, /<option value="long">Long, about 3 s<\/option>/);
+  assert.match(
+    renderSettings({ realtimeCountIn: "long", onChangeRealtimeCountIn: () => undefined }),
+    /<option value="long" selected="">/,
+  );
+
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  const values = new Map<string, string>();
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      localStorage: {
+        getItem: (key: string) => values.get(key) ?? null,
+        setItem: (key: string, value: string) => values.set(key, value),
+      },
+    },
+  });
+  try {
+    assert.equal(loadRealtimeCountIn(), "short");
+    saveRealtimeCountIn("long");
+    assert.equal(values.get(REALTIME_COUNT_IN_STORAGE_KEY), "long");
+    assert.equal(loadRealtimeCountIn(), "long");
+    values.set(REALTIME_COUNT_IN_STORAGE_KEY, "toString");
+    assert.equal(loadRealtimeCountIn(), "short", "not one of the choices");
+    values.set(REALTIME_COUNT_IN_STORAGE_KEY, "normal");
+    assert.equal(loadRealtimeCountIn(), "short", "no longer one of the choices");
+  } finally {
+    if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow);
+    else Reflect.deleteProperty(globalThis, "window");
+  }
 });
 
 test("listen input defaults to microphone and persists a valid MIDI selection", () => {

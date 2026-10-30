@@ -4,7 +4,7 @@
 // playback goes next while looping.
 import type { PageNoteGeometry } from "./noteGeometry";
 import type { LoopBoundaryCommand, PlaybackCommand, PlaybackMoment, PlaybackState } from "./playback";
-import type { PerformanceRoute, RouteEndBarline, StructuralPosition } from "./realtime";
+import type { PerformanceRoute, RouteBarline, StructuralPosition } from "./realtime";
 
 /**
  * Measures by their document position, from 0. Both ends lie on barlines: the loop
@@ -265,8 +265,12 @@ export function loopRouteOffset(route: PerformanceRoute, position: StructuralPos
   return null;
 }
 
-/** Where a route's playhead is in the score: the measure and the time into it. */
-export function routeStructuralPosition(route: PerformanceRoute, offset: number): StructuralPosition | null {
+/**
+ * Where a route's playhead is in the score: the measure and the time into it. In the
+ * lead-in before the route begins, that is the route's start.
+ */
+export function routeStructuralPosition(route: PerformanceRoute, routeOffset: number): StructuralPosition | null {
+  const offset = Math.max(0, routeOffset);
   const occurrence = route.occurrences.filter((item) => item.scoreStart <= offset + 1e-6).at(-1);
   return occurrence
     ? {
@@ -276,8 +280,22 @@ export function routeStructuralPosition(route: PerformanceRoute, offset: number)
     : null;
 }
 
+/**
+ * The barline before the first measure a route plays, where its playhead waits through a
+ * count-in; none when the route begins inside that measure.
+ */
+export function routeStartBarline(systems: readonly LoopSystem[], route: PerformanceRoute): RouteBarline | null {
+  const first = route.occurrences[0];
+  const placement = first && first.localStart === 0
+    ? loopBoundaryPlacement(systems, first.measureIndex, "start")
+    : null;
+  return placement
+    ? { pageIndex: placement.system.pageIndex, staffGroupIndex: placement.system.systemIndex, x: placement.x }
+    : null;
+}
+
 /** The barline after the last measure a route plays, where its playhead stops. */
-export function routeEndBarline(systems: readonly LoopSystem[], route: PerformanceRoute): RouteEndBarline | null {
+export function routeEndBarline(systems: readonly LoopSystem[], route: PerformanceRoute): RouteBarline | null {
   const last = route.occurrences.at(-1);
   const placement = last ? loopBoundaryPlacement(systems, last.measureIndex + 1, "end") : null;
   return placement

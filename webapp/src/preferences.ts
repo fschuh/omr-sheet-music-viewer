@@ -2,12 +2,14 @@ import { DEFAULT_PIANO_ID, isPianoId, type PianoId } from "./pianoRegistry";
 import type { ListenInputSource } from "@fschuh/piano-transcription-engine";
 import type { RepairSettings } from "./native";
 import { normalizeKeyboardViewSettings, type KeyboardViewSettings } from "./keyboardView";
+import { DEFAULT_REALTIME_COUNT_IN, REALTIME_COUNT_INS, type RealtimeCountIn } from "./realtime";
 
 export const DEBUG_PANEL_STORAGE_KEY = "homr.debug-panel-enabled.v1";
 export const PLAYBACK_PIANO_STORAGE_KEY = "homr.playback-piano.v1";
 export const LISTEN_INPUT_SOURCE_STORAGE_KEY = "homr.listen-input-source.v1";
 export const NOTE_HIGHWAY_STORAGE_KEY = "homr.note-highway-enabled.v1";
 export const LOOP_DIM_OUTSIDE_STORAGE_KEY = "homr.loop-dim-outside.v1";
+export const REALTIME_COUNT_IN_STORAGE_KEY = "homr.realtime-count-in.v1";
 export const SHARED_NOTEHEAD_TIMING_STORAGE_KEY = "homr.repair-shared-notehead-timing.v1";
 export const TIME_SIGNATURE_REPAIR_STORAGE_KEY = "homr.repair-time-signatures.v1";
 export const TUPLET_REPAIR_STORAGE_KEY = "homr.repair-tuplets.v1";
@@ -64,6 +66,26 @@ export function saveLoopDimOutside(enabled: boolean): void {
   if (typeof window === "undefined") return;
   try {
     window.localStorage.setItem(LOOP_DIM_OUTSIDE_STORAGE_KEY, String(enabled));
+  } catch {
+    // A disabled/full local store should not prevent changing the current session.
+  }
+}
+
+/** How long realtime counts in before its first note; short unless changed. */
+export function loadRealtimeCountIn(): RealtimeCountIn {
+  if (typeof window === "undefined") return DEFAULT_REALTIME_COUNT_IN;
+  try {
+    const stored = window.localStorage.getItem(REALTIME_COUNT_IN_STORAGE_KEY);
+    return REALTIME_COUNT_INS.find((countIn) => countIn === stored) ?? DEFAULT_REALTIME_COUNT_IN;
+  } catch {
+    return DEFAULT_REALTIME_COUNT_IN;
+  }
+}
+
+export function saveRealtimeCountIn(countIn: RealtimeCountIn): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(REALTIME_COUNT_IN_STORAGE_KEY, countIn);
   } catch {
     // A disabled/full local store should not prevent changing the current session.
   }

@@ -5,6 +5,7 @@ import {
   expandPerformanceRoute,
   parseRealtimeMusicXml,
   RealtimeController,
+  realtimeLeadIn,
   scoreOffsetAfterSeconds,
   scoreOffsetToSeconds,
   seekStructuralPosition,
@@ -834,6 +835,85 @@ test("controller pauses, resumes, changes tempo in place, and cancels sounding a
   (tick as (() => void) | null)?.();
   assert.equal(completions, 1);
   assert.equal(tick, null);
+});
+
+test("a lead-in counts in at the opening tempo before the first note, and a loop starting over skips it", () => {
+  let now = 0;
+  let tick: (() => void) | null = null;
+  const attacks: string[][] = [];
+  let loops = 0;
+  const offsets: number[] = [];
+  const route: PerformanceRoute = {
+    occurrences: [],
+    notes: [
+      { id: "c", musicXmlId: "c", pitch: "C4", dynamic: "mp", onset: 0.5, release: 1, visual: null },
+      { id: "d", musicXmlId: "d", pitch: "D4", dynamic: "mp", onset: 1, release: 2, visual: null },
+    ],
+    events: [],
+    tempoSegments: [{ offset: 0, bpm: 120 }, { offset: 1, bpm: 60 }],
+    totalQuarters: 2,
+  };
+  // A beat is half a second at 120 BPM: three seconds are six beats, of which the
+  // half-beat rest the route opens on is the first half.
+  assert.equal(realtimeLeadIn(route, 0, 3), 5.5);
+  assert.equal(realtimeLeadIn(route, 0, 3, 0.5), 2.5, "half the tempo counts half the beats");
+  assert.equal(realtimeLeadIn(route, 0, 1.25), 1.5, "two and a half beats away counts the shorter two");
+  assert.equal(realtimeLeadIn(route, 0, 3, 0.1), 0.5, "however slow, at least a beat");
+  assert.equal(realtimeLeadIn(route, 0, 0), 0, "no count-in starts right on the first note");
+  assert.equal(scoreOffsetToSeconds(route, -1), -0.5, "at the opening tempo");
+  assert.equal(scoreOffsetAfterSeconds(route, -1.5, 0.5), -0.5);
+  assert.equal(scoreOffsetAfterSeconds(route, -1.5, 1), 0.5);
+
+  const controller = new RealtimeController(
+    { attack: (pitches) => attacks.push([...pitches]), release: () => undefined, stop: () => undefined },
+    { onFrame: (frame) => offsets.push(frame.offset), onComplete: () => undefined, onLoop: () => { loops += 1; } },
+    {
+      now: () => now,
+      setInterval: (callback) => { tick = callback; return 1; },
+      clearInterval: () => { tick = null; },
+    },
+  );
+  controller.setLooping(true);
+  controller.seek(route, "paused", 0, 1.5);
+  assert.equal(controller.getOffset(), -1.5, "paused, it waits at the start of the lead-in");
+  now = 5;
+  controller.resume();
+  now = 5.7;
+  (tick as (() => void) | null)?.();
+  assert.deepEqual(attacks, [], "nothing sounds while counting in");
+  assert.ok(Math.abs(controller.getOffset() - -0.1) < 1e-9);
+  now = 6.1;
+  (tick as (() => void) | null)?.();
+  assert.deepEqual(attacks, [["C4"]]);
+  // 0.75 s of lead-in, 0.5 s for the first beat and 1 s for the second: the pass ends at 7.25.
+  now = 7.3;
+  (tick as (() => void) | null)?.();
+  assert.equal(loops, 1);
+  assert.ok(Math.abs(controller.getOffset() - 0.1) < 1e-9, "the next pass starts at once");
+  assert.ok(offsets.every((offset) => offset >= -1.5));
+});
+
+test("counts in beats of the time signature: dotted quarters in compound metre", () => {
+  const time = (beats: string, beatType: number) =>
+    `<attributes><divisions>4</divisions><time><beats>${beats}</beats><beat-type>${beatType}</beat-type></time></attributes>`;
+  const parsed = parseRealtimeMusicXml(score(`
+    <measure number="1">${time("6", 8)}${quarter("a")}</measure>
+    <measure number="2">${quarter("b")}</measure>
+    <measure number="3">${time("2", 2)}${quarter("c")}</measure>
+    <measure number="4">${time("3+2", 8)}${quarter("d")}</measure>
+    <measure number="5">${time("12", 16)}${quarter("e")}</measure>
+    <measure number="6">${time("3", 4)}${quarter("f")}</measure>
+  `));
+  assert.deepEqual(parsed.measures.map((measure) => measure.beat), [1.5, 1.5, 2, 0.5, 0.75, 1]);
+  assert.equal(parseRealtimeMusicXml(score(`<measure number="1">${quarter("a")}</measure>`)).measures[0].beat, 1,
+    "a quarter without a time signature");
+
+  const route = expandPerformanceRoute(parsed);
+  // At the default 120 BPM, a second and a half is two dotted quarters of 6/8, a bar;
+  // one half note of 2/2, the shorter of one and two; and three quarters of 3/4.
+  assert.equal(realtimeLeadIn(route, 0, 1.5), 3);
+  assert.equal(realtimeLeadIn(expandPerformanceRoute(parsed, { startMeasureIndex: 2 }), 0, 1.5), 2);
+  assert.equal(realtimeLeadIn(expandPerformanceRoute(parsed, { startMeasureIndex: 5 }), 0, 1.5), 3);
 });
 
 function sounding(xml: string): string[] {

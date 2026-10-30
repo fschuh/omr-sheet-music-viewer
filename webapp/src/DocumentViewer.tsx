@@ -187,6 +187,11 @@ interface DocumentViewerProps {
   realtimePlayhead?: RealtimePlayhead | null;
   getRealtimePlayhead?: () => RealtimePlayhead | null;
   realtimePlayheadAnimating?: boolean;
+  /**
+   * Changes whenever the playhead may have moved while not animating, such as after a
+   * seek or a rewind while paused; the playhead is drawn again then.
+   */
+  realtimePlayheadRevision?: unknown;
   realtimeGroupIdsByPage?: Readonly<Record<number, readonly string[]>>;
   tempoBpm?: number;
   tempoMultiplier?: number;
@@ -887,6 +892,7 @@ export function DocumentViewer({
   realtimePlayhead = null,
   getRealtimePlayhead,
   realtimePlayheadAnimating = false,
+  realtimePlayheadRevision,
   realtimeGroupIdsByPage,
   tempoBpm = 120,
   tempoMultiplier = 1,
@@ -1416,7 +1422,7 @@ export function DocumentViewer({
       if (animationFrame !== null) cancelAnimationFrame(animationFrame);
       if (visibleLine) visibleLine.style.display = "none";
     };
-  }, [documentKey, getRealtimePlayhead, pages, realtimePlayheadAnimating]);
+  }, [documentKey, getRealtimePlayhead, pages, realtimePlayheadAnimating, realtimePlayheadRevision]);
 
   /**
    * Where, from the top of the view, the score stops being visible during playback: the

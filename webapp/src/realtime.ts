@@ -124,6 +124,8 @@ export interface StructuralMeasure {
   endingNumbers: ReadonlySet<number>;
   sounds: NavigationSound[];
   fermatas: RealtimeFermata[];
+  /** The beat its time signature is counted in, in quarters; see timeSignatureBeat. */
+  beat: number;
 }
 
 export interface RealtimeScore {
@@ -163,6 +165,8 @@ export interface PerformanceOccurrence {
   scoreStart: number;
   scoreEnd: number;
   localStart: number;
+  /** The measure's beat in quarters, as its time signature counts it; a quarter when unknown. */
+  beat?: number;
 }
 
 export interface PerformanceEvent {
@@ -219,8 +223,8 @@ export interface RealtimePlayhead {
   y2: number;
 }
 
-/** The barline a route ends on, where the playhead stops after its last note. */
-export interface RouteEndBarline {
+/** A barline on a route's score: where its playhead starts before the first note, or stops after the last. */
+export interface RouteBarline {
   pageIndex: number;
   staffGroupIndex: number;
   x: number;
@@ -263,6 +267,18 @@ function finiteNumber(value: string | null, fallback = 0): number {
   if (value === null || value.trim() === "") return fallback;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+/**
+ * The beat a time signature is counted in, in quarters: a dotted note in compound
+ * metre (6, 9 or 12 of anything), otherwise the note of its beat type. Additive
+ * signatures such as 3+2/8 count that note too.
+ */
+function timeSignatureBeat(time: Element): number | null {
+  const beatType = finiteNumber(text(time, "beat-type"), 0);
+  if (beatType <= 0) return null;
+  const unit = 4 / beatType;
+  return [6, 9, 12].includes(Number(text(time, "beats"))) ? 3 * unit : unit;
 }
 
 function yes(value: string | null): boolean {
@@ -947,6 +963,17 @@ export function parseRealtimeMusicXml(musicXml: string): RealtimeScore {
     partMeasures.push(parsed);
   });
 
+  // Beats follow the first part's time signatures, which every part shares.
+  const measureBeats: number[] = [];
+  let beat = 1;
+  for (const measure of elements(parts[0], "measure")) {
+    for (const attributes of elements(measure, "attributes")) {
+      const time = first(attributes, "time");
+      beat = (time && timeSignatureBeat(time)) ?? beat;
+    }
+    measureBeats.push(beat);
+  }
+
   const measureCount = Math.max(...partMeasures.map((part) => part.length));
   const measures: StructuralMeasure[] = [];
   let activeEnding = new Set<number>();
@@ -998,6 +1025,7 @@ export function parseRealtimeMusicXml(musicXml: string): RealtimeScore {
       endingNumbers: new Set(activeEnding),
       sounds: measureSounds,
       fermatas: [...fermatas.values()].sort((a, b) => a.onset - b.onset),
+      beat: measureBeats[index] ?? measureBeats.at(-1) ?? 1,
     });
     if (available.some((measure) => measure.endingStops)) activeEnding = new Set<number>();
   }
@@ -1479,6 +1507,7 @@ export function expandPerformanceRoute(
         scoreStart: scoreOffset,
         scoreEnd: scoreOffset + duration,
         localStart,
+        beat: measure.beat,
       };
       occurrences.push(occurrence);
       for (const note of measure.notes) {
@@ -1746,17 +1775,50 @@ function timingSegmentAtOffset(index: RouteTimingIndex, offset: number): number 
   return result;
 }
 
+/** How long realtime counts in before the first note when it starts at the top of a score or loop. */
+export const REALTIME_COUNT_INS = ["none", "short", "long"] as const;
+export type RealtimeCountIn = (typeof REALTIME_COUNT_INS)[number];
+/** The time each count-in aims for, in seconds as heard. */
+export const REALTIME_COUNT_IN_SECONDS: Readonly<Record<RealtimeCountIn, number>> = {
+  none: 0,
+  short: 2,
+  long: 3,
+};
+export const DEFAULT_REALTIME_COUNT_IN: RealtimeCountIn = "short";
+
+/**
+ * How many quarters before `offset` playback should begin to count in for about
+ * `seconds`, as heard at `multiplier` times the tempo there: the whole number of beats
+ * of the first note's time signature nearest that time, the shorter of two as near,
+ * and at least one. Rests before the first note count toward it. So a slow tempo
+ * counts fewer beats and a fast one more, and the wait stays about the same.
+ */
+export function realtimeLeadIn(
+  route: PerformanceRoute,
+  offset: number,
+  seconds: number,
+  multiplier = 1,
+): number {
+  const first = route.notes.find((note) => note.onset >= offset - 1e-6);
+  if (!first || !(seconds > 0)) return 0;
+  const beat = route.occurrences.filter((item) => item.scoreStart <= first.onset + 1e-6).at(-1)?.beat ?? 1;
+  const beatSeconds = beat * 60 / (tempoAt(route, offset) * (multiplier > 0 ? multiplier : 1));
+  const beats = Math.max(1, Math.ceil(seconds / beatSeconds - 0.5 - 1e-9));
+  return Math.max(0, beats * beat - (first.onset - offset));
+}
+
 export function tempoAt(route: PerformanceRoute, offset: number): number {
   const timing = routeTiming(route);
   return timing.bpms[timingSegmentAtOffset(timing, offset)] ?? 120;
 }
 
+/** Before the route begins, in its lead-in, time runs at the opening tempo: negative seconds. */
 export function scoreOffsetToSeconds(
   route: PerformanceRoute,
   offset: number,
   multiplier = 1,
 ): number {
-  const end = Math.min(route.totalQuarters, Math.max(0, offset));
+  const end = Math.min(route.totalQuarters, offset);
   const timing = routeTiming(route);
   const segment = timingSegmentAtOffset(timing, end);
   const baseSeconds = timing.cumulativeSeconds[segment] +
@@ -1818,11 +1880,18 @@ function occurrenceEndAt(route: PerformanceRoute, offset: number): number | null
   return candidate?.scoreEnd ?? null;
 }
 
+/**
+ * Where the playhead stands at `offset`: on a note, moving toward the next. Before the
+ * first note, through the count-in from `startOffset` and any rest the route opens on,
+ * it moves from `routeStart`, the barline before it, to the note, arriving as it plays.
+ */
 export function realtimePlayheadAt(
   route: PerformanceRoute,
   offset: number,
   _pages: DocumentPage[],
-  routeEnd: RouteEndBarline | null = null,
+  routeEnd: RouteBarline | null = null,
+  routeStart: RouteBarline | null = null,
+  startOffset = 0,
 ): RealtimePlayhead | null {
   const visible = visibleRouteNotes(route);
   if (visible.length === 0) return null;
@@ -1843,6 +1912,22 @@ export function realtimePlayheadAt(
   }
   const current = visible[currentIndex];
   const visual = current.visual!;
+  if (
+    offset < current.onset &&
+    routeStart?.pageIndex === visual.pageIndex &&
+    routeStart.staffGroupIndex === visual.staffGroupIndex &&
+    routeStart.x < visual.x
+  ) {
+    const from = Math.min(startOffset, offset);
+    const progress = current.onset > from ? (offset - from) / (current.onset - from) : 1;
+    return {
+      pageIndex: visual.pageIndex,
+      staffGroupIndex: visual.staffGroupIndex,
+      x: routeStart.x + (visual.x - routeStart.x) * progress,
+      y1: visual.systemTop,
+      y2: visual.systemBottom,
+    };
+  }
   let nextIndex = currentIndex + 1;
   while (nextIndex < visible.length && visible[nextIndex].onset <= current.onset) nextIndex += 1;
   const next = visible[nextIndex];
@@ -2075,12 +2160,13 @@ export class RealtimeController {
     });
   }
 
-  play(route: PerformanceRoute, offset = 0): void {
+  /** Plays from `offset`, counting `leadIn` quarters in before it at the opening tempo. */
+  play(route: PerformanceRoute, offset = 0, leadIn = 0): void {
     this.clearTimer();
     this.silence();
     this.route = route;
     this.status = "playing";
-    this.offset = Math.min(route.totalQuarters, Math.max(0, offset));
+    this.offset = Math.min(route.totalQuarters, Math.max(0, offset)) - Math.max(0, leadIn);
     this.anchorOffset = this.offset;
     this.anchorTime = this.clock.now();
     this.resetActiveNotes(this.offset);
@@ -2108,16 +2194,17 @@ export class RealtimeController {
     this.timer = this.clock.setInterval(() => this.publish(), this.intervalMs);
   }
 
-  seek(route: PerformanceRoute, keepStatus: "playing" | "paused", offset = 0): void {
+  /** Paused, it waits at the start of the lead-in, which plays once resumed. */
+  seek(route: PerformanceRoute, keepStatus: "playing" | "paused", offset = 0, leadIn = 0): void {
     if (keepStatus === "playing") {
-      this.play(route, offset);
+      this.play(route, offset, leadIn);
       return;
     }
     this.clearTimer();
     this.silence();
     this.route = route;
     this.status = "paused";
-    this.offset = Math.min(route.totalQuarters, Math.max(0, offset));
+    this.offset = Math.min(route.totalQuarters, Math.max(0, offset)) - Math.max(0, leadIn);
     this.anchorOffset = this.offset;
     this.anchorTime = this.clock.now();
     this.resetActiveNotes(this.offset);

@@ -403,6 +403,16 @@ test("of two hands striking a key together, the shorter note lies over the longe
   ]);
 });
 
+test("counting in to a loop, no earlier pass lies behind the hit line", () => {
+  const track = highwayTrackForRoute(route([note("a", "C4", 0, 1), note("b", "D4", 1, 2)]));
+  const playing = highwayTrackLooped(track, { start: 0, end: 1 }, 2);
+  assert.ok(playing.notes.starts[0] < 0, "a pass lies behind while the loop plays");
+  const countingIn = highwayTrackLooped(track, { start: 0, end: 1 }, 2, true);
+  assert.notEqual(countingIn, playing);
+  assert.equal(countingIn.notes.starts[0], 0);
+  assert.equal(countingIn.lines.times[0], 0, "the loop's start line is the first");
+});
+
 test("the other hand's ghosts never lie over the practised hand's notes", () => {
   const notes = highwayTrackForRoute(route([
     { ...note("rh", "C5", 0, 4), left: false },

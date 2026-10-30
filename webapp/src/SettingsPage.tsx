@@ -20,6 +20,12 @@ import {
 import { playbackCommandNames, type PlaybackCommand } from "./playback";
 import { PIANO_IDS, PIANO_REGISTRY, type PianoId } from "./pianoRegistry";
 import {
+  DEFAULT_REALTIME_COUNT_IN,
+  REALTIME_COUNT_IN_SECONDS,
+  REALTIME_COUNT_INS,
+  type RealtimeCountIn,
+} from "./realtime";
+import {
   DEFAULT_LISTEN_MATCHER_PROFILE_ID,
   LISTEN_MATCHER_PROFILE_IDS,
   LISTEN_MATCHER_PROFILES,
@@ -134,6 +140,12 @@ const TIME_SCALE_LABELS: Readonly<Record<HighwayTimeScale, string>> = {
   "fixed-tempo": "Fixed tempo, notes keep their size",
 };
 
+const COUNT_IN_LABELS: Readonly<Record<RealtimeCountIn, string>> = {
+  none: "None",
+  short: `Short, about ${REALTIME_COUNT_IN_SECONDS.short} s (default)`,
+  long: `Long, about ${REALTIME_COUNT_IN_SECONDS.long} s`,
+};
+
 const SETTINGS_SECTIONS = [
   { id: "playback", label: "Playback", hint: "Piano, listen input and loop" },
   { id: "keyboard", label: "Keyboard & highway", hint: "Keys, hand colours and 3D notes" },
@@ -152,6 +164,8 @@ interface SettingsPageProps {
   listenInputSource: ListenInputSource;
   /** Whether loop mode dims the bars outside the loop. */
   loopDimOutside?: boolean;
+  /** How long realtime counts in before the first note of the score or loop. */
+  realtimeCountIn?: RealtimeCountIn;
   keyboardView?: KeyboardViewSettings;
   debugPanelEnabled: boolean;
   sharedNoteheadTimingRepair: boolean;
@@ -167,6 +181,7 @@ interface SettingsPageProps {
   onChangePlaybackPiano: (pianoId: PianoId) => void;
   onChangeListenInputSource: (inputSource: ListenInputSource) => void;
   onChangeLoopDimOutside?: (enabled: boolean) => void;
+  onChangeRealtimeCountIn?: (countIn: RealtimeCountIn) => void;
   onChangeKeyboardView?: (settings: KeyboardViewSettings) => void;
   onChangeDebugPanelEnabled: (enabled: boolean) => void;
   onChangeSharedNoteheadTimingRepair: (enabled: boolean) => void;
@@ -185,6 +200,7 @@ export function SettingsPage({
   playbackPiano,
   listenInputSource,
   loopDimOutside = true,
+  realtimeCountIn = DEFAULT_REALTIME_COUNT_IN,
   keyboardView = DEFAULT_KEYBOARD_VIEW_SETTINGS,
   debugPanelEnabled,
   sharedNoteheadTimingRepair,
@@ -200,6 +216,7 @@ export function SettingsPage({
   onChangePlaybackPiano,
   onChangeListenInputSource,
   onChangeLoopDimOutside,
+  onChangeRealtimeCountIn,
   onChangeKeyboardView,
   onChangeDebugPanelEnabled,
   onChangeSharedNoteheadTimingRepair,
@@ -391,6 +408,31 @@ export function SettingsPage({
                 <option value="midi" disabled={!nativeAvailable}>MIDI keyboard</option>
               </select>
             </label>
+            {onChangeRealtimeCountIn ? (
+              <label className="settings-select-row">
+                <span>
+                  <strong>Count-in</strong>
+                  <small>
+                    Silence before the first note when realtime playback starts at the top of the
+                    score or the loop: playing with no note selected, or after a rewind, while the
+                    playhead moves from the barline to the first note. It counts whole beats of
+                    the time signature, as many as come nearest the time chosen at the tempo
+                    playing, so a slow tempo counts fewer beats and a fast one more. Rests the
+                    music opens with count toward it. A selected note plays at once, and a loop
+                    starting over plays straight on.
+                  </small>
+                </span>
+                <select
+                  aria-label="Count-in"
+                  value={realtimeCountIn}
+                  onChange={(event) => onChangeRealtimeCountIn(event.target.value as RealtimeCountIn)}
+                >
+                  {REALTIME_COUNT_INS.map((countIn) => (
+                    <option key={countIn} value={countIn}>{COUNT_IN_LABELS[countIn]}</option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
             {onChangeLoopDimOutside ? (
               <label className="settings-toggle-row">
                 <input

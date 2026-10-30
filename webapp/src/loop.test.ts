@@ -15,6 +15,7 @@ import {
   loopSystems,
   moveLoopHandleTo,
   routeEndBarline,
+  routeStartBarline,
   routeStructuralPosition,
   type LoopRegion,
   type LoopSystem,
@@ -247,6 +248,7 @@ test("a loop's route plays from its start up to its end barline, once", () => {
   assert.equal(loopRouteOffset(route, { measureIndex: 2, onset: 1 }), 3);
   assert.equal(loopRouteOffset(route, { measureIndex: 3, onset: 0 }), null);
   assert.deepEqual(routeStructuralPosition(route, 3), { measureIndex: 2, onset: 1 });
+  assert.deepEqual(routeStructuralPosition(route, -1.5), { measureIndex: 1, onset: 0 }, "a lead-in is at the start");
 });
 
 test("a loop's route follows repeats inside it, and stops where navigation leaves it", () => {
@@ -356,6 +358,17 @@ test("a loop's playhead runs on to the loop's end barline after its last note, n
   // A one-measure loop ends on the barline inside the system.
   const short = expandPerformanceRoute(parsed, { startMeasureIndex: 1, endMeasureIndex: 2, visualMap });
   assert.equal(realtimePlayheadAt(short, 1.5, [], routeEndBarline(systems, short))?.x, 500);
+
+  // Through a two-quarter count-in the playhead moves from the barline before the first
+  // note to the note, arriving as it plays.
+  const start = routeStartBarline(systems, route);
+  assert.deepEqual(start, { pageIndex: 0, staffGroupIndex: 0, x: 300 });
+  assert.equal(realtimePlayheadAt(route, -2, [], end, start, -2)?.x, 300, "waiting on the barline");
+  assert.equal(realtimePlayheadAt(route, -1, [], end, start, -2)?.x, 325);
+  assert.equal(realtimePlayheadAt(route, 0, [], end, start, -2)?.x, 350);
+  assert.equal(realtimePlayheadAt(route, 0.5, [], end, start, -2)?.x, 400, "then it follows the notes");
+  const fromNote = expandPerformanceRoute(parsed, { startMeasureIndex: 1, startOffset: 1, visualMap });
+  assert.equal(routeStartBarline(systems, fromNote), null, "a route begun inside a measure has none");
 });
 
 test("loop shortcuts move one end a barline, keeping a bar between the ends and inside the score", () => {

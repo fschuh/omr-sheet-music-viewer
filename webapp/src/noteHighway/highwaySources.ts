@@ -59,9 +59,11 @@ export function useRealtimeHighwaySource(
       : HIGHWAY_LOOKAHEAD_SECONDS * latest.current.tempoMultiplier) / latest.current.timeZoom;
     const route = getRoute();
     if (!route) return { track: null, now: 0, window };
+    // Offsets below 0 are the lead-in counted before the route begins.
     const timeAt = (offset: number) => quarters
-      ? Math.min(route.totalQuarters, Math.max(0, offset))
+      ? Math.min(route.totalQuarters, offset)
       : scoreOffsetToSeconds(route, offset, 1);
+    const now = timeAt(getOffset());
     const loop = getLooping() ? { start: 0, end: timeAt(route.totalQuarters) } : null;
     return {
       track: highwayTrackLooped(
@@ -73,8 +75,9 @@ export function useRealtimeHighwaySource(
         ),
         loop,
         window,
+        now < 0,
       ),
-      now: timeAt(getOffset()),
+      now,
       window,
     };
   }, [getLooping, getOffset, getRoute]);

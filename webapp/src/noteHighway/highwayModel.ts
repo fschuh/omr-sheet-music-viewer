@@ -372,22 +372,30 @@ export interface HighwayLoop {
   end: number;
 }
 
-const loopTracks = new WeakMap<HighwayTrack, { loop: HighwayLoop; window: number; track: HighwayTrack }>();
+const loopTracks = new WeakMap<
+  HighwayTrack,
+  { loop: HighwayLoop; window: number; leadIn: boolean; track: HighwayTrack }
+>();
 
 /**
  * The track as a loop plays it: the loop's notes and lines over and over, so what comes
  * after the loop's end is its start again, as far ahead as `window` reaches, and the pass
- * before it lies behind. Each start-over is a loop-coloured line across every lane, so
- * the repeat can be seen coming. Cached per track for the last loop and window asked.
+ * before it lies behind, unless the loop is still counting in to its first pass. Each
+ * start-over is a loop-coloured line across every lane, so the repeat can be seen coming.
+ * Cached per track for the last loop, window and lead-in asked.
  */
 export function highwayTrackLooped(
   track: HighwayTrack,
   loop: HighwayLoop | null,
   window: number,
+  leadIn = false,
 ): HighwayTrack {
   if (!loop || !(loop.end > loop.start)) return track;
   const cached = loopTracks.get(track);
-  if (cached?.loop.start === loop.start && cached.loop.end === loop.end && cached.window === window) {
+  if (
+    cached?.loop.start === loop.start && cached.loop.end === loop.end &&
+    cached.window === window && cached.leadIn === leadIn
+  ) {
     return cached.track;
   }
   const length = loop.end - loop.start;
@@ -414,7 +422,7 @@ export function highwayTrackLooped(
   }
   const notes: TrackNote[] = [];
   const lines: TrackLine[] = [];
-  for (let pass = -1; pass <= passes; pass += 1) {
+  for (let pass = leadIn ? 0 : -1; pass <= passes; pass += 1) {
     const shift = pass * length;
     notes.push(...loopNotes.map((note) => ({ ...note, start: note.start + shift, end: note.end + shift })));
     lines.push({ time: loop.start + shift, strength: LOOP_LINE_STRENGTH });
@@ -422,7 +430,7 @@ export function highwayTrackLooped(
   }
   lines.push({ time: loop.start + (passes + 1) * length, strength: LOOP_LINE_STRENGTH });
   const looped = { notes: packNotes(notes), lines: packLines(lines) };
-  loopTracks.set(track, { loop: { ...loop }, window, track: looped });
+  loopTracks.set(track, { loop: { ...loop }, window, leadIn, track: looped });
   return looped;
 }
 
