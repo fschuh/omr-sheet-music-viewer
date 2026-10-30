@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import {
   DEFAULT_KEYBOARD_VIEW_SETTINGS,
   MAX_BLACK_KEY_WIDTH,
@@ -172,8 +172,17 @@ const SETTINGS_SECTIONS = [
 
 export type SettingsSectionId = (typeof SETTINGS_SECTIONS)[number]["id"];
 
+/**
+ * Where the settings page was left, so it opens there again: the section shown and
+ * how far the page was scrolled. Kept while the app runs, never saved.
+ */
+const lastSettingsView: { section: SettingsSectionId; scrollTop: number } = {
+  section: "playback",
+  scrollTop: 0,
+};
+
 interface SettingsPageProps {
-  /** The section shown first. */
+  /** The section shown first; without one, the section the page was left on, scrolled as it was. */
   initialSection?: SettingsSectionId;
   shortcuts: PlaybackShortcuts;
   playbackPiano: PianoId;
@@ -211,10 +220,12 @@ interface SettingsPageProps {
   onCancelMidiCapture: () => void;
   onRefreshMidiInputs: () => void;
   showStopPlayback?: boolean;
+  /** Leaves the page; Escape does too, unless it cancels a shortcut being learned. */
+  onClose?: () => void;
 }
 
 export function SettingsPage({
-  initialSection = "playback",
+  initialSection,
   shortcuts,
   playbackPiano,
   listenInputSource,
@@ -248,10 +259,17 @@ export function SettingsPage({
   onCancelMidiCapture,
   onRefreshMidiInputs,
   showStopPlayback = false,
+  onClose,
 }: SettingsPageProps) {
   const [keyboardCaptureCommand, setKeyboardCaptureCommand] = useState<PlaybackCommand | null>(null);
   const [keyboardError, setKeyboardError] = useState<string | null>(null);
-  const [section, setSection] = useState<SettingsSectionId>(initialSection);
+  const [section, setSection] = useState<SettingsSectionId>(initialSection ?? lastSettingsView.section);
+  const pageRef = useRef<HTMLElement | null>(null);
+
+  useLayoutEffect(() => {
+    if (initialSection === undefined && pageRef.current) pageRef.current.scrollTop = lastSettingsView.scrollTop;
+    // Only as the page opens; afterwards it scrolls as the user scrolls it.
+  }, []);
   const sectionTabs = useRef(new Map<SettingsSectionId, HTMLButtonElement>());
 
   useEffect(() => {
@@ -262,6 +280,13 @@ export function SettingsPage({
         setKeyboardCaptureCommand(null);
         setKeyboardError(null);
         onCancelMidiCapture();
+        return;
+      }
+      if (event.code === "Escape") {
+        if (onClose && !event.defaultPrevented) {
+          event.preventDefault();
+          onClose();
+        }
         return;
       }
       if (!keyboardCaptureCommand) return;
@@ -290,7 +315,7 @@ export function SettingsPage({
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [keyboardCaptureCommand, midiCaptureCommand, onCancelMidiCapture, onChangeShortcuts, shortcuts]);
+  }, [keyboardCaptureCommand, midiCaptureCommand, onCancelMidiCapture, onChangeShortcuts, onClose, shortcuts]);
 
   function beginKeyboardCapture(command: PlaybackCommand) {
     onCancelMidiCapture();
@@ -311,6 +336,7 @@ export function SettingsPage({
     setKeyboardError(null);
     onCancelMidiCapture();
     setSection(next);
+    lastSettingsView.section = next;
   }
 
   /** Up and Down move through the sections, Home and End go to the first and last. */
@@ -352,7 +378,12 @@ export function SettingsPage({
   }
 
   return (
-    <section className="settings-page" aria-labelledby="settings-title">
+    <section
+      ref={pageRef}
+      className="settings-page"
+      aria-labelledby="settings-title"
+      onScroll={(event) => { lastSettingsView.scrollTop = event.currentTarget.scrollTop; }}
+    >
       <div className="settings-heading">
         <span className="settings-kicker">Preferences</span>
         <h2 id="settings-title">Settings</h2>

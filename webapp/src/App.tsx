@@ -1656,6 +1656,11 @@ export function App() {
     midiCaptureCommandRef.current = null;
     setMidiCaptureCommand(null);
   }, []);
+  const closeSettings = useCallback(() => {
+    setShowWorkerLogs(false);
+    cancelMidiCapture();
+    setActivePage("viewer");
+  }, [cancelMidiCapture]);
 
   const beginMidiCapture = useCallback((command: PlaybackCommand) => {
     stopMidiRepeat();
@@ -2487,9 +2492,12 @@ export function App() {
             type="button"
             className={activePage === "settings" ? "settings-button active" : "settings-button"}
             onClick={() => {
-              setShowWorkerLogs(false);
-              cancelMidiCapture();
-              setActivePage((current) => current === "viewer" ? "settings" : "viewer");
+              if (activePage === "settings") closeSettings();
+              else {
+                setShowWorkerLogs(false);
+                cancelMidiCapture();
+                setActivePage("settings");
+              }
             }}
           >
             {activePage === "settings" ? "Back to score" : "Settings"}
@@ -2516,6 +2524,7 @@ export function App() {
           midiRefreshing={midiRefreshing}
           midiCaptureCommand={midiCaptureCommand}
           showStopPlayback
+          onClose={closeSettings}
           onChangeShortcuts={setShortcuts}
           onChangePlaybackPiano={(pianoId: PianoId) => {
             recognizerRef.current?.stop();
