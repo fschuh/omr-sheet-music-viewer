@@ -83,8 +83,25 @@ export const NOTE_HEIGHTS: Readonly<Record<HighwayNoteStyle, { white: number; bl
   flat: { white: 0.004, black: 0.012 },
 };
 
-/** Floats per note instance: centre x, half width, black, left hand, start, end, ghost, finger, layer. */
-export const NOTE_INSTANCE_FLOATS = 9;
+/** Floats per note instance: centre x, half width, black, left hand, start, end, ghost, finger, layer, name. */
+export const NOTE_INSTANCE_FLOATS = 10;
+
+/** The note name atlas: the letters across, these alterations down. */
+export const NOTE_NAME_LETTERS = ["C", "D", "E", "F", "G", "A", "B"] as const;
+export const NOTE_NAME_ALTERS = [-2, -1, 0, 1, 2] as const;
+
+/**
+ * A pitch's cell in the note name atlas, from 1, spelled as written (D♭ stays D♭);
+ * 0 for a pitch it has none for, such as a quarter tone.
+ */
+export function noteNameCell(pitch: string): number {
+  const match = /^([A-Ga-g])([#b♯♭]*)(-?\d+)$/.exec(pitch.trim());
+  if (!match) return 0;
+  const alter = [...match[2]].reduce((total, symbol) => total + (symbol === "#" || symbol === "♯" ? 1 : -1), 0);
+  const row = NOTE_NAME_ALTERS.indexOf(alter as (typeof NOTE_NAME_ALTERS)[number]);
+  const column = NOTE_NAME_LETTERS.indexOf(match[1].toUpperCase() as (typeof NOTE_NAME_LETTERS)[number]);
+  return row < 0 ? 0 : row * NOTE_NAME_LETTERS.length + column + 1;
+}
 /** Floats per grid line instance: time, strength. */
 export const GRID_LINE_INSTANCE_FLOATS = 2;
 
@@ -174,6 +191,8 @@ interface TrackNote {
   left: boolean;
   /** 1 to 5, or 0 when no fingering is known. */
   finger: number;
+  /** The note's name as written; see noteNameCell. */
+  name: number;
 }
 
 interface TrackLine {
@@ -247,7 +266,7 @@ function packNotes(source: TrackNote[]): HighwayNotes {
   const lefts = new Uint8Array(notes.length);
   const writtenEnds = new Float64Array(notes.length);
   let maxDuration = 0;
-  notes.forEach(({ lane, start, end, ghost, left, finger, layer, writtenEnd }, index) => {
+  notes.forEach(({ lane, start, end, ghost, left, finger, layer, writtenEnd, name }, index) => {
     const offset = index * NOTE_INSTANCE_FLOATS;
     writeLane(instances, offset, lane);
     instances[offset + 2] = lane.black ? 1 : 0;
@@ -257,6 +276,7 @@ function packNotes(source: TrackNote[]): HighwayNotes {
     instances[offset + 6] = ghost ? 1 : 0;
     instances[offset + 7] = finger;
     instances[offset + 8] = layer;
+    instances[offset + 9] = name;
     starts[index] = start;
     ends[index] = end;
     midis[index] = lane.midi;
@@ -349,6 +369,7 @@ export function highwayTrackForRoute(
       ghost: !noteInPracticeHand(note.left, hand),
       left: (predicted?.left ?? note.left) === true,
       finger: validFinger(predicted?.finger),
+      name: noteNameCell(note.pitch),
     });
   }
   const lines: TrackLine[] = [];
@@ -418,6 +439,7 @@ export function highwayTrackLooped(
       ghost: track.notes.ghosts[index] === 1,
       left: track.notes.lefts[index] === 1,
       finger: track.notes.instances[index * NOTE_INSTANCE_FLOATS + 7],
+      name: track.notes.instances[index * NOTE_INSTANCE_FLOATS + 9],
     });
   }
   const loopLines: TrackLine[] = [];
@@ -507,7 +529,7 @@ export function highwayTrackForSteps(
       lines.push({ time: position, strength: MEASURE_LINE_STRENGTH });
     }
     // A key both hands strike at once is drawn as the practised hand's.
-    const attacked = new Map<number, { ghost: boolean; left: boolean }>();
+    const attacked = new Map<number, { ghost: boolean; left: boolean; pitch: string }>();
     const attacks = moment.notes
       ? moment.notes.filter((note) => note.startsAttack)
       : moment.pitches.map((pitch) => ({ pitch, left: undefined }));
@@ -516,7 +538,7 @@ export function highwayTrackForSteps(
       if (midi === null) continue;
       const ghost = !noteInPracticeHand(left, hand);
       const previous = attacked.get(midi);
-      if (!previous || (previous.ghost && !ghost)) attacked.set(midi, { ghost, left: left === true });
+      if (!previous || (previous.ghost && !ghost)) attacked.set(midi, { ghost, left: left === true, pitch });
     }
     const next = new Map<number, TrackNote>();
     for (const { pitch } of moment.keyboardNotes) {
@@ -528,13 +550,21 @@ export function highwayTrackForSteps(
         next.set(midi, held);
       }
     }
-    for (const [midi, { ghost, left }] of attacked) {
+    for (const [midi, { ghost, left, pitch }] of attacked) {
       const shown = moment.keyboardNotes.find((candidate) =>
         candidate.finger !== undefined &&
         (candidate.left === undefined || candidate.left === left) &&
         pianoMidi(candidate.pitch) === midi,
       );
-      const note = { midi, start: position, end: endFor(ghost), ghost, left, finger: validFinger(shown?.finger) };
+      const note = {
+        midi,
+        start: position,
+        end: endFor(ghost),
+        ghost,
+        left,
+        finger: validFinger(shown?.finger),
+        name: noteNameCell(pitch),
+      };
       notes.push(note);
       next.set(midi, note);
     }

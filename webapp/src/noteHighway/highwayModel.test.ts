@@ -18,6 +18,7 @@ import {
   NOTE_HEIGHTS,
   NOTE_INSTANCE_FLOATS,
   NOTE_LANE_INSET,
+  noteNameCell,
   practiceStepPositions,
   projectSurfacePoint,
   projectToNdc,
@@ -238,6 +239,28 @@ test("keeps each note's hand and predicted finger", () => {
   const repeat = Array.from(looped.notes.midis).lastIndexOf(48);
   assert.equal(looped.notes.lefts[repeat], 1, "a loop's repeats keep the hand");
   assert.equal(looped.notes.instances[repeat * NOTE_INSTANCE_FLOATS + 7], 5, "and the finger");
+});
+
+test("names each note as the score spells it, for the note name atlas", () => {
+  // Letters across, double flat to double sharp down, from 1.
+  assert.equal(noteNameCell("C4"), 15);
+  assert.equal(noteNameCell("D♭5"), 9);
+  assert.equal(noteNameCell("C♯4"), 22);
+  assert.equal(noteNameCell("C#4"), 22, "a written sharp");
+  assert.equal(noteNameCell("Bbb3"), 7, "a written double flat");
+  assert.equal(noteNameCell("F♯♯2"), 32);
+  assert.equal(noteNameCell("C(+0.5)4"), 0, "no cell for a quarter tone");
+  // D♭ and C♯ share a key but keep their own names.
+  const notes = highwayTrackForRoute(route([note("flat", "D♭4", 0, 1), note("sharp", "C♯5", 1, 2)])).notes;
+  assert.deepEqual(
+    Array.from(notes.midis, (midi, index) => [midi, notes.instances[index * NOTE_INSTANCE_FLOATS + 9]]),
+    [[61, 9], [73, 22]],
+  );
+  const steps = highwayTrackForSteps([{ pitches: ["E♭4"], keyboardNotes: [{ pitch: "E♭4" }], barKey: "b1" }]).notes;
+  assert.equal(steps.instances[9], 10, "note-by-note too");
+  const looped = highwayTrackLooped(highwayTrackForRoute(route([note("flat", "D♭4", 0, 1)])), { start: 0, end: 1 }, 2);
+  assert.ok(Array.from({ length: looped.notes.count }, (_, index) => looped.notes.instances[index * NOTE_INSTANCE_FLOATS + 9])
+    .every((name) => name === 9), "and through a loop's passes");
 });
 
 test("takes note-by-note fingers and hands from the keyboard notes", () => {

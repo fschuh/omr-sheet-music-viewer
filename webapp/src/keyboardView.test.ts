@@ -108,3 +108,14 @@ test("stretching and compressing the notes step by tenths, from 0.5 up to 8", ()
   assert.equal(steppedTimeZoom(8, 1), 8);
   assert.equal(steppedTimeZoom(0.5, -1), 0.5);
 });
+
+test("the highway's note labels carry over the finger number setting they replace", () => {
+  assert.equal(normalizeKeyboardViewSettings({}).highwayNoteLabels, "finger");
+  assert.equal(normalizeKeyboardViewSettings({ highwayFingerNumbers: false }).highwayNoteLabels, "none");
+  assert.equal(normalizeKeyboardViewSettings({ highwayFingerNumbers: true }).highwayNoteLabels, "finger");
+  assert.equal(
+    normalizeKeyboardViewSettings({ highwayFingerNumbers: false, highwayNoteLabels: "name" }).highwayNoteLabels,
+    "name",
+  );
+  assert.equal(normalizeKeyboardViewSettings({ highwayNoteLabels: "colour" }).highwayNoteLabels, "finger");
+});

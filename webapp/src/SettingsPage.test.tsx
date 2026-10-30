@@ -222,11 +222,19 @@ test("no override is selected by default, and an active override is the checked 
   assert.equal(overridden.match(/name="listen-matcher-profile" checked=""/g)?.length, 1);
 });
 
+test("highway notes show finger numbers by default, or nothing, or their names", () => {
+  const markup = renderSettings({ onChangeKeyboardView: () => undefined });
+  assert.match(markup, /aria-label="Labels on highway notes"/);
+  assert.match(markup, /<option value="finger" selected="">Finger numbers<\/option>/);
+  assert.match(markup, /<option value="none">Nothing<\/option>/);
+  assert.match(markup, /<option value="name">Note names<\/option>/);
+});
+
 test("the count-in offers none, short and long, short by default, and persists a valid choice", () => {
   assert.doesNotMatch(renderSettings(), /aria-label="Count-in"/, "hidden where it cannot be changed");
   const markup = renderSettings({ onChangeRealtimeCountIn: () => undefined });
   assert.match(markup, /aria-label="Count-in"/);
-  assert.equal(markup.match(/<option value="(none|short|long)"/g)?.length, 3);
+  assert.equal(markup.match(/<option value="(none|short|long)"[^>]*>(None|Short|Long)/g)?.length, 3);
   assert.match(markup, /<option value="none">None<\/option>/);
   assert.match(markup, /<option value="short" selected="">Short, about 2 s \(default\)<\/option>/);
   assert.match(markup, /<option value="long">Long, about 3 s<\/option>/);

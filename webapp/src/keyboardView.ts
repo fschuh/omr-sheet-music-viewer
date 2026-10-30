@@ -112,6 +112,9 @@ export type HighwayTimeScale = "steady-speed" | "fixed-tempo";
  */
 export type WhiteNoteWidth = "track" | "whole-key";
 
+/** What a highway note block shows at its front end: nothing, its finger, or its name as engraved. */
+export type HighwayNoteLabels = "none" | "finger" | "name";
+
 export interface KeyboardViewSettings {
   range: KeyboardRangeMode;
   /** The narrowest a song or hand range gets, in white keys. */
@@ -144,8 +147,8 @@ export interface KeyboardViewSettings {
    * twice as long and twice as far from the next.
    */
   timeZoom: number;
-  /** The finger number on each note block of the practised hand. */
-  highwayFingerNumbers: boolean;
+  /** What each note block of the practised hand shows: nothing, its finger, or its name. */
+  highwayNoteLabels: HighwayNoteLabels;
 }
 
 export const KEYBOARD_RANGE_MODES: readonly KeyboardRangeMode[] = ["full", "song", "practiced-hand"];
@@ -155,6 +158,7 @@ export const UPCOMING_KEY_EFFECTS: readonly UpcomingKeyEffect[] = [
 export const HIGHWAY_NOTE_STYLES: readonly HighwayNoteStyle[] = ["raised", "flat"];
 export const HIGHWAY_TIME_SCALES: readonly HighwayTimeScale[] = ["steady-speed", "fixed-tempo"];
 export const WHITE_NOTE_WIDTHS: readonly WhiteNoteWidth[] = ["track", "whole-key"];
+export const HIGHWAY_NOTE_LABELS: readonly HighwayNoteLabels[] = ["none", "finger", "name"];
 export const UPCOMING_LEADS: readonly number[] = [0.125, 0.25, 0.5, 1];
 
 export const MIN_TIME_ZOOM = 0.5;
@@ -194,7 +198,7 @@ export const DEFAULT_KEYBOARD_VIEW_SETTINGS: Readonly<KeyboardViewSettings> = Ob
   timeScale: "steady-speed",
   whiteNoteWidth: "track",
   timeZoom: 1,
-  highwayFingerNumbers: true,
+  highwayNoteLabels: "finger",
 });
 
 const HEX_COLOR = /^#[0-9a-f]{6}$/i;
@@ -242,7 +246,12 @@ export function normalizeKeyboardViewSettings(stored: unknown): KeyboardViewSett
     timeScale: oneOf(HIGHWAY_TIME_SCALES, raw.timeScale, defaults.timeScale),
     whiteNoteWidth: oneOf(WHITE_NOTE_WIDTHS, raw.whiteNoteWidth, defaults.whiteNoteWidth),
     timeZoom: Math.round(10 * clampedNumber(raw.timeZoom, MIN_TIME_ZOOM, MAX_TIME_ZOOM, defaults.timeZoom)) / 10,
-    highwayFingerNumbers: flag(raw.highwayFingerNumbers, defaults.highwayFingerNumbers),
+    // Before the names, the blocks showed finger numbers or nothing.
+    highwayNoteLabels: oneOf(
+      HIGHWAY_NOTE_LABELS,
+      raw.highwayNoteLabels,
+      raw.highwayFingerNumbers === false ? "none" : defaults.highwayNoteLabels,
+    ),
   };
 }
 

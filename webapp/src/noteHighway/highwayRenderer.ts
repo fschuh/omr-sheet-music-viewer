@@ -4,6 +4,7 @@ import {
   handColors,
   DEFAULT_KEYBOARD_VIEW_SETTINGS,
   type HandColors,
+  type HighwayNoteLabels,
   type HighwayNoteStyle,
   type WhiteNoteWidth,
   type KeyboardRange,
@@ -20,6 +21,7 @@ import {
   NOTE_HEIGHTS,
   NOTE_LANE_INSET,
   NOTE_INSTANCE_FLOATS,
+  NOTE_NAME_LETTERS,
   upperBound,
   visibleNoteRange,
   type HighwayCamera,
@@ -43,7 +45,8 @@ export interface HighwayRenderView {
   colors: HandColors;
   noteStyle: HighwayNoteStyle;
   whiteNoteWidth: WhiteNoteWidth;
-  fingerNumbers: boolean;
+  /** What each note shows at its front end: nothing, its finger, or its name. */
+  noteLabels: HighwayNoteLabels;
   /** The black keys' width as a share of a real piano's; the lanes follow it. */
   blackKeyWidth: number;
 }
@@ -55,12 +58,16 @@ export const DEFAULT_HIGHWAY_RENDER_VIEW: Readonly<HighwayRenderView> = Object.f
   colors: handColors(DEFAULT_KEYBOARD_VIEW_SETTINGS),
   noteStyle: "raised",
   whiteNoteWidth: "track",
-  fingerNumbers: true,
+  noteLabels: "finger",
   blackKeyWidth: 1,
 });
 
 /** Glyph cells of the finger-number atlas, 1 to 5 left to right. */
 const DIGIT_CELL = 64;
+/** Glyph cells of the note-name atlas, wide enough for a letter and two accidentals. */
+const NAME_CELL_HEIGHT = 60;
+const NAME_CELL_WIDTH = 96;
+const NAME_ACCIDENTALS = ["♭♭", "♭", "", "♯", "♯♯"];
 
 const NOTE_VERTEX_SHADER = `#version 300 es
 layout(location = 0) in vec3 a_corner;
@@ -69,6 +76,7 @@ layout(location = 2) in vec2 a_axes;
 layout(location = 3) in vec4 a_lane; // centre, half width, black, left hand
 layout(location = 4) in vec4 a_time; // start, end, ghost, finger
 layout(location = 5) in float a_layer;
+layout(location = 6) in float a_name; // cell in the note-name atlas, from 1; 0 for none
 
 // A note struck over the other hand's held note is narrower and a little taller,
 // so the held note shows on each side and under it, whole.
@@ -98,6 +106,7 @@ out float v_left;
 out float v_sounding;
 out float v_ghost;
 out float v_finger;
+out float v_name;
 
 void main() {
   float headZ = -(a_time.x - u_now) * u_unitsPerTime;
@@ -136,6 +145,7 @@ void main() {
   v_sounding = headZ >= 0.0 ? 1.0 : 0.0;
   v_ghost = a_time.z;
   v_finger = a_time.w;
+  v_name = a_name;
 }`;
 
 const NOTE_FRAGMENT_SHADER = `#version 300 es
@@ -150,6 +160,7 @@ in float v_left;
 in float v_sounding;
 in float v_ghost;
 in float v_finger;
+in float v_name;
 
 uniform vec3 u_rightColor;
 uniform vec3 u_rightDark;
@@ -157,8 +168,9 @@ uniform vec3 u_leftColor;
 uniform vec3 u_leftDark;
 uniform vec3 u_ghostColor;
 uniform float u_flat;
-uniform float u_showFingers;
+uniform float u_labels; // 0 nothing, 1 finger numbers, 2 note names
 uniform sampler2D u_digits;
+uniform sampler2D u_names;
 
 out vec4 outColor;
 
@@ -199,20 +211,31 @@ void main() {
   float alpha = (1.0 - smoothstep(0.6, 1.0, v_far)) * mix(1.0, 0.3, v_ghost);
   alpha *= mix(1.0, rounded, u_flat);
 
-  // The finger number sits at the near end of the top face, reading upright. A
-  // digit's ink is about 0.6 of its cell's height, so on a short note the cell
-  // may reach past both ends, centred, as long as the ink keeps clear of them.
+  // The label, a finger number or a note name, sits at the near end of the top face,
+  // reading upright. A glyph's ink is about 0.6 of its cell's height, so on a short
+  // note the cell may reach past both ends, centred, as long as the ink keeps clear of
+  // them. A name's cell is wider, for its accidentals, so it shows on narrower notes
+  // at a smaller size before giving up.
   bool top = v_normal.y > 0.5;
-  float side = min(v_faceSize.x * 0.86, (v_faceSize.y - 0.14) / 0.6);
+  bool names = u_labels > 1.5;
+  float aspect = names ? 1.6 : 1.0;
+  float side = min(v_faceSize.x * 0.86 / aspect, (v_faceSize.y - 0.14) / 0.6);
   float fromNear = (1.0 - v_uv.y) * v_faceSize.y - min(0.08, (v_faceSize.y - side) * 0.5);
-  vec2 cell = vec2(facePoint.x - (v_faceSize.x - side) * 0.5, fromNear) / max(side, 1e-3);
-  vec2 digitUv = vec2((clamp(v_finger, 1.0, 5.0) - 1.0 + clamp(cell.x, 0.0, 1.0)) / 5.0, 1.0 - clamp(cell.y, 0.0, 1.0));
-  float glyph = texture(u_digits, digitUv).a;
+  vec2 cell = vec2(facePoint.x - (v_faceSize.x - side * aspect) * 0.5, fromNear) / max(vec2(side * aspect, side), 1e-3);
+  vec2 inside = clamp(cell, 0.0, 1.0);
+  float label = names ? v_name : v_finger;
+  float glyph = names
+    ? texture(u_names, vec2(
+        (mod(label - 1.0, 7.0) + inside.x) / 7.0,
+        (floor((label - 1.0) / 7.0) + 1.0 - inside.y) / 5.0
+      )).a
+    : texture(u_digits, vec2((clamp(label, 1.0, 5.0) - 1.0 + inside.x) / 5.0, 1.0 - inside.y)).a;
   float inCell = step(0.0, cell.x) * step(cell.x, 1.0) * step(0.0, cell.y) * step(cell.y, 1.0);
-  float showDigit = u_showFingers * step(0.5, v_finger) * (1.0 - v_ghost) * (top ? 1.0 : 0.0) * step(0.22, side);
+  float showLabel = step(0.5, u_labels) * step(0.5, label) * (1.0 - v_ghost) * (top ? 1.0 : 0.0) *
+    step(names ? 0.18 : 0.22, side);
   float luminance = dot(base, vec3(0.299, 0.587, 0.114));
   vec3 ink = luminance > 0.55 ? vec3(0.06, 0.14, 0.13) : vec3(1.0);
-  color = mix(color, ink, glyph * inCell * showDigit);
+  color = mix(color, ink, glyph * inCell * showLabel);
 
   if (alpha <= 0.002) discard;
   outColor = vec4(color * alpha, alpha);
@@ -426,7 +449,7 @@ function uniforms<Name extends string>(
 const NOTE_UNIFORMS = [
   "u_viewProjection", "u_now", "u_unitsPerTime", "u_length", "u_minLength", "u_gap", "u_heights", "u_laneSpan", "u_wholeWhiteKeys", "u_laneInset",
   "u_rightColor", "u_rightDark", "u_leftColor", "u_leftDark", "u_ghostColor",
-  "u_flat", "u_showFingers", "u_digits",
+  "u_flat", "u_labels", "u_digits", "u_names",
 ] as const;
 const FLOOR_UNIFORMS = [
   "u_viewProjection", "u_center", "u_halfWidth", "u_keyboardHalfWidth", "u_length",
@@ -436,25 +459,47 @@ const LINE_UNIFORMS = [
   "u_viewProjection", "u_now", "u_unitsPerTime", "u_center", "u_halfWidth", "u_length",
 ] as const;
 
-/** White digits 1 to 5 on transparent cells, sampled by alpha. */
-function drawDigitAtlas(): HTMLCanvasElement | OffscreenCanvas | null {
-  const width = DIGIT_CELL * 5;
+/**
+ * White labels on transparent cells, sampled by alpha: `rows` of labels, each
+ * centred in a cell `cellWidth` by `cellHeight`.
+ */
+function drawLabelAtlas(
+  rows: readonly (readonly string[])[],
+  cellWidth: number,
+  cellHeight: number,
+): HTMLCanvasElement | OffscreenCanvas | null {
+  const width = cellWidth * Math.max(...rows.map((row) => row.length));
+  const height = cellHeight * rows.length;
   const canvas = typeof OffscreenCanvas !== "undefined"
-    ? new OffscreenCanvas(width, DIGIT_CELL)
+    ? new OffscreenCanvas(width, height)
     : typeof document !== "undefined"
-      ? Object.assign(document.createElement("canvas"), { width, height: DIGIT_CELL })
+      ? Object.assign(document.createElement("canvas"), { width, height })
       : null;
   const context = canvas?.getContext("2d") as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null;
   if (!canvas || !context) return null;
-  context.clearRect(0, 0, width, DIGIT_CELL);
+  context.clearRect(0, 0, width, height);
   context.fillStyle = "#fff";
-  context.font = `700 ${Math.round(DIGIT_CELL * 0.8)}px system-ui, -apple-system, "Segoe UI", sans-serif`;
+  context.font = `700 ${Math.round(cellHeight * 0.8)}px system-ui, -apple-system, "Segoe UI", sans-serif`;
   context.textAlign = "center";
   context.textBaseline = "middle";
-  for (let finger = 1; finger <= 5; finger += 1) {
-    context.fillText(String(finger), (finger - 0.5) * DIGIT_CELL, DIGIT_CELL * 0.54);
-  }
+  rows.forEach((row, rowIndex) => row.forEach((label, column) => {
+    context.fillText(label, (column + 0.5) * cellWidth, (rowIndex + 0.54) * cellHeight, cellWidth * 0.94);
+  }));
   return canvas;
+}
+
+/** Digits 1 to 5. */
+function drawDigitAtlas(): HTMLCanvasElement | OffscreenCanvas | null {
+  return drawLabelAtlas([["1", "2", "3", "4", "5"]], DIGIT_CELL, DIGIT_CELL);
+}
+
+/** Every note name noteNameCell gives a cell: the letters across, double flat to double sharp down. */
+function drawNameAtlas(): HTMLCanvasElement | OffscreenCanvas | null {
+  return drawLabelAtlas(
+    NAME_ACCIDENTALS.map((accidental) => NOTE_NAME_LETTERS.map((letter) => letter + accidental)),
+    NAME_CELL_WIDTH,
+    NAME_CELL_HEIGHT,
+  );
 }
 
 interface GpuResources {
@@ -465,6 +510,7 @@ interface GpuResources {
   floorUniforms: Record<(typeof FLOOR_UNIFORMS)[number], WebGLUniformLocation | null>;
   lineUniforms: Record<(typeof LINE_UNIFORMS)[number], WebGLUniformLocation | null>;
   digitTexture: WebGLTexture;
+  nameTexture: WebGLTexture;
   noteVao: WebGLVertexArrayObject;
   floorVao: WebGLVertexArrayObject;
   lineVao: WebGLVertexArrayObject;
@@ -565,6 +611,8 @@ export class NoteHighwayRenderer {
     gl.vertexAttribDivisor(4, 1);
     gl.enableVertexAttribArray(5);
     gl.vertexAttribDivisor(5, 1);
+    gl.enableVertexAttribArray(6);
+    gl.vertexAttribDivisor(6, 1);
 
     const floorVao = vertexArray();
     buffer(gl.ARRAY_BUFFER, UNIT_QUAD, gl.STATIC_DRAW);
@@ -581,21 +629,25 @@ export class NoteHighwayRenderer {
 
     gl.bindVertexArray(null);
 
-    const digitTexture = gl.createTexture();
-    if (!digitTexture) throw new Error("Could not create a WebGL texture.");
-    gl.bindTexture(gl.TEXTURE_2D, digitTexture);
-    const atlas = drawDigitAtlas();
-    if (atlas) {
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, atlas);
-      gl.generateMipmap(gl.TEXTURE_2D);
-    } else {
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(4));
-    }
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, atlas ? gl.LINEAR_MIPMAP_LINEAR : gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.bindTexture(gl.TEXTURE_2D, null);
+    const labelTexture = (atlas: HTMLCanvasElement | OffscreenCanvas | null) => {
+      const texture = gl.createTexture();
+      if (!texture) throw new Error("Could not create a WebGL texture.");
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+      if (atlas) {
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, atlas);
+        gl.generateMipmap(gl.TEXTURE_2D);
+      } else {
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(4));
+      }
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, atlas ? gl.LINEAR_MIPMAP_LINEAR : gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+      return texture;
+    };
+    const digitTexture = labelTexture(drawDigitAtlas());
+    const nameTexture = labelTexture(drawNameAtlas());
 
     return {
       noteProgram,
@@ -605,6 +657,7 @@ export class NoteHighwayRenderer {
       floorUniforms: uniforms(gl, floorProgram, FLOOR_UNIFORMS),
       lineUniforms: uniforms(gl, lineProgram, LINE_UNIFORMS),
       digitTexture,
+      nameTexture,
       noteVao,
       floorVao,
       lineVao,
@@ -768,10 +821,14 @@ export class NoteHighwayRenderer {
       gl.uniform3fv(note.u_leftDark, colorChannels(colors.left.dark));
       gl.uniform3fv(note.u_ghostColor, GHOST_NOTE_COLOR);
       gl.uniform1f(note.u_flat, this.view.noteStyle === "flat" ? 1 : 0);
-      gl.uniform1f(note.u_showFingers, this.view.fingerNumbers ? 1 : 0);
+      gl.uniform1f(note.u_labels, { none: 0, finger: 1, name: 2 }[this.view.noteLabels]);
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, resources.digitTexture);
       gl.uniform1i(note.u_digits, 0);
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, resources.nameTexture);
+      gl.uniform1i(note.u_names, 1);
+      gl.activeTexture(gl.TEXTURE0);
       gl.bindVertexArray(resources.noteVao);
       gl.bindBuffer(gl.ARRAY_BUFFER, resources.noteInstanceBuffer);
       const stride = NOTE_INSTANCE_FLOATS * 4;
@@ -779,6 +836,7 @@ export class NoteHighwayRenderer {
       gl.vertexAttribPointer(3, 4, gl.FLOAT, false, stride, offset);
       gl.vertexAttribPointer(4, 4, gl.FLOAT, false, stride, offset + 4 * 4);
       gl.vertexAttribPointer(5, 1, gl.FLOAT, false, stride, offset + 8 * 4);
+      gl.vertexAttribPointer(6, 1, gl.FLOAT, false, stride, offset + 9 * 4);
       gl.drawElementsInstanced(
         gl.TRIANGLES,
         resources.noteIndexCount,
@@ -825,6 +883,7 @@ export class NoteHighwayRenderer {
       gl.deleteVertexArray(resources.floorVao);
       gl.deleteVertexArray(resources.lineVao);
       gl.deleteTexture(resources.digitTexture);
+      gl.deleteTexture(resources.nameTexture);
       for (const buffer of resources.buffers) gl.deleteBuffer(buffer);
     }
     this.resources = null;

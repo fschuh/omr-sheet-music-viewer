@@ -9,7 +9,9 @@ import {
   MIN_TILT,
   MIN_TIME_ZOOM,
   MIN_WHITE_KEYS,
+  HIGHWAY_NOTE_LABELS,
   UPCOMING_LEADS,
+  type HighwayNoteLabels,
   type HighwayNoteStyle,
   type HighwayTimeScale,
   type WhiteNoteWidth,
@@ -141,6 +143,12 @@ const NOTE_STYLE_LABELS: Readonly<Record<HighwayNoteStyle, string>> = {
 const WHITE_NOTE_WIDTH_LABELS: Readonly<Record<WhiteNoteWidth, string>> = {
   track: "As wide as their track",
   "whole-key": "As wide as the whole key",
+};
+
+const NOTE_LABEL_NAMES: Readonly<Record<HighwayNoteLabels, string>> = {
+  none: "Nothing",
+  finger: "Finger numbers",
+  name: "Note names",
 };
 
 const TIME_SCALE_LABELS: Readonly<Record<HighwayTimeScale, string>> = {
@@ -817,18 +825,25 @@ export function SettingsPage({
                 ))}
               </select>
             </label>
-            <label className="settings-toggle-row">
-              <input
-                type="checkbox"
-                aria-label="Finger numbers on highway notes"
-                checked={keyboardView.highwayFingerNumbers}
-                disabled={keyboardViewLocked}
-                onChange={(event) => changeKeyboardView({ highwayFingerNumbers: event.target.checked })}
-              />
+            <label className="settings-select-row">
               <span>
-                <strong>Finger numbers on notes</strong>
-                <small>The finger to play each note with, at its front end, where fingering is known and the note is long enough.</small>
+                <strong>Labels on notes</strong>
+                <small>
+                  What each note of the practised hand shows at its front end, where the note is
+                  long enough: the finger to play it with, where fingering is known, or its name
+                  as the score spells it.
+                </small>
               </span>
+              <select
+                aria-label="Labels on highway notes"
+                value={keyboardView.highwayNoteLabels}
+                disabled={keyboardViewLocked}
+                onChange={(event) => changeKeyboardView({ highwayNoteLabels: event.target.value as HighwayNoteLabels })}
+              >
+                {HIGHWAY_NOTE_LABELS.map((labels) => (
+                  <option key={labels} value={labels}>{NOTE_LABEL_NAMES[labels]}</option>
+                ))}
+              </select>
             </label>
           </section>
 
