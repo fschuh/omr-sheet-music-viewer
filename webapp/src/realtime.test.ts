@@ -643,6 +643,29 @@ test("moves by bars from a bar whose only note starts on its first beat", () => 
   assert.deepEqual(seekStructuralPosition(parsed, { measureIndex: 1, onset: 3 }, "backwardBar"), { measureIndex: 0, onset: 0 });
 });
 
+test("moves by notes from the note being played, a little past its start during playback", () => {
+  const parsed = parseRealtimeMusicXml(score(`
+    <measure number="1"><attributes><divisions>4</divisions></attributes>
+      ${quarter("a")}${quarter("b", "D")}${quarter("c", "E")}${quarter("d", "F")}</measure>
+  `));
+  const playingB = { measureIndex: 0, onset: 1.05 };
+  assert.deepEqual(seekStructuralPosition(parsed, playingB, "backwardNote"), { measureIndex: 0, onset: 0 },
+    "the note before, not the one playing again");
+  assert.deepEqual(seekStructuralPosition(parsed, playingB, "forwardNote"), { measureIndex: 0, onset: 2 },
+    "the note after, not the one after that");
+  const pausedOnB = { measureIndex: 0, onset: 1 };
+  assert.deepEqual(seekStructuralPosition(parsed, pausedOnB, "backwardNote"), { measureIndex: 0, onset: 0 });
+  assert.deepEqual(seekStructuralPosition(parsed, pausedOnB, "forwardNote"), { measureIndex: 0, onset: 2 });
+  // A route's start before its first note, as in a count-in, moves to that note either way.
+  const parsedRest = parseRealtimeMusicXml(score(`
+    <measure number="1"><attributes><divisions>4</divisions></attributes>
+      <note><rest/><duration>4</duration><voice>1</voice><type>quarter</type></note>${quarter("a")}${quarter("b", "D")}</measure>
+  `));
+  const beforeFirst = { measureIndex: 0, onset: 0 };
+  assert.deepEqual(seekStructuralPosition(parsedRest, beforeFirst, "forwardNote"), { measureIndex: 0, onset: 1 });
+  assert.deepEqual(seekStructuralPosition(parsedRest, beforeFirst, "backwardNote"), { measureIndex: 0, onset: 1 });
+});
+
 test("converts score offsets through tempo changes and a live multiplier", () => {
   const route: PerformanceRoute = {
     occurrences: [],

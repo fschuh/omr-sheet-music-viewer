@@ -1681,11 +1681,13 @@ export function seekStructuralPosition(
 ): StructuralPosition {
   const positions = playableStructuralPositions(score);
   if (positions.length === 0) return { measureIndex: 0, onset: 0 };
-  let currentIndex = positions.findIndex((position) =>
+  // The note being played: the last to start at or before the playhead, which during
+  // playback has always moved a little past it; -1 before the first, as in a count-in.
+  const after = positions.findIndex((position) =>
     position.measureIndex > current.measureIndex ||
-    (position.measureIndex === current.measureIndex && position.onset >= current.onset - 1e-6),
+    (position.measureIndex === current.measureIndex && position.onset > current.onset + 1e-6),
   );
-  if (currentIndex < 0) currentIndex = positions.length - 1;
+  const currentIndex = (after < 0 ? positions.length : after) - 1;
   if (command === "forwardNote") return positions[Math.min(positions.length - 1, currentIndex + 1)];
   if (command === "backwardNote") return positions[Math.max(0, currentIndex - 1)];
 
