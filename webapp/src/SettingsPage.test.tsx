@@ -6,17 +6,20 @@ import { defaultPlaybackShortcuts } from "./shortcuts";
 import { LISTEN_MATCHER_PROFILE_IDS } from "@fschuh/piano-transcription-engine";
 import {
   LISTEN_INPUT_SOURCE_STORAGE_KEY,
+  LOOP_RESTART_STORAGE_KEY,
   REALTIME_COUNT_IN_STORAGE_KEY,
   SHARED_NOTEHEAD_TIMING_STORAGE_KEY,
   TIME_SIGNATURE_REPAIR_STORAGE_KEY,
   TUPLET_REPAIR_STORAGE_KEY,
   loadListenInputSource,
+  loadLoopRestart,
   loadRealtimeCountIn,
   loadSharedNoteheadTimingRepair,
   loadTimeSignatureRepair,
   loadTupletRepair,
   repairSettings,
   saveListenInputSource,
+  saveLoopRestart,
   saveRealtimeCountIn,
   saveSharedNoteheadTimingRepair,
   saveTimeSignatureRepair,
@@ -249,6 +252,49 @@ test("the count-in offers none, short and long, short by default, and persists a
     assert.equal(loadRealtimeCountIn(), "short", "not one of the choices");
     values.set(REALTIME_COUNT_IN_STORAGE_KEY, "normal");
     assert.equal(loadRealtimeCountIn(), "short", "no longer one of the choices");
+  } finally {
+    if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow);
+    else Reflect.deleteProperty(globalThis, "window");
+  }
+});
+
+test("the loop's end loops immediately by default, can count in instead, and persists the choice", () => {
+  assert.doesNotMatch(renderSettings(), /Count in before looping/, "hidden where it cannot be changed");
+  const markup = renderSettings({ onChangeLoopRestart: () => undefined });
+  assert.match(markup, /<option value="immediately" selected="">Loop immediately \(default\)<\/option>/);
+  assert.match(markup, /<option value="count-in">Count in before looping<\/option>/);
+  assert.match(
+    renderSettings({ loopRestart: "count-in", onChangeLoopRestart: () => undefined }),
+    /<option value="count-in" selected="">/,
+  );
+  // With the count-in off there is nothing to count in with: it loops immediately, and
+  // the count-in choice is greyed out, saying why.
+  const countInOff = renderSettings({
+    loopRestart: "count-in",
+    realtimeCountIn: "none",
+    onChangeLoopRestart: () => undefined,
+  });
+  assert.match(countInOff, /<option value="immediately" selected="">/);
+  assert.match(countInOff, /<option value="count-in" disabled="" title="The count-in is off\. Choose a count-in under Settings, Playback to count in before looping\.">/);
+
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  const values = new Map<string, string>();
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      localStorage: {
+        getItem: (key: string) => values.get(key) ?? null,
+        setItem: (key: string, value: string) => values.set(key, value),
+      },
+    },
+  });
+  try {
+    assert.equal(loadLoopRestart(), "immediately");
+    saveLoopRestart("count-in");
+    assert.equal(values.get(LOOP_RESTART_STORAGE_KEY), "count-in");
+    assert.equal(loadLoopRestart(), "count-in");
+    values.set(LOOP_RESTART_STORAGE_KEY, "later");
+    assert.equal(loadLoopRestart(), "immediately", "not one of the choices");
   } finally {
     if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow);
     else Reflect.deleteProperty(globalThis, "window");

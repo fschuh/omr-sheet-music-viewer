@@ -35,7 +35,8 @@ const STEP_GLIDE_MS = 160;
  * lookahead: notes keep their size and come down faster at a faster tempo, from the
  * tempo multiplier and the score's own tempo changes alike.
  * While one hand is practised, the other hand's notes are ghosts. A looping route
- * starts over at its end, so the highway shows its start coming again after it.
+ * starts over at its end, so the highway shows its start coming again after it,
+ * after `getLoopLeadIn`, the quarters it counts in to each pass, when it does.
  * Notes carry their finger from `fingerings`. `timeZoom` divides the window, so
  * above 1 the highway shows less time with longer notes further apart.
  */
@@ -48,6 +49,7 @@ export function useRealtimeHighwaySource(
   fingerings?: Readonly<Record<string, PredictedFingering>>,
   fixedTempoBpm: number | null = null,
   timeZoom = 1,
+  getLoopLeadIn: () => number = () => 0,
 ): HighwayFrameSource {
   const latest = useRef({ tempoMultiplier, hand, fingerings, fixedTempoBpm, timeZoom });
   latest.current = { tempoMultiplier, hand, fingerings, fixedTempoBpm, timeZoom };
@@ -64,7 +66,9 @@ export function useRealtimeHighwaySource(
       ? Math.min(route.totalQuarters, offset)
       : scoreOffsetToSeconds(route, offset, 1);
     const now = timeAt(getOffset());
-    const loop = getLooping() ? { start: 0, end: timeAt(route.totalQuarters) } : null;
+    const loop = getLooping()
+      ? { start: 0, end: timeAt(route.totalQuarters), gap: -timeAt(-getLoopLeadIn()) }
+      : null;
     return {
       track: highwayTrackLooped(
         highwayTrackForRoute(
@@ -80,7 +84,7 @@ export function useRealtimeHighwaySource(
       now,
       window,
     };
-  }, [getLooping, getOffset, getRoute]);
+  }, [getLoopLeadIn, getLooping, getOffset, getRoute]);
 }
 
 function easeOutCubic(progress: number): number {

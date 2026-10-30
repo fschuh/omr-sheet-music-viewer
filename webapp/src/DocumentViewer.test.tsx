@@ -1146,8 +1146,9 @@ function renderLoop(options: {
   loopPlaying?: boolean;
   loopDimOutside?: boolean;
   scale?: number;
+  loopOptions?: boolean;
 }): string {
-  const { playbackActive = true, loopMode = true, loop = null, loopPass = 1, loopPlaying = false, loopDimOutside = true, scale = 1 } = options;
+  const { playbackActive = true, loopMode = true, loop = null, loopPass = 1, loopPlaying = false, loopDimOutside = true, scale = 1, loopOptions = false } = options;
   return renderToStaticMarkup(
     <DocumentViewer
       documentKey="loop-fixture"
@@ -1171,6 +1172,7 @@ function renderLoop(options: {
       loopDimOutside={loopDimOutside}
       initialViewportTransform={{ scale, x: 0, y: 0 }}
       onLoopToggle={() => undefined}
+      onLoopRestartChange={loopOptions ? () => undefined : undefined}
       onLoopChange={() => undefined}
       onPlaybackCommand={() => undefined}
       onSelectGroup={() => undefined}
@@ -1197,6 +1199,14 @@ test("the Loop button is off, on, or showing the pass while playback is inside t
   const looping = loopButton(renderLoop({ loop: { startMeasure: 1, endMeasure: 2 }, loopPlaying: true, loopPass: 3 }));
   assert.match(looping, /class="loop-toggle active looping"/);
   assert.match(looping, />Pass 3<\/span>/);
+});
+
+test("the Loop button has a menu for what happens at the loop's end, closed until opened", () => {
+  assert.doesNotMatch(renderLoop({}), /aria-label="Loop options"/, "not without a way to change it");
+  const markup = renderLoop({ loopOptions: true });
+  assert.match(markup, /<div class="loop-control"><button[^>]*class="loop-toggle active"/);
+  assert.match(markup, /aria-label="Loop options" aria-expanded="false" aria-haspopup="dialog"/);
+  assert.doesNotMatch(markup, /class="loop-popover"/);
 });
 
 test("loop mode turns on only during playback, and can be turned off at any time", () => {

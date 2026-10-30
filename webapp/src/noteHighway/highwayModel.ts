@@ -370,6 +370,8 @@ export function highwayTrackForRoute(
 export interface HighwayLoop {
   start: number;
   end: number;
+  /** Time counted in between one pass's end and the next pass's start; 0 when none. */
+  gap?: number;
 }
 
 const loopTracks = new WeakMap<
@@ -379,9 +381,10 @@ const loopTracks = new WeakMap<
 
 /**
  * The track as a loop plays it: the loop's notes and lines over and over, so what comes
- * after the loop's end is its start again, as far ahead as `window` reaches, and the pass
- * before it lies behind, unless the loop is still counting in to its first pass. Each
- * start-over is a loop-coloured line across every lane, so the repeat can be seen coming.
+ * after the loop's end is its start again, after its count-in gap if it has one, as far
+ * ahead as `window` reaches, and the pass before it lies behind, unless the loop is still
+ * counting in to its first pass. Each start-over is a loop-coloured line across every
+ * lane, so the repeat can be seen coming; across a gap, a bar line marks the pass's end.
  * Cached per track for the last loop, window and lead-in asked.
  */
 export function highwayTrackLooped(
@@ -394,12 +397,15 @@ export function highwayTrackLooped(
   const cached = loopTracks.get(track);
   if (
     cached?.loop.start === loop.start && cached.loop.end === loop.end &&
+    (cached.loop.gap ?? 0) === (loop.gap ?? 0) &&
     cached.window === window && cached.leadIn === leadIn
   ) {
     return cached.track;
   }
   const length = loop.end - loop.start;
-  const passes = Math.max(1, Math.ceil(window / length));
+  const gap = Math.max(0, loop.gap ?? 0);
+  const period = length + gap;
+  const passes = Math.max(1, Math.ceil(window / period));
   // The notes as written: packing the passes strikes their keys again.
   const loopNotes: TrackNote[] = [];
   for (let index = 0; index < track.notes.count; index += 1) {
@@ -423,12 +429,13 @@ export function highwayTrackLooped(
   const notes: TrackNote[] = [];
   const lines: TrackLine[] = [];
   for (let pass = leadIn ? 0 : -1; pass <= passes; pass += 1) {
-    const shift = pass * length;
+    const shift = pass * period;
     notes.push(...loopNotes.map((note) => ({ ...note, start: note.start + shift, end: note.end + shift })));
     lines.push({ time: loop.start + shift, strength: LOOP_LINE_STRENGTH });
     lines.push(...loopLines.map((line) => ({ ...line, time: line.time + shift })));
+    if (gap > 0) lines.push({ time: loop.end + shift, strength: MEASURE_LINE_STRENGTH });
   }
-  lines.push({ time: loop.start + (passes + 1) * length, strength: LOOP_LINE_STRENGTH });
+  lines.push({ time: loop.start + (passes + 1) * period, strength: LOOP_LINE_STRENGTH });
   const looped = { notes: packNotes(notes), lines: packLines(lines) };
   loopTracks.set(track, { loop: { ...loop }, window, leadIn, track: looped });
   return looped;

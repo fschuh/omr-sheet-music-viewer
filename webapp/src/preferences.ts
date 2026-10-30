@@ -3,6 +3,7 @@ import type { ListenInputSource } from "@fschuh/piano-transcription-engine";
 import type { RepairSettings } from "./native";
 import { normalizeKeyboardViewSettings, type KeyboardViewSettings } from "./keyboardView";
 import { DEFAULT_REALTIME_COUNT_IN, REALTIME_COUNT_INS, type RealtimeCountIn } from "./realtime";
+import { DEFAULT_LOOP_RESTART, LOOP_RESTARTS, type LoopRestart } from "./loop";
 
 export const DEBUG_PANEL_STORAGE_KEY = "homr.debug-panel-enabled.v1";
 export const PLAYBACK_PIANO_STORAGE_KEY = "homr.playback-piano.v1";
@@ -10,6 +11,7 @@ export const LISTEN_INPUT_SOURCE_STORAGE_KEY = "homr.listen-input-source.v1";
 export const NOTE_HIGHWAY_STORAGE_KEY = "homr.note-highway-enabled.v1";
 export const LOOP_DIM_OUTSIDE_STORAGE_KEY = "homr.loop-dim-outside.v1";
 export const REALTIME_COUNT_IN_STORAGE_KEY = "homr.realtime-count-in.v1";
+export const LOOP_RESTART_STORAGE_KEY = "homr.loop-restart.v1";
 export const SHARED_NOTEHEAD_TIMING_STORAGE_KEY = "homr.repair-shared-notehead-timing.v1";
 export const TIME_SIGNATURE_REPAIR_STORAGE_KEY = "homr.repair-time-signatures.v1";
 export const TUPLET_REPAIR_STORAGE_KEY = "homr.repair-tuplets.v1";
@@ -86,6 +88,26 @@ export function saveRealtimeCountIn(countIn: RealtimeCountIn): void {
   if (typeof window === "undefined") return;
   try {
     window.localStorage.setItem(REALTIME_COUNT_IN_STORAGE_KEY, countIn);
+  } catch {
+    // A disabled/full local store should not prevent changing the current session.
+  }
+}
+
+/** What realtime does at a loop's end; it loops immediately unless changed. */
+export function loadLoopRestart(): LoopRestart {
+  if (typeof window === "undefined") return DEFAULT_LOOP_RESTART;
+  try {
+    const stored = window.localStorage.getItem(LOOP_RESTART_STORAGE_KEY);
+    return LOOP_RESTARTS.find((restart) => restart === stored) ?? DEFAULT_LOOP_RESTART;
+  } catch {
+    return DEFAULT_LOOP_RESTART;
+  }
+}
+
+export function saveLoopRestart(restart: LoopRestart): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(LOOP_RESTART_STORAGE_KEY, restart);
   } catch {
     // A disabled/full local store should not prevent changing the current session.
   }

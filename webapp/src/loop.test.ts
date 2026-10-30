@@ -14,6 +14,7 @@ import {
   loopSegments,
   loopSystems,
   moveLoopHandleTo,
+  effectiveLoopRestart,
   routeEndBarline,
   routeStartBarline,
   routeStructuralPosition,
@@ -238,6 +239,12 @@ const parsed = parseRealtimeMusicXml(score(`
   <measure number="3">${quarters("c", ["G", "A"])}</measure>
   <measure number="4">${quarters("d", ["B", "C"])}</measure>
 `));
+
+test("a loop counts in to each pass only while the count-in is on, keeping the choice", () => {
+  assert.equal(effectiveLoopRestart("count-in", true), "count-in");
+  assert.equal(effectiveLoopRestart("count-in", false), "immediately");
+  assert.equal(effectiveLoopRestart("immediately", true), "immediately");
+});
 
 test("a loop's route plays from its start up to its end barline, once", () => {
   const route = expandPerformanceRoute(parsed, { startMeasureIndex: 1, endMeasureIndex: 3 });

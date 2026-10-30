@@ -413,6 +413,18 @@ test("counting in to a loop, no earlier pass lies behind the hit line", () => {
   assert.equal(countingIn.lines.times[0], 0, "the loop's start line is the first");
 });
 
+test("a loop that counts in to each pass comes round again after the count-in", () => {
+  const track = highwayTrackForRoute(route([note("a", "C4", 0, 1), note("b", "D4", 1, 2)]));
+  const looped = highwayTrackLooped(track, { start: 0, end: 1, gap: 0.5 }, 3);
+  assert.notEqual(looped, highwayTrackLooped(track, { start: 0, end: 1 }, 3), "cached by the gap too");
+  const starts = Array.from(looped.notes.starts).filter((start) => start >= 0 && start < 4);
+  assert.deepEqual(starts, [0, 0.5, 1.5, 2, 3, 3.5]);
+  const lines = Array.from(looped.lines.times, (time, index) => [time, looped.lines.instances[index * 2 + 1]])
+    .filter(([time, strength]) => time >= 0 && time <= 3 && strength >= 1);
+  assert.deepEqual(lines, [[0, 2], [1, 1], [1.5, 2], [2.5, 1], [3, 2]],
+    "a bar line where each pass ends, the loop line where the next begins");
+});
+
 test("the other hand's ghosts never lie over the practised hand's notes", () => {
   const notes = highwayTrackForRoute(route([
     { ...note("rh", "C5", 0, 4), left: false },

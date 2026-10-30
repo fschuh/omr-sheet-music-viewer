@@ -1990,8 +1990,11 @@ export interface AudibleHands {
 export interface RealtimeControllerCallbacks {
   onFrame(frame: Omit<RealtimeFrame, "playhead">): void;
   onComplete(): void;
-  /** A looping route played to its end and started over. */
-  onLoop?(): void;
+  /**
+   * A looping route played to its end and started over, after a count-in of `leadIn`
+   * quarters when the loop counts in to each pass; see setLoopCountIn.
+   */
+  onLoop?(leadIn: number): void;
 }
 
 export class RealtimeController {
@@ -2004,6 +2007,7 @@ export class RealtimeController {
   private muted = false;
   private audibleHands: AudibleHands = { left: true, right: true };
   private looping = false;
+  private loopCountInSeconds = 0;
   private timer: unknown = null;
   private soundingNotes = new Map<string, string>();
   private activeTimelineNotes = new Map<string, PerformanceNote>();
@@ -2072,26 +2076,28 @@ export class RealtimeController {
 
   /**
    * Starts a looping route over from where its end was reached, so the time spent past
-   * the end is not lost and every pass lasts as long as the first.
+   * the end is not lost and every pass lasts as long as the first: from its count-in,
+   * when it counts in to each pass.
    */
   private wrap(route: PerformanceRoute): void {
     const passSeconds = (
       scoreOffsetToSeconds(route, route.totalQuarters, 1) -
       scoreOffsetToSeconds(route, this.anchorOffset, 1)
     ) / this.tempoMultiplier;
+    const leadIn = this.loopLeadIn();
     this.anchorTime += passSeconds;
-    this.anchorOffset = 0;
+    this.anchorOffset = -leadIn;
     this.offset = this.currentOffset();
     if (this.offset >= route.totalQuarters) {
       // Further behind than a whole pass: start the pass now rather than skip it.
       this.anchorTime = this.clock.now();
-      this.offset = 0;
+      this.offset = -leadIn;
     }
     const sounding = Array.from(new Set(this.soundingNotes.values()));
     this.soundingNotes.clear();
     if (sounding.length > 0) this.sink.release(sounding);
     this.resetActiveNotes(this.offset);
-    this.callbacks.onLoop?.();
+    this.callbacks.onLoop?.(leadIn);
   }
 
   private publish(): void {
@@ -2214,6 +2220,21 @@ export class RealtimeController {
   /** A looping route starts over when it reaches its end instead of completing. */
   setLooping(looping: boolean): void {
     this.looping = looping;
+  }
+
+  /**
+   * Counts in for about `seconds` before each pass a loop starts over with, as
+   * realtimeLeadIn counts; 0 starts the next pass at once.
+   */
+  setLoopCountIn(seconds: number): void {
+    this.loopCountInSeconds = Math.max(0, seconds);
+  }
+
+  /** Quarters the next pass of the loop counts in, at the tempo playing now. */
+  loopLeadIn(): number {
+    return this.route && this.looping
+      ? realtimeLeadIn(this.route, 0, this.loopCountInSeconds, this.tempoMultiplier)
+      : 0;
   }
 
   stop(): void {

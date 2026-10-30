@@ -35,8 +35,14 @@ import {
   loopSegments,
   loopSystems,
   moveLoopHandleTo,
+  DEFAULT_LOOP_RESTART,
+  effectiveLoopRestart,
+  LOOP_COUNT_IN_OFF_HINT,
+  LOOP_RESTART_LABELS,
+  LOOP_RESTARTS,
   type LoopHandle,
   type LoopRegion,
+  type LoopRestart,
   type ScreenLoopSystem,
 } from "./loop";
 import { LOOP_HANDLE_REACH, LoopPageLayer, LoopPageTint, type LoopHandleEvents } from "./LoopOverlay";
@@ -215,6 +221,11 @@ interface DocumentViewerProps {
   loopPlaying?: boolean;
   /** Dim the bars outside the loop. */
   loopDimOutside?: boolean;
+  /** What realtime does at a loop's end; chosen on the Loop button's menu, shown with onLoopRestartChange. */
+  loopRestart?: LoopRestart;
+  onLoopRestartChange?: (restart: LoopRestart) => void;
+  /** The count-in is on, so a loop can count in to each pass; see effectiveLoopRestart. */
+  loopCountInAvailable?: boolean;
   onLoopToggle?: () => void;
   /** A handle was moved to another barline, by dragging or with the arrow keys. */
   onLoopChange?: (region: LoopRegion) => void;
@@ -907,6 +918,9 @@ export function DocumentViewer({
   loopPass = 1,
   loopPlaying = false,
   loopDimOutside = true,
+  loopRestart = DEFAULT_LOOP_RESTART,
+  onLoopRestartChange,
+  loopCountInAvailable = true,
   onLoopToggle,
   onLoopChange,
   onLoopDragChange,
@@ -944,8 +958,10 @@ export function DocumentViewer({
   const [isPointerPanning, setIsPointerPanning] = useState(false);
   const [tempoPopoverOpen, setTempoPopoverOpen] = useState(false);
   const [handSoundMenuOpen, setHandSoundMenuOpen] = useState(false);
+  const [loopMenuOpen, setLoopMenuOpen] = useState(false);
   const tempoControlRef = useRef<HTMLDivElement | null>(null);
   const handSoundControlRef = useRef<HTMLDivElement | null>(null);
+  const loopControlRef = useRef<HTMLDivElement | null>(null);
   const realtimeUnavailableTooltipId = useId();
   const tempoPercentage = Math.round(tempoMultiplier * 100);
   const [tempoPercentageText, setTempoPercentageText] = useState(String(tempoPercentage));
@@ -1342,6 +1358,20 @@ export function DocumentViewer({
 
   useCloseOnPressOutside(tempoPopoverOpen, tempoControlRef, () => setTempoPopoverOpen(false));
   useCloseOnPressOutside(handSoundMenuOpen, handSoundControlRef, () => setHandSoundMenuOpen(false));
+  useCloseOnPressOutside(loopMenuOpen, loopControlRef, () => setLoopMenuOpen(false));
+
+  useEffect(() => {
+    if (!loopMenuOpen) return;
+    function closeLoopMenu(event: KeyboardEvent) {
+      if (event.code !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      setLoopMenuOpen(false);
+    }
+    window.addEventListener("keydown", closeLoopMenu, true);
+    return () => window.removeEventListener("keydown", closeLoopMenu, true);
+  }, [loopMenuOpen]);
 
   useEffect(() => {
     if (playbackMode !== "realtime") setTempoPopoverOpen(false);
@@ -1898,22 +1928,62 @@ export function DocumentViewer({
             >■</button>
           ) : null}
           {onLoopToggle ? (
-            <button
-              type="button"
-              className={`loop-toggle${loopMode ? " active" : ""}${loopMode && loopPlaying ? " looping" : ""}`}
-              aria-label={loopMode ? "Turn loop mode off" : "Turn loop mode on"}
-              aria-pressed={loopMode}
-              title={loopMode
-                ? "Stop looping (L)"
-                : "Loop the bar being played; drag the handles to loop more (L)"}
-              disabled={!effectivelyActive && !loopMode}
-              onClick={onLoopToggle}
-            >
-              <LoopIcon />
-              <span className="loop-toggle-label">
-                {loopMode && loopPlaying ? `Pass ${loopPass}` : "Loop"}
-              </span>
-            </button>
+            <div ref={loopControlRef} className="loop-control">
+              <button
+                type="button"
+                className={`loop-toggle${loopMode ? " active" : ""}${loopMode && loopPlaying ? " looping" : ""}`}
+                aria-label={loopMode ? "Turn loop mode off" : "Turn loop mode on"}
+                aria-pressed={loopMode}
+                title={loopMode
+                  ? "Stop looping (L)"
+                  : "Loop the bar being played; drag the handles to loop more (L)"}
+                disabled={!effectivelyActive && !loopMode}
+                onClick={onLoopToggle}
+              >
+                <LoopIcon />
+                <span className="loop-toggle-label">
+                  {loopMode && loopPlaying ? `Pass ${loopPass}` : "Loop"}
+                </span>
+              </button>
+              {onLoopRestartChange ? (
+                <button
+                  type="button"
+                  className="loop-menu-button"
+                  aria-label="Loop options"
+                  aria-expanded={loopMenuOpen}
+                  aria-haspopup="dialog"
+                  title="Choose what happens at the loop's end"
+                  onClick={() => setLoopMenuOpen((open) => !open)}
+                >▾</button>
+              ) : null}
+              {loopMenuOpen && onLoopRestartChange ? (
+                <div className="loop-popover" role="dialog" aria-label="At the loop's end">
+                  {LOOP_RESTARTS.map((restart) => {
+                    const unavailable = restart === "count-in" && !loopCountInAvailable;
+                    return (
+                      <label
+                        key={restart}
+                        className={`checkbox-row${unavailable ? " disabled" : ""}`}
+                        title={unavailable ? LOOP_COUNT_IN_OFF_HINT : undefined}
+                      >
+                        <input
+                          type="radio"
+                          name="loop-restart"
+                          value={restart}
+                          checked={effectiveLoopRestart(loopRestart, loopCountInAvailable) === restart}
+                          disabled={unavailable}
+                          onChange={() => onLoopRestartChange(restart)}
+                        />
+                        {LOOP_RESTART_LABELS[restart]}
+                      </label>
+                    );
+                  })}
+                  {playbackMode === "realtime" ? null : (
+                    <p className="loop-popover-note">Applies to Realtime playback.</p>
+                  )}
+                </div>
+              ) : null}
+            </div>
           ) : null}
           <div ref={handSoundControlRef} className="hand-sound-control">
             <button

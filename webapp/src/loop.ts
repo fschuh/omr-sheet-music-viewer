@@ -17,6 +17,26 @@ export interface LoopRegion {
 
 export type LoopHandle = "start" | "end";
 
+/** What realtime does at a loop's end: start the next pass at once, or count in to it. */
+export const LOOP_RESTARTS = ["immediately", "count-in"] as const;
+export type LoopRestart = (typeof LOOP_RESTARTS)[number];
+export const DEFAULT_LOOP_RESTART: LoopRestart = "immediately";
+export const LOOP_RESTART_LABELS: Readonly<Record<LoopRestart, string>> = {
+  immediately: "Loop immediately",
+  "count-in": "Count in before looping",
+};
+/** Why counting in before looping cannot be chosen while the count-in is off. */
+export const LOOP_COUNT_IN_OFF_HINT =
+  "The count-in is off. Choose a count-in under Settings, Playback to count in before looping.";
+
+/**
+ * What a loop does at its end: counting in takes the count-in's length, so with the
+ * count-in off it loops immediately, keeping the choice for when it is back on.
+ */
+export function effectiveLoopRestart(restart: LoopRestart, countInOn: boolean): LoopRestart {
+  return countInOn ? restart : "immediately";
+}
+
 /** A system of the score, where the loop overlay is drawn. Coordinates are page pixels. */
 export interface LoopSystem {
   pageIndex: number;

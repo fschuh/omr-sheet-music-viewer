@@ -77,6 +77,7 @@ import {
   loadLastScorePath,
   loadListenInputSource,
   loadLoopDimOutside,
+  loadLoopRestart,
   loadNoteHighwayEnabled,
   loadPlaybackPiano,
   loadRealtimeCountIn,
@@ -89,6 +90,7 @@ import {
   saveLastScorePath,
   saveListenInputSource,
   saveLoopDimOutside,
+  saveLoopRestart,
   saveNoteHighwayEnabled,
   savePlaybackPiano,
   saveRealtimeCountIn,
@@ -111,6 +113,7 @@ import {
   routeStartBarline,
   routeStructuralPosition,
   type LoopRegion,
+  type LoopRestart,
 } from "./loop";
 import {
   diagnosticsAvailable,
@@ -362,6 +365,11 @@ export function App() {
   const [listenInputSource, setListenInputSource] = useState(loadListenInputSource);
   const [loopDimOutside, setLoopDimOutside] = useState(loadLoopDimOutside);
   const [realtimeCountIn, setRealtimeCountIn] = useState(loadRealtimeCountIn);
+  const [loopRestart, setLoopRestart] = useState(loadLoopRestart);
+  const changeLoopRestart = useCallback((restart: LoopRestart) => {
+    setLoopRestart(restart);
+    saveLoopRestart(restart);
+  }, []);
   const [keyboardView, setKeyboardView] = useState<KeyboardViewSettings>(loadKeyboardViewSettings);
   const changeKeyboardView = useCallback((next: KeyboardViewSettings) => {
     setKeyboardView(next);
@@ -617,8 +625,8 @@ export function App() {
             setRealtimeFrame(frame);
           }
         },
-        onLoop: () => {
-          realtimeLeadInRef.current = 0;
+        onLoop: (leadIn) => {
+          realtimeLeadInRef.current = leadIn;
           setLoopPass((pass) => pass + 1);
         },
         onComplete: () => {
@@ -648,6 +656,14 @@ export function App() {
     [],
   );
   const getRealtimeRouteLoops = useCallback(() => realtimeRouteLoopsRef.current, []);
+  const getRealtimeLoopLeadIn = useCallback(() => realtimeControllerRef.current?.loopLeadIn() ?? 0, []);
+  // A loop that counts in to each pass takes the count-in's length; with it off, it
+  // loops immediately.
+  useEffect(() => {
+    realtimeControllerRef.current?.setLoopCountIn(
+      loopRestart === "count-in" ? REALTIME_COUNT_IN_SECONDS[realtimeCountIn] : 0,
+    );
+  }, [loopRestart, realtimeCountIn]);
   const realtimeHighwayFrame = useRealtimeHighwaySource(
     getRealtimeRoute,
     getRealtimeOffset,
@@ -657,6 +673,7 @@ export function App() {
     document?.predictedFingerings,
     keyboardView.timeScale === "fixed-tempo" ? realtimeOpeningBpm : null,
     keyboardView.timeZoom,
+    getRealtimeLoopLeadIn,
   );
   // The keys the keyboard and highway show, from every note of the score, so the
   // range holds still for the whole piece.
@@ -2467,6 +2484,8 @@ export function App() {
           playbackPiano={playbackPiano}
           listenInputSource={listenInputSource}
           loopDimOutside={loopDimOutside}
+          loopRestart={loopRestart}
+          onChangeLoopRestart={changeLoopRestart}
           debugPanelEnabled={debugPanelEnabled}
           sharedNoteheadTimingRepair={sharedNoteheadTimingRepair}
           timeSignatureRepair={timeSignatureRepair}
@@ -2620,6 +2639,9 @@ export function App() {
                 ? realtimeStatus !== "inactive" && realtimeRouteLoopsRef.current
                 : noteByNoteInLoop(notePlaybackMoment, loop)}
               loopDimOutside={loopDimOutside}
+              loopRestart={loopRestart}
+              onLoopRestartChange={changeLoopRestart}
+              loopCountInAvailable={realtimeCountIn !== "none"}
               onLoopToggle={() => handlePlaybackCommand("toggleLoopMode")}
               onLoopChange={changeLoopRegion}
               onLoopDragChange={setLoopDragging}

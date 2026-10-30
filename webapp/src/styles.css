@@ -1143,6 +1143,55 @@ button:disabled {
   color: #2b1a04;
 }
 
+/* The loop button and its menu read as one split button, like the sound toggle's. */
+.loop-control {
+  display: flex;
+  margin: 0 4px 0 2px;
+  position: relative;
+}
+
+.viewer-toolbar .playback-controls .loop-control .loop-toggle {
+  margin: 0;
+}
+
+.viewer-toolbar .playback-controls .loop-control .loop-toggle:has(+ .loop-menu-button) {
+  border-bottom-right-radius: 0;
+  border-top-right-radius: 0;
+}
+
+.viewer-toolbar .playback-controls .loop-menu-button {
+  border-bottom-left-radius: 0;
+  border-left: 0;
+  border-top-left-radius: 0;
+  color: #635c53;
+  font-size: 0.7rem;
+  width: 18px;
+}
+
+.loop-popover {
+  background: #fff;
+  border: 1px solid #c8c1b7;
+  border-radius: 9px;
+  box-shadow: 0 8px 28px rgb(31 27 23 / 24%);
+  color: #39342e;
+  left: 0;
+  padding: 12px 12px 4px;
+  position: absolute;
+  top: 36px;
+  width: 220px;
+  z-index: 20;
+}
+
+.loop-popover .checkbox-row input { accent-color: var(--loop); }
+
+.loop-popover .checkbox-row.disabled { color: #9a948c; cursor: help; }
+
+.viewer-toolbar .loop-popover .loop-popover-note {
+  color: #746d64;
+  font-size: 0.75rem;
+  margin: -4px 0 10px 24px;
+}
+
 .viewer-toolbar .playback-controls .listen-toggle {
   filter: grayscale(1);
   font-size: 0.86rem;

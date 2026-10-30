@@ -20,6 +20,14 @@ import {
 import { playbackCommandNames, type PlaybackCommand } from "./playback";
 import { PIANO_IDS, PIANO_REGISTRY, type PianoId } from "./pianoRegistry";
 import {
+  DEFAULT_LOOP_RESTART,
+  effectiveLoopRestart,
+  LOOP_COUNT_IN_OFF_HINT,
+  LOOP_RESTART_LABELS,
+  LOOP_RESTARTS,
+  type LoopRestart,
+} from "./loop";
+import {
   DEFAULT_REALTIME_COUNT_IN,
   REALTIME_COUNT_IN_SECONDS,
   REALTIME_COUNT_INS,
@@ -164,6 +172,8 @@ interface SettingsPageProps {
   listenInputSource: ListenInputSource;
   /** Whether loop mode dims the bars outside the loop. */
   loopDimOutside?: boolean;
+  /** What realtime does at a loop's end. */
+  loopRestart?: LoopRestart;
   /** How long realtime counts in before the first note of the score or loop. */
   realtimeCountIn?: RealtimeCountIn;
   keyboardView?: KeyboardViewSettings;
@@ -181,6 +191,7 @@ interface SettingsPageProps {
   onChangePlaybackPiano: (pianoId: PianoId) => void;
   onChangeListenInputSource: (inputSource: ListenInputSource) => void;
   onChangeLoopDimOutside?: (enabled: boolean) => void;
+  onChangeLoopRestart?: (restart: LoopRestart) => void;
   onChangeRealtimeCountIn?: (countIn: RealtimeCountIn) => void;
   onChangeKeyboardView?: (settings: KeyboardViewSettings) => void;
   onChangeDebugPanelEnabled: (enabled: boolean) => void;
@@ -200,6 +211,7 @@ export function SettingsPage({
   playbackPiano,
   listenInputSource,
   loopDimOutside = true,
+  loopRestart = DEFAULT_LOOP_RESTART,
   realtimeCountIn = DEFAULT_REALTIME_COUNT_IN,
   keyboardView = DEFAULT_KEYBOARD_VIEW_SETTINGS,
   debugPanelEnabled,
@@ -216,6 +228,7 @@ export function SettingsPage({
   onChangePlaybackPiano,
   onChangeListenInputSource,
   onChangeLoopDimOutside,
+  onChangeLoopRestart,
   onChangeRealtimeCountIn,
   onChangeKeyboardView,
   onChangeDebugPanelEnabled,
@@ -430,6 +443,37 @@ export function SettingsPage({
                   {REALTIME_COUNT_INS.map((countIn) => (
                     <option key={countIn} value={countIn}>{COUNT_IN_LABELS[countIn]}</option>
                   ))}
+                </select>
+              </label>
+            ) : null}
+            {onChangeLoopRestart ? (
+              <label className="settings-select-row">
+                <span>
+                  <strong>At the loop&apos;s end</strong>
+                  <small>
+                    Realtime starts the next pass at once, or counts in to it first, for as long as
+                    the count-in above; while that is off, it loops immediately. Also on the loop
+                    button&apos;s menu.
+                  </small>
+                </span>
+                <select
+                  aria-label="At the loop's end"
+                  value={effectiveLoopRestart(loopRestart, realtimeCountIn !== "none")}
+                  onChange={(event) => onChangeLoopRestart(event.target.value as LoopRestart)}
+                >
+                  {LOOP_RESTARTS.map((restart) => {
+                    const unavailable = restart === "count-in" && realtimeCountIn === "none";
+                    return (
+                      <option
+                        key={restart}
+                        value={restart}
+                        disabled={unavailable}
+                        title={unavailable ? LOOP_COUNT_IN_OFF_HINT : undefined}
+                      >
+                        {LOOP_RESTART_LABELS[restart] + (restart === DEFAULT_LOOP_RESTART ? " (default)" : "")}
+                      </option>
+                    );
+                  })}
                 </select>
               </label>
             ) : null}

@@ -893,6 +893,50 @@ test("a lead-in counts in at the opening tempo before the first note, and a loop
   assert.ok(offsets.every((offset) => offset >= -1.5));
 });
 
+test("a loop that counts in to each pass waits through the count-in at its end", () => {
+  let now = 0;
+  let tick: (() => void) | null = null;
+  const attacks: string[][] = [];
+  const leadIns: number[] = [];
+  const route: PerformanceRoute = {
+    occurrences: [],
+    notes: [
+      { id: "c", musicXmlId: "c", pitch: "C4", dynamic: "mp", onset: 0, release: 1, visual: null },
+      { id: "d", musicXmlId: "d", pitch: "D4", dynamic: "mp", onset: 1, release: 2, visual: null },
+    ],
+    events: [],
+    tempoSegments: [{ offset: 0, bpm: 60 }],
+    totalQuarters: 2,
+  };
+  const controller = new RealtimeController(
+    { attack: (pitches) => attacks.push([...pitches]), release: () => undefined, stop: () => undefined },
+    { onFrame: () => undefined, onComplete: () => undefined, onLoop: (leadIn) => leadIns.push(leadIn) },
+    {
+      now: () => now,
+      setInterval: (callback) => { tick = callback; return 1; },
+      clearInterval: () => { tick = null; },
+    },
+  );
+  controller.setLooping(true);
+  controller.setLoopCountIn(2);
+  controller.play(route);
+  // Two seconds at a second a beat: two beats.
+  assert.equal(controller.loopLeadIn(), 2);
+  assert.deepEqual(attacks, [["C4"]]);
+  now = 2.25;
+  (tick as (() => void) | null)?.();
+  assert.deepEqual(leadIns, [2]);
+  assert.ok(Math.abs(controller.getOffset() - -1.75) < 1e-9, "counting in to the next pass");
+  now = 3.9;
+  (tick as (() => void) | null)?.();
+  assert.deepEqual(attacks, [["C4"]], "nothing sounds while counting in");
+  now = 4.1;
+  (tick as (() => void) | null)?.();
+  assert.deepEqual(attacks.at(-1), ["C4"]);
+  controller.setLoopCountIn(0);
+  assert.equal(controller.loopLeadIn(), 0, "looping immediately");
+});
+
 test("counts in beats of the time signature: dotted quarters in compound metre", () => {
   const time = (beats: string, beatType: number) =>
     `<attributes><divisions>4</divisions><time><beats>${beats}</beats><beat-type>${beatType}</beat-type></time></attributes>`;
