@@ -80,3 +80,21 @@ test("highlighted notes and their chord take the selection or playback colour", 
   assert.match(playing, /class="mx-note mx-playback" data-notehead="P1-m1-s1-v1-t0-C5"/);
   assert.doesNotMatch(renderToStaticMarkup(<MusicXmlPageSurface page={page} />), /class="[^"]*mx-(selected|playback)/);
 });
+
+test("highlighted notes and their chord are drawn last, in front of what touches them", () => {
+  const neighbour = { ...page.chords[0], id: "P1-m1-s1-v1-t1", momentId: "m1-t1", notes: page.chords[0].notes.map((note) => ({
+    ...note,
+    key: note.key.replace("-t0-", "-t1-"),
+  })) };
+  const twoChords = { ...page, chords: [page.chords[0], neighbour] };
+  const order = (markup: string, pattern: RegExp) => Array.from(markup.matchAll(pattern), (match) => match[1]);
+  const plain = renderToStaticMarkup(<MusicXmlPageSurface page={twoChords} />);
+  assert.deepEqual(order(plain, /data-chord="([^"]+)"/g), ["P1-m1-s1-v1-t0", "P1-m1-s1-v1-t1"]);
+  const selected = renderToStaticMarkup(
+    <MusicXmlPageSurface page={twoChords} highlighted={new Set(["P1-m1-s1-v1-t0-C5"])} />,
+  );
+  assert.deepEqual(order(selected, /data-chord="([^"]+)"/g), ["P1-m1-s1-v1-t1", "P1-m1-s1-v1-t0"],
+    "the selected chord over the one after it");
+  assert.deepEqual(order(selected, /data-notehead="(P1-m1-s1-v1-t0-[^"]+)"/g), ["P1-m1-s1-v1-t0-E5", "P1-m1-s1-v1-t0-C5"],
+    "and the selected note over its chord's others");
+});

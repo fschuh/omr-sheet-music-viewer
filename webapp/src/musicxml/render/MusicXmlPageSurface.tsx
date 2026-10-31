@@ -82,10 +82,14 @@ const Chord = memo(function Chord({
   kind: HighlightKind;
 }) {
   const keys = new Set(highlighted ? highlighted.split(" ") : []);
+  // Highlighted notes come last, in front of the chord's others where they touch.
+  const notes = keys.size === 0
+    ? chord.notes
+    : [...chord.notes.filter((note) => !keys.has(note.key)), ...chord.notes.filter((note) => keys.has(note.key))];
   return (
     <g className={`mx-chord${keys.size ? ` mx-${kind}` : ""}`} data-chord={chord.id}>
       {chord.items.map((item, index) => draw(item, staffSpace, index))}
-      {chord.notes.map((note) => (
+      {notes.map((note) => (
         <g key={note.key} className={`mx-note${keys.has(note.key) ? ` mx-${kind}` : ""}`} data-notehead={note.key}>
           {note.items.map((item, index) => draw(item, staffSpace, index))}
         </g>
@@ -97,7 +101,7 @@ const Chord = memo(function Chord({
 /**
  * One engraved page as SVG, in page pixels like a PDF page's image. Highlighted noteheads
  * are drawn in the highlight colour together with their accidentals and dots, and their
- * chord's stem and flag.
+ * chord's stem and flag, and in front of any chord that touches them.
  */
 export const MusicXmlPageSurface = memo(function MusicXmlPageSurface({
   page,
@@ -109,6 +113,11 @@ export const MusicXmlPageSurface = memo(function MusicXmlPageSurface({
   highlighted?: ReadonlySet<string>;
   highlightKind?: HighlightKind;
 }) {
+  const isHighlighted = (chord: LayoutChord) => chord.notes.some((note) => highlighted.has(note.key));
+  // SVG paints in order: highlighted chords last, over neighbours that touch them.
+  const chords = highlighted.size === 0
+    ? page.chords
+    : [...page.chords.filter((chord) => !isHighlighted(chord)), ...page.chords.filter(isHighlighted)];
   return (
     <svg
       className="musicxml-page"
@@ -120,7 +129,7 @@ export const MusicXmlPageSurface = memo(function MusicXmlPageSurface({
       <style>{PAGE_STYLE}</style>
       <rect width={page.width} height={page.height} fill="#fff" />
       <g className="mx-static">{page.items.map((item, index) => draw(item, page.staffSpace, index))}</g>
-      {page.chords.map((chord) => (
+      {chords.map((chord) => (
         <Chord
           key={chord.id}
           chord={chord}
