@@ -153,23 +153,16 @@ export function playbackGroupIdsForPage(
   return moment?.pageIndex === pageIndex ? moment.visualGroupIds : NO_PLAYBACK_GROUPS;
 }
 
-export function playbackGroupIdsByPageForAnchors(
-  timeline: PlaybackMoment[],
-  anchors: readonly VisualGroupRef[],
-): Record<number, string[]> {
+/**
+ * The noteheads of `groups` by page, for realtime to highlight: only the notes sounding,
+ * so a note that has ended goes out even while others that started with it are held.
+ */
+export function visualGroupIdsByPage(groups: readonly VisualGroupRef[]): Record<number, string[]> {
   const result: Record<number, string[]> = {};
-  for (const anchor of anchors) {
-    const moment = timeline.find(
-      (candidate) =>
-        candidate.pageIndex === anchor.pageIndex &&
-        candidate.visualGroupIds.includes(anchor.visualGroupId),
-    );
-    const ids = moment?.visualGroupIds ?? [anchor.visualGroupId];
-    const pageIds = result[anchor.pageIndex] ?? [];
-    for (const id of ids) {
-      if (!pageIds.includes(id)) pageIds.push(id);
-    }
-    result[anchor.pageIndex] = pageIds;
+  for (const group of groups) {
+    const pageIds = result[group.pageIndex] ?? [];
+    if (!pageIds.includes(group.visualGroupId)) pageIds.push(group.visualGroupId);
+    result[group.pageIndex] = pageIds;
   }
   return result;
 }

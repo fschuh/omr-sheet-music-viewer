@@ -15,11 +15,11 @@ import {
   isLoopBoundaryCommand,
   noteInPracticeHand,
   playbackCommandNames,
-  playbackGroupIdsByPageForAnchors,
   runPlaybackCommand as applyPlaybackCommand,
   seekPracticePlaybackToGroup,
   snapMomentToTimeline,
   timelineForPracticeHand,
+  visualGroupIdsByPage,
   type PlaybackCommand,
   type PlaybackState,
   type PracticeHand,
@@ -567,7 +567,7 @@ export function App() {
       });
   }, [document?.predictedFingerings, practiceHand, realtimeFrame]);
   const realtimeGroupIdsByPage = useMemo(() => {
-    const anchors = (realtimeFrame?.activeNotes ?? []).flatMap((note) =>
+    const sounding = (realtimeFrame?.activeNotes ?? []).flatMap((note) =>
       note.visual && noteInPracticeHand(note.left, practiceHand)
         ? [{
             pageIndex: note.visual.pageIndex,
@@ -575,8 +575,8 @@ export function App() {
           }]
         : [],
     );
-    return playbackGroupIdsByPageForAnchors(playbackTimeline, anchors);
-  }, [playbackTimeline, practiceHand, realtimeFrame]);
+    return visualGroupIdsByPage(sounding);
+  }, [practiceHand, realtimeFrame]);
   const realtimeMoment = useMemo(() => {
     if (!realtimeFrame || !realtimeRouteRef.current) return null;
     const route = realtimeRouteRef.current;
