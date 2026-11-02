@@ -155,6 +155,8 @@ export interface PerformanceNote {
   fingeringMusicXmlId?: string | null;
   /** Left-hand note (see RealtimeScoreNote.left); absent when the hand is unknown. */
   left?: boolean;
+  /** Marks a grace note among PerformanceRoute.attacks; absent elsewhere. */
+  grace?: true;
 }
 
 export interface PerformanceOccurrence {
@@ -186,6 +188,13 @@ export interface PerformanceRoute {
   occurrences: PerformanceOccurrence[];
   notes: PerformanceNote[];
   playheadNotes?: PerformanceNote[];
+  /**
+   * Every written note once, at its written pitch, when it is struck: grace notes,
+   * marked, in their own time before the note they lead to, each note of a rolled
+   * chord in its turn, and a trill, tremolo or mordent when its first note sounds.
+   * Ordered by onset.
+   */
+  attacks?: PerformanceNote[];
   events: PerformanceEvent[];
   tempoSegments: TempoSegment[];
   totalQuarters: number;
@@ -238,6 +247,8 @@ export interface RealtimeFrame {
   bpm: number;
   activeNotes: PerformanceNote[];
   playhead: RealtimePlayhead | null;
+  /** Playing, but held before notes the player has yet to play; see RealtimeController.setHold. */
+  waiting?: boolean;
 }
 
 function elements(parent: Element | Document, name?: string): Element[] {
@@ -1437,6 +1448,7 @@ export function expandPerformanceRoute(
       occurrences: [],
       notes: [],
       playheadNotes: [],
+      attacks: [],
       events: [],
       tempoSegments: [{ offset: 0, bpm: 120 }],
       totalQuarters: 0,
@@ -1622,6 +1634,12 @@ export function expandPerformanceRoute(
   placeGraceNotes(sounding);
   rollArpeggios(sounding, bpmAt);
   const performanceNotes = expandOrnamentNotes(sounding, options.visualMap);
+  const attacks = sounding
+    .map((note, index) => ({
+      ...performanceNote(note, note.onset, note.release, index, options.visualMap),
+      ...(note.grace ? { grace: true as const } : {}),
+    }))
+    .sort((left, right) => left.onset - right.onset || left.id.localeCompare(right.id));
   const eventsByOnset = new Map<number, PerformanceEvent>();
   for (const note of performanceNotes) {
     const event = eventsByOnset.get(note.onset);
@@ -1642,6 +1660,7 @@ export function expandPerformanceRoute(
     occurrences,
     notes: performanceNotes,
     playheadNotes,
+    attacks,
     events: performanceEvents,
     tempoSegments: sortedTempos,
     totalQuarters: scoreOffset,
@@ -1992,6 +2011,81 @@ export function realtimePlayheadAt(
   };
 }
 
+/** Notes realtime can wait for the player to play: those starting together at `onset`. */
+export interface RealtimeWaitPoint {
+  onset: number;
+  notes: PerformanceNote[];
+  /**
+   * Pitches the player may play around these notes without spoiling them: grace notes
+   * and the notes trills, tremolos and mordents repeat, from the point before to the
+   * point after. None is one of the notes waited for.
+   */
+  ignoredPitches: string[];
+}
+
+/**
+ * How far before its notes realtime holds while waiting for them, in quarters: close
+ * enough that the playhead stands on them, early enough that none has sounded.
+ */
+export const REALTIME_WAIT_LEAD_QUARTERS = 1e-3;
+
+/** A written note's occurrence on its route, shared by every note it sounds as. */
+function writtenNoteKey(note: PerformanceNote): string {
+  return note.id.slice(0, note.id.lastIndexOf(":"));
+}
+
+/**
+ * The attacks of `route` that `include` keeps, grouped by the time they are struck:
+ * what the player is waited for. Ornaments are not waited for: grace notes are left
+ * out, and a trill, tremolo or mordent is waited for once, at its written note. Each
+ * note of a rolled chord is waited for in turn; see PerformanceRoute.attacks.
+ */
+export function realtimeWaitPoints(
+  route: PerformanceRoute,
+  include: (note: PerformanceNote) => boolean = () => true,
+): RealtimeWaitPoint[] {
+  const attacks = (route.attacks ?? route.notes).filter((note) => include(note));
+  const points: RealtimeWaitPoint[] = [];
+  const waited = attacks
+    .filter((attack) => !attack.grace)
+    .sort((left, right) => left.onset - right.onset);
+  for (const note of waited) {
+    const last = points.at(-1);
+    if (last && note.onset - last.onset <= 1e-6) last.notes.push(note);
+    else points.push({ onset: note.onset, notes: [note], ignoredPitches: [] });
+  }
+  // What ornaments add: every note a grace note sounds as, and every note a trill,
+  // tremolo or mordent sounds as but the first at its written pitch.
+  const graces = new Set(attacks.filter((attack) => attack.grace).map(writtenNoteKey));
+  const writtenPitches = new Map(attacks.map((attack) => [writtenNoteKey(attack), attack.pitch]));
+  const struck = new Set<string>();
+  const ornamental: PerformanceNote[] = [];
+  for (const note of [...route.notes].sort((left, right) => left.onset - right.onset)) {
+    if (!include(note)) continue;
+    const key = writtenNoteKey(note);
+    if (graces.has(key) || note.pitch !== writtenPitches.get(key) || struck.has(key)) {
+      ornamental.push(note);
+    } else {
+      struck.add(key);
+    }
+  }
+  points.forEach((point, index) => {
+    const from = points[index - 1]?.onset ?? -Infinity;
+    const to = points[index + 1]?.onset ?? Infinity;
+    const pitches = new Set(point.notes.map((note) => note.pitch));
+    point.ignoredPitches = [...new Set(ornamental
+      .filter((note) => note.onset >= from - 1e-6 && note.onset <= to + 1e-6 && !pitches.has(note.pitch))
+      .map((note) => note.pitch))];
+  });
+  return points;
+}
+
+/** The first of `points` not yet behind `offset`: the next the player is waited for. */
+export function realtimeWaitPointIndex(points: readonly { onset: number }[], offset: number): number {
+  const index = points.findIndex((point) => point.onset >= offset - 1e-6);
+  return index < 0 ? points.length : index;
+}
+
 export interface RealtimeAudioSink {
   attack(pitches: readonly string[], dynamic: MusicalDynamic): void;
   release(pitches: readonly string[]): void;
@@ -2042,6 +2136,7 @@ export class RealtimeController {
   private activeTimelineNotes = new Map<string, PerformanceNote>();
   private noteCursor = 0;
   private evaluatedOffset = -1;
+  private holdOffset: number | null = null;
 
   constructor(
     private readonly sink: RealtimeAudioSink,
@@ -2057,12 +2152,18 @@ export class RealtimeController {
 
   private currentOffset(): number {
     if (!this.route || this.status !== "playing") return this.offset;
-    return scoreOffsetAfterSeconds(
+    const offset = scoreOffsetAfterSeconds(
       this.route,
       this.anchorOffset,
       Math.max(0, this.clock.now() - this.anchorTime),
       this.tempoMultiplier,
     );
+    return this.holdOffset !== null && offset > this.holdOffset ? this.holdOffset : offset;
+  }
+
+  /** Playing, but stopped at the hold. */
+  private held(): boolean {
+    return this.status === "playing" && this.holdOffset !== null && this.offset >= this.holdOffset - 1e-9;
   }
 
   private silence(): void {
@@ -2140,6 +2241,12 @@ export class RealtimeController {
     ) {
       this.wrap(this.route);
     }
+    const waiting = this.held();
+    if (waiting) {
+      // Time spent at the hold is not played: once released, the music goes on from it.
+      this.anchorOffset = this.offset;
+      this.anchorTime = this.clock.now();
+    }
     if (this.offset >= this.route.totalQuarters && this.status === "playing") {
       this.offset = this.route.totalQuarters;
       this.clearTimer();
@@ -2192,6 +2299,7 @@ export class RealtimeController {
       offset: this.offset,
       bpm: tempoAt(this.route, this.offset) * this.tempoMultiplier,
       activeNotes,
+      waiting,
     });
   }
 
@@ -2199,6 +2307,7 @@ export class RealtimeController {
   play(route: PerformanceRoute, offset = 0, leadIn = 0): void {
     this.clearTimer();
     this.silence();
+    this.holdOffset = null;
     this.route = route;
     this.status = "playing";
     this.offset = Math.min(route.totalQuarters, Math.max(0, offset)) - Math.max(0, leadIn);
@@ -2237,6 +2346,7 @@ export class RealtimeController {
     }
     this.clearTimer();
     this.silence();
+    this.holdOffset = null;
     this.route = route;
     this.status = "paused";
     this.offset = Math.min(route.totalQuarters, Math.max(0, offset)) - Math.max(0, leadIn);
@@ -2244,6 +2354,22 @@ export class RealtimeController {
     this.anchorTime = this.clock.now();
     this.resetActiveNotes(this.offset);
     this.publish();
+  }
+
+  /**
+   * Holds playback at `offset` until the hold moves on or is cleared with null, as if
+   * paused there, but still playing: the notes already sounding ring on, and once
+   * released the music continues from the hold. Starting, seeking and stopping clear
+   * it. It takes effect from the next frame, so it is safe to set from a callback.
+   */
+  setHold(offset: number | null): void {
+    if (offset === this.holdOffset) return;
+    if (this.route && this.status === "playing") {
+      const current = this.currentOffset();
+      this.anchorOffset = current;
+      this.anchorTime = this.clock.now();
+    }
+    this.holdOffset = offset;
   }
 
   /** A looping route starts over when it reaches its end instead of completing. */
@@ -2268,6 +2394,7 @@ export class RealtimeController {
 
   stop(): void {
     this.clearTimer();
+    this.holdOffset = null;
     this.status = "inactive";
     this.offset = 0;
     this.route = null;

@@ -211,6 +211,10 @@ interface DocumentViewerProps {
   /** The highway is on screen, so playback scrolling keeps the staff above it. */
   noteHighwayVisible?: boolean;
   listenFeedback: ListenModeFeedback;
+  /** Realtime waits at each note, while listening, until the player plays it. */
+  realtimeWaitEnabled?: boolean;
+  /** Realtime is held now, waiting for the player. */
+  realtimeWaiting?: boolean;
   /** Loop mode is on; the Loop button is hidden without onLoopToggle. */
   loopMode?: boolean;
   /** The loop drawn on the score, while loop mode is on during playback. */
@@ -913,6 +917,8 @@ export function DocumentViewer({
   noteHighwayEnabled = false,
   noteHighwayVisible = false,
   listenFeedback,
+  realtimeWaitEnabled = false,
+  realtimeWaiting = false,
   loopMode = false,
   loop = null,
   loopPass = 1,
@@ -1026,7 +1032,12 @@ export function DocumentViewer({
       const playing = listenFeedback.recognizedActivePitches
         .map(({ midi }) => midiToPitchName(midi))
         .join(" ");
-      return `${inputLabel} ready · ${playing ? `Playing ${playing}` : "Waiting for notes"}`;
+      const next = listenFeedback.targetPitches.map(midiToPitchName).join(" ");
+      return [
+        `${inputLabel} ready`,
+        next ? `Next ${next}` : "",
+        playing ? `Playing ${playing}` : "Waiting for notes",
+      ].filter(Boolean).join(" · ");
     }
     const target = listenFeedback.targetPitches.map(midiToPitchName).join(" ") || "no pitched notes";
     const heard = listenFeedback.detectedTargetPitches.map(midiToPitchName).join(" ");
@@ -2052,6 +2063,23 @@ export function DocumentViewer({
             disabled={!playbackActive}
             onClick={() => onPlaybackCommand("toggleListenMode")}
           >🎙</button>
+          {playbackMode === "realtime" ? (
+            <button
+              type="button"
+              className={`wait-toggle${realtimeWaitEnabled ? " active" : ""}${
+                realtimeWaiting ? " waiting" : ""
+              }`}
+              aria-label={realtimeWaitEnabled ? "Stop waiting for notes" : "Wait for notes"}
+              aria-pressed={realtimeWaitEnabled}
+              title={realtimeWaitEnabled
+                ? "Stop waiting for the notes you play (W)"
+                : listenActive
+                  ? "Wait at each note until you play it (W)"
+                  : "Turn on listen mode to wait for the notes you play"}
+              disabled={!listenActive}
+              onClick={() => onPlaybackCommand("toggleRealtimeWait")}
+            >⏳</button>
+          ) : null}
           <button
             type="button"
             className="audition-button"

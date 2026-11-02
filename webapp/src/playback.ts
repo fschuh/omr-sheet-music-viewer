@@ -14,6 +14,7 @@ export const playbackCommandNames = [
   "togglePlaybackMode",
   "toggleNoteSounds",
   "toggleListenMode",
+  "toggleRealtimeWait",
   "playCurrentNotes",
   "rewind",
   "forwardNote",
@@ -510,6 +511,7 @@ function commandDestination(
     | "togglePlaybackMode"
     | "toggleNoteSounds"
     | "toggleListenMode"
+    | "toggleRealtimeWait"
     | "playCurrentNotes"
     | "rewind"
     | "toggleLoopMode"
@@ -586,6 +588,7 @@ export function runPlaybackCommand(
     return state.active ? { ...state, listenModeEnabled: !state.listenModeEnabled } : state;
   }
   if (
+    command === "toggleRealtimeWait" ||
     command === "playCurrentNotes" ||
     command === "togglePlaybackMode" ||
     command === "toggleLoopMode" ||

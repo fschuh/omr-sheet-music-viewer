@@ -1206,6 +1206,33 @@ button:disabled {
   opacity: 1;
 }
 
+.viewer-toolbar .playback-controls .wait-toggle {
+  filter: grayscale(1);
+  font-size: 0.86rem;
+  opacity: 0.68;
+}
+
+.viewer-toolbar .playback-controls .wait-toggle.active {
+  background: #e5eef7;
+  border-color: #7597b6;
+  color: #174f7d;
+  filter: none;
+  opacity: 1;
+}
+
+.viewer-toolbar .playback-controls .wait-toggle.active:disabled {
+  opacity: 0.5;
+}
+
+.viewer-toolbar .playback-controls .wait-toggle.waiting {
+  animation: wait-toggle-pulse 1s ease-in-out infinite alternate;
+}
+
+@keyframes wait-toggle-pulse {
+  from { box-shadow: 0 0 0 0 rgba(117, 151, 182, 0); }
+  to { box-shadow: 0 0 0 3px rgba(117, 151, 182, 0.55); }
+}
+
 .viewer-toolbar .playback-controls .audition-button {
   color: #4c3a70;
   margin-right: 2px;

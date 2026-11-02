@@ -56,9 +56,9 @@ test("renders every playback command with its default keyboard key and empty MID
     />,
   );
 
-  assert.equal(markup.match(/aria-label="Keyboard shortcut for/g)?.length, 26);
-  assert.equal(markup.match(/aria-label="MIDI shortcut for/g)?.length, 26);
-  assert.equal(markup.match(/>Not assigned<\/button>/g)?.length, 26);
+  assert.equal(markup.match(/aria-label="Keyboard shortcut for/g)?.length, 27);
+  assert.equal(markup.match(/aria-label="MIDI shortcut for/g)?.length, 27);
+  assert.equal(markup.match(/>Not assigned<\/button>/g)?.length, 27);
   assert.match(markup, />Space<\/button>/);
   assert.match(markup, />M<\/button>/);
   assert.match(markup, />I<\/button>/);
@@ -135,7 +135,7 @@ test("disables MIDI assignment when initialization fails", () => {
 
   assert.match(markup, />MIDI unavailable</);
   assert.match(markup, /MIDI initialization timed out\./);
-  assert.equal(markup.match(/aria-label="MIDI shortcut for[^>]+disabled/g)?.length, 26);
+  assert.equal(markup.match(/aria-label="MIDI shortcut for[^>]+disabled/g)?.length, 27);
   assert.match(markup, /type="checkbox" checked=""/);
 });
 

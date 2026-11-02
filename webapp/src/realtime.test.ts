@@ -7,6 +7,9 @@ import {
   RealtimeController,
   realtimeLeadIn,
   realtimePlayheadAt,
+  realtimeWaitPointIndex,
+  realtimeWaitPoints,
+  REALTIME_WAIT_LEAD_QUARTERS,
   scoreOffsetAfterSeconds,
   scoreOffsetToSeconds,
   seekStructuralPosition,
@@ -1114,4 +1117,119 @@ test("mordents play two 32nd notes with the neighbour above or below, then the m
     ["C5@0-0.125", "B♭4@0.125-0.25", "C5@0.25-1"]);
   assert.deepEqual(sounding(score(`<measure number="1"><attributes><divisions>4</divisions></attributes>${ornament("mordent", "<accidental-mark>flat</accidental-mark>")}</measure>`)),
     ["C5@0-0.125", "B♭4@0.125-0.25", "C5@0.25-1"]);
+});
+
+test("wait points take written notes, rolled ones in turn, and leave ornaments to play freely", () => {
+  const parsed = parseRealtimeMusicXml(score(`
+    <measure number="1">
+      <attributes><divisions>4</divisions><staves>2</staves></attributes>
+      <note id="grace"><grace slash="yes"/><pitch><step>D</step><octave>5</octave></pitch><voice>1</voice><staff>1</staff><type>eighth</type></note>
+      <note id="c5"><pitch><step>C</step><octave>5</octave></pitch><duration>4</duration><voice>1</voice><staff>1</staff></note>
+      <note id="e5"><chord/><pitch><step>E</step><octave>5</octave></pitch><duration>4</duration><voice>1</voice><staff>1</staff></note>
+      <note id="tied-start"><pitch><step>G</step><octave>5</octave></pitch><duration>4</duration><tie type="start"/><voice>1</voice><staff>1</staff></note>
+      <note id="tied-stop"><pitch><step>G</step><octave>5</octave></pitch><duration>4</duration><tie type="stop"/><voice>1</voice><staff>1</staff></note>
+      <note id="a5"><pitch><step>A</step><octave>5</octave></pitch><duration>4</duration><voice>1</voice><staff>1</staff><notations><arpeggiate/></notations></note>
+      <note id="c6"><chord/><pitch><step>C</step><octave>6</octave></pitch><duration>4</duration><voice>1</voice><staff>1</staff><notations><arpeggiate/></notations></note>
+      <backup><duration>16</duration></backup>
+      <note id="c3"><pitch><step>C</step><octave>3</octave></pitch><duration>8</duration><voice>2</voice><staff>2</staff></note>
+      <note id="g3"><pitch><step>G</step><octave>3</octave></pitch><duration>8</duration><voice>2</voice><staff>2</staff>
+        <notations><ornaments><trill-mark beats="4" start-note="upper"/></ornaments></notations>
+      </note>
+    </measure>
+  `));
+  const route = expandPerformanceRoute(parsed);
+  // A rolled chord is played, and waited for, one note after another, from the bottom.
+  const rollStep = route.notes.find((note) => note.musicXmlId === "c6")!.onset - 3;
+  assert.ok(rollStep > 0);
+  const summary = (include?: (note: PerformanceNote) => boolean) =>
+    realtimeWaitPoints(route, include).map((point) => [
+      point.onset,
+      point.notes.map((note) => note.musicXmlId).sort(),
+      [...point.ignoredPitches].sort(),
+    ]);
+  // The acciaccatura sounds on the beat, putting off the chord it leads to, and may be
+  // played or not around both. The trill, from its upper note, is waited for at its
+  // written note, and its other notes may be played around it and what follows.
+  const principal = 1 / 16;
+  assert.deepEqual(summary(), [
+    [0, ["c3"], ["D5"]],
+    [principal, ["c5", "e5"], ["D5"]],
+    [1, ["tied-start"], ["A3"]],
+    [2, ["g3"], ["A3"]],
+    [3, ["a5"], ["A3"]],
+    [3 + rollStep, ["c6"], ["A3", "G3"]],
+  ]);
+  assert.deepEqual(summary((note) => note.left === false), [
+    [principal, ["c5", "e5"], ["D5"]],
+    [1, ["tied-start"], []],
+    [3, ["a5"], []],
+    [3 + rollStep, ["c6"], []],
+  ]);
+  const points = realtimeWaitPoints(route);
+  assert.equal(realtimeWaitPointIndex(points, -1), 0);
+  assert.equal(realtimeWaitPointIndex(points, 1), 2);
+  assert.equal(realtimeWaitPointIndex(points, 1.5), 3);
+  assert.equal(realtimeWaitPointIndex(points, 3.5), 6);
+});
+
+test("controller holds before notes until released, then plays on from the hold", () => {
+  let now = 0;
+  let tick: (() => void) | null = null;
+  const attacks: string[][] = [];
+  const frames: { offset: number; waiting?: boolean }[] = [];
+  const route: PerformanceRoute = {
+    occurrences: [],
+    notes: [
+      { id: "a", musicXmlId: "a", pitch: "C4", dynamic: "mp", onset: 0, release: 1, visual: null },
+      { id: "b", musicXmlId: "b", pitch: "D4", dynamic: "mp", onset: 1, release: 2, visual: null },
+    ],
+    events: [],
+    tempoSegments: [{ offset: 0, bpm: 60 }],
+    totalQuarters: 2,
+  };
+  let completed = false;
+  const controller = new RealtimeController(
+    {
+      attack: (pitches) => attacks.push([...pitches]),
+      release: () => undefined,
+      stop: () => undefined,
+    },
+    {
+      onFrame: (frame) => frames.push({ offset: frame.offset, waiting: frame.waiting }),
+      onComplete: () => { completed = true; },
+    },
+    {
+      now: () => now,
+      setInterval: (callback) => { tick = callback; return 1; },
+      clearInterval: () => { tick = null; },
+    },
+  );
+
+  controller.play(route);
+  const hold = 1 - REALTIME_WAIT_LEAD_QUARTERS;
+  controller.setHold(hold);
+  now = 0.5;
+  (tick as (() => void) | null)?.();
+  assert.equal(frames.at(-1)?.waiting, false);
+  now = 5;
+  (tick as (() => void) | null)?.();
+  assert.equal(frames.at(-1)?.offset, hold);
+  assert.equal(frames.at(-1)?.waiting, true);
+  assert.equal(controller.getOffset(), hold);
+  assert.deepEqual(attacks, [["C4"]]);
+
+  controller.setHold(null);
+  now = 5.1;
+  (tick as (() => void) | null)?.();
+  assert.equal(frames.at(-1)?.waiting, false);
+  assert.ok(Math.abs((frames.at(-1)?.offset ?? 0) - (hold + 0.1)) < 1e-9);
+  assert.deepEqual(attacks, [["C4"], ["D4"]]);
+  assert.equal(completed, false);
+
+  // Seeking clears the hold.
+  controller.setHold(0.5);
+  controller.seek(route, "playing", 0);
+  now = 6.8;
+  (tick as (() => void) | null)?.();
+  assert.ok(Math.abs(controller.getOffset() - 1.7) < 1e-9);
 });
