@@ -1990,12 +1990,30 @@ export function App() {
 
   useEffect(() => {
     if (activePage === "settings") {
-      if (recognizerRef.current) stopListenMode();
       stopMidiRepeat();
       handleRefreshMidiInputs();
     }
     else cancelMidiCapture();
-  }, [activePage, cancelMidiCapture, handleRefreshMidiInputs, stopListenMode, stopMidiRepeat]);
+  }, [activePage, cancelMidiCapture, handleRefreshMidiInputs, stopMidiRepeat]);
+
+  // Nothing plays or listens behind the settings, where MIDI keys assign shortcuts and
+  // the input itself may change: realtime pauses, and listening stops until the score
+  // is back. Waiting resumes from the paused playhead, on the notes it waited for.
+  const pageShownRef = useRef(activePage);
+  const listenBeforeSettingsRef = useRef(false);
+  useEffect(() => {
+    if (pageShownRef.current === activePage) return;
+    pageShownRef.current = activePage;
+    if (activePage === "settings") {
+      realtimeControllerRef.current?.pause();
+      listenBeforeSettingsRef.current = recognizerRef.current !== null;
+      if (recognizerRef.current) stopListenMode();
+      return;
+    }
+    if (!listenBeforeSettingsRef.current) return;
+    listenBeforeSettingsRef.current = false;
+    void startListenMode();
+  }, [activePage, startListenMode, stopListenMode]);
 
   useEffect(() => {
     if (!nativeAvailable) return;
