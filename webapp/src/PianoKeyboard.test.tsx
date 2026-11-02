@@ -437,3 +437,16 @@ test("does not time-limit the spectral detector's refreshed active snapshots", (
     [{ midi: 60, confidence: 0.8 }],
   );
 });
+
+test("pulses the keys playback is waiting for until each is played", () => {
+  const notes = [{ pitch: "C4" }, { pitch: "E4" }];
+  const waitingKeys = (markup: string) =>
+    [...markup.matchAll(/class="([^"]*)"[^>]*data-piano-key="([^"]+)"/g)]
+      .filter(([, className]) => className.split(" ").includes("waiting"))
+      .map(([, , name]) => name);
+  assert.deepEqual(waitingKeys(renderToStaticMarkup(<PianoKeyboard notes={notes} />)), []);
+  assert.deepEqual(
+    waitingKeys(renderToStaticMarkup(<PianoKeyboard notes={notes} waiting recognizedPitches={[60]} />)),
+    ["E4"],
+  );
+});

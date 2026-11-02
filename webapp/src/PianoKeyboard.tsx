@@ -65,6 +65,8 @@ interface PianoKeyboardProps {
    * tilt; only under the highway. The keyboard then covers the highway's box.
    */
   solidTilt?: number | null;
+  /** Playback is held until the player plays `notes`, so their keys pulse. */
+  waiting?: boolean;
 }
 
 export interface PianoKeyboardNote {
@@ -158,6 +160,7 @@ export function PianoKeyboard({
   display = DEFAULT_DISPLAY,
   blackKeyWidth = DEFAULT_KEYBOARD_VIEW_SETTINGS.blackKeyWidth,
   solidTilt = null,
+  waiting = false,
 }: PianoKeyboardProps) {
   const solid = highwayAttached && solidTilt !== null;
   const { ref: rootRef, size } = useElementSize(solid);
@@ -265,6 +268,7 @@ export function PianoKeyboard({
       recognized ? "user-active" : "",
       recognized && expected ? "user-correct" : "",
       recognized && !expected ? "user-wrong" : "",
+      waiting && expected && !recognized ? "waiting" : "",
     ].filter(Boolean).join(" ");
   }
 

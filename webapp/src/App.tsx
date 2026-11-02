@@ -600,6 +600,8 @@ export function App() {
         )
       : null;
   }, []);
+  // Realtime is held now until the player plays the notes it waits for.
+  const realtimeWaiting = playbackMode === "realtime" && realtimeFrame?.status === "playing" && realtimeFrame.waiting === true;
   // Held for the player, realtime shows the notes to play rather than those still sounding.
   const realtimeShownNotes = useMemo(
     () => realtimeFrame?.waiting && realtimeWaitNotes ? realtimeWaitNotes : realtimeFrame?.activeNotes ?? [],
@@ -2838,7 +2840,7 @@ export function App() {
               onNoteHighwayToggle={toggleNoteHighway}
               listenFeedback={listenFeedback}
               realtimeWaitEnabled={realtimeWaitEnabled}
-              realtimeWaiting={playbackMode === "realtime" && realtimeFrame?.status === "playing" && realtimeFrame.waiting === true}
+              realtimeWaiting={realtimeWaiting}
               initialViewportTransform={
                 viewerViewportRef.current?.documentKey === document.jobId
                   ? viewerViewportRef.current.transform
@@ -2993,6 +2995,7 @@ export function App() {
                 successPitches={playbackState.listenModeEnabled
                   ? listenFeedback.successPitches
                   : []}
+                waiting={realtimeWaiting}
               />
             ) : null}
           </>
