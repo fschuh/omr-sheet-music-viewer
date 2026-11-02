@@ -567,16 +567,22 @@ export function App() {
     setLoopPass(1);
   }, [playbackActive]);
   const notePlaybackMoment = currentPlaybackMoment(playbackTimeline, playbackState);
-  const realtimePlayhead = realtimeFrame && realtimeRouteRef.current && document
-    ? realtimePlayheadAt(
-        realtimeRouteRef.current,
-        realtimeFrame.offset,
-        document.pages,
-        routeEndBarline(scoreSystems, realtimeRouteRef.current),
-        routeStartBarline(scoreSystems, realtimeRouteRef.current),
-        -realtimeLeadInRef.current,
-      )
-    : null;
+  // Kept from one frame to the next, so renders the frame did not cause, such as
+  // listen feedback, leave the moment, and the view following it, alone.
+  const documentPages = document?.pages;
+  const realtimePlayhead = useMemo(
+    () => realtimeFrame && realtimeRouteRef.current && documentPages
+      ? realtimePlayheadAt(
+          realtimeRouteRef.current,
+          realtimeFrame.offset,
+          documentPages,
+          routeEndBarline(scoreSystems, realtimeRouteRef.current),
+          routeStartBarline(scoreSystems, realtimeRouteRef.current),
+          -realtimeLeadInRef.current,
+        )
+      : null,
+    [documentPages, realtimeFrame, scoreSystems],
+  );
   const scoreSystemsRef = useRef(scoreSystems);
   scoreSystemsRef.current = scoreSystems;
   const getRealtimePlayhead = useCallback(() => {
