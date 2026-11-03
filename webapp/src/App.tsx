@@ -25,6 +25,7 @@ import {
   type PracticeHand,
 } from "./playback";
 import { pianoSampler, pitchToMidi } from "./piano";
+import { HeldChordMatcher } from "./heldChordMatcher";
 import { LISTEN_ENGINE } from "./listenEngine";
 import { createBrowserOnlineAmtRecognizer } from "./listenRecognizer";
 import {
@@ -845,6 +846,13 @@ export function App() {
   const chordMatcherRef = useRef(new ExactChordMatcher(
     matcherOptionsForListenMatcherProfile(listenMatcherProfile),
   ));
+  // MIDI reports exactly which keys are down, so a chord held down also counts there,
+  // however its notes arrived; see HeldChordMatcher.
+  const heldChordMatcherRef = useRef(new HeldChordMatcher(
+    matcherOptionsForListenMatcherProfile(listenMatcherProfile).settleMs,
+  ));
+  /** The listen generation whose target was last matched, so each matches once. */
+  const matchedListenGenerationRef = useRef<number | null>(null);
   const keyboardRecognitionRef = useRef(new KeyboardRecognitionTracker());
   const playheadGenerationRef = useRef(0);
   const listenTargetKeyRef = useRef<string | null>(null);
@@ -870,6 +878,7 @@ export function App() {
     recognizer.setTarget(target);
     recognizer.setGeneration(generation);
     chordMatcherRef.current.setTarget(target, generation, performance.now());
+    heldChordMatcherRef.current.setTarget(target);
     keyboardRecognitionRef.current.suppressVisibleUntilRelease();
     setListenFeedback((feedback) => ({
       ...feedback,
@@ -1018,9 +1027,9 @@ export function App() {
     pianoSampler.stop();
     playbackStateRef.current = initialPlaybackState;
     setPlaybackState(initialPlaybackState);
-    chordMatcherRef.current = new ExactChordMatcher(
-      matcherOptionsForListenMatcherProfile(resolveEffectiveListenMatcherProfile(profileId)),
-    );
+    const matcherOptions = matcherOptionsForListenMatcherProfile(resolveEffectiveListenMatcherProfile(profileId));
+    chordMatcherRef.current = new ExactChordMatcher(matcherOptions);
+    heldChordMatcherRef.current = new HeldChordMatcher(matcherOptions.settleMs);
     setListenMatcherProfileOverride(profileId);
   }, [listenMatcherProfileOverride, stopRealtime]);
   /** The count-in before `offset`, in quarters, at the tempo playing as it starts. */
@@ -1337,6 +1346,7 @@ export function App() {
     keyboardRecognitionRef.current.reset();
     const generation = ++playheadGenerationRef.current;
     chordMatcherRef.current.setTarget([], generation, performance.now());
+    heldChordMatcherRef.current.setTarget([]);
     if (playbackStateRef.current.listenModeEnabled) setListenModeEnabled(false);
     setListenFeedback((feedback) => ({
       lifecycle: preserveError && feedback.lifecycle.state === "error"
@@ -1370,13 +1380,20 @@ export function App() {
     // Ornaments are optional in realtime: what they add is not a wrong note.
     const wait = realtime ? realtimeWaitRef.current : null;
     const ignored = wait?.points[wait.index]?.ignored;
-    const update = chordMatcherRef.current.consume(ignored ? withoutPitches(result, ignored) : result);
+    const heard = ignored ? withoutPitches(result, ignored) : result;
+    const update = chordMatcherRef.current.consume(heard);
     if (update.stale) return;
+    const held = recognizerRef.current instanceof MidiNoteRecognizer &&
+      heldChordMatcherRef.current.consume(heard);
+    // Either matcher may complete the target, but it is played only once.
+    const matched = (update.matched || held) &&
+      matchedListenGenerationRef.current !== result.generation;
+    if (matched) matchedListenGenerationRef.current = result.generation;
     const activeConfidence = new Map(
       result.targetPitchEvidence.map(({ midi, confidence }) => [midi, confidence]),
     );
     const keyboardRecognition = keyboardRecognitionRef.current.consume(result);
-    if (update.matched) keyboardRecognitionRef.current.suppressVisibleUntilRelease();
+    if (matched) keyboardRecognitionRef.current.suppressVisibleUntilRelease();
     setListenFeedback((feedback) => ({
       ...feedback,
       targetPitches: update.targetPitches,
@@ -1386,9 +1403,9 @@ export function App() {
         midi,
         confidence: activeConfidence.get(midi) ?? 0,
       })),
-      recognizedActivePitches: update.matched ? [] : keyboardRecognition.activePitches,
-      attackPitches: update.matched ? [] : keyboardRecognition.attacks,
-      successPitches: update.matched
+      recognizedActivePitches: matched ? [] : keyboardRecognition.activePitches,
+      attackPitches: matched ? [] : keyboardRecognition.attacks,
+      successPitches: matched
         ? update.targetPitches.map((midi) => ({
             midi,
             successTimeMs: result.capturedAtMs,
@@ -1396,7 +1413,7 @@ export function App() {
         : feedback.successPitches,
       processingTimeMs: result.processingTimeMs,
     }));
-    if (!update.matched) return;
+    if (!matched) return;
     if (realtime) syncRealtimeWait(true);
     else handlePlaybackCommandRef.current("forwardNote");
   }, [syncRealtimeWait]);
@@ -1423,6 +1440,7 @@ export function App() {
           target: midiPitches(moment?.pitches ?? []),
         };
     chordMatcherRef.current.setTarget(target, generation, performance.now());
+    heldChordMatcherRef.current.setTarget(target);
     setListenFeedback({
       lifecycle: {
         state: "initializing",
@@ -1505,6 +1523,7 @@ export function App() {
       const generation = ++playheadGenerationRef.current;
       recognizer.pause(generation);
       chordMatcherRef.current.reset(generation, performance.now());
+      heldChordMatcherRef.current.setTarget([]);
       keyboardRecognitionRef.current.reset();
       setListenFeedback((feedback) => ({
         ...feedback,
@@ -1538,6 +1557,7 @@ export function App() {
           generation,
           performance.now(),
         );
+        heldChordMatcherRef.current.setTarget(target);
         recognizer.resume(generation);
         setListenFeedback((feedback) => ({
           ...feedback,
