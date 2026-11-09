@@ -107,13 +107,39 @@ function LoopIcon() {
   );
 }
 
+/*
+ * Transport icons are drawn rather than typed, so they look the same on every platform:
+ * text glyphs like ▶ and Ⅱ take their shape and baseline from whichever font the system
+ * falls back to. All but the pause bars have even widths and heights and whole-pixel
+ * edges, so they sit exactly in the middle of a 30px button. The square shapes are CSS
+ * boxes rather than SVG: WebKitGTK at 2x scaling snaps an SVG's drawing to pixels
+ * differently from the button's border, which pushed the stop square a pixel off centre.
+ */
 function RewindIcon() {
+  // Its weight sits on the right (the triangle's base and the bar), so 2px of empty space
+  // on the right draws it 1px left of the box centre, where it looks centred.
   return (
-    <svg className="rewind-icon" viewBox="0 0 15.2 12" aria-hidden="true" focusable="false">
-      <path d="M10.5 0 0 6l10.5 6z" />
-      <rect x="12.5" y="0" width="2.7" height="12" />
+    <svg className="transport-icon" width="16" height="12" viewBox="0 0 16 12" aria-hidden="true" focusable="false">
+      <path d="M10 0 0 6l10 6z" />
+      <rect x="12" y="0" width="2" height="12" />
     </svg>
   );
+}
+
+function PlayIcon() {
+  return (
+    <svg className="transport-icon" width="10" height="12" viewBox="0 0 10 12" aria-hidden="true" focusable="false">
+      <path d="M0 0l10 6-10 6z" />
+    </svg>
+  );
+}
+
+function PauseIcon() {
+  return <span className="transport-icon pause-icon" aria-hidden="true" />;
+}
+
+function StopIcon() {
+  return <span className="transport-icon stop-icon" aria-hidden="true" />;
 }
 
 function ResetZoomIcon() {
@@ -984,11 +1010,11 @@ export function DocumentViewer({
       : effectiveStatus === "note-by-note"
         ? "Stop playback"
         : "Play";
-  const primarySymbol = effectiveStatus === "playing"
-    ? "Ⅱ"
+  const primaryIcon = effectiveStatus === "playing"
+    ? <PauseIcon />
     : effectiveStatus === "note-by-note"
-      ? "■"
-      : "▶";
+      ? <StopIcon />
+      : <PlayIcon />;
   const pages = useMemo(
     () => documentPages.filter((page) => page.status !== "skipped"),
     [documentPages],
@@ -1928,7 +1954,7 @@ export function DocumentViewer({
               playbackMode === "realtime" ? !realtimeAvailable : !playbackAvailable
             )}
             onClick={() => onPlaybackCommand("togglePlayback")}
-          >{primarySymbol}</button>
+          >{primaryIcon}</button>
           {playbackMode === "realtime" && effectivelyActive ? (
             <button
               type="button"
@@ -1936,7 +1962,7 @@ export function DocumentViewer({
               aria-label="Stop playback"
               title="Stop playback (Escape)"
               onClick={() => onPlaybackCommand("stopPlayback")}
-            >■</button>
+            ><StopIcon /></button>
           ) : null}
           {onLoopToggle ? (
             <div ref={loopControlRef} className="loop-control">

@@ -1008,15 +1008,39 @@ button:disabled {
   opacity: 1;
 }
 
-/* Filled in the play button's colour, at the size of its ▶. */
+/* Filled in the play button's colour. */
 .viewer-toolbar .playback-controls .rewind-button {
   color: #116657;
 }
 
-.viewer-toolbar .playback-controls .rewind-icon {
+.viewer-toolbar .playback-controls .transport-icon {
   fill: currentColor;
+}
+
+/* Undo the toolbar's label styling for spans. */
+.viewer-toolbar .playback-controls span.transport-icon {
+  box-sizing: border-box;
+  color: inherit;
+  display: block;
+  min-width: 0;
+}
+
+/*
+ * Two 3px bars with a 3px gap, drawn as the box's side borders. The bars start 6px apart,
+ * a whole number of pixels at 1.5x scaling too, so both fall on the pixel grid alike and
+ * look the same width; with a 2px gap the right one started half a pixel off from the left.
+ */
+.viewer-toolbar .playback-controls .pause-icon {
+  border-left: 3px solid currentColor;
+  border-right: 3px solid currentColor;
+  height: 12px;
+  width: 9px;
+}
+
+.viewer-toolbar .playback-controls .stop-icon {
+  background: currentColor;
   height: 10px;
-  width: 12.7px;
+  width: 10px;
 }
 
 .viewer-toolbar .playback-controls .realtime-stop {
