@@ -11,12 +11,14 @@ import {
   loopNoteByNoteState,
   loopRegionAfterCommand,
   loopRouteOffset,
+  loopRouteStep,
   loopSegments,
   loopSystems,
   moveLoopHandleTo,
   effectiveLoopRestart,
   routeEndBarline,
   routeStartBarline,
+  routeStepPosition,
   routeStructuralPosition,
   type LoopRegion,
   type LoopSystem,
@@ -28,6 +30,7 @@ import {
   parseRealtimeMusicXml,
   RealtimeController,
   realtimePlayheadAt,
+  seekStructuralPosition,
   type VisualNoteTarget,
 } from "./realtime";
 
@@ -256,6 +259,23 @@ test("a loop's route plays from its start up to its end barline, once", () => {
   assert.equal(loopRouteOffset(route, { measureIndex: 3, onset: 0 }), null);
   assert.deepEqual(routeStructuralPosition(route, 3), { measureIndex: 2, onset: 1 });
   assert.deepEqual(routeStructuralPosition(route, -1.5), { measureIndex: 1, onset: 0 }, "a lead-in is at the start");
+  // Counting in, a step forward lands on the loop's first note, not its second.
+  const counting = routeStepPosition(route, -1.5)!;
+  assert.deepEqual(seekStructuralPosition(parsed, counting, "forwardNote"), { measureIndex: 1, onset: 0 });
+  assert.deepEqual(routeStepPosition(route, 1), routeStructuralPosition(route, 1));
+  // A step out of the loop lands on its first note, the next pass when it went forwards.
+  assert.deepEqual(loopRouteStep(route, { measureIndex: 2, onset: 1 }, "forwardNote"), {
+    position: { measureIndex: 2, onset: 1 },
+    nextPass: false,
+  });
+  assert.deepEqual(loopRouteStep(route, { measureIndex: 3, onset: 0 }, "forwardNote"), {
+    position: { measureIndex: 1, onset: 0 },
+    nextPass: true,
+  });
+  assert.deepEqual(loopRouteStep(route, { measureIndex: 0, onset: 3 }, "backwardNote"), {
+    position: { measureIndex: 1, onset: 0 },
+    nextPass: false,
+  });
 });
 
 test("a loop's route follows repeats inside it, and stops where navigation leaves it", () => {

@@ -286,6 +286,23 @@ export function loopRouteOffset(route: PerformanceRoute, position: StructuralPos
 }
 
 /**
+ * Where a step from inside a looping route lands in it: on `destination` when the loop
+ * plays it, otherwise on the loop's first note, at once and without a count-in, as
+ * note-by-note does. Leaving forwards from inside starts the loop's next pass.
+ */
+export function loopRouteStep(
+  route: PerformanceRoute,
+  destination: StructuralPosition,
+  command: PlaybackCommand,
+): { position: StructuralPosition; nextPass: boolean } {
+  if (loopRouteOffset(route, destination) !== null) return { position: destination, nextPass: false };
+  return {
+    position: routeStructuralPosition(route, 0) ?? destination,
+    nextPass: FORWARD_COMMANDS.has(command),
+  };
+}
+
+/**
  * Where a route's playhead is in the score: the measure and the time into it. In the
  * lead-in before the route begins, that is the route's start.
  */
@@ -298,6 +315,16 @@ export function routeStructuralPosition(route: PerformanceRoute, routeOffset: nu
         onset: occurrence.localStart + Math.max(0, offset - occurrence.scoreStart),
       }
     : null;
+}
+
+/**
+ * Where note and bar steps start from at a route's playhead: its structural position,
+ * except counting in, when it stands just before the route's first note, so that a
+ * step forward lands on that note rather than the one after it.
+ */
+export function routeStepPosition(route: PerformanceRoute, routeOffset: number): StructuralPosition | null {
+  const position = routeStructuralPosition(route, routeOffset);
+  return position && routeOffset < 0 ? { ...position, onset: position.onset - 1e-3 } : position;
 }
 
 /**

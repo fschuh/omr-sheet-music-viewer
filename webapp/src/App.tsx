@@ -108,16 +108,19 @@ import {
 import { NoteHighway } from "./noteHighway/NoteHighway";
 import {
   clampLoopRegion,
+  effectiveLoopRestart,
   loopAroundMeasure,
   loopMeasureCount,
   loopNoteByNoteState,
   loopRegionAfterCommand,
   loopRouteOffset,
+  loopRouteStep,
   loopSystems,
   measureInLoop,
   noteByNoteInLoop,
   routeEndBarline,
   routeStartBarline,
+  routeStepPosition,
   routeStructuralPosition,
   type LoopRegion,
   type LoopRestart,
@@ -1208,9 +1211,18 @@ export function App() {
         }
         const route = realtimeRouteRef.current;
         const offset = realtimeControllerRef.current?.getOffset() ?? realtimeFrame?.offset ?? 0;
-        const current = route ? routeStructuralPosition(route, offset) : null;
+        const current = route ? routeStepPosition(route, offset) : null;
         if (!current) return;
-        const destination = seekStructuralPosition(realtimeModel.score, current, command);
+        let destination = seekStructuralPosition(realtimeModel.score, current, command);
+        if (route && realtimeRouteLoopsRef.current) {
+          // A step out of the loop lands on its start: counting in to it when the loop
+          // counts in to each pass, otherwise at once.
+          const step = loopRouteStep(route, destination, command);
+          if (effectiveLoopRestart(loopRestart, realtimeCountIn !== "none") === "immediately") {
+            destination = step.position;
+          }
+          if (step.nextPass) setLoopPass((pass) => pass + 1);
+        }
         seekRealtimePosition(destination, realtimeStatus);
         return;
       }
@@ -1229,8 +1241,10 @@ export function App() {
     [
       commitPlaybackState,
       fullPlaybackTimeline,
+      loopRestart,
       playbackMode,
       playbackTimeline,
+      realtimeCountIn,
       realtimeFrame?.offset,
       realtimeModel.score,
       realtimeStatus,
