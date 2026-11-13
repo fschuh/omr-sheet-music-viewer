@@ -395,17 +395,28 @@ export const FingeringPageLayer = memo(function FingeringPageLayer({
     const pad = page.staffSpace * 0.6;
     band = { x: (left + right) / 2 - width / 2, y: reach.top - pad, width, height: reach.bottom - reach.top + 2 * pad };
   }
+  // The picker stands outside the system, its caret pointing at the ringed label. In a
+  // chord's stack it stands beside the stack, and a line runs from its caret down the
+  // stack's side and turns in at the ringed digit.
   let anchor: { x: number; y: number; above: boolean } | null = null;
+  let lead: { x: number; from: number; to: number; tickTo: number } | null = null;
   if (cursorLabel) {
     const stack = layout.stacks.find((candidate) => candidate.id === cursorLabel.stackId);
-    anchor = cursorLabel.left
-      ? { x: cursorLabel.x, y: (stack?.bottom ?? cursorLabel.y + radius) + radius * 0.6, above: false }
-      : { x: cursorLabel.x, y: (stack?.top ?? cursorLabel.y - radius) - radius * 0.6, above: true };
-  } else if (cursorPrinted) {
-    const [left, top, right, bottom] = cursorPrinted.note.printedFingering!;
-    anchor = cursorPrinted.fingering.left
-      ? { x: (left + right) / 2, y: bottom + radius * 0.6, above: false }
-      : { x: (left + right) / 2, y: top - radius * 0.6, above: true };
+    const above = !cursorLabel.left;
+    if (stack) {
+      const x = stack.x + layout.size * 0.95;
+      const y = above ? stack.top - layout.size * 0.12 - radius * 0.6 : stack.bottom + layout.size * 0.12 + radius * 0.6;
+      anchor = { x, y, above };
+      lead = { x, from: y, to: cursorLabel.y, tickTo: cursorLabel.x + radius + layout.size * 0.08 };
+    }
+  }
+  if (!anchor && ring) {
+    // A single label: the caret's tip touches the ring's outer edge. The caret reaches half
+    // its 10-pixel square's diagonal past the picker, a size on screen, not on the page.
+    const reach = ring.r + (5 * Math.SQRT2) / (scale * (displayWidth / page.width));
+    anchor = ring.left
+      ? { x: ring.x, y: ring.y + reach, above: false }
+      : { x: ring.x, y: ring.y - reach, above: true };
   }
 
   // What moves is drawn in HTML on layers of its own, so the browser slides it without
@@ -466,6 +477,30 @@ export const FingeringPageLayer = memo(function FingeringPageLayer({
             transform: `translate3d(${(ring.x - ring.r) * k}px, ${(ring.y - ring.r) * k}px, 0)`,
           }}
         />
+      ) : null}
+      {editor.pickerOpen && anchor && cursorFingering && lead ? (
+        <>
+          <div
+            className="finger-picker-lead"
+            aria-hidden="true"
+            style={{
+              left: lead.x * k - 0.75 / scale,
+              top: Math.min(lead.from, lead.to) * k,
+              width: 1.5 / scale,
+              height: Math.abs(lead.to - lead.from) * k,
+            }}
+          />
+          <div
+            className="finger-picker-lead"
+            aria-hidden="true"
+            style={{
+              left: lead.tickTo * k,
+              top: lead.to * k - 0.75 / scale,
+              width: (lead.x - lead.tickTo) * k + 0.75 / scale,
+              height: 1.5 / scale,
+            }}
+          />
+        </>
       ) : null}
       {editor.pickerOpen && anchor && cursorFingering ? (
         <FingerPicker

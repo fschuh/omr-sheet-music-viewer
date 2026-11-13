@@ -2802,6 +2802,28 @@ button:disabled {
 
 .fingering-layer .fingering-printed-strike { stroke: #24211d; }
 
+/* The caret on the picker's edge that faces the ringed note. */
+.document-page .finger-picker::after {
+  background: #24211d;
+  content: "";
+  height: 10px;
+  left: 50%;
+  position: absolute;
+  transform: translateX(-50%) rotate(45deg);
+  width: 10px;
+}
+
+.document-page .finger-picker.above::after { bottom: -5px; }
+.document-page .finger-picker.below::after { top: -5px; }
+
+/* The line from the caret down a chord's stack to the ringed digit. */
+.document-page .finger-picker-lead {
+  background: #57514a;
+  pointer-events: none;
+  position: absolute;
+  z-index: 3;
+}
+
 .document-page .finger-picker {
   align-items: center;
   background: #24211d;
