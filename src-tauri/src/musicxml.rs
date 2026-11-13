@@ -357,7 +357,9 @@ pub(crate) fn open_score_data_directory(app: AppHandle, path: String) -> Result<
 }
 
 /// The files a score data folder may hold besides its manifest, which only this module writes.
-const SCORE_DATA_FILES: [&str; 1] = ["fingerings.json"];
+/// `fingerings.json` holds predictions, which can be regenerated; `fingering-overrides.json`
+/// holds the player's own fingerings, which cannot.
+const SCORE_DATA_FILES: [&str; 2] = ["fingerings.json", "fingering-overrides.json"];
 
 /// The path of an allowed file in a checked score data folder.
 fn score_data_file(root: &Path, folder: &str, name: &str) -> Result<PathBuf, String> {
@@ -633,6 +635,13 @@ mod tests {
         assert!(
             !folder.join("fingerings.json.tmp").exists(),
             "the write is atomic"
+        );
+        write_score_data_file(&root, folder_text, "fingering-overrides.json", "{}").unwrap();
+        assert_eq!(
+            read_score_data_file(&root, folder_text, "fingering-overrides.json")
+                .unwrap()
+                .as_deref(),
+            Some("{}")
         );
 
         assert!(write_score_data_file(&root, folder_text, "manifest.json", "{}").is_err());

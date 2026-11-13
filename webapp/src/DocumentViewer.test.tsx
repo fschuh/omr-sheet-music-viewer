@@ -929,6 +929,7 @@ const engravedChordPage: DocumentPage = {
     chords: [{
       id: "P1-m1-s1-v1-t0",
       systemIndex: 0,
+      part: 0,
       momentId: "m1-t0",
       items: [],
       stemBounds: null,

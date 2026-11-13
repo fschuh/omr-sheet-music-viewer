@@ -32,8 +32,25 @@ articulations, fermatas, ornaments, printed fingerings and arpeggios, keeping th
 page format and breaks the file asks for. Notes can be selected, and note-by-note
 and realtime playback, listen mode, the keyboard and the note highway work as on a
 PDF. Lyrics, chord symbols and multi-measure rests are not drawn yet. Piano fingerings are predicted on first opening and stored in the
-score's data folder (`fingerings.json`), so later openings reuse them; fingerings
-the score prints always take precedence. A MusicXML file is never modified; anything the app
+score's data folder (`fingerings.json`), so later openings reuse them; the model keeps
+the fingers the score prints and predicts the other notes around them.
+
+**Edit fingers** (`F`) corrects them. It works on top of note-by-note playback,
+starting it if needed: every fingered note gets a label on the score (an outline in its
+hand's colour for a prediction, filled for your own finger, the score's digit for a
+printed one) and the playhead's note is ringed. `1`–`5` give that note a finger and
+move on, top note first, so a run is typed as its digits, or pasted with `Ctrl`+`V`;
+`0` goes back to the printed or predicted finger, `H` moves the note to the other hand,
+`Alt`+`Up` and `Alt`+`Down` move within a chord, `Ctrl`+`Z` undoes, and `Esc` leaves.
+Clicking a label or notehead opens a finger picker for that note. Every key can be
+reassigned, or bound to MIDI, in **Settings**. Your fingers win over printed and
+predicted ones on the score, the keyboard and the highway, and a note moved to the
+other hand is practised with it. They are saved in the data folder as
+`fingering-overrides.json`, apart from the predictions, so predicting again never
+loses them. **Re-fit fingerings** predicts the other notes again with your fingers and
+hand changes as fixed hints; nothing is re-predicted on its own. Edit mode is for
+MusicXML scores; overrides are tied to the file's content, so editing the file itself
+starts it with none. A MusicXML file is never modified; anything the app
 stores for it goes into a folder of its own under the app's data directory
 (`musicxml-scores/<SHA-256 of the file>/`), which **Open score data folder**
 shows. Diagnostics describe PDF recognition and are hidden for MusicXML scores.

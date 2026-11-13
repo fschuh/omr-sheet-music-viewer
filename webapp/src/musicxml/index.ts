@@ -8,10 +8,31 @@ import { importMusicXml } from "./import/parseMusicXml";
 import { pageFormat } from "./layout/pageFormat";
 import { layoutScore } from "./layout/pages";
 import type { FingeringPredictor } from "../fingering";
-import { loadScoreFingerings, type ScoreFingerings } from "./scoreData/fingerings";
+import {
+  loadScoreFingerings,
+  refitScoreFingerings,
+  saveScoreOverrides,
+  type ScoreFingerings,
+} from "./scoreData/fingerings";
+import type { FingeringOverrides } from "./scoreData/overrides";
 import { readScoreFile, scoreDataStore, type MusicXmlScoreFile } from "./scoreData/scoreData";
 
 export type { LayoutPage as MusicXmlPage } from "./model/layout";
+export {
+  fingeringLabelLayout,
+  type FingeringLabelLayout,
+  type FingeringLabelPlacement,
+  type FingeringLabelStack,
+} from "./layout/fingeringLabels";
+export {
+  constraintSignature,
+  noteKeyOf,
+  resolveFingerings,
+  withOverride,
+  type EffectiveFingering,
+  type FingeringSource,
+} from "./scoreData/fingerings";
+export type { FingeringOverride, FingeringOverrides } from "./scoreData/overrides";
 export { MusicXmlImportError } from "./import/parseMusicXml";
 export { MusicXmlPageSurface, type HighlightKind } from "./render/MusicXmlPageSurface";
 export { showScoreDataFolder, showScoreSource } from "./scoreData/scoreData";
@@ -51,6 +72,35 @@ export function musicXmlFingerings(
     return Promise.reject(new Error("Fingerings need an opened MusicXML score"));
   }
   return loadScoreFingerings(document.documentMusicXml, scoreDataStore(document.source.scoreDataPath), predict, onPredicting);
+}
+
+function scoreStore(document: LoadedDocument) {
+  if (document.source.kind !== "musicxml" || !document.source.scoreDataPath || !document.documentMusicXml) {
+    throw new Error("Fingerings need an opened MusicXML score");
+  }
+  return { store: scoreDataStore(document.source.scoreDataPath), musicXml: document.documentMusicXml };
+}
+
+/** Saves the player's fingerings in the score's data folder. */
+export async function saveMusicXmlFingeringOverrides(
+  document: LoadedDocument,
+  overrides: FingeringOverrides,
+): Promise<void> {
+  await saveScoreOverrides(scoreStore(document).store, overrides);
+}
+
+/**
+ * Predicts the score's fingerings again around its printed fingers and the player's
+ * overrides, and stores them.
+ */
+export async function refitMusicXmlFingerings(
+  document: LoadedDocument,
+  predict: FingeringPredictor,
+  current: Pick<ScoreFingerings, "predicted" | "printed">,
+  overrides: FingeringOverrides,
+): Promise<Pick<ScoreFingerings, "predicted" | "fittedConstraints">> {
+  const { store, musicXml } = scoreStore(document);
+  return refitScoreFingerings(musicXml, store, predict, current, overrides);
 }
 
 /** Note geometry of every engraved page, in page order. */

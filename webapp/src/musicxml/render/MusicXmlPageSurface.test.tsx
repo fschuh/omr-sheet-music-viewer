@@ -21,6 +21,7 @@ const page: LayoutPage = {
     {
       id: "P1-m1-s1-v1-t0",
       systemIndex: 0,
+      part: 0,
       momentId: "m1-t0",
       stemBounds: [200, 150, 230, 240],
       items: [{ kind: "line", x1: 228, y1: 230, x2: 228, y2: 160, width: 2 }],

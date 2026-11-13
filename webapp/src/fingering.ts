@@ -38,6 +38,18 @@ export type FingeringPredictor = (
   notes: IndexedFingeringNote[],
 ) => Promise<IndexedFingeringNote[]>;
 
+/**
+ * What a prediction must respect for one note: a finger the model keeps, and so takes as a
+ * hint for its neighbours, and the hand the note is played by.
+ */
+export interface FingeringConstraint {
+  finger?: number;
+  left?: boolean;
+}
+
+/** Constraints by note ID; notes without one are predicted freely. */
+export type FingeringConstraints = (musicXmlId: string) => FingeringConstraint | undefined;
+
 export interface MusicXmlFingeringResult {
   musicXml: string;
   fingeringsByMusicXmlId: Record<string, PredictedFingering>;
@@ -275,7 +287,10 @@ function millisecondsAtQuarter(quarter: number, tempos: TempoEvent[]): number {
   return milliseconds + (quarter - previousQuarter) * (60_000 / bpm);
 }
 
-function modelNotes(parts: ParsedPart[]): { indexed: IndexedFingeringNote[]; raw: RawNote[] } {
+function modelNotes(
+  parts: ParsedPart[],
+  constraints?: FingeringConstraints,
+): { indexed: IndexedFingeringNote[]; raw: RawNote[] } {
   const starts = measureStarts(parts);
   const tempos = tempoEvents(parts, starts);
   const raw = parts.flatMap((part) => part.notes);
@@ -284,11 +299,14 @@ function modelNotes(parts: ParsedPart[]): { indexed: IndexedFingeringNote[]; raw
     const endQuarter = startQuarter + note.durationQuarters;
     const start = millisecondsAtQuarter(startQuarter, tempos);
     const end = millisecondsAtQuarter(endQuarter, tempos);
+    const constraint = note.musicXmlId ? constraints?.(note.musicXmlId) : undefined;
+    const finger = constraint?.finger;
     return {
-      left: note.left,
+      left: constraint?.left ?? note.left,
       note: note.midi,
       time: Math.round(start),
       duration: Math.max(0, Math.round(end - start)),
+      ...(finger !== undefined && Number.isInteger(finger) && finger >= 1 && finger <= 5 ? { finger } : {}),
       sourceIndex,
     };
   });
@@ -436,12 +454,13 @@ export interface FingeringPredictions {
 async function predictNotes(
   document: XMLDocument,
   predict: FingeringPredictor,
+  constraints?: FingeringConstraints,
 ): Promise<{ raw: RawNote[]; fingers: Map<number, number>; noteCount: number }> {
   const tempoOrder = { value: 0 };
   const parts = childrenNamed(document.documentElement, "part").map((part) =>
     parsePart(part, tempoOrder),
   );
-  const { indexed, raw } = modelNotes(parts);
+  const { indexed, raw } = modelNotes(parts, constraints);
   const fingers = new Map<number, number>();
   if (indexed.length === 0) return { raw, fingers, noteCount: 0 };
   for (const prediction of await predict(indexed)) {
@@ -463,12 +482,17 @@ async function predictNotes(
   return { raw, fingers, noteCount: indexed.length };
 }
 
-/** Predicted fingers by note ID, without writing them into the MusicXML. */
+/**
+ * Predicted fingers by note ID, without writing them into the MusicXML. With constraints,
+ * fixed fingers come back as given and the others are predicted around them, each on the
+ * hand its constraint names; `left` is always the hand the staff and clef imply.
+ */
 export async function predictFingerings(
   musicXml: string,
   predict: FingeringPredictor,
+  constraints?: FingeringConstraints,
 ): Promise<FingeringPredictions> {
-  const { raw, fingers, noteCount } = await predictNotes(musicXmlDocument(musicXml), predict);
+  const { raw, fingers, noteCount } = await predictNotes(musicXmlDocument(musicXml), predict, constraints);
   const fingeringsByMusicXmlId: Record<string, PredictedFingering> = {};
   for (const [index, finger] of fingers) {
     const source = raw[index];

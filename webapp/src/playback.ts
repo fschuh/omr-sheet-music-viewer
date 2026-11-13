@@ -37,9 +37,48 @@ export const playbackCommandNames = [
   "loopStartLater",
   "loopEndEarlier",
   "loopEndLater",
+  "toggleFingerEditing",
+  "setFinger1",
+  "setFinger2",
+  "setFinger3",
+  "setFinger4",
+  "setFinger5",
+  "resetFinger",
+  "swapFingerHand",
+  "undoFingerEdit",
+  "fingerNoteHigher",
+  "fingerNoteLower",
 ] as const;
 
 export type PlaybackCommand = (typeof playbackCommandNames)[number];
+
+/** Commands of the fingering editor; playback state never changes for them. */
+export type FingerEditCommand =
+  | "toggleFingerEditing"
+  | "setFinger1"
+  | "setFinger2"
+  | "setFinger3"
+  | "setFinger4"
+  | "setFinger5"
+  | "resetFinger"
+  | "swapFingerHand"
+  | "undoFingerEdit"
+  | "fingerNoteHigher"
+  | "fingerNoteLower";
+
+export function isFingerEditCommand(command: PlaybackCommand): command is FingerEditCommand {
+  return command === "toggleFingerEditing" ||
+    command === "setFinger1" ||
+    command === "setFinger2" ||
+    command === "setFinger3" ||
+    command === "setFinger4" ||
+    command === "setFinger5" ||
+    command === "resetFinger" ||
+    command === "swapFingerHand" ||
+    command === "undoFingerEdit" ||
+    command === "fingerNoteHigher" ||
+    command === "fingerNoteLower";
+}
 
 /** Commands that move one end of the loop by a barline. */
 export type LoopBoundaryCommand = "loopStartEarlier" | "loopStartLater" | "loopEndEarlier" | "loopEndLater";
@@ -379,7 +418,12 @@ export function buildPlaybackTimeline(
         suppressed,
       );
       clusters.forEach((cluster, clusterIndex) => {
-        const momentNotes = playbackNotesForCluster(cluster, scoreFacts);
+        // A note's fingering names its hand, which the player may have changed from the
+        // staff's; practising one hand follows it.
+        const momentNotes = playbackNotesForCluster(cluster, scoreFacts).map((note) => {
+          const left = predictedFingerings[note.musicXmlId]?.left;
+          return left === undefined || note.left === undefined || left === note.left ? note : { ...note, left };
+        });
         const visualGroupIds = cluster.groups
           .map((entry) => entry.notehead.id)
           .sort((first, second) => first.localeCompare(second));
@@ -525,6 +569,7 @@ function commandDestination(
     | "compressNotes"
     | "resetNoteStretch"
     | LoopBoundaryCommand
+    | FingerEditCommand
   >,
 ): number {
   if (command === "forwardNote") return Math.min(timeline.length - 1, index + 1);
@@ -601,7 +646,8 @@ export function runPlaybackCommand(
     command === "stretchNotes" ||
     command === "compressNotes" ||
     command === "resetNoteStretch" ||
-    isLoopBoundaryCommand(command)
+    isLoopBoundaryCommand(command) ||
+    isFingerEditCommand(command)
   ) return state;
   if (!state.active || timeline.length === 0) return state;
   // The first moment of the score; a loop moves it on to the loop's first moment.

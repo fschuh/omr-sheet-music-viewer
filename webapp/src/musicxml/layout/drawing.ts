@@ -43,6 +43,8 @@ export interface DrawContext {
   firstSystem: PlacedSystem;
   /** Ties and other spanners, by the system they are drawn in. */
   spanners: Map<PlacedSystem, Drawable[]>;
+  /** Where each note's printed fingering stands, by note key, in staff spaces. */
+  printedFingerings?: ReadonlyMap<string, readonly [number, number, number, number]>;
 }
 
 function pitchName(step: string, alter: number, octave: number): string {
@@ -75,6 +77,10 @@ export function drawPage(index: number, systems: PlacedSystem[], context: DrawCo
     layoutSystems.push({
       top: staffTop(0) * sp,
       bottom: (staffTop(lastStaff) + 4) * sp,
+      parts: context.prepared.partStaves.map((staves) => ({
+        top: staffTop(staves[0] ?? 0) * sp,
+        bottom: (staffTop(staves[staves.length - 1] ?? lastStaff) + 4) * sp,
+      })),
       firstMeasure: system.plan.measures[0],
       barlines: [system.left * sp, ...measureEnds],
     });
@@ -142,7 +148,13 @@ export function drawPage(index: number, systems: PlacedSystem[], context: DrawCo
     }
     for (const chord of systemChords(system)) {
       const drawn = drawChord(chord, context.shapes.get(chord)!, system.chords.get(chord)!, staffTop(chord.staff), systemIndex, glyph, line, sp);
-      if (drawn.chord) chords.push(drawn.chord);
+      if (drawn.chord) {
+        for (const note of drawn.chord.notes) {
+          const printed = context.printedFingerings?.get(note.key);
+          if (printed) note.printedFingering = [printed[0] * sp, printed[1] * sp, printed[2] * sp, printed[3] * sp];
+        }
+        chords.push(drawn.chord);
+      }
       items.push(...drawn.items);
     }
   });
@@ -403,6 +415,7 @@ function drawChord(
     chord: {
       id: model.id,
       systemIndex,
+      part: chord.part,
       momentId,
       notes,
       items: printed ? chordItems : [],

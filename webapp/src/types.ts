@@ -192,6 +192,19 @@ export type DocumentSource =
       scoreDataPath?: string;
     };
 
+export interface FingeringLayers {
+  /** The model's fingers by viewer ID. */
+  predicted: Record<string, import("./fingering").PredictedFingering>;
+  /** The score's printed fingers by viewer ID. */
+  printed: Record<string, import("./fingering").PredictedFingering>;
+  /** The player's fingerings by structural note key. */
+  overrides: import("./musicxml").FingeringOverrides;
+  /** Why the player's saved fingerings could not be read; edits are not saved over them. */
+  overridesError: string | null;
+  /** The printed fingers and overrides the predictions were fitted to. */
+  fittedConstraints: string;
+}
+
 export interface LoadedDocument {
   jobId: string;
   name: string;
@@ -202,8 +215,14 @@ export interface LoadedDocument {
   documentMusicXml?: string;
   fingeringStatus?: FingeringStatus;
   fingeringError?: string;
+  /**
+   * Each note's finger and hand by viewer ID, as every view shows them: for a MusicXML score
+   * the player's override, else the printed finger, else the prediction.
+   */
   predictedFingerings?: Record<string, import("./fingering").PredictedFingering>;
   predictedFingeringCount?: number;
+  /** What a MusicXML score's fingerings are resolved from; the fingering editor changes it. */
+  fingeringLayers?: FingeringLayers;
   status: JobStatus;
   pages: DocumentPage[];
 }

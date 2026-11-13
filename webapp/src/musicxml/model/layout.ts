@@ -44,6 +44,8 @@ export interface LayoutNote {
   measure: number;
   center: [number, number];
   headBounds: Bounds;
+  /** Where the fingering the score prints for the note stands, when it prints one. */
+  printedFingering?: Bounds;
   /** Notehead, accidental and dots. */
   items: Drawable[];
 }
@@ -53,6 +55,8 @@ export interface LayoutChord {
   id: string;
   /** The system on the page, counted from the top. */
   systemIndex: number;
+  /** The chord's part, by its position in the score: an index into LayoutSystem.parts. */
+  part: number;
   /** Chords struck together in a system share this ID. */
   momentId: string;
   notes: LayoutNote[];
@@ -66,6 +70,8 @@ export interface LayoutSystem {
   /** The top line of the first staff and the bottom line of the last one. */
   top: number;
   bottom: number;
+  /** For each part of the score, the top line of its first staff and the bottom line of its last. */
+  parts: { top: number; bottom: number }[];
   /** The system's first measure, by position. */
   firstMeasure: number;
   /** Where each measure begins, then where the last one ends: one more than its measures. */

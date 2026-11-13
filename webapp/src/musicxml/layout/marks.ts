@@ -44,10 +44,15 @@ const FINGERING_SCALE = 0.9;
 const MARK_GAP = 0.5;
 const ARTICULATION_STEP = 0.75;
 
+/** An area in staff spaces from the page's top left: left, top, right, bottom. */
+export type MarkBounds = [number, number, number, number];
+
 interface Pen {
   items: Drawable[];
   /** What each unrotated mark covers, in staff spaces. */
   boxes: Box[];
+  /** Where each note's printed fingering stands, by note key. */
+  fingerings: Map<string, MarkBounds>;
   /** The staff the marks drawn next belong to; none for a mark across staves. */
   staff: number | undefined;
   glyph(name: GlyphName, x: number, y: number, scale?: number, rotate?: number): void;
@@ -60,6 +65,7 @@ function pen(sp: number): Pen {
   const result: Pen = {
     items,
     boxes,
+    fingerings: new Map(),
     staff: undefined,
     glyph: (name, x, y, scale = 1, rotate) => {
       items.push({ kind: "glyph", glyph: name, x: x * sp, y: y * sp, scale, ...(rotate === undefined ? {} : { rotate }) });
@@ -184,11 +190,16 @@ function chordMarks(system: PlacedSystem, chord: PreparedChord, shape: ChordShap
   if (fingered.length) {
     const placement = fingered[0].fingerings[0].placement;
     const up = placement ? placement === "above" : fingeringAbove(chord);
-    const rows = fingered.map((entry) => entry.fingerings.map((fingering) => fingering.text));
+    const rows = fingered.map((entry) => ({
+      key: model.notes[entry.note.index].key,
+      labels: entry.fingerings.map((fingering) => fingering.text),
+    }));
     let y = up
       ? Math.min(topNote - 1.2, shape.stem && shape.stem.up ? staffTop + shape.stem.yEnd - 0.6 : Infinity)
       : Math.max(bottomNote + 1.2, shape.stem && !shape.stem.up ? staffTop + shape.stem.yEnd + 0.6 : -Infinity);
-    for (const row of up ? [...rows].reverse() : rows) {
+    for (const { key, labels: row } of up ? [...rows].reverse() : rows) {
+      const width = Math.max(0.8, row.join("").length * 0.75);
+      output.fingerings.set(key, [headCentre - width / 2, y - 0.6, headCentre + width / 2, y + 0.6]);
       const digits = row.flatMap((label) => [...label]);
       if (digits.every((digit) => FINGERING_DIGITS[digit])) {
         // One baseline for the row, centred on y by the row's tallest digits.
@@ -261,7 +272,12 @@ export function layoutMarks(
   shapes: Map<PreparedChord, ChordShape>,
   sp: number,
   crossStaff: Set<PreparedChord> = new Set(),
-): { drawables: Map<PlacedSystem, Drawable[]>; boxes: Map<PlacedSystem, Box[]> } {
+): {
+  drawables: Map<PlacedSystem, Drawable[]>;
+  boxes: Map<PlacedSystem, Box[]>;
+  /** Where each note's printed fingering stands, by note key. */
+  fingerings: Map<string, MarkBounds>;
+} {
   const drawables = new Map<PlacedSystem, Drawable[]>();
   const boxes = new Map<PlacedSystem, Box[]>();
   const outputs = new Map(systems.map((system) => [system, pen(sp)]));
@@ -322,9 +338,11 @@ export function layoutMarks(
       );
     }
   }
+  const fingerings = new Map<string, MarkBounds>();
   for (const [system, output] of outputs) {
     if (output.items.length) drawables.set(system, output.items);
     boxes.set(system, output.boxes);
+    for (const [key, bounds] of output.fingerings) fingerings.set(key, bounds);
   }
-  return { drawables, boxes };
+  return { drawables, boxes, fingerings };
 }

@@ -7,6 +7,7 @@ import {
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
+  type ReactNode,
   type RefObject,
 } from "react";
 import { layoutNoteLabels } from "./noteLabels";
@@ -272,6 +273,12 @@ interface DocumentViewerProps {
   onOtherHandSoundChange?: (enabled: boolean) => void;
   onSelectGroup: (group: VisualGroupRef | null) => void;
   onRetryPage: (pageIndex: number) => void;
+  /** More controls at the end of the playback toolbar. */
+  toolbarExtra?: ReactNode;
+  /** Drawn over a page, in the page's box; `scale` is the viewport's zoom. */
+  renderPageExtra?: (page: DocumentPage, scale: number) => ReactNode;
+  /** Below the score. */
+  footer?: ReactNode;
 }
 
 interface PointerState {
@@ -967,6 +974,9 @@ export function DocumentViewer({
   onOtherHandSoundChange,
   onSelectGroup,
   onRetryPage,
+  toolbarExtra,
+  renderPageExtra,
+  footer,
 }: DocumentViewerProps) {
   const stageRef = useRef<HTMLDivElement | null>(null);
   const pageRefs = useRef(new Map<number, HTMLDivElement>());
@@ -2221,6 +2231,7 @@ export function DocumentViewer({
             </div>
           ) : null}
         </div>
+        {toolbarExtra}
         {listenStatus ? (
           <span
             className={`listen-status listen-status-${listenFeedback.lifecycle.state}`}
@@ -2320,6 +2331,7 @@ export function DocumentViewer({
                 showUnsupportedRests={showUnsupportedRests}
                 showValueMismatches={showValueMismatches}
               />
+              {renderPageExtra?.(page, transform.scale)}
               {page.status !== "complete" ? (
                 <div className="page-placeholder">
                   {page.status === "failed" ? (
@@ -2371,6 +2383,7 @@ export function DocumentViewer({
           ))}
         </div>
       </div>
+      {footer}
     </div>
   );
 }

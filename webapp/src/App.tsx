@@ -4,6 +4,7 @@ import { printedValueSummary } from "./noteValues";
 import {
   addPredictedFingeringsToMusicXml,
   cachedFingeringsFromMusicXml,
+  type FingeringPredictor,
 } from "./fingering";
 import { PianoKeyboard } from "./PianoKeyboard";
 import { SettingsPage } from "./SettingsPage";
@@ -12,6 +13,7 @@ import {
   currentPlaybackMoment,
   effectivePlaybackNoteSounds,
   initialPlaybackState,
+  isFingerEditCommand,
   isLoopBoundaryCommand,
   noteInPracticeHand,
   playbackCommandNames,
@@ -138,6 +140,8 @@ import {
   showScoreDataFolder,
   showScoreSource,
 } from "./musicxml";
+import { useFingeringEditor, withFingeringLayers } from "./fingeringEditor";
+import { FingeringPageLayer, FingeringStatusStrip, FingeringToolbar } from "./FingeringEditorView";
 import {
   useNoteByNoteHighwaySource,
   useRealtimeHighwaySource,
@@ -286,7 +290,9 @@ function isPlaybackToggleCommand(command: PlaybackCommand): boolean {
     command === "practiceLeftHand" ||
     command === "practiceRightHand" ||
     command === "resetTempo" ||
-    command === "resetNoteStretch";
+    command === "resetNoteStretch" ||
+    // A held digit sets one finger, not a run of them.
+    (isFingerEditCommand(command) && command !== "fingerNoteHigher" && command !== "fingerNoteLower");
 }
 
 /** Commands that do something before playback starts. */
@@ -301,7 +307,9 @@ function commandWorksWhileStopped(command: PlaybackCommand): boolean {
     command === "resetTempo" ||
     command === "stretchNotes" ||
     command === "compressNotes" ||
-    command === "resetNoteStretch";
+    command === "resetNoteStretch" ||
+    // Editing fingers starts note-by-note playback.
+    command === "toggleFingerEditing";
 }
 
 function RefreshRateDiagnostic() {
@@ -614,14 +622,15 @@ export function App() {
   const realtimeDisplayNotes = useMemo(() => {
     if (!realtimeFrame) return [];
     return realtimeShownNotes
-      .filter((note) => noteInPracticeHand(note.left, practiceHand))
       .map((note) => {
         const fingeringId = note.fingeringMusicXmlId === undefined
           ? note.musicXmlId
           : note.fingeringMusicXmlId;
         const predicted = fingeringId ? document?.predictedFingerings?.[fingeringId] : undefined;
         return { pitch: note.pitch, ...(note.left === undefined ? {} : { left: note.left }), ...predicted };
-      });
+      })
+      // A note's fingering names its hand, which the player may have moved from the staff's.
+      .filter((note) => noteInPracticeHand(note.left, practiceHand));
   }, [document?.predictedFingerings, practiceHand, realtimeFrame, realtimeShownNotes]);
   const realtimeGroupIdsByPage = useMemo(() => {
     const sounding = realtimeShownNotes.flatMap((note) =>
@@ -1203,7 +1212,8 @@ export function App() {
           command === "stretchNotes" ||
           command === "compressNotes" ||
           command === "resetNoteStretch" ||
-          isLoopBoundaryCommand(command)
+          isLoopBoundaryCommand(command) ||
+          isFingerEditCommand(command)
         ) return;
         if (realtimeStatus === "inactive" || !realtimeModel.score) return;
         if (command === "rewind") {
@@ -1336,6 +1346,34 @@ export function App() {
     stopRealtime,
   ]);
   const handlePlaybackCommandRef = useRef<(command: PlaybackCommand, heldSince?: number) => void>(() => undefined);
+
+  const startNoteByNotePlayback = useCallback(() => handlePlaybackCommandRef.current("togglePlayback"), []);
+  const predictFingeringsWithModel = useCallback<FingeringPredictor>(
+    async (notes) => (await import("./fingeringModel")).predictPianoFingerings(notes),
+    [],
+  );
+  const fingerEditor = useFingeringEditor({
+    document,
+    setDocument,
+    timeline: playbackTimeline,
+    moment: notePlaybackMoment,
+    playbackActive,
+    playbackMode,
+    practiceHand,
+    onPracticeHandChange: handlePracticeHandChange,
+    startPlayback: startNoteByNotePlayback,
+    seek: handleSelectGroup,
+    predict: predictFingeringsWithModel,
+    onError: setError,
+  });
+  const fingerEditorRef = useRef(fingerEditor);
+  fingerEditorRef.current = fingerEditor;
+  // In edit mode a click on a note rings it and opens its finger picker.
+  const handleViewerSelectGroup = useCallback((group: VisualGroupRef | null) => {
+    const id = group ? `page-${group.pageIndex + 1}-${group.visualGroupId}` : null;
+    if (fingerEditor.editing && id && fingerEditor.fingerings?.[id]) fingerEditor.select(id);
+    else handleSelectGroup(group);
+  }, [fingerEditor, handleSelectGroup]);
 
   /**
    * Note-by-note commits the flag, silencing its playhead sounds; realtime keeps
@@ -1647,6 +1685,18 @@ export function App() {
 
   /** `heldSince` is when the key or MIDI control repeating `command` went down. */
   const handlePlaybackCommand = useCallback((command: PlaybackCommand, heldSince?: number) => {
+    if (isFingerEditCommand(command)) {
+      const editor = fingerEditorRef.current;
+      if (command === "toggleFingerEditing") editor.toggle();
+      else if (!editor.editing) return;
+      else if (command === "resetFinger") editor.reset();
+      else if (command === "swapFingerHand") editor.swapHand();
+      else if (command === "undoFingerEdit") editor.undo();
+      else if (command === "fingerNoteHigher") editor.moveInMoment(-1);
+      else if (command === "fingerNoteLower") editor.moveInMoment(1);
+      else editor.setFinger(Number(command.slice("setFinger".length)));
+      return;
+    }
     if (isLoopBoundaryCommand(command)) {
       if (!loopMode || !loopRegion) return;
       const current = clampLoopRegion(loopRegion, documentMeasureCount);
@@ -1941,8 +1991,19 @@ export function App() {
     function handleKeyDown(event: KeyboardEvent) {
       if (activePage !== "viewer") return;
       if (isEditableKeyboardTarget(event.target)) return;
+      const editor = fingerEditorRef.current;
+      // Esc leaves the fingering editor, closing its picker first, and leaves playback alone.
+      if (editor.editing && event.key === "Escape" && !event.ctrlKey && !event.altKey && !event.metaKey) {
+        event.preventDefault();
+        if (editor.pickerOpen) editor.closePicker();
+        else editor.exit();
+        return;
+      }
       const command = commandForKeyboardEvent(shortcuts, event);
       if (!command || (!commandWorksWhileStopped(command) && !playbackActive)) return;
+      // Outside edit mode the editor's keys keep their ordinary meaning.
+      if (isFingerEditCommand(command) && command !== "toggleFingerEditing" && !editor.editing) return;
+      if (command === "toggleFingerEditing" && !editor.available) return;
       if (isPlaybackToggleCommand(command) && event.repeat) return;
       event.preventDefault();
       if (!event.repeat || heldKeyRef.current?.code !== event.code) {
@@ -1953,6 +2014,35 @@ export function App() {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [activePage, handlePlaybackCommand, playbackActive, shortcuts]);
+
+  // While editing fingers, pasting digits types them as a run: "54545243" fingers eight notes.
+  const fingerEditing = fingerEditor.editing;
+  useEffect(() => {
+    if (!fingerEditing || activePage !== "viewer") return;
+    function handlePaste(event: ClipboardEvent) {
+      if (isEditableKeyboardTarget(event.target)) return;
+      const text = event.clipboardData?.getData("text") ?? "";
+      const run = text.replace(/[^0-5hH]/g, "");
+      if (!run) return;
+      event.preventDefault();
+      fingerEditorRef.current.typeRun(run);
+    }
+    window.addEventListener("paste", handlePaste);
+    return () => window.removeEventListener("paste", handlePaste);
+  }, [activePage, fingerEditing]);
+
+  // A press anywhere but the finger picker or a fingering label closes the picker.
+  const fingerPickerOpen = fingerEditor.pickerOpen;
+  useEffect(() => {
+    if (!fingerPickerOpen) return;
+    function closeOnPressOutside(event: PointerEvent) {
+      const target = event.target;
+      if (target instanceof Element && target.closest(".finger-picker, .fingering-label, .fingering-printed")) return;
+      fingerEditorRef.current.closePicker();
+    }
+    window.addEventListener("pointerdown", closeOnPressOutside, true);
+    return () => window.removeEventListener("pointerdown", closeOnPressOutside, true);
+  }, [fingerPickerOpen]);
 
   useEffect(() => {
     if (!playbackActive || activePage !== "viewer") stopMidiRepeat();
@@ -2290,14 +2380,21 @@ export function App() {
         setDocument((value) =>
           value?.jobId === jobId
             ? {
-                ...value,
+                ...withFingeringLayers(value, {
+                  predicted: result.predicted,
+                  printed: result.printed,
+                  overrides: result.overrides,
+                  overridesError: result.overridesError,
+                  fittedConstraints: result.fittedConstraints,
+                }),
                 fingeringStatus: "ready",
                 fingeringError: undefined,
-                predictedFingerings: result.fingeringsByMusicXmlId,
-                predictedFingeringCount: result.noteCount,
               }
             : value,
         );
+        if (result.overridesError) {
+          setError(`Your saved fingerings could not be read, so edits will not be saved over them: ${result.overridesError}`);
+        }
       })
       .catch((fingeringError: unknown) => {
         if (!current()) return;
@@ -2890,8 +2987,17 @@ export function App() {
               onPlaybackCommand={handlePlaybackCommand}
               onPlaybackModeChange={handlePlaybackModeChange}
               onTempoMultiplierChange={changeTempoMultiplier}
-              onSelectGroup={handleSelectGroup}
+              onSelectGroup={handleViewerSelectGroup}
               onRetryPage={handleRetryPage}
+              toolbarExtra={
+                <FingeringToolbar editor={fingerEditor} playbackMode={playbackMode} shortcuts={shortcuts} />
+              }
+              renderPageExtra={fingerEditor.editing
+                ? (page, scale) => page.surface
+                  ? <FingeringPageLayer page={page.surface} editor={fingerEditor} scale={scale} />
+                  : null
+                : undefined}
+              footer={<FingeringStatusStrip editor={fingerEditor} shortcuts={shortcuts} />}
             />
             {diagnosticsShown ? <aside className="inspector" aria-label="Debug panel">
               <h2>Diagnostics</h2>

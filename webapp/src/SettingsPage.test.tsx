@@ -56,9 +56,9 @@ test("renders every playback command with its default keyboard key and empty MID
     />,
   );
 
-  assert.equal(markup.match(/aria-label="Keyboard shortcut for/g)?.length, 27);
-  assert.equal(markup.match(/aria-label="MIDI shortcut for/g)?.length, 27);
-  assert.equal(markup.match(/>Not assigned<\/button>/g)?.length, 27);
+  assert.equal(markup.match(/aria-label="Keyboard shortcut for/g)?.length, 38);
+  assert.equal(markup.match(/aria-label="MIDI shortcut for/g)?.length, 38);
+  assert.equal(markup.match(/>Not assigned<\/button>/g)?.length, 38);
   assert.match(markup, />Space<\/button>/);
   assert.match(markup, />M<\/button>/);
   assert.match(markup, />I<\/button>/);
@@ -73,6 +73,11 @@ test("renders every playback command with its default keyboard key and empty MID
   assert.match(markup, />Right Arrow<\/button>/);
   assert.match(markup, />Page Up<\/button>/);
   assert.match(markup, />Page Down<\/button>/);
+  assert.match(markup, />F<\/button>/);
+  assert.match(markup, />H<\/button>/);
+  assert.match(markup, />3<\/button>/);
+  assert.match(markup, />Ctrl \+ Z<\/button>/);
+  assert.match(markup, />Alt \+ Up Arrow<\/button>/);
   assert.match(markup, />Delete<\/button>/);
   assert.match(markup, />1 MIDI input connected</);
   assert.match(markup, /Bluetooth MIDI bridge/);
@@ -135,7 +140,7 @@ test("disables MIDI assignment when initialization fails", () => {
 
   assert.match(markup, />MIDI unavailable</);
   assert.match(markup, /MIDI initialization timed out\./);
-  assert.equal(markup.match(/aria-label="MIDI shortcut for[^>]+disabled/g)?.length, 27);
+  assert.equal(markup.match(/aria-label="MIDI shortcut for[^>]+disabled/g)?.length, 38);
   assert.match(markup, /type="checkbox" checked=""/);
 });
 

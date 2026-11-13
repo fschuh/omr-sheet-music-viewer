@@ -56,6 +56,17 @@ export const playbackCommandDetails: ReadonlyArray<{
   { command: "loopEndEarlier", label: "Loop end earlier", description: "Move the end of the loop one bar earlier." },
   { command: "loopStartEarlier", label: "Loop start earlier", description: "Move the start of the loop one bar earlier." },
   { command: "loopStartLater", label: "Loop start later", description: "Move the start of the loop one bar later." },
+  { command: "toggleFingerEditing", label: "Edit fingers", description: "Turn the fingering editor on or off for a MusicXML score. Esc also leaves it." },
+  { command: "setFinger1", label: "Finger 1", description: "While editing fingers, give the ringed note the thumb and go to the next note." },
+  { command: "setFinger2", label: "Finger 2", description: "While editing fingers, give the ringed note the index finger and go to the next note." },
+  { command: "setFinger3", label: "Finger 3", description: "While editing fingers, give the ringed note the middle finger and go to the next note." },
+  { command: "setFinger4", label: "Finger 4", description: "While editing fingers, give the ringed note the ring finger and go to the next note." },
+  { command: "setFinger5", label: "Finger 5", description: "While editing fingers, give the ringed note the little finger and go to the next note." },
+  { command: "resetFinger", label: "Back to printed or predicted finger", description: "While editing fingers, remove your fingering of the ringed note and go to the next note." },
+  { command: "swapFingerHand", label: "Move note to the other hand", description: "While editing fingers, play the ringed note with the other hand." },
+  { command: "undoFingerEdit", label: "Undo finger edit", description: "While editing fingers, undo the last change." },
+  { command: "fingerNoteHigher", label: "Higher note of the chord", description: "While editing fingers, ring the next higher note struck at the same time." },
+  { command: "fingerNoteLower", label: "Lower note of the chord", description: "While editing fingers, ring the next lower note struck at the same time." },
 ];
 
 function keyboard(code: string): KeyboardShortcut {
@@ -92,6 +103,17 @@ export function defaultPlaybackShortcuts(): PlaybackShortcuts {
     loopEndEarlier: { keyboard: { ...keyboard("ArrowLeft"), shift: true }, midi: null },
     loopStartEarlier: { keyboard: { ...keyboard("ArrowLeft"), ctrl: true, shift: true }, midi: null },
     loopStartLater: { keyboard: { ...keyboard("ArrowRight"), ctrl: true, shift: true }, midi: null },
+    toggleFingerEditing: { keyboard: keyboard("KeyF"), midi: null },
+    setFinger1: { keyboard: keyboard("Digit1"), midi: null },
+    setFinger2: { keyboard: keyboard("Digit2"), midi: null },
+    setFinger3: { keyboard: keyboard("Digit3"), midi: null },
+    setFinger4: { keyboard: keyboard("Digit4"), midi: null },
+    setFinger5: { keyboard: keyboard("Digit5"), midi: null },
+    resetFinger: { keyboard: keyboard("Digit0"), midi: null },
+    swapFingerHand: { keyboard: keyboard("KeyH"), midi: null },
+    undoFingerEdit: { keyboard: { ...keyboard("KeyZ"), ctrl: true }, midi: null },
+    fingerNoteHigher: { keyboard: { ...keyboard("ArrowUp"), alt: true }, midi: null },
+    fingerNoteLower: { keyboard: { ...keyboard("ArrowDown"), alt: true }, midi: null },
   };
 }
 

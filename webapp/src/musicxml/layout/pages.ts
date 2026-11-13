@@ -375,7 +375,9 @@ export function layoutScore(score: ScoreModel, format: PageFormat): LayoutModel 
     directions.drawables,
   );
   const pages = pagesOfSystems.map((page, pageIndex) =>
-    drawPage(pageIndex, page.map((entry) => entry.system), { score, prepared, shapes, format, sp, firstSystem: systems[0], spanners }),
+    drawPage(pageIndex, page.map((entry) => entry.system), {
+      score, prepared, shapes, format, sp, firstSystem: systems[0], spanners, printedFingerings: marks.fingerings,
+    }),
   );
   return { format, pages };
 }
