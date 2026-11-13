@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { DocumentViewer, heldTempoStep, steppedTempoMultiplier } from "./DocumentViewer";
+import { DocumentViewer, heldTempoStep, steppedTempoMultiplier, type NoteHighlight } from "./DocumentViewer";
 import { printedValueSummary } from "./noteValues";
 import {
   addPredictedFingeringsToMusicXml,
@@ -23,6 +23,7 @@ import {
   timelineForPracticeHand,
   visualGroupIdsByPage,
   type PlaybackCommand,
+  type PlaybackMoment,
   type PlaybackState,
   type PracticeHand,
 } from "./playback";
@@ -140,7 +141,7 @@ import {
   showScoreDataFolder,
   showScoreSource,
 } from "./musicxml";
-import { useFingeringEditor, withFingeringLayers } from "./fingeringEditor";
+import { isEditNavigation, useFingeringEditor, withFingeringLayers, type EditTarget } from "./fingeringEditor";
 import { FingeringPageLayer, FingeringStatusStrip, FingeringToolbar } from "./FingeringEditorView";
 import {
   useNoteByNoteHighwaySource,
@@ -291,8 +292,14 @@ function isPlaybackToggleCommand(command: PlaybackCommand): boolean {
     command === "practiceRightHand" ||
     command === "resetTempo" ||
     command === "resetNoteStretch" ||
-    // A held digit sets one finger, not a run of them.
-    (isFingerEditCommand(command) && command !== "fingerNoteHigher" && command !== "fingerNoteLower");
+    // Held, a digit types on like any key, and undo keeps undoing; the editor's switches do not repeat.
+    command === "toggleFingerEditing" ||
+    command === "swapFingerHand";
+}
+
+/** Commands the fingering editor answers while playback is stopped for it. */
+function worksWhileEditing(command: PlaybackCommand, editing: boolean): boolean {
+  return editing && (isFingerEditCommand(command) || isEditNavigation(command) || command === "playCurrentNotes");
 }
 
 /** Commands that do something before playback starts. */
@@ -1347,33 +1354,82 @@ export function App() {
   ]);
   const handlePlaybackCommandRef = useRef<(command: PlaybackCommand, heldSince?: number) => void>(() => undefined);
 
-  const startNoteByNotePlayback = useCallback(() => handlePlaybackCommandRef.current("togglePlayback"), []);
+  // The fingering editor stops playback while it is on and keeps its own cursor.
+  const stopAnyPlayback = useCallback(() => handlePlaybackCommandRef.current("stopPlayback"), []);
+  const auditionEditedMoment = useCallback((moment: PlaybackMoment) => {
+    if (moment.pitches.length === 0) return;
+    void pianoSampler.audition(moment.pitches, {}, moment.dynamic)
+      .then(() => setPlaybackAudioError(null))
+      .catch((audioError: unknown) => {
+        const message = audioError instanceof Error ? audioError.message : String(audioError);
+        setPlaybackAudioError(`Piano audio could not start: ${message}`);
+      });
+  }, []);
   const predictFingeringsWithModel = useCallback<FingeringPredictor>(
     async (notes) => (await import("./fingeringModel")).predictPianoFingerings(notes),
     [],
   );
+  // The notes realtime struck last, at or before where it is now.
+  const realtimePlayheadNoteIds = useCallback((): string[] => {
+    const route = realtimeRouteRef.current;
+    if (playbackModeRef.current !== "realtime" || !route) return [];
+    const offset = realtimeControllerRef.current?.getOffset() ?? 0;
+    const struck = (route.playheadNotes ?? route.notes).filter((note) => note.onset <= offset + 1e-6);
+    const last = Math.max(...struck.map((note) => note.onset));
+    return struck.filter((note) => Math.abs(note.onset - last) < 1e-6).map((note) => note.musicXmlId);
+  }, []);
+  /**
+   * Back from the fingering editor to the playback it began in, at the note it last ringed,
+   * realtime paused there; with no playback to go back to, the note is selected.
+   */
+  const leaveFingerEditor = useCallback((cursor: EditTarget | null, resume: boolean) => {
+    if (cursor) setSelectedGroup({ pageIndex: cursor.pageIndex, visualGroupId: cursor.key });
+    if (!resume) return;
+    // Once the selection has rendered, playback starts at it.
+    window.setTimeout(() => handlePlaybackCommandRef.current("togglePlayback"), 0);
+  }, []);
   const fingerEditor = useFingeringEditor({
     document,
     setDocument,
     timeline: playbackTimeline,
-    moment: notePlaybackMoment,
     playbackActive,
-    playbackMode,
+    startMomentId: playbackMode === "note-by-note" ? notePlaybackMoment?.id ?? null : null,
+    playheadNoteIds: realtimePlayheadNoteIds,
+    startNoteId: selectedGroup ? `page-${selectedGroup.pageIndex + 1}-${selectedGroup.visualGroupId}` : null,
     practiceHand,
     onPracticeHandChange: handlePracticeHandChange,
-    startPlayback: startNoteByNotePlayback,
-    seek: handleSelectGroup,
+    stopPlayback: stopAnyPlayback,
+    onLeave: leaveFingerEditor,
+    audition: auditionEditedMoment,
     predict: predictFingeringsWithModel,
     onError: setError,
   });
   const fingerEditorRef = useRef(fingerEditor);
   fingerEditorRef.current = fingerEditor;
+  // The editor's cursor replaces the selection while it is on.
+  const fingerEditing = fingerEditor.editing;
+  useEffect(() => {
+    if (fingerEditing) setSelectedGroup(null);
+  }, [fingerEditing]);
   // In edit mode a click on a note rings it and opens its finger picker.
   const handleViewerSelectGroup = useCallback((group: VisualGroupRef | null) => {
     const id = group ? `page-${group.pageIndex + 1}-${group.visualGroupId}` : null;
-    if (fingerEditor.editing && id && fingerEditor.fingerings?.[id]) fingerEditor.select(id);
-    else handleSelectGroup(group);
+    if (fingerEditor.editing) {
+      if (id && fingerEditor.fingerings?.[id]) fingerEditor.select(id);
+      else fingerEditor.closePicker();
+      return;
+    }
+    handleSelectGroup(group);
   }, [fingerEditor, handleSelectGroup]);
+  // The edited note is coloured in its hand's colour.
+  const fingerCursor = fingerEditor.cursor;
+  const fingerCursorLeft = fingerCursor ? fingerEditor.fingerings?.[fingerCursor.id]?.left : undefined;
+  const fingerNoteHighlight = useMemo<NoteHighlight | null>(
+    () => fingerCursor && fingerCursorLeft !== undefined
+      ? { pageIndex: fingerCursor.pageIndex, keys: [fingerCursor.key], kind: fingerCursorLeft ? "left-hand" : "right-hand" }
+      : null,
+    [fingerCursor, fingerCursorLeft],
+  );
 
   /**
    * Note-by-note commits the flag, silencing its playhead sounds; realtime keeps
@@ -1685,8 +1741,18 @@ export function App() {
 
   /** `heldSince` is when the key or MIDI control repeating `command` went down. */
   const handlePlaybackCommand = useCallback((command: PlaybackCommand, heldSince?: number) => {
+    const editor = fingerEditorRef.current;
+    // While editing fingers, moving goes to the editor's cursor and nothing plays unasked.
+    if (editor.editing && !isFingerEditCommand(command)) {
+      if (isEditNavigation(command)) editor.navigate(command);
+      else if (command === "playCurrentNotes") editor.audition();
+      else if (command === "practiceLeftHand" || command === "practiceRightHand") {
+        const hand = command === "practiceLeftHand" ? "left" : "right";
+        handlePracticeHandChange(practiceHand === hand ? "both" : hand);
+      }
+      return;
+    }
     if (isFingerEditCommand(command)) {
-      const editor = fingerEditorRef.current;
       if (command === "toggleFingerEditing") editor.toggle();
       else if (!editor.editing) return;
       else if (command === "resetFinger") editor.reset();
@@ -1825,7 +1891,7 @@ export function App() {
       if (
         activeMidiRepeatRef.current !== activeRepeat ||
         activePageRef.current !== "viewer" ||
-        !playbackActiveRef.current
+        (!playbackActiveRef.current && !fingerEditorRef.current.editing)
       ) {
         if (activeMidiRepeatRef.current === activeRepeat) stopMidiRepeat();
         return;
@@ -2000,7 +2066,8 @@ export function App() {
         return;
       }
       const command = commandForKeyboardEvent(shortcuts, event);
-      if (!command || (!commandWorksWhileStopped(command) && !playbackActive)) return;
+      if (!command) return;
+      if (!commandWorksWhileStopped(command) && !playbackActive && !worksWhileEditing(command, editor.editing)) return;
       // Outside edit mode the editor's keys keep their ordinary meaning.
       if (isFingerEditCommand(command) && command !== "toggleFingerEditing" && !editor.editing) return;
       if (command === "toggleFingerEditing" && !editor.available) return;
@@ -2016,7 +2083,6 @@ export function App() {
   }, [activePage, handlePlaybackCommand, playbackActive, shortcuts]);
 
   // While editing fingers, pasting digits types them as a run: "54545243" fingers eight notes.
-  const fingerEditing = fingerEditor.editing;
   useEffect(() => {
     if (!fingerEditing || activePage !== "viewer") return;
     function handlePaste(event: ClipboardEvent) {
@@ -2045,8 +2111,8 @@ export function App() {
   }, [fingerPickerOpen]);
 
   useEffect(() => {
-    if (!playbackActive || activePage !== "viewer") stopMidiRepeat();
-  }, [activePage, playbackActive, stopMidiRepeat]);
+    if ((!playbackActive && !fingerEditing) || activePage !== "viewer") stopMidiRepeat();
+  }, [activePage, fingerEditing, playbackActive, stopMidiRepeat]);
 
   useEffect(() => {
     if (!nativeAvailable) return;
@@ -2100,7 +2166,10 @@ export function App() {
 
       if (activePageRef.current !== "viewer") return;
       const command = commandForMidiShortcut(shortcutsRef.current, received);
-      if (!command || (!commandWorksWhileStopped(command) && !playbackActiveRef.current)) return;
+      if (!command) return;
+      const editing = fingerEditorRef.current.editing;
+      if (!commandWorksWhileStopped(command) && !playbackActiveRef.current && !worksWhileEditing(command, editing)) return;
+      if (isFingerEditCommand(command) && command !== "toggleFingerEditing" && !editing) return;
       stopMidiRepeat();
       handlePlaybackCommandRef.current(command);
       if (!isPlaybackToggleCommand(command)) startMidiRepeat(command, received);
@@ -2383,6 +2452,7 @@ export function App() {
                 ...withFingeringLayers(value, {
                   predicted: result.predicted,
                   printed: result.printed,
+                  tiedTo: result.tiedTo,
                   overrides: result.overrides,
                   overridesError: result.overridesError,
                   fittedConstraints: result.fittedConstraints,
@@ -2990,14 +3060,18 @@ export function App() {
               onSelectGroup={handleViewerSelectGroup}
               onRetryPage={handleRetryPage}
               toolbarExtra={
-                <FingeringToolbar editor={fingerEditor} playbackMode={playbackMode} shortcuts={shortcuts} />
+                <FingeringToolbar editor={fingerEditor} shortcuts={shortcuts} />
               }
               renderPageExtra={fingerEditor.editing
-                ? (page, scale) => page.surface
-                  ? <FingeringPageLayer page={page.surface} editor={fingerEditor} scale={scale} />
+                ? (page, scale, width) => page.surface
+                  ? <FingeringPageLayer page={page.surface} editor={fingerEditor} scale={scale} displayWidth={width} />
                   : null
                 : undefined}
               footer={<FingeringStatusStrip editor={fingerEditor} shortcuts={shortcuts} />}
+              noteHighlight={fingerNoteHighlight}
+              followMoment={fingerEditor.cursorMoment}
+              stillPages={fingerEditor.editing}
+              playbackLocked={fingerEditor.editing}
             />
             {diagnosticsShown ? <aside className="inspector" aria-label="Debug panel">
               <h2>Diagnostics</h2>
@@ -3120,16 +3194,18 @@ export function App() {
                 upcomingLead={keyboardView.upcomingLead}
               />
             ) : null}
-            {playbackActive ? (
+            {playbackActive || fingerEditor.editing ? (
               <PianoKeyboard
                 highwayAttached={noteHighwayShown}
                 range={keyboardRange}
                 display={keyboardDisplay}
                 blackKeyWidth={keyboardView.blackKeyWidth}
                 solidTilt={keyboardSolid ? keyboardView.tilt : null}
-                notes={playbackMode === "realtime"
-                  ? realtimeDisplayNotes
-                  : playbackMoment?.keyboardNotes ?? []}
+                notes={fingerEditor.editing
+                  ? fingerEditor.cursorMoment?.keyboardNotes ?? []
+                  : playbackMode === "realtime"
+                    ? realtimeDisplayNotes
+                    : playbackMoment?.keyboardNotes ?? []}
                 recognizedPitches={playbackState.listenModeEnabled
                   ? listenFeedback.recognizedActivePitches.map(({ midi }) => midi)
                   : []}

@@ -82,6 +82,17 @@ test("highlighted notes and their chord take the selection or playback colour", 
   assert.doesNotMatch(renderToStaticMarkup(<MusicXmlPageSurface page={page} />), /class="[^"]*mx-(selected|playback)/);
 });
 
+test("a hand highlight colours one note of a chord and the chord's stem, not its other notes", () => {
+  const markup = renderToStaticMarkup(
+    <MusicXmlPageSurface page={page} highlighted={new Set(["P1-m1-s1-v1-t0-E5"])} highlightKind="right-hand" />,
+  );
+  assert.match(markup, /class="mx-chord mx-right-hand"/);
+  assert.match(markup, /class="mx-note mx-right-hand" data-notehead="P1-m1-s1-v1-t0-E5"/);
+  assert.match(markup, /class="mx-note" data-notehead="P1-m1-s1-v1-t0-C5"/);
+  // The other notes are reset to black inside a hand-coloured chord.
+  assert.match(markup, /\.mx-chord\.mx-right-hand \.mx-note:not\(\.mx-right-hand\)[^{]*\{color:#000\}/);
+});
+
 test("highlighted notes and their chord are drawn last, in front of what touches them", () => {
   const neighbour = { ...page.chords[0], id: "P1-m1-s1-v1-t1", momentId: "m1-t1", notes: page.chords[0].notes.map((note) => ({
     ...note,

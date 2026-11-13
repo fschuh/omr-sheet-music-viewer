@@ -2,8 +2,8 @@ import type { Note as PianoFingeringNote } from "@lumikey/piano-fingering-model"
 
 const DEFAULT_TEMPO_BPM = 120;
 const FINGERING_CACHE_FIELD_NAME = "homr-piano-fingering-cache";
-// Bump this whenever the model version or hand-assignment rules change.
-const FINGERING_CACHE_VERSION = "lumikey-0.3.0-staff-hands-v1";
+// Bump this whenever the model version, the hand-assignment rules or the notes it sees change.
+const FINGERING_CACHE_VERSION = "lumikey-0.3.0-staff-hands-ties-v2";
 /** Identifies the predictions: stored predictions from another model or hand rule are stale. */
 export const FINGERING_MODEL = FINGERING_CACHE_VERSION;
 const STEP_SEMITONES: Readonly<Record<string, number>> = {
@@ -63,7 +63,10 @@ interface RawNote {
   left: boolean;
   measureIndex: number;
   offsetQuarters: number;
+  /** Including the notes tied on to it, which are held, not played. */
   durationQuarters: number;
+  /** The IDs of the notes tied on to this one. */
+  continuations: string[];
 }
 
 interface RawTempo {
@@ -74,7 +77,10 @@ interface RawTempo {
 }
 
 interface ParsedPart {
+  /** Played notes; a note tied on from another is held, not played, and is not among them. */
   notes: RawNote[];
+  /** Each held note's ID, mapped to the ID of the note whose tie it continues. */
+  continuations: Map<string, string>;
   tempos: RawTempo[];
   measureLengths: number[];
 }
@@ -167,6 +173,9 @@ function parsePart(part: Element, tempoOrder: { value: number }): ParsedPart {
   const notes: RawNote[] = [];
   const tempos: RawTempo[] = [];
   const measureLengths: number[] = [];
+  const continuations = new Map<string, string>();
+  // Notes whose tie is still open, by staff and pitch.
+  const openTies = new Map<string, RawNote>();
 
   childrenNamed(part, "measure").forEach((measure, measureIndex) => {
     let cursor = 0;
@@ -229,7 +238,21 @@ function parsePart(part: Element, tempoOrder: { value: number }): ParsedPart {
       if (midi === null) continue;
       const staff = finiteNumber(childText(child, "staff")) ?? 1;
       const clef = clefs.get(staff);
-      notes.push({
+      const ties = new Set(childrenNamed(child, "tie").map((tie) => tie.getAttribute("type")));
+      const tieKey = `${staff}|${midi}`;
+      const tiedFrom = ties.has("stop") ? openTies.get(tieKey) : undefined;
+      if (tiedFrom) {
+        // Held on from the note that starts the tie: that note lasts longer instead.
+        tiedFrom.durationQuarters += duration;
+        const id = child.getAttribute("id");
+        if (id) {
+          tiedFrom.continuations.push(id);
+          if (tiedFrom.musicXmlId) continuations.set(id, tiedFrom.musicXmlId);
+        }
+        if (!ties.has("start")) openTies.delete(tieKey);
+        continue;
+      }
+      const note: RawNote = {
         element: child,
         musicXmlId: child.getAttribute("id"),
         midi,
@@ -237,7 +260,11 @@ function parsePart(part: Element, tempoOrder: { value: number }): ParsedPart {
         measureIndex,
         offsetQuarters: onset,
         durationQuarters: duration,
-      });
+        continuations: [],
+      };
+      notes.push(note);
+      if (ties.has("start")) openTies.set(tieKey, note);
+      else openTies.delete(tieKey);
     }
 
     measureLengths.push(
@@ -245,7 +272,7 @@ function parsePart(part: Element, tempoOrder: { value: number }): ParsedPart {
     );
   });
 
-  return { notes, tempos, measureLengths };
+  return { notes, tempos, measureLengths, continuations };
 }
 
 function measureStarts(parts: ParsedPart[]): number[] {
@@ -437,6 +464,7 @@ export function cachedFingeringsFromMusicXml(
     if (source.musicXmlId) {
       fingeringsByMusicXmlId[source.musicXmlId] = { finger, left: source.left };
     }
+    for (const id of source.continuations) fingeringsByMusicXmlId[id] = { finger, left: source.left };
   }
   return {
     musicXml,
@@ -501,6 +529,17 @@ export async function predictFingerings(
   return { fingeringsByMusicXmlId, noteCount };
 }
 
+/** Each held note's ID, mapped to the ID of the note whose tie it continues. */
+export function tiedContinuations(musicXml: string): Record<string, string> {
+  const document = musicXmlDocument(musicXml);
+  const tempoOrder = { value: 0 };
+  const result: Record<string, string> = {};
+  for (const part of childrenNamed(document.documentElement, "part")) {
+    for (const [held, start] of parsePart(part, tempoOrder).continuations) result[held] = start;
+  }
+  return result;
+}
+
 /** Fingers the MusicXML prints, by note ID, with the hand the staff and clef imply. */
 export function printedFingerings(musicXml: string): Record<string, PredictedFingering> {
   const document = musicXmlDocument(musicXml);
@@ -531,6 +570,8 @@ export async function addPredictedFingeringsToMusicXml(
     if (source.musicXmlId) {
       fingeringsByMusicXmlId[source.musicXmlId] = { finger, left: source.left };
     }
+    // A held note shows the finger holding it.
+    for (const id of source.continuations) fingeringsByMusicXmlId[id] = { finger, left: source.left };
   }
   markFingeringCacheCurrent(document);
 

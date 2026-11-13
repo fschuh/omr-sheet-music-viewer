@@ -27,6 +27,7 @@ export {
 export {
   constraintSignature,
   noteKeyOf,
+  resolveFingering,
   resolveFingerings,
   withOverride,
   type EffectiveFingering,
@@ -34,7 +35,8 @@ export {
 } from "./scoreData/fingerings";
 export type { FingeringOverride, FingeringOverrides } from "./scoreData/overrides";
 export { MusicXmlImportError } from "./import/parseMusicXml";
-export { MusicXmlPageSurface, type HighlightKind } from "./render/MusicXmlPageSurface";
+export { MusicXmlNoteMarks, MusicXmlPageSurface, type HighlightKind } from "./render/MusicXmlPageSurface";
+export { usePageImage } from "./render/MusicXmlPageImage";
 export { showScoreDataFolder, showScoreSource } from "./scoreData/scoreData";
 
 const MUSIC_XML_EXTENSION = /\.(musicxml|xml|mxl)$/i;

@@ -2,18 +2,22 @@ import { memo, type ReactElement } from "react";
 import { glyphText } from "../fonts/smufl";
 import type { Drawable, LayoutChord, LayoutPage } from "../model/layout";
 
-const LELAND_URL = new URL("../fonts/Leland.otf", import.meta.url).href;
+export const LELAND_URL = new URL("../fonts/Leland.otf", import.meta.url).href;
 /** The page's own styles: the music font, and the colours shared with PDF highlighting. */
 const PAGE_STYLE =
   `@font-face{font-family:"Leland";src:url("${LELAND_URL}") format("opentype");font-display:block}` +
   ".musicxml-page{color:#000}.musicxml-page line{stroke:currentColor}" +
   ".musicxml-page polygon,.musicxml-page path,.musicxml-page text{fill:currentColor}" +
   '.mx-glyph{font-family:"Leland"}.mx-text{font-family:Georgia,"Times New Roman",serif}' +
-  ".mx-selected{color:#de3619}.mx-playback{color:#13a98d}";
+  ".mx-selected{color:#de3619}.mx-playback{color:#13a98d}" +
+  // The note the fingering editor points at, in its hand's colour, with its chord's stem;
+  // the chord's other notes stay black, so the note stands out within it.
+  ".mx-left-hand{color:var(--hand-left,#f28c38)}.mx-right-hand{color:var(--hand-right,#2fbfa5)}" +
+  ".mx-chord.mx-left-hand .mx-note:not(.mx-left-hand),.mx-chord.mx-right-hand .mx-note:not(.mx-right-hand){color:#000}";
 /** SMuFL fonts are scaled so one em is four staff spaces. */
 const EM_PER_STAFF_SPACE = 4;
 
-export type HighlightKind = "selected" | "playback";
+export type HighlightKind = "selected" | "playback" | "left-hand" | "right-hand";
 
 function draw(item: Drawable, staffSpace: number, key: number): ReactElement {
   switch (item.kind) {
@@ -114,8 +118,10 @@ export const MusicXmlPageSurface = memo(function MusicXmlPageSurface({
   highlightKind?: HighlightKind;
 }) {
   const isHighlighted = (chord: LayoutChord) => chord.notes.some((note) => highlighted.has(note.key));
-  // SVG paints in order: highlighted chords last, over neighbours that touch them.
-  const chords = highlighted.size === 0
+  // SVG paints in order: highlighted chords last, over neighbours that touch them. The
+  // fingering editor's note changes only colour, so moving it on each step does not make
+  // the browser lay out the whole page again.
+  const chords = highlighted.size === 0 || highlightKind === "left-hand" || highlightKind === "right-hand"
     ? page.chords
     : [...page.chords.filter((chord) => !isHighlighted(chord)), ...page.chords.filter(isHighlighted)];
   return (
@@ -137,6 +143,41 @@ export const MusicXmlPageSurface = memo(function MusicXmlPageSurface({
           highlighted={chord.notes.filter((note) => highlighted.has(note.key)).map((note) => note.key).join(" ")}
           kind={highlightKind}
         />
+      ))}
+    </svg>
+  );
+});
+
+/**
+ * Notes of a page drawn again on their own, coloured `kind`, with their chords' stems: laid
+ * over the page, they highlight it without changing it.
+ */
+export const MusicXmlNoteMarks = memo(function MusicXmlNoteMarks({
+  page,
+  keys,
+  kind,
+}: {
+  page: LayoutPage;
+  keys: readonly string[];
+  kind: HighlightKind;
+}) {
+  const marked = new Set(keys);
+  const chords = page.chords.filter((chord) => chord.notes.some((note) => marked.has(note.key)));
+  return (
+    <svg
+      className="musicxml-page musicxml-note-marks"
+      viewBox={`0 0 ${page.width} ${page.height}`}
+      preserveAspectRatio="none"
+      aria-hidden="true"
+    >
+      <style>{PAGE_STYLE}</style>
+      {chords.map((chord) => (
+        <g key={chord.id} className={`mx-${kind}`}>
+          {chord.items.map((item, index) => draw(item, page.staffSpace, index))}
+          {chord.notes.filter((note) => marked.has(note.key)).map((note) => (
+            <g key={note.key}>{note.items.map((item, index) => draw(item, page.staffSpace, index))}</g>
+          ))}
+        </g>
       ))}
     </svg>
   );

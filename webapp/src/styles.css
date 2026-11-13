@@ -1466,6 +1466,18 @@ button:disabled {
 
 .overlay { pointer-events: none; }
 
+/* An engraved page's SVG, kept under its image while the page holds still. */
+.document-page .musicxml-page-live {
+  height: 100%;
+  left: 0;
+  pointer-events: none;
+  position: absolute;
+  top: 0;
+  width: 100%;
+}
+
+.document-page .musicxml-page-live[hidden] { display: none; }
+
 .document-page .loop-tint-layer,
 .document-page .loop-layer {
   height: 100%;
@@ -2675,12 +2687,7 @@ button:disabled {
 
 .viewer-toolbar .fingering-edit-toggle.active kbd { background: #c6e3da; }
 
-.viewer-toolbar .fingering-summary {
-  color: #37322d;
-  font-weight: 600;
-  min-width: 0;
-  white-space: nowrap;
-}
+.viewer-toolbar .fingering-toolbar button { white-space: nowrap; }
 
 .document-page .fingering-layer {
   height: 100%;
@@ -2712,27 +2719,69 @@ button:disabled {
 .fingering-layer .fingering-label.yours circle:not(.fingering-ring) { fill: var(--hand-ink); stroke: var(--hand-ink); }
 .fingering-layer .fingering-label.yours text { fill: #fff; }
 
-.fingering-layer .fingering-label:hover .fingering-label-body { filter: drop-shadow(0 0 2px var(--hand)); }
+/* Hover changes only a colour: a filter would make the browser lay out the page anew. */
+.fingering-layer .fingering-label:hover circle { stroke: var(--hand-ink); }
 
-.fingering-layer .fingering-ring {
-  fill: none;
-  stroke: var(--hand-ink);
+/* The ring, the band and an edit's pop move on layers of their own, so the browser slides
+   them without painting the engraved page again. */
+.document-page .fingering-ring,
+.document-page .fingering-band,
+.document-page .fingering-pop {
+  box-sizing: border-box;
+  left: 0;
+  pointer-events: none;
+  position: absolute;
+  top: 0;
+  will-change: transform;
 }
 
-.fingering-layer .fingering-label.flash .fingering-label-body {
-  animation: fingering-flash 520ms ease-out both;
-  transform-box: fill-box;
-  transform-origin: center;
+.document-page .fingering-ring {
+  border-radius: 50%;
+  border-style: solid;
+  transition: transform 120ms cubic-bezier(0.2, 0.9, 0.3, 1), border-color 120ms ease-out;
+  z-index: 2;
 }
 
-@keyframes fingering-flash {
-  0% { transform: scale(1.55); }
-  55% { transform: scale(0.92); }
-  100% { transform: scale(1); }
+.document-page .fingering-ring.right-hand { border-color: var(--hand-right-dark); }
+.document-page .fingering-ring.left-hand { border-color: var(--hand-left-dark); }
+
+/* The cursor's moment: a band across the system and its labels. */
+.document-page .fingering-band {
+  background: rgb(8 115 97 / 10%);
+  transition: transform 120ms cubic-bezier(0.2, 0.9, 0.3, 1);
+}
+
+/* An edited label pops, then gives way to the label underneath. */
+.document-page .fingering-pop {
+  align-items: center;
+  animation: fingering-pop 520ms ease-out forwards;
+  border-radius: 50%;
+  border-style: solid;
+  display: flex;
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  font-weight: 700;
+  justify-content: center;
+  line-height: 1;
+  transform: var(--at);
+  z-index: 1;
+}
+
+.document-page .fingering-pop.right-hand { --hand: var(--hand-right); --hand-ink: var(--hand-right-dark); }
+.document-page .fingering-pop.left-hand { --hand: var(--hand-left); --hand-ink: var(--hand-left-dark); }
+.document-page .fingering-pop.predicted { background: #fff; border-color: var(--hand); color: var(--hand-ink); }
+.document-page .fingering-pop.yours { background: var(--hand-ink); border-color: var(--hand-ink); color: #fff; }
+
+@keyframes fingering-pop {
+  0% { opacity: 1; transform: var(--at) scale(1.55); }
+  55% { opacity: 1; transform: var(--at) scale(0.92); }
+  99% { opacity: 1; transform: var(--at) scale(1); }
+  100% { opacity: 0; transform: var(--at) scale(1); }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .fingering-layer .fingering-label.flash .fingering-label-body { animation: none; }
+  .document-page .fingering-ring,
+  .document-page .fingering-band { transition: none; }
+  .document-page .fingering-pop { display: none; }
 }
 
 .fingering-layer .fingering-stack {
@@ -2750,8 +2799,6 @@ button:disabled {
 }
 
 .fingering-layer .fingering-printed:hover { stroke: #a39b91; }
-.fingering-layer .fingering-printed.current.right-hand { stroke: var(--hand-right-dark); stroke-width: 5; }
-.fingering-layer .fingering-printed.current.left-hand { stroke: var(--hand-left-dark); stroke-width: 5; }
 
 .fingering-layer .fingering-printed-strike { stroke: #24211d; }
 
@@ -2871,6 +2918,16 @@ button:disabled {
 .fingering-status .fingering-status-hand.right-hand { color: var(--hand-right-dark); }
 .fingering-status .fingering-status-hand.left-hand { color: var(--hand-left-dark); }
 .fingering-status .fingering-status-warning { color: #9c3a12; font-weight: 600; }
+
+/* Your fingerings' count, at the right end beside the Keys button. */
+.fingering-status .fingering-summary {
+  color: #37322d;
+  font-weight: 600;
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.fingering-status .fingering-summary ~ .fingering-keys { margin-left: 0; }
 
 .fingering-status .fingering-keys {
   margin-left: auto;

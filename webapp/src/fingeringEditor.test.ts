@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { applyTypedRun, editWalk, momentTargets, withFingeringLayers } from "./fingeringEditor";
+import { applyTypedRun, editWalk, momentTargets, navigateWalk, withFingeringLayers } from "./fingeringEditor";
 import { resolveFingerings, type FingeringOverrides } from "./musicxml";
 import { buildPlaybackTimeline, timelineForPracticeHand, type PlaybackMoment } from "./playback";
 import type { FingeringLayers, LoadedDocument } from "./types";
@@ -33,12 +33,13 @@ const layers: FingeringLayers = {
     [id("c-E5")]: { finger: 5, left: false },
   },
   printed: { [id("a-A4")]: { finger: 3, left: false } },
+  tiedTo: {},
   overrides: {},
   overridesError: null,
   fittedConstraints: "",
 };
 const fingerings = resolveFingerings(layers, {});
-const resolve = (overrides: FingeringOverrides) => resolveFingerings(layers, overrides);
+const resolve = (overrides: FingeringOverrides, id: string) => resolveFingerings(layers, overrides)[id];
 const timeline = [
   moment("a", [["a-E4", "E4", false], ["a-C5", "C5", false], ["a-A4", "A4", false], ["a-A2", "A2", true], ["a-rest", "B4", false]]),
   moment("b", [["b-D5", "D5", false]]),
@@ -114,4 +115,24 @@ test("practising one hand follows a note moved to the other hand", () => {
   const right = timelineForPracticeHand(full, "right");
   assert.deepEqual(right[0].pitches.sort(), ["C3", "C5"]);
   assert.deepEqual(timelineForPracticeHand(full, "left"), []);
+});
+
+test("the cursor moves by note, bar and page as the playhead does", () => {
+  const target = (key: string, barKey: string, pageIndex = 0) => ({
+    id: `page-${pageIndex + 1}-${key}`, pageIndex, key, pitch: "C4", momentId: key, measure: null, barKey,
+  });
+  const walk = [
+    target("a", "bar1"), target("b", "bar1"), target("c", "bar2"), target("d", "bar2"),
+    target("e", "bar3", 1), target("f", "bar3", 1),
+  ];
+  assert.equal(navigateWalk(walk, 0, "forwardNote"), 1);
+  assert.equal(navigateWalk(walk, 5, "forwardNote"), 5, "the last note stays");
+  assert.equal(navigateWalk(walk, 0, "backwardNote"), 0);
+  assert.equal(navigateWalk(walk, 1, "forwardBar"), 2);
+  assert.equal(navigateWalk(walk, 3, "backwardBar"), 0, "back to the start of the bar before");
+  assert.equal(navigateWalk(walk, 1, "backwardBar"), 0);
+  assert.equal(navigateWalk(walk, 1, "forwardPage"), 4);
+  assert.equal(navigateWalk(walk, 5, "backwardPage"), 0);
+  assert.equal(navigateWalk(walk, 5, "rewind"), 0);
+  assert.equal(navigateWalk([], 0, "forwardNote"), -1);
 });

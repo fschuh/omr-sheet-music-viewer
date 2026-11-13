@@ -182,3 +182,28 @@ test("printed fingerings are read with the hand their staff implies", async () =
   assert.deepEqual(printedFingerings(printed), { "page-1-rh-e": { finger: 3, left: false } });
   assert.deepEqual(printedFingerings(SCORE), {});
 });
+
+test("a note tied on from another is held, not played: the model sees one longer note and both show its finger", async () => {
+  const { predictFingerings, tiedContinuations } = await import("./fingering");
+  const tied = `<score-partwise><part-list><score-part id="P1"><part-name>P</part-name></score-part></part-list><part id="P1">
+    <measure><attributes><divisions>4</divisions><clef><sign>G</sign><line>2</line></clef></attributes>
+      <direction><sound tempo="60"/></direction>
+      <note id="a"><pitch><step>C</step><octave>5</octave></pitch><duration>4</duration><tie type="start"/></note>
+      <note id="b"><pitch><step>C</step><octave>5</octave></pitch><duration>4</duration><tie type="stop"/><tie type="start"/></note>
+      <note id="c"><pitch><step>C</step><octave>5</octave></pitch><duration>4</duration><tie type="stop"/></note>
+      <note id="d"><pitch><step>C</step><octave>5</octave></pitch><duration>4</duration></note>
+    </measure></part></score-partwise>`;
+  let received: IndexedFingeringNote[] = [];
+  const predict = async (notes: IndexedFingeringNote[]) => {
+    received = notes;
+    return notes.map((note, index) => ({ ...note, finger: index + 1 }));
+  };
+  const predicted = await predictFingerings(tied, predict);
+  assert.deepEqual(received.map(({ time, duration }) => [time, duration]), [[0, 3000], [3000, 1000]]);
+  assert.deepEqual(Object.keys(predicted.fingeringsByMusicXmlId).sort(), ["a", "d"], "held notes get no prediction of their own");
+  assert.deepEqual(tiedContinuations(tied), { b: "a", c: "a" });
+  // Written into a recognized score, the held notes show the finger holding them.
+  const written = await addPredictedFingeringsToMusicXml(tied, predict);
+  assert.deepEqual(written.fingeringsByMusicXmlId.c, { finger: 1, left: false });
+  assert.deepEqual(cachedFingeringsFromMusicXml(written.musicXml)?.fingeringsByMusicXmlId.b, { finger: 1, left: false });
+});

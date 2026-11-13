@@ -177,3 +177,16 @@ test("note keys are viewer IDs without their page", () => {
   assert.equal(noteKeyOf("page-12-P1-m3-s1-v1-t1_4-E5"), "P1-m3-s1-v1-t1_4-E5");
   assert.equal(noteKeyOf("P1-m3-s1-v1-t1_4-E5"), "P1-m3-s1-v1-t1_4-E5");
 });
+
+test("a held note takes the finger and hand of the note whose tie it continues, overrides included", () => {
+  const layers = {
+    predicted: { "page-1-a": { finger: 2, left: false } },
+    printed: {},
+    tiedTo: { "page-1-b": "page-1-a" },
+  };
+  assert.deepEqual(resolveFingerings(layers, {})["page-1-b"], {
+    finger: 2, left: false, source: "predicted", staffLeft: false, handMoved: false, baseFinger: 2, basePrinted: false, tiedTo: "page-1-a",
+  });
+  const moved = resolveFingerings(layers, { a: { finger: 4, left: true } })["page-1-b"];
+  assert.deepEqual([moved.finger, moved.left, moved.source], [4, true, "yours"]);
+});

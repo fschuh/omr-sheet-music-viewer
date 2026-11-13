@@ -197,6 +197,8 @@ export interface FingeringLayers {
   predicted: Record<string, import("./fingering").PredictedFingering>;
   /** The score's printed fingers by viewer ID. */
   printed: Record<string, import("./fingering").PredictedFingering>;
+  /** Each held note, tied on from another, mapped to the note that starts its tie, by viewer ID. */
+  tiedTo: Record<string, string>;
   /** The player's fingerings by structural note key. */
   overrides: import("./musicxml").FingeringOverrides;
   /** Why the player's saved fingerings could not be read; edits are not saved over them. */
@@ -223,6 +225,8 @@ export interface LoadedDocument {
   predictedFingeringCount?: number;
   /** What a MusicXML score's fingerings are resolved from; the fingering editor changes it. */
   fingeringLayers?: FingeringLayers;
+  /** The fingerings resolved from the layers, with where each comes from, by viewer ID. */
+  resolvedFingerings?: Record<string, import("./musicxml").EffectiveFingering>;
   status: JobStatus;
   pages: DocumentPage[];
 }

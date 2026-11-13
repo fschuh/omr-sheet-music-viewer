@@ -20,7 +20,13 @@ import {
   type PageNoteGeometry,
 } from "./noteGeometry";
 import { diagnosticNoteheads } from "./sidecarNoteGeometry";
-import { MusicXmlPageSurface, type MusicXmlPage } from "./musicxml";
+import {
+  MusicXmlNoteMarks,
+  MusicXmlPageSurface,
+  usePageImage,
+  type HighlightKind,
+  type MusicXmlPage,
+} from "./musicxml";
 import { playbackGroupIdsForPage } from "./playback";
 import { valueMismatchGroupIds } from "./noteValues";
 import { restGlyph } from "./restGlyphs";
@@ -275,11 +281,35 @@ interface DocumentViewerProps {
   onRetryPage: (pageIndex: number) => void;
   /** More controls at the end of the playback toolbar. */
   toolbarExtra?: ReactNode;
-  /** Drawn over a page, in the page's box; `scale` is the viewport's zoom. */
-  renderPageExtra?: (page: DocumentPage, scale: number) => ReactNode;
+  /** Drawn over a page, in the page's box; `scale` is the viewport's zoom and `width` the page's width before it. */
+  renderPageExtra?: (page: DocumentPage, scale: number, width: number) => ReactNode;
   /** Below the score. */
   footer?: ReactNode;
+  /** Notes of an engraved page to colour while playback is stopped, such as the fingering editor's. */
+  noteHighlight?: NoteHighlight | null;
+  /** A moment to keep in view while playback is stopped. */
+  followMoment?: PlaybackMoment | null;
+  /**
+   * Playback's own controls are off, as while the fingering editor is on: only choosing the
+   * hand, stepping and hearing the current notes stay available.
+   */
+  playbackLocked?: boolean;
+  /**
+   * Engraved pages hold still, as for the fingering editor: each is drawn as one image, with
+   * `noteHighlight` drawn over it, so what moves over the pages stays smooth.
+   */
+  stillPages?: boolean;
 }
+
+export interface NoteHighlight {
+  pageIndex: number;
+  /** Note keys, which are the noteheads' IDs on an engraved page. */
+  keys: readonly string[];
+  kind: HighlightKind;
+}
+
+const NO_NOTE_KEYS: readonly string[] = [];
+const NO_HIGHLIGHT: ReadonlySet<string> = new Set();
 
 interface PointerState {
   pointerId: number;
@@ -874,6 +904,9 @@ const EngravedPage = memo(function EngravedPage({
   highlightAll,
   playbackActive,
   playbackGroupIds,
+  noteKeys,
+  noteKind,
+  still,
 }: {
   surface: MusicXmlPage;
   geometry: PageNoteGeometry | undefined;
@@ -881,17 +914,37 @@ const EngravedPage = memo(function EngravedPage({
   highlightAll: boolean;
   playbackActive: boolean;
   playbackGroupIds: readonly string[];
+  /** Notes coloured `noteKind` in place of any other highlight, while playback is stopped. */
+  noteKeys: readonly string[];
+  noteKind: HighlightKind;
+  /** Drawn as one image, with `noteKeys` drawn over it. */
+  still: boolean;
 }) {
   const highlighted = useMemo(
-    () => pageHighlightIds(geometry, selected, surface.index, highlightAll, [], playbackActive, playbackGroupIds),
-    [geometry, highlightAll, playbackActive, playbackGroupIds, selected, surface.index],
+    () => !playbackActive && noteKeys.length > 0
+      ? new Set(noteKeys)
+      : pageHighlightIds(geometry, selected, surface.index, highlightAll, [], playbackActive, playbackGroupIds),
+    [geometry, highlightAll, noteKeys, playbackActive, playbackGroupIds, selected, surface.index],
   );
+  // The SVG stays mounted under the image, carrying the highlight until the image is
+  // decoded, so going in and out of the still view never flashes.
+  const image = usePageImage(surface, still && !playbackActive);
   return (
-    <MusicXmlPageSurface
-      page={surface}
-      highlighted={highlighted}
-      highlightKind={playbackActive ? "playback" : "selected"}
-    />
+    <>
+      <div className="musicxml-page-live" hidden={image !== null}>
+        <MusicXmlPageSurface
+          page={surface}
+          highlighted={image ? NO_HIGHLIGHT : highlighted}
+          highlightKind={playbackActive ? "playback" : noteKeys.length > 0 ? noteKind : "selected"}
+        />
+      </div>
+      {image ? (
+        <>
+          <img className="musicxml-page" src={image} alt={`Sheet music page ${surface.index + 1}`} draggable={false} />
+          {noteKeys.length > 0 ? <MusicXmlNoteMarks page={surface} keys={noteKeys} kind={noteKind} /> : null}
+        </>
+      ) : null}
+    </>
   );
 });
 
@@ -977,6 +1030,10 @@ export function DocumentViewer({
   toolbarExtra,
   renderPageExtra,
   footer,
+  noteHighlight = null,
+  followMoment = null,
+  stillPages = false,
+  playbackLocked = false,
 }: DocumentViewerProps) {
   const stageRef = useRef<HTMLDivElement | null>(null);
   const pageRefs = useRef(new Map<number, HTMLDivElement>());
@@ -1001,6 +1058,13 @@ export function DocumentViewer({
   const [tempoPopoverOpen, setTempoPopoverOpen] = useState(false);
   const [handSoundMenuOpen, setHandSoundMenuOpen] = useState(false);
   const [loopMenuOpen, setLoopMenuOpen] = useState(false);
+  // Playback's menus close when its controls are turned off.
+  useEffect(() => {
+    if (!playbackLocked) return;
+    setTempoPopoverOpen(false);
+    setHandSoundMenuOpen(false);
+    setLoopMenuOpen(false);
+  }, [playbackLocked]);
   const tempoControlRef = useRef<HTMLDivElement | null>(null);
   const handSoundControlRef = useRef<HTMLDivElement | null>(null);
   const loopControlRef = useRef<HTMLDivElement | null>(null);
@@ -1507,15 +1571,41 @@ export function DocumentViewer({
    */
   function scoreViewBottom(): number {
     const stage = stageRef.current;
-    const rect = stage?.getBoundingClientRect();
+    const rect = stageBox(stage);
     if (!stage || !rect) return 0;
     const keyboardHeight = Math.min(210, Math.max(150, window.innerHeight * 0.24));
     // The highway is positioned against the workspace, which this viewer fills.
-    const viewerRect = stage.parentElement?.getBoundingClientRect() ?? rect;
+    const viewerRect = stageBoxRef.current?.viewer ?? stage.parentElement?.getBoundingClientRect() ?? rect;
     const obscuredFrom = noteHighwayVisible
       ? viewerRect.top + viewerRect.height * NOTE_HIGHWAY_TOP_FRACTION - rect.top
       : rect.height - keyboardHeight - 20;
     return Math.max(rect.height * 0.12 + 80, obscuredFrom);
+  }
+
+  /**
+   * The stage's box and the viewer's, measured when either is resized. Reading them from
+   * the DOM on every playhead or cursor move would force a layout of the whole score.
+   */
+  const stageBoxRef = useRef<{ stage: DOMRect; viewer: DOMRect } | null>(null);
+  useEffect(() => {
+    const stage = stageRef.current;
+    const viewer = stage?.parentElement;
+    if (!stage || !viewer || typeof ResizeObserver === "undefined") return;
+    const measure = () => {
+      stageBoxRef.current = { stage: stage.getBoundingClientRect(), viewer: viewer.getBoundingClientRect() };
+    };
+    const observer = new ResizeObserver(measure);
+    observer.observe(stage);
+    observer.observe(viewer);
+    window.addEventListener("resize", measure);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", measure);
+      stageBoxRef.current = null;
+    };
+  }, []);
+  function stageBox(stage: HTMLDivElement | null): DOMRect | undefined {
+    return stageBoxRef.current?.stage ?? stage?.getBoundingClientRect();
   }
 
   function publishTransform(next: ViewportTransform) {
@@ -1762,7 +1852,8 @@ export function DocumentViewer({
   }
 
   useEffect(() => {
-    if (!playbackActive || !playbackMoment) return;
+    const followed = playbackActive ? playbackMoment : followMoment;
+    if (!followed) return;
     // The view is the loop handle's while one is dragged, and in realtime, where the
     // playhead moves on regardless, for a moment after a loop end moved.
     if (loopLatest.current.loopDrag) return;
@@ -1772,13 +1863,13 @@ export function DocumentViewer({
       performance.now() - loopEditedAt.current < LOOP_EDIT_FOLLOW_HOLD_MS
     ) return;
     const stage = stageRef.current;
-    const page = pages.find((candidate) => candidate.index === playbackMoment.pageIndex);
-    const rect = stage?.getBoundingClientRect();
+    const page = pages.find((candidate) => candidate.index === followed.pageIndex);
+    const rect = stageBox(stage);
     if (!stage || !page || !rect) return;
     const extents = playbackMomentExtents(
       geometryByPage.get(page.index),
       page,
-      playbackMoment,
+      followed,
       !realtimeRunning,
     );
     if (!extents) return;
@@ -1799,7 +1890,8 @@ export function DocumentViewer({
     const momentContentRight = pageLeft + extents.contentRight;
     const current = transformRef.current;
     const safeTop = rect.height * 0.12;
-    const safeBottom = scoreViewBottom();
+    // A footer, such as the fingering editor's, stands over the score above the keyboard.
+    const safeBottom = scoreViewBottom() - (footer && !playbackActive ? 40 : 0);
     const safeLeft = rect.width * 0.12;
     const safeRight = rect.width * 0.88;
     const screenStaffTop = current.y + staffTop * current.scale;
@@ -1836,6 +1928,7 @@ export function DocumentViewer({
     pages,
     playbackActive,
     playbackMoment,
+    followMoment,
     realtimeRunning,
   ]);
 
@@ -1894,6 +1987,7 @@ export function DocumentViewer({
               className={playbackMode === "note-by-note" ? "selected" : ""}
               aria-pressed={playbackMode === "note-by-note"}
               title="Step through the notes yourself (N)"
+              disabled={playbackLocked}
               onClick={() => onPlaybackModeChange?.("note-by-note")}
             >Note-by-note</button>
             <div className={`realtime-mode-control${realtimeAvailable ? "" : " unavailable"}`}>
@@ -1903,7 +1997,7 @@ export function DocumentViewer({
                 aria-pressed={playbackMode === "realtime"}
                 aria-describedby={!realtimeAvailable ? realtimeUnavailableTooltipId : undefined}
                 title={realtimeAvailable ? "Use audio-clock playback (N)" : undefined}
-                disabled={!realtimeAvailable}
+                disabled={!realtimeAvailable || playbackLocked}
                 onClick={() => onPlaybackModeChange?.("realtime")}
               >Realtime</button>
               {!realtimeAvailable ? (
@@ -1941,6 +2035,7 @@ export function DocumentViewer({
               aria-label={noteHighwayEnabled ? "Hide 3D note highway" : "Show 3D note highway"}
               aria-pressed={noteHighwayEnabled}
               title={noteHighwayEnabled ? "Hide the 3D note highway" : "Show notes approaching the keyboard in 3D"}
+              disabled={playbackLocked}
               onClick={onNoteHighwayToggle}
             >3D</button>
           ) : null}
@@ -1951,7 +2046,7 @@ export function DocumentViewer({
             title={loopMode
               ? "Rewind to the start of the loop (Backspace)"
               : "Rewind to the start of the score (Backspace)"}
-            disabled={!effectivelyActive}
+            disabled={!effectivelyActive || playbackLocked}
             onClick={() => onPlaybackCommand("rewind")}
           ><RewindIcon /></button>
           <button
@@ -1960,9 +2055,9 @@ export function DocumentViewer({
             aria-label={primaryLabel}
             aria-pressed={effectivelyActive}
             title={`${primaryLabel} (Space)`}
-            disabled={effectiveStatus === "inactive" && (
+            disabled={playbackLocked || (effectiveStatus === "inactive" && (
               playbackMode === "realtime" ? !realtimeAvailable : !playbackAvailable
-            )}
+            ))}
             onClick={() => onPlaybackCommand("togglePlayback")}
           >{primaryIcon}</button>
           {playbackMode === "realtime" && effectivelyActive ? (
@@ -1984,7 +2079,7 @@ export function DocumentViewer({
                 title={loopMode
                   ? "Stop looping (L)"
                   : "Loop the bar being played; drag the handles to loop more (L)"}
-                disabled={!effectivelyActive && !loopMode}
+                disabled={playbackLocked || (!effectivelyActive && !loopMode)}
                 onClick={onLoopToggle}
               >
                 <LoopIcon />
@@ -2000,6 +2095,7 @@ export function DocumentViewer({
                   aria-expanded={loopMenuOpen}
                   aria-haspopup="dialog"
                   title="Choose what happens at the loop's end"
+                  disabled={playbackLocked}
                   onClick={() => setLoopMenuOpen((open) => !open)}
                 >▾</button>
               ) : null}
@@ -2039,7 +2135,7 @@ export function DocumentViewer({
               aria-label={playbackNoteSoundsEnabled ? "Mute note sounds" : "Play note sounds"}
               aria-pressed={playbackNoteSoundsEnabled}
               title={playbackNoteSoundsEnabled ? "Mute note sounds (M)" : "Play note sounds (M)"}
-              disabled={!effectivelyActive}
+              disabled={!effectivelyActive || playbackLocked}
               onClick={() => onPlaybackCommand("toggleNoteSounds")}
             >{playbackNoteSoundsEnabled ? "🔊" : "🔇"}</button>
             {onPracticeHandChange ? (
@@ -2052,7 +2148,7 @@ export function DocumentViewer({
                 title={practiceHand === "both"
                   ? "Choose LH or RH to set each hand's sound"
                   : "Choose which hands sound"}
-                disabled={practiceHand === "both"}
+                disabled={practiceHand === "both" || playbackLocked}
                 onClick={() => setHandSoundMenuOpen((open) => !open)}
               >▾</button>
             ) : null}
@@ -2096,7 +2192,7 @@ export function DocumentViewer({
               : playbackMode === "realtime"
                 ? "Listen and show the notes you play (I)"
                 : "Listen and advance when the chord is played (I)"}
-            disabled={!playbackActive}
+            disabled={!playbackActive || playbackLocked}
             onClick={() => onPlaybackCommand("toggleListenMode")}
           >🎙</button>
           {playbackMode === "realtime" ? (
@@ -2112,7 +2208,7 @@ export function DocumentViewer({
                 : listenActive
                   ? "Wait at each note until you play it (W)"
                   : "Turn on listen mode to wait for the notes you play"}
-              disabled={!listenActive}
+              disabled={!listenActive || playbackLocked}
               onClick={() => onPlaybackCommand("toggleRealtimeWait")}
             >⏳</button>
           ) : null}
@@ -2121,53 +2217,53 @@ export function DocumentViewer({
             className="audition-button"
             aria-label="Play current notes"
             title="Play the current note or chord (P)"
-            disabled={
+            disabled={!playbackLocked && (
               playbackMode !== "note-by-note" ||
               !playbackActive ||
               (playbackMoment?.pitches.length ?? 0) === 0
-            }
+            )}
             onClick={() => onPlaybackCommand("playCurrentNotes")}
           >♬</button>
           <button
             type="button"
             aria-label="Backward one page"
             title="Backward one page (Up arrow)"
-            disabled={!effectivelyActive}
+            disabled={!effectivelyActive && !playbackLocked}
             onClick={() => onPlaybackCommand("backwardPage")}
           >⇤</button>
           <button
             type="button"
             aria-label="Backward one bar"
             title="Backward one bar (Comma)"
-            disabled={!effectivelyActive}
+            disabled={!effectivelyActive && !playbackLocked}
             onClick={() => onPlaybackCommand("backwardBar")}
           >←│</button>
           <button
             type="button"
             aria-label="Backward one note"
             title="Backward one note (Left arrow)"
-            disabled={!effectivelyActive}
+            disabled={!effectivelyActive && !playbackLocked}
             onClick={() => onPlaybackCommand("backwardNote")}
           >←</button>
           <button
             type="button"
             aria-label="Forward one note"
             title="Forward one note (Right arrow)"
-            disabled={!effectivelyActive}
+            disabled={!effectivelyActive && !playbackLocked}
             onClick={() => onPlaybackCommand("forwardNote")}
           >→</button>
           <button
             type="button"
             aria-label="Forward one bar"
             title="Forward one bar (Period)"
-            disabled={!effectivelyActive}
+            disabled={!effectivelyActive && !playbackLocked}
             onClick={() => onPlaybackCommand("forwardBar")}
           >│→</button>
           <button
             type="button"
             aria-label="Forward one page"
             title="Forward one page (Down arrow)"
-            disabled={!effectivelyActive}
+            disabled={!effectivelyActive && !playbackLocked}
             onClick={() => onPlaybackCommand("forwardPage")}
           >⇥</button>
           {playbackMode === "realtime" ? (
@@ -2178,9 +2274,10 @@ export function DocumentViewer({
                 aria-label={`Tempo ${Math.round(tempoBpm)} BPM`}
                 title="Tempo; Shift+Up and Shift+Down change it by 1%"
                 aria-expanded={tempoPopoverOpen}
+                disabled={playbackLocked}
                 onClick={() => setTempoPopoverOpen((open) => !open)}
               >{Math.round(tempoBpm)} BPM</button>
-              {tempoPopoverOpen ? (
+              {tempoPopoverOpen && !playbackLocked ? (
                 <div className="tempo-popover" role="dialog" aria-label="Realtime tempo">
                   <label>
                     Tempo
@@ -2279,6 +2376,9 @@ export function DocumentViewer({
                       ? realtimeGroupIdsByPage[page.index] ?? NO_REALTIME_GROUPS
                       : playbackGroupIdsForPage(playbackMoment, page.index)
                   }
+                  noteKeys={noteHighlight?.pageIndex === page.index ? noteHighlight.keys : NO_NOTE_KEYS}
+                  noteKind={noteHighlight?.kind ?? "selected"}
+                  still={stillPages}
                 />
               ) : page.imageUrl ? (
                 <img src={page.imageUrl} alt={`Sheet music page ${page.index + 1}`} draggable={false} />
@@ -2331,7 +2431,7 @@ export function DocumentViewer({
                 showUnsupportedRests={showUnsupportedRests}
                 showValueMismatches={showValueMismatches}
               />
-              {renderPageExtra?.(page, transform.scale)}
+              {renderPageExtra?.(page, transform.scale, width)}
               {page.status !== "complete" ? (
                 <div className="page-placeholder">
                   {page.status === "failed" ? (

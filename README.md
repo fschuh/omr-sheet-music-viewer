@@ -35,14 +35,19 @@ PDF. Lyrics, chord symbols and multi-measure rests are not drawn yet. Piano fing
 score's data folder (`fingerings.json`), so later openings reuse them; the model keeps
 the fingers the score prints and predicts the other notes around them.
 
-**Edit fingers** (`F`) corrects them. It works on top of note-by-note playback,
-starting it if needed: every fingered note gets a label on the score (an outline in its
-hand's colour for a prediction, filled for your own finger, the score's digit for a
-printed one) and the playhead's note is ringed. `1`–`5` give that note a finger and
-move on, top note first, so a run is typed as its digits, or pasted with `Ctrl`+`V`;
-`0` goes back to the printed or predicted finger, `H` moves the note to the other hand,
-`Alt`+`Up` and `Alt`+`Down` move within a chord, `Ctrl`+`Z` undoes, and `Esc` leaves.
-Clicking a label or notehead opens a finger picker for that note. Every key can be
+**Edit fingers** (`F`) corrects them. Playback stops while it is on: every fingered
+note gets a label on the score (an outline in its hand's colour for a prediction,
+filled for your own finger, the score's digit for a printed one), and the note being
+edited, starting where the playhead or the selection was, is coloured in its hand's
+colour, its label ringed and its moment banded; the keyboard shows that moment's
+fingers. `1`–`5` give the note a finger and move on, top note first, so a run is typed
+as its digits, or pasted with `Ctrl`+`V`; `0` goes back to the printed or predicted
+finger, `H` moves the note to the other hand, `Alt`+`Up` and `Alt`+`Down` move within a
+chord, and `Ctrl`+`Z` undoes. The note, bar and page keys move between notes without
+sounding them, `P` plays them, and LH and RH limit the walk to one hand. Playback's own
+controls are off while editing; `F` or `Esc` goes back to the playback you came from, at
+the ringed note, with realtime paused there. Clicking a label or notehead
+opens a finger picker for that note. Every key can be
 reassigned, or bound to MIDI, in **Settings**. Your fingers win over printed and
 predicted ones on the score, the keyboard and the highway, and a note moved to the
 other hand is practised with it. They are saved in the data folder as

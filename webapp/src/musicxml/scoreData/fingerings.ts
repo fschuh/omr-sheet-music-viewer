@@ -11,6 +11,7 @@ import {
   FINGERING_MODEL,
   predictFingerings,
   printedFingerings,
+  tiedContinuations,
   type FingeringConstraint,
   type FingeringPredictor,
   type PredictedFingering,
@@ -132,6 +133,8 @@ export interface ScoreFingerings {
   predicted: Record<string, PredictedFingering>;
   /** Fingers the score prints, by viewer ID. */
   printed: Record<string, PredictedFingering>;
+  /** Each held note, tied on from another, mapped to the note that starts its tie, by viewer ID. */
+  tiedTo: Record<string, string>;
   /** The player's fingerings, by structural key. */
   overrides: FingeringOverrides;
   /** Why the overrides file could not be read; edits are then kept for the session only. */
@@ -202,6 +205,7 @@ export async function loadScoreFingerings(
   onPredicting: () => void = () => {},
 ): Promise<ScoreFingerings> {
   const printed = printedFingerings(documentMusicXml);
+  const tiedTo = tiedContinuations(documentMusicXml);
   const viewerIdByKey = viewerIdsByKey(documentMusicXml);
 
   let overrides: FingeringOverrides = {};
@@ -217,6 +221,7 @@ export async function loadScoreFingerings(
     return {
       predicted: byViewerId(stored.predicted, viewerIdByKey),
       printed,
+      tiedTo,
       overrides,
       overridesError,
       fittedConstraints: stored.constraints,
@@ -234,6 +239,7 @@ export async function loadScoreFingerings(
   return {
     predicted: byViewerId(predictedByKey, viewerIdByKey),
     printed,
+    tiedTo,
     overrides,
     overridesError,
     fittedConstraints,
@@ -275,34 +281,58 @@ export interface EffectiveFingering extends PredictedFingering {
   baseFinger: number;
   /** Whether that finger is printed rather than predicted. */
   basePrinted: boolean;
+  /** For a held note, the note whose tie it continues, whose finger and hand it takes. */
+  tiedTo?: string;
 }
 
 /**
  * Each note's finger and hand, by viewer ID: the player's, else printed, else predicted.
- * A note without a printed finger or a prediction has none.
+ * A held note, tied on from another, is played by the finger holding that note. A note
+ * without a printed finger or a prediction has none.
  */
 export function resolveFingerings(
-  fingerings: Pick<ScoreFingerings, "predicted" | "printed">,
+  fingerings: Pick<ScoreFingerings, "predicted" | "printed"> & Partial<Pick<ScoreFingerings, "tiedTo">>,
   overrides: FingeringOverrides,
 ): Record<string, EffectiveFingering> {
   const result: Record<string, EffectiveFingering> = {};
+  const tiedTo = fingerings.tiedTo ?? {};
   const ids = new Set([...Object.keys(fingerings.predicted), ...Object.keys(fingerings.printed)]);
   for (const id of ids) {
-    const printed = fingerings.printed[id];
-    const base = printed ?? fingerings.predicted[id];
-    const override: FingeringOverride | undefined = overrides[noteKeyOf(id)];
-    const left = override?.left ?? base.left;
-    result[id] = {
-      finger: override?.finger ?? base.finger,
-      left,
-      source: override?.finger !== undefined ? "yours" : printed ? "printed" : "predicted",
-      staffLeft: base.left,
-      handMoved: left !== base.left,
-      baseFinger: base.finger,
-      basePrinted: Boolean(printed),
-    };
+    if (tiedTo[id]) continue;
+    const fingering = resolveFingering(fingerings, overrides, id);
+    if (fingering) result[id] = fingering;
+  }
+  for (const [held, start] of Object.entries(tiedTo)) {
+    if (result[start]) result[held] = { ...result[start], tiedTo: start };
   }
   return result;
+}
+
+/** One note's finger and hand, as resolveFingerings gives them, without resolving the others. */
+export function resolveFingering(
+  fingerings: Pick<ScoreFingerings, "predicted" | "printed"> & Partial<Pick<ScoreFingerings, "tiedTo">>,
+  overrides: FingeringOverrides,
+  id: string,
+): EffectiveFingering | undefined {
+  const start = fingerings.tiedTo?.[id];
+  if (start) {
+    const held = resolveFingering(fingerings, overrides, start);
+    return held && { ...held, tiedTo: start };
+  }
+  const printed = fingerings.printed[id];
+  const base = printed ?? fingerings.predicted[id];
+  if (!base) return undefined;
+  const override: FingeringOverride | undefined = overrides[noteKeyOf(id)];
+  const left = override?.left ?? base.left;
+  return {
+    finger: override?.finger ?? base.finger,
+    left,
+    source: override?.finger !== undefined ? "yours" : printed ? "printed" : "predicted",
+    staffLeft: base.left,
+    handMoved: left !== base.left,
+    baseFinger: base.finger,
+    basePrinted: Boolean(printed),
+  };
 }
 
 /**

@@ -3,10 +3,9 @@
 // layers apart rather than hue, so it survives custom hand colours and colour blindness:
 // a predicted finger is an outline in its hand's colour, the player's own is filled, and a
 // printed one stays the score's own digit.
-import { memo, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import type { FingeringEditor } from "./fingeringEditor";
 import { fingeringLabelLayout, type EffectiveFingering, type MusicXmlPage } from "./musicxml";
-import type { PlaybackMode } from "./realtime";
 import { formatKeyboardShortcut, type PlaybackShortcuts } from "./shortcuts";
 import type { PlaybackCommand } from "./playback";
 
@@ -32,28 +31,22 @@ function PencilIcon() {
 
 export function FingeringToolbar({
   editor,
-  playbackMode,
   shortcuts,
 }: {
   editor: FingeringEditor;
-  playbackMode: PlaybackMode;
   shortcuts: PlaybackShortcuts;
 }) {
   if (!editor.available) return null;
   const toggleKey = keyName(shortcuts, "toggleFingerEditing");
-  const realtime = playbackMode === "realtime";
   return (
     <div className="fingering-toolbar" role="group" aria-label="Fingering editor">
       <button
         type="button"
         className={`fingering-edit-toggle${editor.editing ? " active" : ""}`}
         aria-pressed={editor.editing}
-        disabled={realtime && !editor.editing}
-        title={realtime
-          ? "Switch to note-by-note to edit fingers"
-          : editor.editing
-            ? `Stop editing fingers (${toggleKey} or Esc)`
-            : `Edit the fingers of the notes as you step through them (${toggleKey})`}
+        title={editor.editing
+          ? `Back to playback at the ringed note (${toggleKey} or Esc)`
+          : `Edit the fingers of the notes; playback stops while you do (${toggleKey})`}
         onClick={editor.toggle}
       >
         <PencilIcon />
@@ -76,12 +69,6 @@ export function FingeringToolbar({
               : "The predictions already take your fingers into account"}
             onClick={editor.refit}
           >{editor.refitting ? "Re-fitting…" : "Re-fit fingerings"}</button>
-          <span className="fingering-summary" role="status">
-            {editor.overrideCount
-              ? `${editor.overrideCount} of your fingering${editor.overrideCount === 1 ? "" : "s"}`
-              : "Showing the model’s fingerings"}
-            {editor.unsavedReason ? " · not saved" : ""}
-          </span>
         </>
       ) : null}
     </div>
@@ -191,6 +178,37 @@ function FingerPicker({
   );
 }
 
+/** One finger label. Its props are plain values, so an edit redraws only the labels it changes. */
+const FingeringLabel = memo(function FingeringLabel({
+  id, x, y, size, left, finger, yours, text, onPick,
+}: {
+  id: string;
+  x: number;
+  y: number;
+  size: number;
+  left: boolean;
+  finger: number;
+  yours: boolean;
+  text: string;
+  onPick: (id: string) => void;
+}) {
+  return (
+    <g
+      className={`fingering-label ${handClass(left)} ${yours ? "yours" : "predicted"}`}
+      transform={`translate(${x} ${y})`}
+      role="button"
+      aria-label={text}
+      onPointerDown={stop}
+      onClick={() => onPick(id)}
+    >
+      <g className="fingering-label-body">
+        <circle r={size / 2 - size * 0.04} strokeWidth={size * 0.08} />
+        <text dy="0.36em" fontSize={size * 0.62}>{finger}</text>
+      </g>
+    </g>
+  );
+});
+
 /**
  * The fingering labels of one engraved page while editing, with the finger picker of the
  * ringed note when it is on this page.
@@ -199,15 +217,22 @@ export const FingeringPageLayer = memo(function FingeringPageLayer({
   page,
   editor,
   scale,
+  displayWidth,
 }: {
   page: MusicXmlPage;
   editor: FingeringEditor;
   scale: number;
+  /** The page's width on screen before zooming, which the moving marks are placed in. */
+  displayWidth: number;
 }) {
   const fingerings = editor.fingerings;
   const prefix = `page-${page.index + 1}-`;
   const notes = useMemo(
     () => new Map(page.chords.flatMap((chord) => chord.notes.map((note) => [note.key, note] as const))),
+    [page],
+  );
+  const chordOf = useMemo(
+    () => new Map(page.chords.flatMap((chord) => chord.notes.map((note) => [note.key, chord] as const))),
     [page],
   );
   // Where labels go depends only on which notes have one and on which hand, so a new finger
@@ -216,7 +241,8 @@ export const FingeringPageLayer = memo(function FingeringPageLayer({
     const result = new Map<string, boolean>();
     for (const key of notes.keys()) {
       const fingering = fingerings?.[prefix + key];
-      if (!fingering) continue;
+      // A held note is played by the finger holding it, which its tie's first note shows.
+      if (!fingering || fingering.tiedTo) continue;
       // A printed finger the player kept is the score's own digit, not a label.
       if (fingering.source === "printed" && notes.get(key)?.printedFingering) continue;
       result.set(key, fingering.left);
@@ -234,39 +260,39 @@ export const FingeringPageLayer = memo(function FingeringPageLayer({
     // The signature stands for the hands.
     [page, handsSignature],
   );
-  if (!editor.editing || !fingerings) return null;
-
-  const cursorId = editor.cursor?.id ?? null;
-  const flashing = new Set(editor.flash.ids);
-  const radius = layout.size / 2;
-  const printedTargets = [...notes.values()].flatMap((note) => {
-    const fingering = fingerings[prefix + note.key];
-    return note.printedFingering && fingering?.basePrinted ? [{ note, fingering }] : [];
-  });
-  const cursorLabel = layout.labels.find((label) => prefix + label.key === cursorId);
-  const cursorPrinted = printedTargets.find(({ note }) => prefix + note.key === cursorId && !cursorLabel);
-  const cursorFingering = cursorId ? fingerings[cursorId] : undefined;
-  let anchor: { x: number; y: number; above: boolean } | null = null;
-  if (cursorLabel) {
-    const stack = layout.stacks.find((candidate) => candidate.id === cursorLabel.stackId);
-    anchor = cursorLabel.left
-      ? { x: cursorLabel.x, y: (stack?.bottom ?? cursorLabel.y + radius) + radius * 0.6, above: false }
-      : { x: cursorLabel.x, y: (stack?.top ?? cursorLabel.y - radius) - radius * 0.6, above: true };
-  } else if (cursorPrinted) {
-    const [left, top, right, bottom] = cursorPrinted.note.printedFingering!;
-    anchor = cursorPrinted.fingering.left
-      ? { x: (left + right) / 2, y: bottom + radius * 0.6, above: false }
-      : { x: (left + right) / 2, y: top - radius * 0.6, above: true };
-  }
-
-  return (
-    <>
-      <svg
-        className="fingering-layer"
-        viewBox={`0 0 ${page.width} ${page.height}`}
-        preserveAspectRatio="none"
-        aria-label="Fingerings"
-      >
+  // The band over the cursor's moment keeps one size within a system: as wide as a label
+  // with a margin, and as tall as the system's highest label to its lowest, so only its
+  // place changes from note to note.
+  const systemReach = useMemo(() => {
+    const result = new Map<number, { top: number; bottom: number }>();
+    page.systems.forEach((system, index) => result.set(index, { top: system.top, bottom: system.bottom }));
+    for (const label of layout.labels) {
+      const index = Number(label.stackId.slice(0, label.stackId.indexOf("|")));
+      const reach = result.get(index);
+      if (!reach) continue;
+      reach.top = Math.min(reach.top, label.y - layout.size / 2);
+      reach.bottom = Math.max(reach.bottom, label.y + layout.size / 2);
+    }
+    return result;
+  }, [layout, page]);
+  // The labels change with the fingers, not with the cursor, so moving the cursor redraws
+  // only the ring and the band.
+  const editorRef = useRef(editor);
+  editorRef.current = editor;
+  const pick = useCallback((id: string) => {
+    const current = editorRef.current;
+    if (current.cursor?.id === id) current.togglePicker();
+    else current.select(id);
+  }, []);
+  const printedTargets = useMemo(() => [...notes.values()].flatMap((note) => {
+    const fingering = fingerings?.[prefix + note.key];
+    return note.printedFingering && fingering?.basePrinted && !fingering.tiedTo ? [{ note, fingering }] : [];
+  }), [fingerings, notes, prefix]);
+  const marks = useMemo(() => {
+    if (!fingerings) return null;
+    const radius = layout.size / 2;
+    return (
+      <>
         {layout.stacks.map((stack) => (
           <rect
             key={stack.id}
@@ -295,7 +321,7 @@ export const FingeringPageLayer = memo(function FingeringPageLayer({
                 />
               ) : (
                 <rect
-                  className={`fingering-printed${id === cursorId ? " current" : ""} ${handClass(fingering.left)}`}
+                  className={`fingering-printed ${handClass(fingering.left)}`}
                   x={left - layout.size * 0.1}
                   y={top - layout.size * 0.1}
                   width={right - left + layout.size * 0.2}
@@ -304,7 +330,7 @@ export const FingeringPageLayer = memo(function FingeringPageLayer({
                   role="button"
                   aria-label={labelText(id, fingering, note.pitch)}
                   onPointerDown={stop}
-                  onClick={() => editor.select(id)}
+                  onClick={() => pick(id)}
                 />
               )}
             </g>
@@ -313,34 +339,134 @@ export const FingeringPageLayer = memo(function FingeringPageLayer({
         {layout.labels.map((label) => {
           const id = prefix + label.key;
           const fingering = fingerings[id];
-          const current = id === cursorId;
-          const flash = flashing.has(id);
           return (
-            <g
-              key={flash ? `${label.key}-${editor.flash.serial}` : label.key}
-              className={[
-                "fingering-label",
-                handClass(label.left),
-                fingering.source === "yours" ? "yours" : "predicted",
-                current ? "current" : "",
-                flash ? "flash" : "",
-              ].filter(Boolean).join(" ")}
-              transform={`translate(${label.x} ${label.y})`}
-              role="button"
-              aria-label={labelText(id, fingering, notes.get(label.key)?.pitch ?? null)}
-              aria-expanded={current && editor.pickerOpen}
-              onPointerDown={stop}
-              onClick={() => (current ? editor.togglePicker() : editor.select(id))}
-            >
-              {current ? <circle className="fingering-ring" r={radius + layout.size * 0.2} strokeWidth={layout.size * 0.1} /> : null}
-              <g className="fingering-label-body">
-                <circle r={radius - layout.size * 0.04} strokeWidth={layout.size * 0.08} />
-                <text dy="0.36em" fontSize={layout.size * 0.62}>{fingering.finger}</text>
-              </g>
-            </g>
+            <FingeringLabel
+              key={label.key}
+              id={id}
+              x={label.x}
+              y={label.y}
+              size={layout.size}
+              left={label.left}
+              finger={fingering.finger}
+              yours={fingering.source === "yours"}
+              text={labelText(id, fingering, notes.get(label.key)?.pitch ?? null)}
+              onPick={pick}
+            />
           );
         })}
+      </>
+    );
+  }, [fingerings, layout, notes, pick, prefix, printedTargets]);
+  if (!editor.editing || !fingerings) return null;
+
+  const cursorId = editor.cursor?.id ?? null;
+  const radius = layout.size / 2;
+  const cursorLabel = layout.labels.find((label) => prefix + label.key === cursorId);
+  const cursorPrinted = printedTargets.find(({ note }) => prefix + note.key === cursorId && !cursorLabel);
+  const cursorFingering = cursorId ? fingerings[cursorId] : undefined;
+  // The ring around the cursor's label, which slides from note to note.
+  let ring: { x: number; y: number; r: number; left: boolean } | null = null;
+  if (cursorLabel) ring = { x: cursorLabel.x, y: cursorLabel.y, r: radius + layout.size * 0.2, left: cursorLabel.left };
+  else if (cursorPrinted) {
+    const [left, top, right, bottom] = cursorPrinted.note.printedFingering!;
+    ring = {
+      x: (left + right) / 2,
+      y: (top + bottom) / 2,
+      r: Math.max(radius, (right - left) / 2) + layout.size * 0.2,
+      left: cursorPrinted.fingering.left,
+    };
+  }
+  let band: { x: number; y: number; width: number; height: number } | null = null;
+  const cursorChord = editor.cursor && editor.cursor.pageIndex === page.index ? chordOf.get(editor.cursor.key) : undefined;
+  const reach = cursorChord ? systemReach.get(cursorChord.systemIndex) : undefined;
+  if (cursorChord && reach) {
+    // Centred on the whole moment, not on the ringed note, so it holds still while the ring
+    // moves between the moment's notes; it widens only for a moment whose labels spread
+    // further than it.
+    const labelPrefix = `${cursorChord.systemIndex}|${cursorChord.momentId}|`;
+    const momentLabels = layout.labels.filter((label) => label.stackId.startsWith(labelPrefix));
+    const momentChords = page.chords.filter((chord) => chord.systemIndex === cursorChord.systemIndex && chord.momentId === cursorChord.momentId);
+    const xs = momentLabels.length
+      ? momentLabels.map((label) => label.x)
+      : momentChords.flatMap((chord) => chord.notes.map((note) => note.center[0]));
+    const left = Math.min(...xs);
+    const right = Math.max(...xs);
+    const width = Math.max(layout.size * 1.5, right - left + layout.size * 1.3);
+    const pad = page.staffSpace * 0.6;
+    band = { x: (left + right) / 2 - width / 2, y: reach.top - pad, width, height: reach.bottom - reach.top + 2 * pad };
+  }
+  let anchor: { x: number; y: number; above: boolean } | null = null;
+  if (cursorLabel) {
+    const stack = layout.stacks.find((candidate) => candidate.id === cursorLabel.stackId);
+    anchor = cursorLabel.left
+      ? { x: cursorLabel.x, y: (stack?.bottom ?? cursorLabel.y + radius) + radius * 0.6, above: false }
+      : { x: cursorLabel.x, y: (stack?.top ?? cursorLabel.y - radius) - radius * 0.6, above: true };
+  } else if (cursorPrinted) {
+    const [left, top, right, bottom] = cursorPrinted.note.printedFingering!;
+    anchor = cursorPrinted.fingering.left
+      ? { x: (left + right) / 2, y: bottom + radius * 0.6, above: false }
+      : { x: (left + right) / 2, y: top - radius * 0.6, above: true };
+  }
+
+  // What moves is drawn in HTML on layers of its own, so the browser slides it without
+  // painting the page again; inside the labels' SVG, every frame of a move would make it
+  // lay out the whole engraved page anew.
+  const k = displayWidth / page.width;
+  const pops = editor.flash.ids.flatMap((id) => {
+    const label = layout.labels.find((candidate) => prefix + candidate.key === id);
+    const fingering = fingerings[id];
+    return label && fingering ? [{ id, label, fingering }] : [];
+  });
+  return (
+    <>
+      {band ? (
+        <div
+          className="fingering-band"
+          aria-hidden="true"
+          style={{
+            width: band.width * k,
+            height: band.height * k,
+            borderRadius: page.staffSpace * 0.8 * k,
+            transform: `translate3d(${band.x * k}px, ${band.y * k}px, 0)`,
+          }}
+        />
+      ) : null}
+      <svg
+        className="fingering-layer"
+        viewBox={`0 0 ${page.width} ${page.height}`}
+        preserveAspectRatio="none"
+        aria-label="Fingerings"
+      >
+        {marks}
       </svg>
+      {pops.map(({ id, label, fingering }) => (
+        <div
+          key={`${id}-${editor.flash.serial}`}
+          className={`fingering-pop ${handClass(label.left)} ${fingering.source === "yours" ? "yours" : "predicted"}`}
+          aria-hidden="true"
+          style={{
+            width: layout.size * k,
+            height: layout.size * k,
+            borderWidth: layout.size * 0.08 * k,
+            fontSize: layout.size * 0.62 * k,
+            ["--at" as string]: `translate3d(${(label.x - radius) * k}px, ${(label.y - radius) * k}px, 0)`,
+          }}
+        >
+          {fingering.finger}
+        </div>
+      ))}
+      {ring ? (
+        <div
+          className={`fingering-ring ${handClass(ring.left)}`}
+          aria-hidden="true"
+          style={{
+            width: ring.r * 2 * k,
+            height: ring.r * 2 * k,
+            borderWidth: layout.size * 0.1 * k,
+            transform: `translate3d(${(ring.x - ring.r) * k}px, ${(ring.y - ring.r) * k}px, 0)`,
+          }}
+        />
+      ) : null}
       {editor.pickerOpen && anchor && cursorFingering ? (
         <FingerPicker
           editor={editor}
@@ -399,8 +525,10 @@ export function FingeringStatusStrip({
     [keyName(shortcuts, "undoFingerEdit"), "Undo"],
     [`${keyName(shortcuts, "backwardNote")} · ${keyName(shortcuts, "forwardNote")}`, "Previous / next note"],
     [`${keyName(shortcuts, "fingerNoteHigher")} · ${keyName(shortcuts, "fingerNoteLower")}`, "Higher / lower note at the same time"],
+    [`${keyName(shortcuts, "backwardBar")} · ${keyName(shortcuts, "forwardBar")}`, "Previous / next bar"],
+    [keyName(shortcuts, "playCurrentNotes"), "Hear the notes at the ring"],
     ["Ctrl + V", "Paste a run of fingers, such as 54545243"],
-    [`${keyName(shortcuts, "toggleFingerEditing")} · Esc`, "Leave edit mode; Esc first closes the picker"],
+    [`${keyName(shortcuts, "toggleFingerEditing")} · Esc`, "Back to what was playing, at the ring; Esc first closes the picker"],
   ];
   return (
     <section className="fingering-status" aria-label="Ringed note">
@@ -421,6 +549,11 @@ export function FingeringStatusStrip({
       ) : (
         <span>No fingered note at the playhead.</span>
       )}
+      <span className="fingering-summary" role="status">
+        {editor.overrideCount
+          ? `${editor.overrideCount} of your fingering${editor.overrideCount === 1 ? "" : "s"}`
+          : "Showing the model’s fingerings"}
+      </span>
       {editor.unsavedReason ? (
         <span className="fingering-status-warning" title={editor.unsavedReason}>Edits are not being saved</span>
       ) : null}
