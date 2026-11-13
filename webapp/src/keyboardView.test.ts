@@ -66,10 +66,10 @@ test("stored settings fill in, field by field, whatever is missing or wrong", ()
     rightHandColor: "#3B82F6",
     leftHandColor: "orange",
     keyboard3d: "yes",
-    noteStyle: "flat",
+    noteStyle: "raised",
     timeScale: "bars",
     timeZoom: 9,
-    whiteNoteWidth: "whole-key",
+    whiteNoteWidth: "track",
   });
   assert.equal(settings.range, "song");
   assert.equal(settings.minimumWhiteKeys, 52);
@@ -79,13 +79,13 @@ test("stored settings fill in, field by field, whatever is missing or wrong", ()
   assert.equal(settings.rightHandColor, "#3b82f6");
   assert.equal(settings.leftHandColor, DEFAULT_KEYBOARD_VIEW_SETTINGS.leftHandColor);
   assert.equal(settings.keyboard3d, false);
-  assert.equal(settings.noteStyle, "flat");
+  assert.equal(settings.noteStyle, "raised");
   assert.equal(settings.timeScale, DEFAULT_KEYBOARD_VIEW_SETTINGS.timeScale);
   assert.equal(settings.timeZoom, 8);
-  assert.equal(settings.whiteNoteWidth, "whole-key");
-  assert.equal(normalizeKeyboardViewSettings({ whiteNoteWidth: "wide" }).whiteNoteWidth, "track");
+  assert.equal(settings.whiteNoteWidth, "track");
+  assert.equal(normalizeKeyboardViewSettings({ whiteNoteWidth: "wide" }).whiteNoteWidth, "whole-key");
   assert.equal(normalizeKeyboardViewSettings({ timeZoom: 1.26 }).timeZoom, 1.3);
-  assert.equal(normalizeKeyboardViewSettings({ timeScale: "fixed-tempo" }).timeScale, "fixed-tempo");
+  assert.equal(normalizeKeyboardViewSettings({ timeScale: "steady-speed" }).timeScale, "steady-speed");
   assert.equal(normalizeKeyboardViewSettings({ blackKeyWidth: 1.23 }).blackKeyWidth, 1.25);
   assert.equal(normalizeKeyboardViewSettings({ blackKeyWidth: 3 }).blackKeyWidth, 1.5);
   assert.equal(normalizeKeyboardViewSettings({ blackKeyWidth: 0.1 }).blackKeyWidth, 0.5);

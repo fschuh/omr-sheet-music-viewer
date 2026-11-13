@@ -182,22 +182,22 @@ export const DEFAULT_RIGHT_HAND_COLOR = "#2fbfa5";
 export const DEFAULT_LEFT_HAND_COLOR = "#f28c38";
 
 export const DEFAULT_KEYBOARD_VIEW_SETTINGS: Readonly<KeyboardViewSettings> = Object.freeze({
-  range: "full",
+  range: "practiced-hand",
   minimumWhiteKeys: 15,
   blackKeyWidth: 1,
   octaveLabels: true,
   fingerNumbers: true,
-  noteNames: false,
-  upcomingEffect: "growing-tint",
+  noteNames: true,
+  upcomingEffect: "tint",
   upcomingLead: 0.25,
   rightHandColor: DEFAULT_RIGHT_HAND_COLOR,
   leftHandColor: DEFAULT_LEFT_HAND_COLOR,
-  tilt: 34,
+  tilt: 50,
   keyboard3d: false,
-  noteStyle: "raised",
-  timeScale: "steady-speed",
-  whiteNoteWidth: "track",
-  timeZoom: 1,
+  noteStyle: "flat",
+  timeScale: "fixed-tempo",
+  whiteNoteWidth: "whole-key",
+  timeZoom: 2.3,
   highwayNoteLabels: "finger",
 });
 

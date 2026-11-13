@@ -58,14 +58,14 @@ test("draws black keys as wide as the black-key width asks", () => {
 test("gives every key an approach overlay only under the note highway, with an effect on", () => {
   const attached = renderToStaticMarkup(<PianoKeyboard notes={[]} highwayAttached />);
   assert.equal(attached.match(/class="piano-key-approach"/g)?.length, 88);
-  assert.match(attached, /piano-keyboard-overlay highway-attached upcoming-growing-tint/);
+  assert.match(attached, /piano-keyboard-overlay highway-attached upcoming-tint"/);
   const plain = renderToStaticMarkup(<PianoKeyboard notes={[]} />);
   assert.doesNotMatch(plain, /piano-key-approach|highway-attached|upcoming-/);
   const off = renderToStaticMarkup(
     <PianoKeyboard notes={[]} highwayAttached display={{ ...NAMES_AND_FINGERS, upcomingEffect: "off" }} />,
   );
   assert.doesNotMatch(off, /piano-key-approach|upcoming-/);
-  for (const effect of ["top-edge", "tint", "filling-meter"] as const) {
+  for (const effect of ["top-edge", "growing-tint", "filling-meter"] as const) {
     const markup = renderToStaticMarkup(
       <PianoKeyboard notes={[]} highwayAttached display={{ ...NAMES_AND_FINGERS, upcomingEffect: effect }} />,
     );
@@ -104,7 +104,7 @@ test("marks the finger with a numbered circle in its hand's colour, and only whe
   const markup = renderToStaticMarkup(<PianoKeyboard notes={notes} />);
   assert.match(markup, /class="piano-key-finger" data-hand="right" data-finger="3">3<\/span>/);
   assert.doesNotMatch(markup, /<svg|hand-part/, "no hand drawing any more");
-  assert.doesNotMatch(markup, /piano-key-note-name/, "note names are off by default");
+  assert.match(markup, /class="piano-key-note-name">E4<\/span>/, "note names are on by default");
 
   const plain = renderToStaticMarkup(
     <PianoKeyboard notes={notes} display={{ ...NAMES_AND_FINGERS, fingerNumbers: false, noteNames: false }} />,
@@ -113,7 +113,7 @@ test("marks the finger with a numbered circle in its hand's colour, and only whe
   assert.match(plain, /data-midi="64" data-active="true"/, "the key is still lit");
 
   const unfingered = renderToStaticMarkup(<PianoKeyboard notes={[{ pitch: "E4" }]} />);
-  assert.doesNotMatch(unfingered, /class="piano-key-label[ "]/, "no fingering known, no circle");
+  assert.doesNotMatch(unfingered, /piano-key-finger/, "no fingering known, no circle");
 });
 
 test("names every C on its key unless a marker covers it", () => {
