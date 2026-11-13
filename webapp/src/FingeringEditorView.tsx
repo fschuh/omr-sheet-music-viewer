@@ -172,7 +172,7 @@ function FingerPicker({
         aria-label={resetLabel}
         title={resetLabel}
         disabled={!hasOverride}
-        onClick={editor.reset}
+        onClick={editor.resetHere}
       >↺</button>
     </div>
   );

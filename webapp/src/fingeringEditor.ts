@@ -244,7 +244,10 @@ export interface FingeringEditor {
   setFinger: (finger: number) => void;
   /** Sets the cursor's finger and stays on it, as picking it in the picker does. */
   pickFinger: (finger: number) => void;
+  /** Back to the printed or predicted finger, and on to the next note, as typing 0 does. */
   reset: () => void;
+  /** Back to the printed or predicted finger, staying on the note, as the picker does. */
+  resetHere: () => void;
   swapHand: () => void;
   undo: () => void;
   refit: () => void;
@@ -376,13 +379,20 @@ export function useFingeringEditor(options: FingeringEditorOptions): FingeringEd
     commit(withOverride(layers.overrides, cursor.id, { finger }, fingerings[cursor.id]), [cursor.id], cursor);
   }, [commit, cursor, editing, fingerings, layers]);
   const reset = useCallback(() => typeRun("0"), [typeRun]);
+  // Moving a note to the other hand stays on it, picker and all, so its finger can be chosen
+  // for that hand next.
   const swapHand = useCallback(() => {
-    if (!cursor || !fingerings) return;
-    const movedLeft = !fingerings[cursor.id]?.left;
-    typeRun("h");
+    if (!editing || !layers || !cursor || !fingerings?.[cursor.id]) return;
+    const movedLeft = !fingerings[cursor.id].left;
+    commit(withOverride(layers.overrides, cursor.id, { left: movedLeft }, fingerings[cursor.id]), [cursor.id], cursor);
     // A note moved away from the hand being practised would leave the walk; walk both.
     if (!noteInPracticeHand(movedLeft, practiceHand)) onPracticeHandChange("both");
-  }, [cursor, fingerings, onPracticeHandChange, practiceHand, typeRun]);
+  }, [commit, cursor, editing, fingerings, layers, onPracticeHandChange, practiceHand]);
+  /** Back to the printed or predicted finger, staying on the note, as the picker does. */
+  const resetHere = useCallback(() => {
+    if (!editing || !layers || !cursor || !fingerings?.[cursor.id]) return;
+    commit(withOverride(layers.overrides, cursor.id, null, fingerings[cursor.id]), [cursor.id], cursor);
+  }, [commit, cursor, editing, fingerings, layers]);
 
   const undo = useCallback(() => {
     const last = history[history.length - 1];
@@ -486,6 +496,7 @@ export function useFingeringEditor(options: FingeringEditorOptions): FingeringEd
     setFinger,
     pickFinger,
     reset,
+    resetHere,
     swapHand,
     undo,
     refit,
