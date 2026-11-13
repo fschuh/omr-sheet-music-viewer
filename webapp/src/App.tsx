@@ -15,16 +15,17 @@ import {
   isLoopBoundaryCommand,
   noteInPracticeHand,
   playbackCommandNames,
-  playbackGroupIdsByPageForAnchors,
   runPlaybackCommand as applyPlaybackCommand,
   seekPracticePlaybackToGroup,
   snapMomentToTimeline,
   timelineForPracticeHand,
+  visualGroupIdsByPage,
   type PlaybackCommand,
   type PlaybackState,
   type PracticeHand,
 } from "./playback";
 import { pianoSampler, pitchToMidi } from "./piano";
+import { HeldChordMatcher } from "./heldChordMatcher";
 import { LISTEN_ENGINE } from "./listenEngine";
 import { createBrowserOnlineAmtRecognizer } from "./listenRecognizer";
 import {
@@ -46,6 +47,7 @@ import type {
 } from "@fschuh/piano-transcription-engine";
 import {
   stoppedRecognizerLifecycle,
+  withoutPitches,
   type ListenModeFeedback,
 } from "./noteRecognizer";
 import { KEYBOARD_STALE_SUSTAIN_MS, KeyboardRecognitionTracker } from "./keyboardRecognition";
@@ -53,8 +55,13 @@ import {
   buildRealtimeVisualMap,
   expandPerformanceRoute,
   parseRealtimeMusicXml,
+  REALTIME_COUNT_IN_SECONDS,
+  realtimeLeadIn,
   realtimePlayheadAt,
   RealtimeController,
+  REALTIME_WAIT_LEAD_QUARTERS,
+  realtimeWaitPointIndex,
+  realtimeWaitPoints,
   seekStructuralPosition,
   structuralPositionForGroup,
   type PerformanceNote,
@@ -64,22 +71,36 @@ import {
   type StructuralPosition,
 } from "./realtime";
 import {
+  DEFAULT_KEYBOARD_VIEW_SETTINGS,
+  handColorProperties,
+  handColors,
+  keyboardRangeForSetting,
+  steppedTimeZoom,
+  type KeyboardViewSettings,
+} from "./keyboardView";
+import {
   loadDebugPanelEnabled,
+  loadKeyboardViewSettings,
   loadLastScorePath,
   loadListenInputSource,
   loadLoopDimOutside,
+  loadLoopRestart,
   loadNoteHighwayEnabled,
   loadPlaybackPiano,
+  loadRealtimeCountIn,
   loadSharedNoteheadTimingRepair,
   loadTimeSignatureRepair,
   loadTupletRepair,
   repairSettings,
   saveDebugPanelEnabled,
+  saveKeyboardViewSettings,
   saveLastScorePath,
   saveListenInputSource,
   saveLoopDimOutside,
+  saveLoopRestart,
   saveNoteHighwayEnabled,
   savePlaybackPiano,
+  saveRealtimeCountIn,
   saveSharedNoteheadTimingRepair,
   saveTimeSignatureRepair,
   saveTupletRepair,
@@ -87,17 +108,22 @@ import {
 import { NoteHighway } from "./noteHighway/NoteHighway";
 import {
   clampLoopRegion,
+  effectiveLoopRestart,
   loopAroundMeasure,
   loopMeasureCount,
   loopNoteByNoteState,
   loopRegionAfterCommand,
   loopRouteOffset,
+  loopRouteStep,
   loopSystems,
   measureInLoop,
   noteByNoteInLoop,
   routeEndBarline,
+  routeStartBarline,
+  routeStepPosition,
   routeStructuralPosition,
   type LoopRegion,
+  type LoopRestart,
 } from "./loop";
 import {
   diagnosticsAvailable,
@@ -162,6 +188,8 @@ import { isLinkedVisualGroup, isSelectableVisualGroup } from "./types";
 interface RealtimeStart {
   route: PerformanceRoute;
   offset: number;
+  /** Quarters counted in before `offset`, when playback begins at the top of the score or loop. */
+  leadIn: number;
   loops: boolean;
 }
 
@@ -250,12 +278,15 @@ function isPlaybackToggleCommand(command: PlaybackCommand): boolean {
     command === "togglePlaybackMode" ||
     command === "toggleNoteSounds" ||
     command === "toggleListenMode" ||
+    command === "toggleRealtimeWait" ||
     command === "playCurrentNotes" ||
+    command === "rewind" ||
     command === "toggleLoopMode" ||
     command === "toggleNoteHighway" ||
     command === "practiceLeftHand" ||
     command === "practiceRightHand" ||
-    command === "resetTempo";
+    command === "resetTempo" ||
+    command === "resetNoteStretch";
 }
 
 /** Commands that do something before playback starts. */
@@ -267,7 +298,10 @@ function commandWorksWhileStopped(command: PlaybackCommand): boolean {
     command === "practiceRightHand" ||
     command === "tempoUp" ||
     command === "tempoDown" ||
-    command === "resetTempo";
+    command === "resetTempo" ||
+    command === "stretchNotes" ||
+    command === "compressNotes" ||
+    command === "resetNoteStretch";
 }
 
 function RefreshRateDiagnostic() {
@@ -317,6 +351,27 @@ function listenTargetKey(momentId: string | null | undefined, targetPitches: rea
   return `${momentId ?? ""}:${targetPitches.join(",")}`;
 }
 
+/** Where realtime is in waiting for the player along one route, for one practice hand. */
+interface RealtimeWait {
+  route: PerformanceRoute;
+  hand: PracticeHand;
+  /** Tells this route's targets apart from another's that share an index. */
+  serial: number;
+  /** `ignored` are the pitches the player may add without spoiling `pitches`. */
+  points: { onset: number; notes: PerformanceNote[]; pitches: number[]; ignored: ReadonlySet<number> }[];
+  /** The point waited for next; past the last once every one has been played. */
+  index: number;
+}
+
+function realtimeWaitListenTarget(wait: RealtimeWait | null): { key: string; target: number[] } {
+  const point = wait?.points[wait.index];
+  const target = point?.pitches ?? [];
+  return {
+    key: listenTargetKey(point ? `realtime-wait-${wait!.serial}-${wait!.index}` : null, target),
+    target,
+  };
+}
+
 /**
  * Realtime keeps sounding while listening to a MIDI keyboard, but a microphone would
  * hear the playback as notes the player pressed.
@@ -345,6 +400,21 @@ export function App() {
   const [playbackPiano, setPlaybackPiano] = useState(loadPlaybackPiano);
   const [listenInputSource, setListenInputSource] = useState(loadListenInputSource);
   const [loopDimOutside, setLoopDimOutside] = useState(loadLoopDimOutside);
+  const [realtimeCountIn, setRealtimeCountIn] = useState(loadRealtimeCountIn);
+  const [loopRestart, setLoopRestart] = useState(loadLoopRestart);
+  const changeLoopRestart = useCallback((restart: LoopRestart) => {
+    setLoopRestart(restart);
+    saveLoopRestart(restart);
+  }, []);
+  const [keyboardView, setKeyboardView] = useState<KeyboardViewSettings>(loadKeyboardViewSettings);
+  const changeKeyboardView = useCallback((next: KeyboardViewSettings) => {
+    setKeyboardView(next);
+    saveKeyboardViewSettings(next);
+  }, []);
+  const keyboardHandColors = useMemo(
+    () => handColors(keyboardView),
+    [keyboardView.leftHandColor, keyboardView.rightHandColor],
+  );
   const listenInputSourceRef = useRef<ListenInputSource>(listenInputSource);
   listenInputSourceRef.current = listenInputSource;
   const activePageRef = useRef(activePage);
@@ -410,6 +480,8 @@ export function App() {
   );
   // Practice-hand settings are per session and start from ordinary playback.
   const [practiceHand, setPracticeHand] = useState<PracticeHand>("both");
+  const practiceHandRef = useRef(practiceHand);
+  practiceHandRef.current = practiceHand;
   const [practicedHandSoundEnabled, setPracticedHandSoundEnabled] = useState(true);
   const [otherHandSoundEnabled, setOtherHandSoundEnabled] = useState(false);
   // Note-by-note steps through, highlights, sounds and listens for this timeline;
@@ -445,12 +517,14 @@ export function App() {
     offset: number;
     bpm: number;
     activeNotes: PerformanceNote[];
+    waiting?: boolean;
   } | null>(null);
   const realtimeLatestFrameRef = useRef<{
     status: "playing" | "paused";
     offset: number;
     bpm: number;
     activeNotes: PerformanceNote[];
+    waiting?: boolean;
   } | null>(null);
   const realtimeRenderSignatureRef = useRef("");
   const [tempoMultiplier, setTempoMultiplier] = useState(1);
@@ -466,7 +540,19 @@ export function App() {
   const realtimeRouteRef = useRef<PerformanceRoute | null>(null);
   /** The realtime route is a loop's, which starts over at its end. */
   const realtimeRouteLoopsRef = useRef(false);
+  /** Quarters counted in before the realtime route's first pass; see RealtimeStart. */
+  const realtimeLeadInRef = useRef(0);
   const realtimeStartGenerationRef = useRef(0);
+  // While listening, realtime can wait at each note until the player plays it.
+  const [realtimeWaitEnabled, setRealtimeWaitEnabled] = useState(false);
+  const realtimeWaitEnabledRef = useRef(realtimeWaitEnabled);
+  realtimeWaitEnabledRef.current = realtimeWaitEnabled;
+  const realtimeWaitRef = useRef<RealtimeWait | null>(null);
+  /** The notes realtime waits for next, shown in place of those sounding while it waits. */
+  const [realtimeWaitNotes, setRealtimeWaitNotes] = useState<PerformanceNote[] | null>(null);
+  const realtimeWaitSerialRef = useRef(0);
+  /** Set once syncRealtimeWait exists, for the realtime controller's callbacks. */
+  const syncRealtimeWaitRef = useRef<(advance?: boolean) => void>(() => undefined);
   const documentPagesRef = useRef(document?.pages ?? []);
   documentPagesRef.current = document?.pages ?? [];
   const [playbackState, setPlaybackState] = useState(initialPlaybackState);
@@ -485,37 +571,60 @@ export function App() {
     setLoopPass(1);
   }, [playbackActive]);
   const notePlaybackMoment = currentPlaybackMoment(playbackTimeline, playbackState);
-  const realtimePlayhead = realtimeFrame && realtimeRouteRef.current && document
-    ? realtimePlayheadAt(
-        realtimeRouteRef.current,
-        realtimeFrame.offset,
-        document.pages,
-        routeEndBarline(scoreSystems, realtimeRouteRef.current),
-      )
-    : null;
+  // Kept from one frame to the next, so renders the frame did not cause, such as
+  // listen feedback, leave the moment, and the view following it, alone.
+  const documentPages = document?.pages;
+  const realtimePlayhead = useMemo(
+    () => realtimeFrame && realtimeRouteRef.current && documentPages
+      ? realtimePlayheadAt(
+          realtimeRouteRef.current,
+          realtimeFrame.offset,
+          documentPages,
+          routeEndBarline(scoreSystems, realtimeRouteRef.current),
+          routeStartBarline(scoreSystems, realtimeRouteRef.current),
+          -realtimeLeadInRef.current,
+        )
+      : null,
+    [documentPages, realtimeFrame, scoreSystems],
+  );
   const scoreSystemsRef = useRef(scoreSystems);
   scoreSystemsRef.current = scoreSystems;
   const getRealtimePlayhead = useCallback(() => {
     const frame = realtimeLatestFrameRef.current;
     const route = realtimeRouteRef.current;
+    const systems = scoreSystemsRef.current;
     return frame && route
-      ? realtimePlayheadAt(route, frame.offset, documentPagesRef.current, routeEndBarline(scoreSystemsRef.current, route))
+      ? realtimePlayheadAt(
+          route,
+          frame.offset,
+          documentPagesRef.current,
+          routeEndBarline(systems, route),
+          routeStartBarline(systems, route),
+          -realtimeLeadInRef.current,
+        )
       : null;
   }, []);
+  // Realtime is held now until the player plays the notes it waits for.
+  const realtimeWaiting = playbackMode === "realtime" && realtimeFrame?.status === "playing" && realtimeFrame.waiting === true;
+  // Held for the player, realtime shows the notes to play rather than those still sounding.
+  const realtimeShownNotes = useMemo(
+    () => realtimeFrame?.waiting && realtimeWaitNotes ? realtimeWaitNotes : realtimeFrame?.activeNotes ?? [],
+    [realtimeFrame, realtimeWaitNotes],
+  );
   const realtimeDisplayNotes = useMemo(() => {
     if (!realtimeFrame) return [];
-    return realtimeFrame.activeNotes
+    return realtimeShownNotes
       .filter((note) => noteInPracticeHand(note.left, practiceHand))
       .map((note) => {
         const fingeringId = note.fingeringMusicXmlId === undefined
           ? note.musicXmlId
           : note.fingeringMusicXmlId;
         const predicted = fingeringId ? document?.predictedFingerings?.[fingeringId] : undefined;
-        return { pitch: note.pitch, ...predicted };
+        return { pitch: note.pitch, ...(note.left === undefined ? {} : { left: note.left }), ...predicted };
       });
-  }, [document?.predictedFingerings, practiceHand, realtimeFrame]);
+  }, [document?.predictedFingerings, practiceHand, realtimeFrame, realtimeShownNotes]);
   const realtimeGroupIdsByPage = useMemo(() => {
-    const anchors = (realtimeFrame?.activeNotes ?? []).flatMap((note) =>
+    const sounding = realtimeShownNotes.flatMap((note) =>
       note.visual && noteInPracticeHand(note.left, practiceHand)
         ? [{
             pageIndex: note.visual.pageIndex,
@@ -523,16 +632,16 @@ export function App() {
           }]
         : [],
     );
-    return playbackGroupIdsByPageForAnchors(playbackTimeline, anchors);
-  }, [playbackTimeline, practiceHand, realtimeFrame]);
+    return visualGroupIdsByPage(sounding);
+  }, [practiceHand, realtimeShownNotes]);
   const realtimeMoment = useMemo(() => {
     if (!realtimeFrame || !realtimeRouteRef.current) return null;
     const route = realtimeRouteRef.current;
-    const visible = realtimeFrame.activeNotes.filter((note) => note.visual !== null);
-    const nearest = [...(route.playheadNotes ?? route.notes)]
-      .filter((note) => note.visual !== null && note.onset <= realtimeFrame.offset + 1e-6)
-      .at(-1);
-    const anchor = visible[0] ?? nearest;
+    const visible = realtimeShownNotes.filter((note) => note.visual !== null);
+    const placed = (route.playheadNotes ?? route.notes).filter((note) => note.visual !== null);
+    const nearest = placed.filter((note) => note.onset <= realtimeFrame.offset + 1e-6).at(-1);
+    // Before the first note, in a count-in, the view waits on the bar it begins.
+    const anchor = visible[0] ?? nearest ?? placed[0];
     if (!anchor?.visual) return null;
     const sameSystem = visible.filter((note) =>
       note.visual?.pageIndex === anchor.visual?.pageIndex &&
@@ -551,12 +660,12 @@ export function App() {
       measureIndex: null,
       barKey: `realtime-${anchor.visual.pageIndex}`,
       visualGroupIds: groupIds,
-      pitches: realtimeFrame.activeNotes.map((note) => note.pitch),
+      pitches: realtimeShownNotes.map((note) => note.pitch),
       keyboardNotes: realtimeDisplayNotes,
       dynamic: realtimeFrame.activeNotes.find((note) => note.onset <= realtimeFrame.offset + 1e-6)?.dynamic ?? "mp",
       center: [realtimePlayhead?.x ?? anchor.visual.x, anchor.visual.y] as [number, number],
     };
-  }, [realtimeDisplayNotes, realtimeFrame, realtimePlayhead]);
+  }, [realtimeDisplayNotes, realtimeFrame, realtimePlayhead, realtimeShownNotes]);
   const playbackMoment = playbackMode === "realtime" ? realtimeMoment : notePlaybackMoment;
   const playbackPitchKey = notePlaybackMoment?.pitches.join("|") ?? "";
   const realtimeControllerRef = useRef<RealtimeController | null>(null);
@@ -570,7 +679,7 @@ export function App() {
       {
         onFrame: (frame) => {
           realtimeLatestFrameRef.current = frame;
-          const signature = `${frame.status}:${frame.bpm}:${frame.activeNotes
+          const signature = `${frame.status}:${frame.waiting ? "waiting" : ""}:${frame.bpm}:${frame.activeNotes
             .map((note) => `${note.musicXmlId}:${note.pitch}`)
             .join(",")}`;
           if (signature !== realtimeRenderSignatureRef.current) {
@@ -579,10 +688,17 @@ export function App() {
             setRealtimeFrame(frame);
           }
         },
-        onLoop: () => setLoopPass((pass) => pass + 1),
+        onLoop: (leadIn) => {
+          realtimeLeadInRef.current = leadIn;
+          setLoopPass((pass) => pass + 1);
+          // Each pass waits for every note again.
+          syncRealtimeWaitRef.current();
+        },
         onComplete: () => {
           realtimeRouteRef.current = null;
+          realtimeWaitRef.current = null;
           realtimeRouteLoopsRef.current = false;
+          realtimeLeadInRef.current = 0;
           realtimeLatestFrameRef.current = null;
           realtimeRenderSignatureRef.current = "";
           setRealtimeStatus("inactive");
@@ -606,13 +722,62 @@ export function App() {
     [],
   );
   const getRealtimeRouteLoops = useCallback(() => realtimeRouteLoopsRef.current, []);
+  const getRealtimeLoopLeadIn = useCallback(() => realtimeControllerRef.current?.loopLeadIn() ?? 0, []);
+  // A loop that counts in to each pass takes the count-in's length; with it off, it
+  // loops immediately.
+  useEffect(() => {
+    realtimeControllerRef.current?.setLoopCountIn(
+      loopRestart === "count-in" ? REALTIME_COUNT_IN_SECONDS[realtimeCountIn] : 0,
+    );
+  }, [loopRestart, realtimeCountIn]);
   const realtimeHighwayFrame = useRealtimeHighwaySource(
     getRealtimeRoute,
     getRealtimeOffset,
     tempoMultiplier,
     practiceHand,
     getRealtimeRouteLoops,
+    document?.predictedFingerings,
+    keyboardView.timeScale === "fixed-tempo" ? realtimeOpeningBpm : null,
+    keyboardView.timeZoom,
+    getRealtimeLoopLeadIn,
   );
+  // The keys the keyboard and highway show, from every note of the score, so the
+  // range holds still for the whole piece.
+  const keyboardRange = useMemo(
+    () => keyboardRangeForSetting(
+      keyboardView.range,
+      keyboardView.minimumWhiteKeys,
+      fullPlaybackTimeline.flatMap((moment) => moment.keyboardNotes),
+      practiceHand,
+    ),
+    [fullPlaybackTimeline, keyboardView.minimumWhiteKeys, keyboardView.range, practiceHand],
+  );
+  const keyboardSolid = noteHighwayShown && keyboardView.keyboard3d;
+  const highwayView = useMemo(() => ({
+    range: keyboardRange,
+    tilt: keyboardView.tilt,
+    keyboard3d: keyboardSolid,
+    colors: keyboardHandColors,
+    noteStyle: keyboardView.noteStyle,
+    whiteNoteWidth: keyboardView.whiteNoteWidth,
+    noteLabels: keyboardView.highwayNoteLabels,
+    blackKeyWidth: keyboardView.blackKeyWidth,
+  }), [
+    keyboardHandColors,
+    keyboardRange,
+    keyboardSolid,
+    keyboardView.blackKeyWidth,
+    keyboardView.highwayNoteLabels,
+    keyboardView.noteStyle,
+    keyboardView.tilt,
+    keyboardView.whiteNoteWidth,
+  ]);
+  const keyboardDisplay = useMemo(() => ({
+    octaveLabels: keyboardView.octaveLabels,
+    fingerNumbers: keyboardView.fingerNumbers,
+    noteNames: keyboardView.noteNames,
+    upcomingEffect: keyboardView.upcomingEffect,
+  }), [keyboardView.fingerNumbers, keyboardView.noteNames, keyboardView.octaveLabels, keyboardView.upcomingEffect]);
   // The loop in the highway's note-by-note steps: from its first practised moment up to
   // the step after its last.
   const noteByNoteLoopSteps = useMemo(() => {
@@ -628,6 +793,7 @@ export function App() {
     notePlaybackMoment ? Math.max(0, playbackTimeline.indexOf(notePlaybackMoment)) : 0,
     practiceHand,
     noteByNoteLoopSteps,
+    keyboardView.timeZoom,
   );
   // Both hands sound in ordinary playback. Practising one hand, each hand follows
   // its own switch; accompaniment by the other hand exists in realtime only,
@@ -644,11 +810,13 @@ export function App() {
   }, [otherHandAudible, practiceHand, practicedHandAudible]);
   const practicedHandAudibleRef = useRef(practicedHandAudible);
   practicedHandAudibleRef.current = practicedHandAudible;
+  const changeNoteHighwayEnabled = useCallback((enabled: boolean) => {
+    saveNoteHighwayEnabled(enabled);
+    setNoteHighwayEnabled(enabled);
+  }, []);
   const toggleNoteHighway = useCallback(() => {
-    const next = !noteHighwayEnabled;
-    saveNoteHighwayEnabled(next);
-    setNoteHighwayEnabled(next);
-  }, [noteHighwayEnabled]);
+    changeNoteHighwayEnabled(!noteHighwayEnabled);
+  }, [changeNoteHighwayEnabled, noteHighwayEnabled]);
   const handlePracticeHandChange = useCallback((hand: PracticeHand) => {
     if (hand === practiceHand) return;
     setPracticeHand(hand);
@@ -683,6 +851,13 @@ export function App() {
   const chordMatcherRef = useRef(new ExactChordMatcher(
     matcherOptionsForListenMatcherProfile(listenMatcherProfile),
   ));
+  // MIDI reports exactly which keys are down, so a chord held down also counts there,
+  // however its notes arrived; see HeldChordMatcher.
+  const heldChordMatcherRef = useRef(new HeldChordMatcher(
+    matcherOptionsForListenMatcherProfile(listenMatcherProfile).settleMs,
+  ));
+  /** The listen generation whose target was last matched, so each matches once. */
+  const matchedListenGenerationRef = useRef<number | null>(null);
   const keyboardRecognitionRef = useRef(new KeyboardRecognitionTracker());
   const playheadGenerationRef = useRef(0);
   const listenTargetKeyRef = useRef<string | null>(null);
@@ -699,21 +874,16 @@ export function App() {
     successPitches: [],
     processingTimeMs: null,
   });
-  const retargetListenMode = useCallback((state: PlaybackState) => {
+  /** Listens for `target`, keyed by `targetKey`, unless it already does. */
+  const applyListenTarget = useCallback((targetKey: string, target: number[]) => {
     const recognizer = recognizerRef.current;
-    if (!state.listenModeEnabled || !recognizer) return;
-    // Only note-by-note waits for a chord; realtime listens without a target.
-    const moment = playbackMode === "note-by-note"
-      ? currentPlaybackMoment(playbackTimeline, state)
-      : null;
-    const target = midiPitches(moment?.pitches ?? []);
-    const targetKey = listenTargetKey(moment?.id, target);
-    if (listenTargetKeyRef.current === targetKey) return;
+    if (!recognizer || listenTargetKeyRef.current === targetKey) return;
     const generation = ++playheadGenerationRef.current;
     listenTargetKeyRef.current = targetKey;
     recognizer.setTarget(target);
     recognizer.setGeneration(generation);
     chordMatcherRef.current.setTarget(target, generation, performance.now());
+    heldChordMatcherRef.current.setTarget(target);
     keyboardRecognitionRef.current.suppressVisibleUntilRelease();
     setListenFeedback((feedback) => ({
       ...feedback,
@@ -725,7 +895,80 @@ export function App() {
       attackPitches: [],
       processingTimeMs: null,
     }));
-  }, [playbackMode, playbackTimeline]);
+  }, []);
+  const retargetListenMode = useCallback((state: PlaybackState) => {
+    if (!state.listenModeEnabled || !recognizerRef.current) return;
+    // Note-by-note waits for its chord; realtime waits only while asked to.
+    if (playbackMode === "realtime") {
+      const { key, target } = realtimeWaitListenTarget(realtimeWaitRef.current);
+      applyListenTarget(key, target);
+      return;
+    }
+    const moment = currentPlaybackMoment(playbackTimeline, state);
+    const target = midiPitches(moment?.pitches ?? []);
+    applyListenTarget(listenTargetKey(moment?.id, target), target);
+  }, [applyListenTarget, playbackMode, playbackTimeline]);
+  /**
+   * Holds realtime before the next notes of the practised hand the player has yet to
+   * play, and listens for them, while listening with waiting switched on; otherwise
+   * lets it play freely. `advance` moves on from notes just played; without it, the
+   * next notes are the first not yet behind the playhead, as after a seek.
+   */
+  const syncRealtimeWait = useCallback((advance = false) => {
+    const controller = realtimeControllerRef.current;
+    const route = realtimeRouteRef.current;
+    const realtime = playbackModeRef.current === "realtime";
+    const listening = playbackStateRef.current.listenModeEnabled;
+    if (!realtime || !listening || !realtimeWaitEnabledRef.current || !route) {
+      realtimeWaitRef.current = null;
+      controller?.setHold(null);
+    } else {
+      const hand = practiceHandRef.current;
+      let wait = realtimeWaitRef.current;
+      if (!wait || wait.route !== route || wait.hand !== hand) {
+        const points = realtimeWaitPoints(route, (note) => noteInPracticeHand(note.left, hand))
+          .map((point) => {
+            const pitches = midiPitches(point.notes.map((note) => note.pitch));
+            return {
+              onset: point.onset,
+              notes: point.notes,
+              pitches,
+              ignored: new Set(midiPitches(point.ignoredPitches).filter((midi) => !pitches.includes(midi))),
+            };
+          })
+          .filter((point) => point.pitches.length > 0);
+        wait = { route, hand, serial: ++realtimeWaitSerialRef.current, points, index: 0 };
+        realtimeWaitRef.current = wait;
+        advance = false;
+      }
+      wait.index = advance
+        ? Math.min(wait.points.length, wait.index + 1)
+        : realtimeWaitPointIndex(wait.points, controller?.getOffset() ?? 0);
+      const point = wait.points[wait.index];
+      controller?.setHold(point ? point.onset - REALTIME_WAIT_LEAD_QUARTERS : null);
+    }
+    setRealtimeWaitNotes(realtimeWaitRef.current?.points[realtimeWaitRef.current.index]?.notes ?? null);
+    if (realtime && listening) {
+      const { key, target } = realtimeWaitListenTarget(realtimeWaitRef.current);
+      applyListenTarget(key, target);
+    }
+  }, [applyListenTarget]);
+  syncRealtimeWaitRef.current = syncRealtimeWait;
+  // Another hand waits for other notes, and only realtime waits this way.
+  useEffect(() => {
+    syncRealtimeWait();
+  }, [playbackMode, practiceHand, syncRealtimeWait]);
+  /** Waiting needs listening to hear the notes, but it can always be switched off. */
+  const toggleRealtimeWait = useCallback(() => {
+    const enabled = !realtimeWaitEnabledRef.current;
+    if (
+      enabled &&
+      (playbackModeRef.current !== "realtime" || !playbackStateRef.current.listenModeEnabled)
+    ) return;
+    realtimeWaitEnabledRef.current = enabled;
+    setRealtimeWaitEnabled(enabled);
+    syncRealtimeWait();
+  }, [syncRealtimeWait]);
   /**
    * `command` is what moved playback, when a command did: leaving the loop forwards
    * from inside it starts the loop's next pass.
@@ -763,7 +1006,9 @@ export function App() {
     realtimeStartGenerationRef.current += 1;
     realtimeControllerRef.current?.stop();
     realtimeRouteRef.current = null;
+    realtimeWaitRef.current = null;
     realtimeRouteLoopsRef.current = false;
+    realtimeLeadInRef.current = 0;
     realtimeLatestFrameRef.current = null;
     realtimeRenderSignatureRef.current = "";
     setRealtimeStatus("inactive");
@@ -787,17 +1032,29 @@ export function App() {
     pianoSampler.stop();
     playbackStateRef.current = initialPlaybackState;
     setPlaybackState(initialPlaybackState);
-    chordMatcherRef.current = new ExactChordMatcher(
-      matcherOptionsForListenMatcherProfile(resolveEffectiveListenMatcherProfile(profileId)),
-    );
+    const matcherOptions = matcherOptionsForListenMatcherProfile(resolveEffectiveListenMatcherProfile(profileId));
+    chordMatcherRef.current = new ExactChordMatcher(matcherOptions);
+    heldChordMatcherRef.current = new HeldChordMatcher(matcherOptions.settleMs);
     setListenMatcherProfileOverride(profileId);
   }, [listenMatcherProfileOverride, stopRealtime]);
+  /** The count-in before `offset`, in quarters, at the tempo playing as it starts. */
+  const leadInFor = useCallback(
+    (route: PerformanceRoute, offset: number) =>
+      realtimeLeadIn(route, offset, REALTIME_COUNT_IN_SECONDS[realtimeCountIn], tempoMultiplierRef.current),
+    [realtimeCountIn],
+  );
   /**
    * The route realtime plays from a position, and where in it to begin. While looping it
    * is the loop's own route, which starts over at its end; a position outside the loop
-   * begins at the loop's start.
+   * begins at the loop's start. No position, from the play button with nothing selected
+   * or a rewind, begins at the top with a count-in, and so does a loop begun from outside
+   * it; a chosen note plays at once, unless `countIn` asks for one, and a loop starting
+   * over plays straight on.
    */
-  const routeForPosition = useCallback((position: StructuralPosition | null): RealtimeStart | null => {
+  const routeForPosition = useCallback((
+    position: StructuralPosition | null,
+    countIn = false,
+  ): RealtimeStart | null => {
     if (!realtimeModel.score) return null;
     const loopRegion = loopRef.current;
     if (loopRegion) {
@@ -807,7 +1064,10 @@ export function App() {
         visualMap: realtimeVisualMap,
       });
       if (route.totalQuarters > 0) {
-        return { route, offset: position ? loopRouteOffset(route, position) ?? 0 : 0, loops: true };
+        const inLoop = position ? loopRouteOffset(route, position) : null;
+        return inLoop === null
+          ? { route, offset: 0, leadIn: leadInFor(route, 0), loops: true }
+          : { route, offset: inLoop, leadIn: countIn ? leadInFor(route, inLoop) : 0, loops: true };
       }
     }
     const route = expandPerformanceRoute(realtimeModel.score, {
@@ -815,8 +1075,8 @@ export function App() {
       startOffset: position?.onset ?? 0,
       visualMap: realtimeVisualMap,
     });
-    return { route, offset: 0, loops: false };
-  }, [realtimeModel.score, realtimeVisualMap]);
+    return { route, offset: 0, leadIn: position && !countIn ? 0 : leadInFor(route, 0), loops: false };
+  }, [leadInFor, realtimeModel.score, realtimeVisualMap]);
   const routeForGroup = useCallback((group: VisualGroupRef | null): RealtimeStart | null => {
     const position = realtimeModel.score
       ? structuralPositionForGroup(realtimeModel.score, realtimeVisualMap, group)
@@ -838,6 +1098,7 @@ export function App() {
     const generation = ++realtimeStartGenerationRef.current;
     realtimeRouteRef.current = route;
     realtimeRouteLoopsRef.current = start.loops;
+    realtimeLeadInRef.current = start.leadIn;
     realtimeLatestFrameRef.current = null;
     realtimeRenderSignatureRef.current = "";
     setRealtimeStatus(status);
@@ -853,7 +1114,8 @@ export function App() {
         controller.setTempoMultiplier(tempoMultiplier);
         controller.setMuted(realtimeMuted(playbackStateRef.current, listenInputSourceRef.current));
         controller.setLooping(start!.loops);
-        controller.seek(route, status, start!.offset);
+        controller.seek(route, status, start!.offset, start!.leadIn);
+        syncRealtimeWait();
         setPlaybackAudioError(null);
       })
       .catch((audioError: unknown) => {
@@ -861,17 +1123,19 @@ export function App() {
         stopRealtime();
         setPlaybackAudioError(`Piano audio could not start: ${audioError instanceof Error ? audioError.message : String(audioError)}`);
       });
-  }, [playbackPiano, routeForGroup, stopRealtime, tempoMultiplier]);
+  }, [playbackPiano, routeForGroup, stopRealtime, syncRealtimeWait, tempoMultiplier]);
   /** Moves realtime playback onto `start`, keeping it playing or paused. */
   const seekRealtimeStart = useCallback((start: RealtimeStart, status: "playing" | "paused") => {
     realtimeRouteRef.current = start.route;
     realtimeRouteLoopsRef.current = start.loops;
+    realtimeLeadInRef.current = start.leadIn;
     realtimeLatestFrameRef.current = null;
     realtimeRenderSignatureRef.current = "";
     realtimeControllerRef.current?.setLooping(start.loops);
-    realtimeControllerRef.current?.seek(start.route, status, start.offset);
+    realtimeControllerRef.current?.seek(start.route, status, start.offset, start.leadIn);
+    syncRealtimeWait();
     setPlaybackAudioError(null);
-  }, []);
+  }, [syncRealtimeWait]);
   const seekRealtime = useCallback((group: VisualGroupRef, status: "playing" | "paused") => {
     try {
       const start = routeForGroup(group);
@@ -887,9 +1151,10 @@ export function App() {
   const seekRealtimePosition = useCallback((
     position: StructuralPosition | null,
     status: "playing" | "paused",
+    countIn = false,
   ) => {
     try {
-      const start = routeForPosition(position);
+      const start = routeForPosition(position, countIn);
       if (!start) return;
       seekRealtimeStart(start, status);
     } catch (routeError) {
@@ -909,7 +1174,8 @@ export function App() {
         if (command === "togglePlayback") {
           if (realtimeStatus === "playing") realtimeControllerRef.current?.pause();
           else if (realtimeStatus === "paused") realtimeControllerRef.current?.resume();
-          else startRealtime(selectedGroup);
+          // Entering realtime waits, paused, for the play button, as from note-by-note.
+          else startRealtime(selectedGroup, "paused");
           return;
         }
         if (command === "toggleNoteSounds") {
@@ -924,6 +1190,7 @@ export function App() {
         }
         if (
           command === "toggleListenMode" ||
+          command === "toggleRealtimeWait" ||
           command === "playCurrentNotes" ||
           command === "togglePlaybackMode" ||
           command === "toggleLoopMode" ||
@@ -933,14 +1200,31 @@ export function App() {
           command === "tempoUp" ||
           command === "tempoDown" ||
           command === "resetTempo" ||
+          command === "stretchNotes" ||
+          command === "compressNotes" ||
+          command === "resetNoteStretch" ||
           isLoopBoundaryCommand(command)
         ) return;
         if (realtimeStatus === "inactive" || !realtimeModel.score) return;
+        if (command === "rewind") {
+          // No position starts the score, or the loop's own route while looping.
+          seekRealtimePosition(null, realtimeStatus);
+          return;
+        }
         const route = realtimeRouteRef.current;
         const offset = realtimeControllerRef.current?.getOffset() ?? realtimeFrame?.offset ?? 0;
-        const current = route ? routeStructuralPosition(route, offset) : null;
+        const current = route ? routeStepPosition(route, offset) : null;
         if (!current) return;
-        const destination = seekStructuralPosition(realtimeModel.score, current, command);
+        let destination = seekStructuralPosition(realtimeModel.score, current, command);
+        if (route && realtimeRouteLoopsRef.current) {
+          // A step out of the loop lands on its start: counting in to it when the loop
+          // counts in to each pass, otherwise at once.
+          const step = loopRouteStep(route, destination, command);
+          if (effectiveLoopRestart(loopRestart, realtimeCountIn !== "none") === "immediately") {
+            destination = step.position;
+          }
+          if (step.nextPass) setLoopPass((pass) => pass + 1);
+        }
         seekRealtimePosition(destination, realtimeStatus);
         return;
       }
@@ -959,8 +1243,10 @@ export function App() {
     [
       commitPlaybackState,
       fullPlaybackTimeline,
+      loopRestart,
       playbackMode,
       playbackTimeline,
+      realtimeCountIn,
       realtimeFrame?.offset,
       realtimeModel.score,
       realtimeStatus,
@@ -1020,6 +1306,8 @@ export function App() {
       currentMomentId: null,
     });
     setPlaybackMode(mode);
+    // Starting realtime below reads the mode before the next render does.
+    playbackModeRef.current = mode;
     if (!wasActive) return;
     const group = playheadVisual
       ? { pageIndex: playheadVisual.pageIndex, visualGroupId: playheadVisual.visualGroupId }
@@ -1062,7 +1350,8 @@ export function App() {
     playbackStateRef.current = next;
     setPlaybackState(next);
     realtimeControllerRef.current?.setMuted(realtimeMuted(next, listenInputSourceRef.current));
-  }, [commitPlaybackState]);
+    syncRealtimeWait();
+  }, [commitPlaybackState, syncRealtimeWait]);
 
   const stopListenMode = useCallback((preserveError = false) => {
     listenOperationRef.current += 1;
@@ -1073,6 +1362,7 @@ export function App() {
     keyboardRecognitionRef.current.reset();
     const generation = ++playheadGenerationRef.current;
     chordMatcherRef.current.setTarget([], generation, performance.now());
+    heldChordMatcherRef.current.setTarget([]);
     if (playbackStateRef.current.listenModeEnabled) setListenModeEnabled(false);
     setListenFeedback((feedback) => ({
       lifecycle: preserveError && feedback.lifecycle.state === "error"
@@ -1091,8 +1381,9 @@ export function App() {
 
   const handleRecognizerResult = useCallback((result: RecognizerResult) => {
     if (!playbackStateRef.current.listenModeEnabled) return;
-    if (playbackModeRef.current === "realtime") {
-      // Realtime only shows what is being played; nothing waits on a chord.
+    const realtime = playbackModeRef.current === "realtime";
+    if (realtime && !realtimeWaitRef.current) {
+      // Realtime only shows what is being played, unless it waits on the player.
       const keyboardRecognition = keyboardRecognitionRef.current.consume(result);
       setListenFeedback((feedback) => ({
         ...feedback,
@@ -1102,13 +1393,23 @@ export function App() {
       }));
       return;
     }
-    const update = chordMatcherRef.current.consume(result);
+    // Ornaments are optional in realtime: what they add is not a wrong note.
+    const wait = realtime ? realtimeWaitRef.current : null;
+    const ignored = wait?.points[wait.index]?.ignored;
+    const heard = ignored ? withoutPitches(result, ignored) : result;
+    const update = chordMatcherRef.current.consume(heard);
     if (update.stale) return;
+    const held = recognizerRef.current instanceof MidiNoteRecognizer &&
+      heldChordMatcherRef.current.consume(heard);
+    // Either matcher may complete the target, but it is played only once.
+    const matched = (update.matched || held) &&
+      matchedListenGenerationRef.current !== result.generation;
+    if (matched) matchedListenGenerationRef.current = result.generation;
     const activeConfidence = new Map(
       result.targetPitchEvidence.map(({ midi, confidence }) => [midi, confidence]),
     );
     const keyboardRecognition = keyboardRecognitionRef.current.consume(result);
-    if (update.matched) keyboardRecognitionRef.current.suppressVisibleUntilRelease();
+    if (matched) keyboardRecognitionRef.current.suppressVisibleUntilRelease();
     setListenFeedback((feedback) => ({
       ...feedback,
       targetPitches: update.targetPitches,
@@ -1118,9 +1419,9 @@ export function App() {
         midi,
         confidence: activeConfidence.get(midi) ?? 0,
       })),
-      recognizedActivePitches: update.matched ? [] : keyboardRecognition.activePitches,
-      attackPitches: update.matched ? [] : keyboardRecognition.attacks,
-      successPitches: update.matched
+      recognizedActivePitches: matched ? [] : keyboardRecognition.activePitches,
+      attackPitches: matched ? [] : keyboardRecognition.attacks,
+      successPitches: matched
         ? update.targetPitches.map((midi) => ({
             midi,
             successTimeMs: result.capturedAtMs,
@@ -1128,8 +1429,10 @@ export function App() {
         : feedback.successPitches,
       processingTimeMs: result.processingTimeMs,
     }));
-    if (update.matched) handlePlaybackCommandRef.current("forwardNote");
-  }, []);
+    if (!matched) return;
+    if (realtime) syncRealtimeWait(true);
+    else handlePlaybackCommandRef.current("forwardNote");
+  }, [syncRealtimeWait]);
 
   const startListenMode = useCallback(async () => {
     if (!playbackActiveRef.current || recognizerRef.current) return;
@@ -1146,8 +1449,14 @@ export function App() {
     const moment = playbackModeRef.current === "note-by-note"
       ? currentPlaybackMoment(playbackTimeline, playbackStateRef.current)
       : null;
-    const target = midiPitches(moment?.pitches ?? []);
+    const { key: targetKey, target } = playbackModeRef.current === "realtime"
+      ? realtimeWaitListenTarget(realtimeWaitRef.current)
+      : {
+          key: listenTargetKey(moment?.id, midiPitches(moment?.pitches ?? [])),
+          target: midiPitches(moment?.pitches ?? []),
+        };
     chordMatcherRef.current.setTarget(target, generation, performance.now());
+    heldChordMatcherRef.current.setTarget(target);
     setListenFeedback({
       lifecycle: {
         state: "initializing",
@@ -1188,7 +1497,7 @@ export function App() {
       ? new MidiNoteRecognizer()
       : createBrowserOnlineAmtRecognizer();
     recognizer.setTarget(target);
-    listenTargetKeyRef.current = listenTargetKey(moment?.id, target);
+    listenTargetKeyRef.current = targetKey;
     recognizerRef.current = recognizer;
     try {
       await recognizer.start(generation, {
@@ -1230,6 +1539,7 @@ export function App() {
       const generation = ++playheadGenerationRef.current;
       recognizer.pause(generation);
       chordMatcherRef.current.reset(generation, performance.now());
+      heldChordMatcherRef.current.setTarget([]);
       keyboardRecognitionRef.current.reset();
       setListenFeedback((feedback) => ({
         ...feedback,
@@ -1255,7 +1565,7 @@ export function App() {
         const generation = ++playheadGenerationRef.current;
         const target = playbackModeRef.current === "note-by-note"
           ? midiPitches(currentPlaybackMoment(playbackTimeline, playbackStateRef.current)?.pitches ?? [])
-          : [];
+          : realtimeWaitListenTarget(realtimeWaitRef.current).target;
         recognizer.flush();
         recognizer.setTarget(target);
         chordMatcherRef.current.setTarget(
@@ -1263,6 +1573,7 @@ export function App() {
           generation,
           performance.now(),
         );
+        heldChordMatcherRef.current.setTarget(target);
         recognizer.resume(generation);
         setListenFeedback((feedback) => ({
           ...feedback,
@@ -1301,7 +1612,9 @@ export function App() {
       if (realtimeStatus === "inactive") return;
       const route = realtimeRouteRef.current;
       const offset = realtimeControllerRef.current?.getOffset() ?? 0;
-      seekRealtimePosition(route ? routeStructuralPosition(route, offset) : null, realtimeStatus);
+      // In a count-in the playhead is before the route's first note: the new route
+      // counts in to the same place rather than starting on it.
+      seekRealtimePosition(route ? routeStructuralPosition(route, offset) : null, realtimeStatus, offset < 0);
       return;
     }
     const current = playbackStateRef.current;
@@ -1353,6 +1666,13 @@ export function App() {
       changeTempoMultiplier(1);
       return;
     }
+    if (command === "stretchNotes" || command === "compressNotes" || command === "resetNoteStretch") {
+      const timeZoom = command === "resetNoteStretch"
+        ? DEFAULT_KEYBOARD_VIEW_SETTINGS.timeZoom
+        : steppedTimeZoom(keyboardView.timeZoom, command === "stretchNotes" ? 1 : -1);
+      if (timeZoom !== keyboardView.timeZoom) changeKeyboardView({ ...keyboardView, timeZoom });
+      return;
+    }
     if (command === "toggleNoteHighway") {
       toggleNoteHighway();
       return;
@@ -1376,11 +1696,17 @@ export function App() {
       else void startListenMode();
       return;
     }
+    if (command === "toggleRealtimeWait") {
+      toggleRealtimeWait();
+      return;
+    }
     if (command === "playCurrentNotes") {
       if (playbackMode !== "note-by-note") return;
       void auditionCurrentNotes();
       return;
     }
+    // Rewinding starts the practice over, loop passes included.
+    if (command === "rewind") setLoopPass(1);
     if (
       (command === "togglePlayback" || command === "stopPlayback") &&
       playbackStateRef.current.active &&
@@ -1392,11 +1718,13 @@ export function App() {
   }, [
     applyPlaybackStateCommand,
     auditionCurrentNotes,
+    changeKeyboardView,
     changeLoopRegion,
     changeTempoMultiplier,
     documentMeasureCount,
     handlePlaybackModeChange,
     handlePracticeHandChange,
+    keyboardView,
     loopMode,
     loopRegion,
     playbackMode,
@@ -1405,6 +1733,7 @@ export function App() {
     stopListenMode,
     toggleLoopMode,
     toggleNoteHighway,
+    toggleRealtimeWait,
   ]);
   handlePlaybackCommandRef.current = handlePlaybackCommand;
 
@@ -1509,6 +1838,11 @@ export function App() {
     midiCaptureCommandRef.current = null;
     setMidiCaptureCommand(null);
   }, []);
+  const closeSettings = useCallback(() => {
+    setShowWorkerLogs(false);
+    cancelMidiCapture();
+    setActivePage("viewer");
+  }, [cancelMidiCapture]);
 
   const beginMidiCapture = useCallback((command: PlaybackCommand) => {
     stopMidiRepeat();
@@ -1694,12 +2028,30 @@ export function App() {
 
   useEffect(() => {
     if (activePage === "settings") {
-      if (recognizerRef.current) stopListenMode();
       stopMidiRepeat();
       handleRefreshMidiInputs();
     }
     else cancelMidiCapture();
-  }, [activePage, cancelMidiCapture, handleRefreshMidiInputs, stopListenMode, stopMidiRepeat]);
+  }, [activePage, cancelMidiCapture, handleRefreshMidiInputs, stopMidiRepeat]);
+
+  // Nothing plays or listens behind the settings, where MIDI keys assign shortcuts and
+  // the input itself may change: realtime pauses, and listening stops until the score
+  // is back. Waiting resumes from the paused playhead, on the notes it waited for.
+  const pageShownRef = useRef(activePage);
+  const listenBeforeSettingsRef = useRef(false);
+  useEffect(() => {
+    if (pageShownRef.current === activePage) return;
+    pageShownRef.current = activePage;
+    if (activePage === "settings") {
+      realtimeControllerRef.current?.pause();
+      listenBeforeSettingsRef.current = recognizerRef.current !== null;
+      if (recognizerRef.current) stopListenMode();
+      return;
+    }
+    if (!listenBeforeSettingsRef.current) return;
+    listenBeforeSettingsRef.current = false;
+    void startListenMode();
+  }, [activePage, startListenMode, stopListenMode]);
 
   useEffect(() => {
     if (!nativeAvailable) return;
@@ -2340,9 +2692,12 @@ export function App() {
             type="button"
             className={activePage === "settings" ? "settings-button active" : "settings-button"}
             onClick={() => {
-              setShowWorkerLogs(false);
-              cancelMidiCapture();
-              setActivePage((current) => current === "viewer" ? "settings" : "viewer");
+              if (activePage === "settings") closeSettings();
+              else {
+                setShowWorkerLogs(false);
+                cancelMidiCapture();
+                setActivePage("settings");
+              }
             }}
           >
             {activePage === "settings" ? "Back to score" : "Settings"}
@@ -2356,6 +2711,8 @@ export function App() {
           playbackPiano={playbackPiano}
           listenInputSource={listenInputSource}
           loopDimOutside={loopDimOutside}
+          loopRestart={loopRestart}
+          onChangeLoopRestart={changeLoopRestart}
           debugPanelEnabled={debugPanelEnabled}
           sharedNoteheadTimingRepair={sharedNoteheadTimingRepair}
           timeSignatureRepair={timeSignatureRepair}
@@ -2367,6 +2724,7 @@ export function App() {
           midiRefreshing={midiRefreshing}
           midiCaptureCommand={midiCaptureCommand}
           showStopPlayback
+          onClose={closeSettings}
           onChangeShortcuts={setShortcuts}
           onChangePlaybackPiano={(pianoId: PianoId) => {
             recognizerRef.current?.stop();
@@ -2381,6 +2739,15 @@ export function App() {
             setLoopDimOutside(enabled);
             saveLoopDimOutside(enabled);
           }}
+          realtimeCountIn={realtimeCountIn}
+          onChangeRealtimeCountIn={(countIn) => {
+            setRealtimeCountIn(countIn);
+            saveRealtimeCountIn(countIn);
+          }}
+          keyboardView={keyboardView}
+          onChangeKeyboardView={changeKeyboardView}
+          noteHighwayEnabled={noteHighwayEnabled}
+          onChangeNoteHighwayEnabled={changeNoteHighwayEnabled}
           onChangeListenInputSource={(inputSource) => {
             stopListenMode();
             setListenInputSource(inputSource);
@@ -2446,6 +2813,7 @@ export function App() {
         className={`workspace${diagnosticsShown ? "" : " debug-panel-hidden"}${
           noteHighwayShown ? " note-highway-active" : ""
         }`}
+        style={handColorProperties(keyboardHandColors)}
       >
         {document && document.pages.length > 0 ? (
           <>
@@ -2482,6 +2850,7 @@ export function App() {
                   : undefined
               }
               realtimePlayheadAnimating={playbackMode === "realtime" && realtimeStatus === "playing"}
+              realtimePlayheadRevision={realtimeStatus === "playing" ? null : realtimeFrame}
               realtimeGroupIdsByPage={playbackMode === "realtime" ? realtimeGroupIdsByPage : undefined}
               tempoBpm={realtimeFrame?.bpm ?? realtimeOpeningBpm * tempoMultiplier}
               tempoMultiplier={tempoMultiplier}
@@ -2500,11 +2869,16 @@ export function App() {
                 ? realtimeStatus !== "inactive" && realtimeRouteLoopsRef.current
                 : noteByNoteInLoop(notePlaybackMoment, loop)}
               loopDimOutside={loopDimOutside}
+              loopRestart={loopRestart}
+              onLoopRestartChange={changeLoopRestart}
+              loopCountInAvailable={realtimeCountIn !== "none"}
               onLoopToggle={() => handlePlaybackCommand("toggleLoopMode")}
               onLoopChange={changeLoopRegion}
               onLoopDragChange={setLoopDragging}
               onNoteHighwayToggle={toggleNoteHighway}
               listenFeedback={listenFeedback}
+              realtimeWaitEnabled={realtimeWaitEnabled}
+              realtimeWaiting={realtimeWaiting}
               initialViewportTransform={
                 viewerViewportRef.current?.documentKey === document.jobId
                   ? viewerViewportRef.current.transform
@@ -2636,11 +3010,17 @@ export function App() {
               <NoteHighway
                 getFrame={playbackMode === "realtime" ? realtimeHighwayFrame : noteByNoteHighwayFrame}
                 hidden={!noteHighwayVisible}
+                view={highwayView}
+                upcomingLead={keyboardView.upcomingLead}
               />
             ) : null}
             {playbackActive ? (
               <PianoKeyboard
                 highwayAttached={noteHighwayShown}
+                range={keyboardRange}
+                display={keyboardDisplay}
+                blackKeyWidth={keyboardView.blackKeyWidth}
+                solidTilt={keyboardSolid ? keyboardView.tilt : null}
                 notes={playbackMode === "realtime"
                   ? realtimeDisplayNotes
                   : playbackMoment?.keyboardNotes ?? []}
@@ -2653,6 +3033,7 @@ export function App() {
                 successPitches={playbackState.listenModeEnabled
                   ? listenFeedback.successPitches
                   : []}
+                waiting={realtimeWaiting}
               />
             ) : null}
           </>

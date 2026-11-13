@@ -10,6 +10,7 @@ import {
   seekPracticePlaybackToGroup,
   snapMomentToTimeline,
   timelineForPracticeHand,
+  visualGroupIdsByPage,
   type PlaybackCommand,
   type PlaybackState,
 } from "./playback";
@@ -655,4 +656,14 @@ test("reuses the empty page selection so memoized overlays stay memoized", () =>
   assert.equal(firstEmptySelection, secondEmptySelection);
   assert.equal(secondEmptySelection, inactiveSelection);
   assert.equal(playbackGroupIdsForPage(timeline[0], 0), timeline[0].visualGroupIds);
+});
+
+test("realtime highlights the noteheads of the notes sounding, page by page, each once", () => {
+  assert.deepEqual(visualGroupIdsByPage([
+    { pageIndex: 0, visualGroupId: "bass-f-sharp" },
+    { pageIndex: 0, visualGroupId: "bass-a" },
+    { pageIndex: 1, visualGroupId: "next-page" },
+    { pageIndex: 0, visualGroupId: "bass-a" },
+  ]), { 0: ["bass-f-sharp", "bass-a"], 1: ["next-page"] });
+  assert.deepEqual(visualGroupIdsByPage([]), {});
 });

@@ -1,6 +1,40 @@
-import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import {
+  DEFAULT_KEYBOARD_VIEW_SETTINGS,
+  MAX_BLACK_KEY_WIDTH,
+  MAX_TILT,
+  MAX_TIME_ZOOM,
+  MAX_WHITE_KEYS,
+  MIN_BLACK_KEY_WIDTH,
+  MIN_TILT,
+  MIN_TIME_ZOOM,
+  MIN_WHITE_KEYS,
+  HIGHWAY_NOTE_LABELS,
+  UPCOMING_LEADS,
+  type HighwayNoteLabels,
+  type HighwayNoteStyle,
+  type HighwayTimeScale,
+  type WhiteNoteWidth,
+  type KeyboardRangeMode,
+  type KeyboardViewSettings,
+  type UpcomingKeyEffect,
+} from "./keyboardView";
 import { playbackCommandNames, type PlaybackCommand } from "./playback";
 import { PIANO_IDS, PIANO_REGISTRY, type PianoId } from "./pianoRegistry";
+import {
+  DEFAULT_LOOP_RESTART,
+  effectiveLoopRestart,
+  LOOP_COUNT_IN_OFF_HINT,
+  LOOP_RESTART_LABELS,
+  LOOP_RESTARTS,
+  type LoopRestart,
+} from "./loop";
+import {
+  DEFAULT_REALTIME_COUNT_IN,
+  REALTIME_COUNT_IN_SECONDS,
+  REALTIME_COUNT_INS,
+  type RealtimeCountIn,
+} from "./realtime";
 import {
   DEFAULT_LISTEN_MATCHER_PROFILE_ID,
   LISTEN_MATCHER_PROFILE_IDS,
@@ -80,8 +114,57 @@ function formatListenMatcherThresholds(profileId: ListenMatcherProfileId): strin
     `active ${profile.activeTargetThreshold} · unexpected ${profile.extraNoteThreshold}`;
 }
 
+const KEYBOARD_RANGE_LABELS: Readonly<Record<KeyboardRangeMode, string>> = {
+  full: "All 88 keys",
+  song: "The score's range",
+  "practiced-hand": "The practised hand's range",
+};
+
+const UPCOMING_EFFECT_LABELS: Readonly<Record<UpcomingKeyEffect, string>> = {
+  off: "Off",
+  "top-edge": "Coloured top edge",
+  tint: "Even tint",
+  "growing-tint": "Tint that grows as the note nears",
+  "filling-meter": "Fills up as the note nears",
+};
+
+const UPCOMING_LEAD_LABELS: Readonly<Record<number, string>> = {
+  0.125: "Its last eighth",
+  0.25: "Its last quarter",
+  0.5: "Its last half",
+  1: "The whole highway",
+};
+
+const NOTE_STYLE_LABELS: Readonly<Record<HighwayNoteStyle, string>> = {
+  raised: "Raised blocks",
+  flat: "Flat tiles",
+};
+
+const WHITE_NOTE_WIDTH_LABELS: Readonly<Record<WhiteNoteWidth, string>> = {
+  track: "As wide as their track",
+  "whole-key": "As wide as the whole key",
+};
+
+const NOTE_LABEL_NAMES: Readonly<Record<HighwayNoteLabels, string>> = {
+  none: "Nothing",
+  finger: "Finger numbers",
+  name: "Note names",
+};
+
+const TIME_SCALE_LABELS: Readonly<Record<HighwayTimeScale, string>> = {
+  "steady-speed": "Steady speed, notes resize",
+  "fixed-tempo": "Fixed tempo, notes keep their size",
+};
+
+const COUNT_IN_LABELS: Readonly<Record<RealtimeCountIn, string>> = {
+  none: "None",
+  short: `Short, about ${REALTIME_COUNT_IN_SECONDS.short} s (default)`,
+  long: `Long, about ${REALTIME_COUNT_IN_SECONDS.long} s`,
+};
+
 const SETTINGS_SECTIONS = [
   { id: "playback", label: "Playback", hint: "Piano, listen input and loop" },
+  { id: "keyboard", label: "Keyboard & highway", hint: "Keys, hand colours and 3D notes" },
   { id: "shortcuts", label: "Shortcuts", hint: "Keyboard keys and MIDI" },
   { id: "repairs", label: "Repairs", hint: "Corrections to recognition" },
   { id: "debug", label: "Debug", hint: "Troubleshooting tools" },
@@ -89,14 +172,30 @@ const SETTINGS_SECTIONS = [
 
 export type SettingsSectionId = (typeof SETTINGS_SECTIONS)[number]["id"];
 
+/**
+ * Where the settings page was left, so it opens there again: the section shown and
+ * how far the page was scrolled. Kept while the app runs, never saved.
+ */
+const lastSettingsView: { section: SettingsSectionId; scrollTop: number } = {
+  section: "playback",
+  scrollTop: 0,
+};
+
 interface SettingsPageProps {
-  /** The section shown first. */
+  /** The section shown first; without one, the section the page was left on, scrolled as it was. */
   initialSection?: SettingsSectionId;
   shortcuts: PlaybackShortcuts;
   playbackPiano: PianoId;
   listenInputSource: ListenInputSource;
   /** Whether loop mode dims the bars outside the loop. */
   loopDimOutside?: boolean;
+  /** Whether the 3D note highway is shown above the keyboard during playback. */
+  noteHighwayEnabled?: boolean;
+  /** What realtime does at a loop's end. */
+  loopRestart?: LoopRestart;
+  /** How long realtime counts in before the first note of the score or loop. */
+  realtimeCountIn?: RealtimeCountIn;
+  keyboardView?: KeyboardViewSettings;
   debugPanelEnabled: boolean;
   sharedNoteheadTimingRepair: boolean;
   timeSignatureRepair: boolean;
@@ -111,6 +210,10 @@ interface SettingsPageProps {
   onChangePlaybackPiano: (pianoId: PianoId) => void;
   onChangeListenInputSource: (inputSource: ListenInputSource) => void;
   onChangeLoopDimOutside?: (enabled: boolean) => void;
+  onChangeNoteHighwayEnabled?: (enabled: boolean) => void;
+  onChangeLoopRestart?: (restart: LoopRestart) => void;
+  onChangeRealtimeCountIn?: (countIn: RealtimeCountIn) => void;
+  onChangeKeyboardView?: (settings: KeyboardViewSettings) => void;
   onChangeDebugPanelEnabled: (enabled: boolean) => void;
   onChangeSharedNoteheadTimingRepair: (enabled: boolean) => void;
   onChangeTimeSignatureRepair: (enabled: boolean) => void;
@@ -120,14 +223,20 @@ interface SettingsPageProps {
   onCancelMidiCapture: () => void;
   onRefreshMidiInputs: () => void;
   showStopPlayback?: boolean;
+  /** Leaves the page; Escape does too, unless it cancels a shortcut being learned. */
+  onClose?: () => void;
 }
 
 export function SettingsPage({
-  initialSection = "playback",
+  initialSection,
   shortcuts,
   playbackPiano,
   listenInputSource,
   loopDimOutside = true,
+  noteHighwayEnabled = false,
+  loopRestart = DEFAULT_LOOP_RESTART,
+  realtimeCountIn = DEFAULT_REALTIME_COUNT_IN,
+  keyboardView = DEFAULT_KEYBOARD_VIEW_SETTINGS,
   debugPanelEnabled,
   sharedNoteheadTimingRepair,
   timeSignatureRepair,
@@ -142,6 +251,10 @@ export function SettingsPage({
   onChangePlaybackPiano,
   onChangeListenInputSource,
   onChangeLoopDimOutside,
+  onChangeNoteHighwayEnabled,
+  onChangeLoopRestart,
+  onChangeRealtimeCountIn,
+  onChangeKeyboardView,
   onChangeDebugPanelEnabled,
   onChangeSharedNoteheadTimingRepair,
   onChangeTimeSignatureRepair,
@@ -151,10 +264,17 @@ export function SettingsPage({
   onCancelMidiCapture,
   onRefreshMidiInputs,
   showStopPlayback = false,
+  onClose,
 }: SettingsPageProps) {
   const [keyboardCaptureCommand, setKeyboardCaptureCommand] = useState<PlaybackCommand | null>(null);
   const [keyboardError, setKeyboardError] = useState<string | null>(null);
-  const [section, setSection] = useState<SettingsSectionId>(initialSection);
+  const [section, setSection] = useState<SettingsSectionId>(initialSection ?? lastSettingsView.section);
+  const pageRef = useRef<HTMLElement | null>(null);
+
+  useLayoutEffect(() => {
+    if (initialSection === undefined && pageRef.current) pageRef.current.scrollTop = lastSettingsView.scrollTop;
+    // Only as the page opens; afterwards it scrolls as the user scrolls it.
+  }, []);
   const sectionTabs = useRef(new Map<SettingsSectionId, HTMLButtonElement>());
 
   useEffect(() => {
@@ -165,6 +285,13 @@ export function SettingsPage({
         setKeyboardCaptureCommand(null);
         setKeyboardError(null);
         onCancelMidiCapture();
+        return;
+      }
+      if (event.code === "Escape") {
+        if (onClose && !event.defaultPrevented) {
+          event.preventDefault();
+          onClose();
+        }
         return;
       }
       if (!keyboardCaptureCommand) return;
@@ -193,7 +320,7 @@ export function SettingsPage({
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [keyboardCaptureCommand, midiCaptureCommand, onCancelMidiCapture, onChangeShortcuts, shortcuts]);
+  }, [keyboardCaptureCommand, midiCaptureCommand, onCancelMidiCapture, onChangeShortcuts, onClose, shortcuts]);
 
   function beginKeyboardCapture(command: PlaybackCommand) {
     onCancelMidiCapture();
@@ -214,6 +341,7 @@ export function SettingsPage({
     setKeyboardError(null);
     onCancelMidiCapture();
     setSection(next);
+    lastSettingsView.section = next;
   }
 
   /** Up and Down move through the sections, Home and End go to the first and last. */
@@ -240,6 +368,12 @@ export function SettingsPage({
     } as const;
   }
 
+  function changeKeyboardView(change: Partial<KeyboardViewSettings>) {
+    onChangeKeyboardView?.({ ...keyboardView, ...change });
+  }
+
+  const keyboardViewLocked = !onChangeKeyboardView;
+
   function clearMidi(command: PlaybackCommand) {
     if (midiCaptureCommand === command) onCancelMidiCapture();
     onChangeShortcuts({
@@ -249,7 +383,12 @@ export function SettingsPage({
   }
 
   return (
-    <section className="settings-page" aria-labelledby="settings-title">
+    <section
+      ref={pageRef}
+      className="settings-page"
+      aria-labelledby="settings-title"
+      onScroll={(event) => { lastSettingsView.scrollTop = event.currentTarget.scrollTop; }}
+    >
       <div className="settings-heading">
         <span className="settings-kicker">Preferences</span>
         <h2 id="settings-title">Settings</h2>
@@ -326,6 +465,62 @@ export function SettingsPage({
                 <option value="midi" disabled={!nativeAvailable}>MIDI keyboard</option>
               </select>
             </label>
+            {onChangeRealtimeCountIn ? (
+              <label className="settings-select-row">
+                <span>
+                  <strong>Count-in</strong>
+                  <small>
+                    Silence before the first note when realtime playback starts at the top of the
+                    score or the loop: playing with no note selected, or after a rewind, while the
+                    playhead moves from the barline to the first note. It counts whole beats of
+                    the time signature, as many as come nearest the time chosen at the tempo
+                    playing, so a slow tempo counts fewer beats and a fast one more. Rests the
+                    music opens with count toward it. A selected note plays at once, and a loop
+                    starting over plays straight on.
+                  </small>
+                </span>
+                <select
+                  aria-label="Count-in"
+                  value={realtimeCountIn}
+                  onChange={(event) => onChangeRealtimeCountIn(event.target.value as RealtimeCountIn)}
+                >
+                  {REALTIME_COUNT_INS.map((countIn) => (
+                    <option key={countIn} value={countIn}>{COUNT_IN_LABELS[countIn]}</option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+            {onChangeLoopRestart ? (
+              <label className="settings-select-row">
+                <span>
+                  <strong>At the loop&apos;s end</strong>
+                  <small>
+                    Realtime starts the next pass at once, or counts in to it first, for as long as
+                    the count-in above; while that is off, it loops immediately. Also on the loop
+                    button&apos;s menu.
+                  </small>
+                </span>
+                <select
+                  aria-label="At the loop's end"
+                  value={effectiveLoopRestart(loopRestart, realtimeCountIn !== "none")}
+                  onChange={(event) => onChangeLoopRestart(event.target.value as LoopRestart)}
+                >
+                  {LOOP_RESTARTS.map((restart) => {
+                    const unavailable = restart === "count-in" && realtimeCountIn === "none";
+                    return (
+                      <option
+                        key={restart}
+                        value={restart}
+                        disabled={unavailable}
+                        title={unavailable ? LOOP_COUNT_IN_OFF_HINT : undefined}
+                      >
+                        {LOOP_RESTART_LABELS[restart] + (restart === DEFAULT_LOOP_RESTART ? " (default)" : "")}
+                      </option>
+                    );
+                  })}
+                </select>
+              </label>
+            ) : null}
             {onChangeLoopDimOutside ? (
               <label className="settings-toggle-row">
                 <input
@@ -340,6 +535,369 @@ export function SettingsPage({
                 </span>
               </label>
             ) : null}
+          </section>
+
+          <section className="settings-card" aria-labelledby="keyboard-view-title" {...sectionPanel("keyboard")}>
+            <header className="settings-card-header">
+              <div>
+                <h3 id="keyboard-view-title">Keyboard &amp; highway</h3>
+                <p>
+                  How the keyboard shown during playback and the 3D note highway above it look.
+                  Changes show straight away.
+                </p>
+              </div>
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={keyboardViewLocked}
+                onClick={() => onChangeKeyboardView?.({ ...DEFAULT_KEYBOARD_VIEW_SETTINGS })}
+              >
+                Reset defaults
+              </button>
+            </header>
+
+            <h4 className="settings-group-title">Keys</h4>
+            <label className="settings-select-row">
+              <span>
+                <strong>Keys shown</strong>
+                <small>
+                  Fewer keys make each one wider. A range spans the lowest to the highest note of
+                  the whole score, or of the hand being practised, with a key to spare at each end.
+                </small>
+              </span>
+              <select
+                aria-label="Keys shown"
+                value={keyboardView.range}
+                disabled={keyboardViewLocked}
+                onChange={(event) => changeKeyboardView({ range: event.target.value as KeyboardRangeMode })}
+              >
+                {(Object.keys(KEYBOARD_RANGE_LABELS) as KeyboardRangeMode[]).map((mode) => (
+                  <option key={mode} value={mode}>{KEYBOARD_RANGE_LABELS[mode]}</option>
+                ))}
+              </select>
+            </label>
+            <label className="settings-select-row">
+              <span>
+                <strong>Narrowest range</strong>
+                <small>A range is widened to at least this many white keys.</small>
+              </span>
+              <span className="settings-range-control">
+                <input
+                  type="range"
+                  aria-label="Narrowest range"
+                  min={MIN_WHITE_KEYS}
+                  max={MAX_WHITE_KEYS}
+                  step={1}
+                  value={keyboardView.minimumWhiteKeys}
+                  disabled={keyboardViewLocked || keyboardView.range === "full"}
+                  onChange={(event) => changeKeyboardView({ minimumWhiteKeys: Number(event.target.value) })}
+                />
+                <output>{keyboardView.minimumWhiteKeys} white keys</output>
+              </span>
+            </label>
+            <label className="settings-select-row">
+              <span>
+                <strong>Black key width</strong>
+                <small>
+                  Thinner or thicker black keys, next to the white ones. 100% is a real
+                  piano&apos;s, about three fifths of a white key. The highway&apos;s tracks follow.
+                </small>
+              </span>
+              <span className="settings-range-control">
+                <input
+                  type="range"
+                  aria-label="Black key width"
+                  min={MIN_BLACK_KEY_WIDTH}
+                  max={MAX_BLACK_KEY_WIDTH}
+                  step={0.05}
+                  value={keyboardView.blackKeyWidth}
+                  disabled={keyboardViewLocked}
+                  onChange={(event) => changeKeyboardView({ blackKeyWidth: Number(event.target.value) })}
+                />
+                <output>{Math.round(keyboardView.blackKeyWidth * 100)}%</output>
+              </span>
+            </label>
+            <label className="settings-toggle-row">
+              <input
+                type="checkbox"
+                aria-label="Name every C"
+                checked={keyboardView.octaveLabels}
+                disabled={keyboardViewLocked}
+                onChange={(event) => changeKeyboardView({ octaveLabels: event.target.checked })}
+              />
+              <span>
+                <strong>Name every C</strong>
+                <small>C1, C2… on their keys, so you can find an octave at a glance. Middle C is C4.</small>
+              </span>
+            </label>
+            <label className="settings-toggle-row">
+              <input
+                type="checkbox"
+                aria-label="Finger numbers on played keys"
+                checked={keyboardView.fingerNumbers}
+                disabled={keyboardViewLocked}
+                onChange={(event) => changeKeyboardView({ fingerNumbers: event.target.checked })}
+              />
+              <span>
+                <strong>Finger numbers on played keys</strong>
+                <small>A circle in the hand&apos;s colour with the finger to play the key with, where fingering is known.</small>
+              </span>
+            </label>
+            <label className="settings-toggle-row">
+              <input
+                type="checkbox"
+                aria-label="Note names on played keys"
+                checked={keyboardView.noteNames}
+                disabled={keyboardViewLocked}
+                onChange={(event) => changeKeyboardView({ noteNames: event.target.checked })}
+              />
+              <span>
+                <strong>Note names on played keys</strong>
+                <small>The name of each note being played, such as C♯4, on its key.</small>
+              </span>
+            </label>
+            <label className="settings-select-row">
+              <span>
+                <strong>Upcoming keys</strong>
+                <small>
+                  With the 3D note highway on, how a key shows that its next note is on the way, in
+                  that note&apos;s hand colour.
+                </small>
+              </span>
+              <select
+                aria-label="Upcoming keys"
+                value={keyboardView.upcomingEffect}
+                disabled={keyboardViewLocked}
+                onChange={(event) => changeKeyboardView({ upcomingEffect: event.target.value as UpcomingKeyEffect })}
+              >
+                {(Object.keys(UPCOMING_EFFECT_LABELS) as UpcomingKeyEffect[]).map((effect) => (
+                  <option key={effect} value={effect}>{UPCOMING_EFFECT_LABELS[effect]}</option>
+                ))}
+              </select>
+            </label>
+            <label className="settings-select-row">
+              <span>
+                <strong>Show upcoming keys over</strong>
+                <small>
+                  How much of the highway, from the keys up, a note is shown on its key for. A
+                  quarter is about 0.8 seconds in realtime and two steps note by note.
+                </small>
+              </span>
+              <select
+                aria-label="Show upcoming keys over"
+                value={keyboardView.upcomingLead}
+                disabled={keyboardViewLocked || keyboardView.upcomingEffect === "off"}
+                onChange={(event) => changeKeyboardView({ upcomingLead: Number(event.target.value) })}
+              >
+                {UPCOMING_LEADS.map((lead) => (
+                  <option key={lead} value={lead}>{UPCOMING_LEAD_LABELS[lead]}</option>
+                ))}
+              </select>
+            </label>
+
+            <h4 className="settings-group-title">Hands</h4>
+            <div className="settings-select-row">
+              <span>
+                <strong>Hand colours</strong>
+                <small>
+                  Played keys, finger numbers and notes on the highway take their hand&apos;s
+                  colour; on black keys a darker shade of it.
+                </small>
+              </span>
+              <span className="settings-color-controls">
+                <label>
+                  <input
+                    type="color"
+                    aria-label="Right hand colour"
+                    value={keyboardView.rightHandColor}
+                    disabled={keyboardViewLocked}
+                    onChange={(event) => changeKeyboardView({ rightHandColor: event.target.value })}
+                  />
+                  <span>Right</span>
+                </label>
+                <label>
+                  <input
+                    type="color"
+                    aria-label="Left hand colour"
+                    value={keyboardView.leftHandColor}
+                    disabled={keyboardViewLocked}
+                    onChange={(event) => changeKeyboardView({ leftHandColor: event.target.value })}
+                  />
+                  <span>Left</span>
+                </label>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={keyboardViewLocked || (
+                    keyboardView.rightHandColor === DEFAULT_KEYBOARD_VIEW_SETTINGS.rightHandColor &&
+                    keyboardView.leftHandColor === DEFAULT_KEYBOARD_VIEW_SETTINGS.leftHandColor
+                  )}
+                  onClick={() => changeKeyboardView({
+                    rightHandColor: DEFAULT_KEYBOARD_VIEW_SETTINGS.rightHandColor,
+                    leftHandColor: DEFAULT_KEYBOARD_VIEW_SETTINGS.leftHandColor,
+                  })}
+                >
+                  Reset colours
+                </button>
+              </span>
+            </div>
+
+            <h4 className="settings-group-title">3D note highway</h4>
+            {onChangeNoteHighwayEnabled ? (
+              <label className="settings-toggle-row">
+                <input
+                  type="checkbox"
+                  aria-label="Show the 3D note highway"
+                  checked={noteHighwayEnabled}
+                  onChange={(event) => onChangeNoteHighwayEnabled(event.target.checked)}
+                />
+                <span>
+                  <strong>Show the 3D note highway</strong>
+                  <small>
+                    Notes travel down a highway onto the keyboard during playback. The highway
+                    button on the toolbar switches it too.
+                  </small>
+                </span>
+              </label>
+            ) : null}
+            <label className="settings-select-row">
+              <span>
+                <strong>Tilt</strong>
+                <small>How far the highway leans back. 0° looks straight down at it.</small>
+              </span>
+              <span className="settings-range-control">
+                <input
+                  type="range"
+                  aria-label="Highway tilt"
+                  min={MIN_TILT}
+                  max={MAX_TILT}
+                  step={1}
+                  value={keyboardView.tilt}
+                  disabled={keyboardViewLocked}
+                  onChange={(event) => changeKeyboardView({ tilt: Number(event.target.value) })}
+                />
+                <output>{keyboardView.tilt}°</output>
+              </span>
+            </label>
+            <label className="settings-toggle-row">
+              <input
+                type="checkbox"
+                aria-label="3D keyboard"
+                checked={keyboardView.keyboard3d}
+                disabled={keyboardViewLocked}
+                onChange={(event) => changeKeyboardView({ keyboard3d: event.target.checked })}
+              />
+              <span>
+                <strong>3D keyboard</strong>
+                <small>
+                  While the highway is shown, the keys lie on its floor and lean back with it, with
+                  raised black keys, instead of standing flat below it.
+                </small>
+              </span>
+            </label>
+            <label className="settings-select-row">
+              <span>
+                <strong>Notes</strong>
+                <small>
+                  Blocks with a little height, or flat tiles on the highway&apos;s floor. Notes on
+                  black keys are narrower and darker either way.
+                </small>
+              </span>
+              <select
+                aria-label="Highway notes"
+                value={keyboardView.noteStyle}
+                disabled={keyboardViewLocked}
+                onChange={(event) => changeKeyboardView({ noteStyle: event.target.value as HighwayNoteStyle })}
+              >
+                {(Object.keys(NOTE_STYLE_LABELS) as HighwayNoteStyle[]).map((style) => (
+                  <option key={style} value={style}>{NOTE_STYLE_LABELS[style]}</option>
+                ))}
+              </select>
+            </label>
+            <label className="settings-select-row">
+              <span>
+                <strong>White-key notes</strong>
+                <small>
+                  As wide as their track, the back of the key between the black keys, so every
+                  note is about as wide; or as wide as the whole key, reaching under the black
+                  keys&apos; tracks beside it, so white-key notes stand out from black-key ones.
+                </small>
+              </span>
+              <select
+                aria-label="White-key note width"
+                value={keyboardView.whiteNoteWidth}
+                disabled={keyboardViewLocked}
+                onChange={(event) => changeKeyboardView({ whiteNoteWidth: event.target.value as WhiteNoteWidth })}
+              >
+                {(Object.keys(WHITE_NOTE_WIDTH_LABELS) as WhiteNoteWidth[]).map((width) => (
+                  <option key={width} value={width}>{WHITE_NOTE_WIDTH_LABELS[width]}</option>
+                ))}
+              </select>
+            </label>
+            <label className="settings-select-row">
+              <span>
+                <strong>Note stretch</strong>
+                <small>
+                  Stretches the notes along the highway, above 1×, or compresses them, below it.
+                  Stretched notes are longer and further apart, with less time ahead; compressed
+                  ones show more of what is coming.
+                </small>
+              </span>
+              <span className="settings-range-control">
+                <input
+                  type="range"
+                  aria-label="Note stretch"
+                  min={MIN_TIME_ZOOM}
+                  max={MAX_TIME_ZOOM}
+                  step={0.1}
+                  value={keyboardView.timeZoom}
+                  disabled={keyboardViewLocked}
+                  onChange={(event) => changeKeyboardView({ timeZoom: Number(event.target.value) })}
+                />
+                <output>{keyboardView.timeZoom.toFixed(1)}×</output>
+              </span>
+            </label>
+            <label className="settings-select-row">
+              <span>
+                <strong>When the tempo changes</strong>
+                <small>
+                  Steady speed: notes take the same time to reach the keys at any tempo, so a
+                  faster tempo packs them closer and shorter. Fixed tempo: every beat keeps the
+                  length it has at the score&apos;s opening tempo, and the notes come down faster
+                  or slower instead. Applies to realtime playback.
+                </small>
+              </span>
+              <select
+                aria-label="Highway time scale"
+                value={keyboardView.timeScale}
+                disabled={keyboardViewLocked}
+                onChange={(event) => changeKeyboardView({ timeScale: event.target.value as HighwayTimeScale })}
+              >
+                {(Object.keys(TIME_SCALE_LABELS) as HighwayTimeScale[]).map((scale) => (
+                  <option key={scale} value={scale}>{TIME_SCALE_LABELS[scale]}</option>
+                ))}
+              </select>
+            </label>
+            <label className="settings-select-row">
+              <span>
+                <strong>Labels on notes</strong>
+                <small>
+                  What each note of the practised hand shows at its front end, where the note is
+                  long enough: the finger to play it with, where fingering is known, or its name
+                  as the score spells it.
+                </small>
+              </span>
+              <select
+                aria-label="Labels on highway notes"
+                value={keyboardView.highwayNoteLabels}
+                disabled={keyboardViewLocked}
+                onChange={(event) => changeKeyboardView({ highwayNoteLabels: event.target.value as HighwayNoteLabels })}
+              >
+                {HIGHWAY_NOTE_LABELS.map((labels) => (
+                  <option key={labels} value={labels}>{NOTE_LABEL_NAMES[labels]}</option>
+                ))}
+              </select>
+            </label>
           </section>
 
           <section className="settings-card" aria-labelledby="shortcuts-title" {...sectionPanel("shortcuts")}>

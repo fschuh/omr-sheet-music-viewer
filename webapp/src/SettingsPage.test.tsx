@@ -6,15 +6,21 @@ import { defaultPlaybackShortcuts } from "./shortcuts";
 import { LISTEN_MATCHER_PROFILE_IDS } from "@fschuh/piano-transcription-engine";
 import {
   LISTEN_INPUT_SOURCE_STORAGE_KEY,
+  LOOP_RESTART_STORAGE_KEY,
+  REALTIME_COUNT_IN_STORAGE_KEY,
   SHARED_NOTEHEAD_TIMING_STORAGE_KEY,
   TIME_SIGNATURE_REPAIR_STORAGE_KEY,
   TUPLET_REPAIR_STORAGE_KEY,
   loadListenInputSource,
+  loadLoopRestart,
+  loadRealtimeCountIn,
   loadSharedNoteheadTimingRepair,
   loadTimeSignatureRepair,
   loadTupletRepair,
   repairSettings,
   saveListenInputSource,
+  saveLoopRestart,
+  saveRealtimeCountIn,
   saveSharedNoteheadTimingRepair,
   saveTimeSignatureRepair,
   saveTupletRepair,
@@ -50,9 +56,9 @@ test("renders every playback command with its default keyboard key and empty MID
     />,
   );
 
-  assert.equal(markup.match(/aria-label="Keyboard shortcut for/g)?.length, 22);
-  assert.equal(markup.match(/aria-label="MIDI shortcut for/g)?.length, 22);
-  assert.equal(markup.match(/>Not assigned<\/button>/g)?.length, 22);
+  assert.equal(markup.match(/aria-label="Keyboard shortcut for/g)?.length, 27);
+  assert.equal(markup.match(/aria-label="MIDI shortcut for/g)?.length, 27);
+  assert.equal(markup.match(/>Not assigned<\/button>/g)?.length, 27);
   assert.match(markup, />Space<\/button>/);
   assert.match(markup, />M<\/button>/);
   assert.match(markup, />I<\/button>/);
@@ -65,6 +71,9 @@ test("renders every playback command with its default keyboard key and empty MID
   assert.match(markup, />Shift \+ Down Arrow<\/button>/);
   assert.match(markup, />Ctrl \+ Shift \+ Left Arrow<\/button>/);
   assert.match(markup, />Right Arrow<\/button>/);
+  assert.match(markup, />Page Up<\/button>/);
+  assert.match(markup, />Page Down<\/button>/);
+  assert.match(markup, />Delete<\/button>/);
   assert.match(markup, />1 MIDI input connected</);
   assert.match(markup, /Bluetooth MIDI bridge/);
   assert.match(markup, /<h3 id="debug-title">Debug<\/h3>/);
@@ -81,8 +90,8 @@ test("renders every playback command with its default keyboard key and empty MID
 
 test("lists the sections and shows only the chosen one", () => {
   const playback = renderSettings();
-  assert.equal(playback.match(/role="tab"/g)?.length, 4);
-  for (const label of ["Playback", "Shortcuts", "Repairs", "Debug"]) {
+  assert.equal(playback.match(/role="tab"/g)?.length, 5);
+  for (const label of ["Playback", "Keyboard &amp; highway", "Shortcuts", "Repairs", "Debug"]) {
     assert.match(playback, new RegExp(`role="tab"[^>]*><strong>${label}</strong>`));
   }
   // Playback is first: its panel shows, and the others are hidden.
@@ -126,7 +135,7 @@ test("disables MIDI assignment when initialization fails", () => {
 
   assert.match(markup, />MIDI unavailable</);
   assert.match(markup, /MIDI initialization timed out\./);
-  assert.equal(markup.match(/aria-label="MIDI shortcut for[^>]+disabled/g)?.length, 22);
+  assert.equal(markup.match(/aria-label="MIDI shortcut for[^>]+disabled/g)?.length, 27);
   assert.match(markup, /type="checkbox" checked=""/);
 });
 
@@ -211,6 +220,106 @@ test("no override is selected by default, and an active override is the checked 
   assert.match(overridden, /checked="" value="early-open-v2"/);
   assert.doesNotMatch(overridden, /checked="" value=""/);
   assert.equal(overridden.match(/name="listen-matcher-profile" checked=""/g)?.length, 1);
+});
+
+test("highway notes show finger numbers by default, or nothing, or their names", () => {
+  const markup = renderSettings({ onChangeKeyboardView: () => undefined });
+  assert.match(markup, /aria-label="Labels on highway notes"/);
+  assert.match(markup, /<option value="finger" selected="">Finger numbers<\/option>/);
+  assert.match(markup, /<option value="none">Nothing<\/option>/);
+  assert.match(markup, /<option value="name">Note names<\/option>/);
+});
+
+test("the 3D note highway can be shown or hidden from settings, off by default", () => {
+  assert.doesNotMatch(renderSettings(), /Show the 3D note highway/, "hidden where it cannot be changed");
+  const toggle = (markup: string) => /<input type="checkbox" aria-label="Show the 3D note highway"[^>]*>/.exec(markup)?.[0];
+  const off = toggle(renderSettings({ onChangeNoteHighwayEnabled: () => undefined }));
+  assert.ok(off);
+  assert.doesNotMatch(off, /checked/);
+  const on = toggle(renderSettings({ noteHighwayEnabled: true, onChangeNoteHighwayEnabled: () => undefined }));
+  assert.match(on ?? "", /checked=""/);
+});
+
+test("the count-in offers none, short and long, short by default, and persists a valid choice", () => {
+  assert.doesNotMatch(renderSettings(), /aria-label="Count-in"/, "hidden where it cannot be changed");
+  const markup = renderSettings({ onChangeRealtimeCountIn: () => undefined });
+  assert.match(markup, /aria-label="Count-in"/);
+  assert.equal(markup.match(/<option value="(none|short|long)"[^>]*>(None|Short|Long)/g)?.length, 3);
+  assert.match(markup, /<option value="none">None<\/option>/);
+  assert.match(markup, /<option value="short" selected="">Short, about 2 s \(default\)<\/option>/);
+  assert.match(markup, /<option value="long">Long, about 3 s<\/option>/);
+  assert.match(
+    renderSettings({ realtimeCountIn: "long", onChangeRealtimeCountIn: () => undefined }),
+    /<option value="long" selected="">/,
+  );
+
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  const values = new Map<string, string>();
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      localStorage: {
+        getItem: (key: string) => values.get(key) ?? null,
+        setItem: (key: string, value: string) => values.set(key, value),
+      },
+    },
+  });
+  try {
+    assert.equal(loadRealtimeCountIn(), "short");
+    saveRealtimeCountIn("long");
+    assert.equal(values.get(REALTIME_COUNT_IN_STORAGE_KEY), "long");
+    assert.equal(loadRealtimeCountIn(), "long");
+    values.set(REALTIME_COUNT_IN_STORAGE_KEY, "toString");
+    assert.equal(loadRealtimeCountIn(), "short", "not one of the choices");
+    values.set(REALTIME_COUNT_IN_STORAGE_KEY, "normal");
+    assert.equal(loadRealtimeCountIn(), "short", "no longer one of the choices");
+  } finally {
+    if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow);
+    else Reflect.deleteProperty(globalThis, "window");
+  }
+});
+
+test("the loop's end loops immediately by default, can count in instead, and persists the choice", () => {
+  assert.doesNotMatch(renderSettings(), /Count in before looping/, "hidden where it cannot be changed");
+  const markup = renderSettings({ onChangeLoopRestart: () => undefined });
+  assert.match(markup, /<option value="immediately" selected="">Loop immediately \(default\)<\/option>/);
+  assert.match(markup, /<option value="count-in">Count in before looping<\/option>/);
+  assert.match(
+    renderSettings({ loopRestart: "count-in", onChangeLoopRestart: () => undefined }),
+    /<option value="count-in" selected="">/,
+  );
+  // With the count-in off there is nothing to count in with: it loops immediately, and
+  // the count-in choice is greyed out, saying why.
+  const countInOff = renderSettings({
+    loopRestart: "count-in",
+    realtimeCountIn: "none",
+    onChangeLoopRestart: () => undefined,
+  });
+  assert.match(countInOff, /<option value="immediately" selected="">/);
+  assert.match(countInOff, /<option value="count-in" disabled="" title="The count-in is off\. Choose a count-in under Settings, Playback to count in before looping\.">/);
+
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  const values = new Map<string, string>();
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      localStorage: {
+        getItem: (key: string) => values.get(key) ?? null,
+        setItem: (key: string, value: string) => values.set(key, value),
+      },
+    },
+  });
+  try {
+    assert.equal(loadLoopRestart(), "immediately");
+    saveLoopRestart("count-in");
+    assert.equal(values.get(LOOP_RESTART_STORAGE_KEY), "count-in");
+    assert.equal(loadLoopRestart(), "count-in");
+    values.set(LOOP_RESTART_STORAGE_KEY, "later");
+    assert.equal(loadLoopRestart(), "immediately", "not one of the choices");
+  } finally {
+    if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow);
+    else Reflect.deleteProperty(globalThis, "window");
+  }
 });
 
 test("listen input defaults to microphone and persists a valid MIDI selection", () => {

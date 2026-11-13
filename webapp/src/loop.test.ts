@@ -11,10 +11,14 @@ import {
   loopNoteByNoteState,
   loopRegionAfterCommand,
   loopRouteOffset,
+  loopRouteStep,
   loopSegments,
   loopSystems,
   moveLoopHandleTo,
+  effectiveLoopRestart,
   routeEndBarline,
+  routeStartBarline,
+  routeStepPosition,
   routeStructuralPosition,
   type LoopRegion,
   type LoopSystem,
@@ -26,6 +30,7 @@ import {
   parseRealtimeMusicXml,
   RealtimeController,
   realtimePlayheadAt,
+  seekStructuralPosition,
   type VisualNoteTarget,
 } from "./realtime";
 
@@ -199,6 +204,12 @@ test("note-by-note never leaves the loop backwards, and starts inside it", () =>
   assert.deepEqual(loopNoteByNoteState(timeline, at("c"), at("e"), null, loop), { state: at("b"), nextPass: false });
 });
 
+test("rewind returns note-by-note to the first moment, or the loop's first while looping", () => {
+  assert.deepEqual(runPlaybackCommand(timeline, at("d"), "rewind"), at("a"));
+  assert.deepEqual(step(at("d"), "rewind"), { state: at("b"), nextPass: false });
+  assert.equal(runPlaybackCommand(timeline, initialPlaybackState, "rewind"), initialPlaybackState);
+});
+
 test("without a loop, or once stopped, note-by-note moves as before", () => {
   const next = runPlaybackCommand(timeline, at("d"), "forwardNote");
   assert.equal(loopNoteByNoteState(timeline, at("d"), next, "forwardNote", null).state, next);
@@ -232,6 +243,12 @@ const parsed = parseRealtimeMusicXml(score(`
   <measure number="4">${quarters("d", ["B", "C"])}</measure>
 `));
 
+test("a loop counts in to each pass only while the count-in is on, keeping the choice", () => {
+  assert.equal(effectiveLoopRestart("count-in", true), "count-in");
+  assert.equal(effectiveLoopRestart("count-in", false), "immediately");
+  assert.equal(effectiveLoopRestart("immediately", true), "immediately");
+});
+
 test("a loop's route plays from its start up to its end barline, once", () => {
   const route = expandPerformanceRoute(parsed, { startMeasureIndex: 1, endMeasureIndex: 3 });
   assert.deepEqual(route.occurrences.map((occurrence) => occurrence.measureNumber), ["2", "3"]);
@@ -241,6 +258,24 @@ test("a loop's route plays from its start up to its end barline, once", () => {
   assert.equal(loopRouteOffset(route, { measureIndex: 2, onset: 1 }), 3);
   assert.equal(loopRouteOffset(route, { measureIndex: 3, onset: 0 }), null);
   assert.deepEqual(routeStructuralPosition(route, 3), { measureIndex: 2, onset: 1 });
+  assert.deepEqual(routeStructuralPosition(route, -1.5), { measureIndex: 1, onset: 0 }, "a lead-in is at the start");
+  // Counting in, a step forward lands on the loop's first note, not its second.
+  const counting = routeStepPosition(route, -1.5)!;
+  assert.deepEqual(seekStructuralPosition(parsed, counting, "forwardNote"), { measureIndex: 1, onset: 0 });
+  assert.deepEqual(routeStepPosition(route, 1), routeStructuralPosition(route, 1));
+  // A step out of the loop lands on its first note, the next pass when it went forwards.
+  assert.deepEqual(loopRouteStep(route, { measureIndex: 2, onset: 1 }, "forwardNote"), {
+    position: { measureIndex: 2, onset: 1 },
+    nextPass: false,
+  });
+  assert.deepEqual(loopRouteStep(route, { measureIndex: 3, onset: 0 }, "forwardNote"), {
+    position: { measureIndex: 1, onset: 0 },
+    nextPass: true,
+  });
+  assert.deepEqual(loopRouteStep(route, { measureIndex: 0, onset: 3 }, "backwardNote"), {
+    position: { measureIndex: 1, onset: 0 },
+    nextPass: false,
+  });
 });
 
 test("a loop's route follows repeats inside it, and stops where navigation leaves it", () => {
@@ -350,6 +385,17 @@ test("a loop's playhead runs on to the loop's end barline after its last note, n
   // A one-measure loop ends on the barline inside the system.
   const short = expandPerformanceRoute(parsed, { startMeasureIndex: 1, endMeasureIndex: 2, visualMap });
   assert.equal(realtimePlayheadAt(short, 1.5, [], routeEndBarline(systems, short))?.x, 500);
+
+  // Through a two-quarter count-in the playhead moves from the barline before the first
+  // note to the note, arriving as it plays.
+  const start = routeStartBarline(systems, route);
+  assert.deepEqual(start, { pageIndex: 0, staffGroupIndex: 0, x: 300 });
+  assert.equal(realtimePlayheadAt(route, -2, [], end, start, -2)?.x, 300, "waiting on the barline");
+  assert.equal(realtimePlayheadAt(route, -1, [], end, start, -2)?.x, 325);
+  assert.equal(realtimePlayheadAt(route, 0, [], end, start, -2)?.x, 350);
+  assert.equal(realtimePlayheadAt(route, 0.5, [], end, start, -2)?.x, 400, "then it follows the notes");
+  const fromNote = expandPerformanceRoute(parsed, { startMeasureIndex: 1, startOffset: 1, visualMap });
+  assert.equal(routeStartBarline(systems, fromNote), null, "a route begun inside a measure has none");
 });
 
 test("loop shortcuts move one end a barline, keeping a bar between the ends and inside the score", () => {

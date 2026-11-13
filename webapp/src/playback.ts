@@ -14,7 +14,9 @@ export const playbackCommandNames = [
   "togglePlaybackMode",
   "toggleNoteSounds",
   "toggleListenMode",
+  "toggleRealtimeWait",
   "playCurrentNotes",
+  "rewind",
   "forwardNote",
   "backwardNote",
   "forwardBar",
@@ -28,6 +30,9 @@ export const playbackCommandNames = [
   "tempoUp",
   "tempoDown",
   "resetTempo",
+  "stretchNotes",
+  "compressNotes",
+  "resetNoteStretch",
   "loopStartEarlier",
   "loopStartLater",
   "loopEndEarlier",
@@ -149,23 +154,16 @@ export function playbackGroupIdsForPage(
   return moment?.pageIndex === pageIndex ? moment.visualGroupIds : NO_PLAYBACK_GROUPS;
 }
 
-export function playbackGroupIdsByPageForAnchors(
-  timeline: PlaybackMoment[],
-  anchors: readonly VisualGroupRef[],
-): Record<number, string[]> {
+/**
+ * The noteheads of `groups` by page, for realtime to highlight: only the notes sounding,
+ * so a note that has ended goes out even while others that started with it are held.
+ */
+export function visualGroupIdsByPage(groups: readonly VisualGroupRef[]): Record<number, string[]> {
   const result: Record<number, string[]> = {};
-  for (const anchor of anchors) {
-    const moment = timeline.find(
-      (candidate) =>
-        candidate.pageIndex === anchor.pageIndex &&
-        candidate.visualGroupIds.includes(anchor.visualGroupId),
-    );
-    const ids = moment?.visualGroupIds ?? [anchor.visualGroupId];
-    const pageIds = result[anchor.pageIndex] ?? [];
-    for (const id of ids) {
-      if (!pageIds.includes(id)) pageIds.push(id);
-    }
-    result[anchor.pageIndex] = pageIds;
+  for (const group of groups) {
+    const pageIds = result[group.pageIndex] ?? [];
+    if (!pageIds.includes(group.visualGroupId)) pageIds.push(group.visualGroupId);
+    result[group.pageIndex] = pageIds;
   }
   return result;
 }
@@ -513,7 +511,9 @@ function commandDestination(
     | "togglePlaybackMode"
     | "toggleNoteSounds"
     | "toggleListenMode"
+    | "toggleRealtimeWait"
     | "playCurrentNotes"
+    | "rewind"
     | "toggleLoopMode"
     | "toggleNoteHighway"
     | "practiceLeftHand"
@@ -521,6 +521,9 @@ function commandDestination(
     | "tempoUp"
     | "tempoDown"
     | "resetTempo"
+    | "stretchNotes"
+    | "compressNotes"
+    | "resetNoteStretch"
     | LoopBoundaryCommand
   >,
 ): number {
@@ -585,6 +588,7 @@ export function runPlaybackCommand(
     return state.active ? { ...state, listenModeEnabled: !state.listenModeEnabled } : state;
   }
   if (
+    command === "toggleRealtimeWait" ||
     command === "playCurrentNotes" ||
     command === "togglePlaybackMode" ||
     command === "toggleLoopMode" ||
@@ -594,9 +598,14 @@ export function runPlaybackCommand(
     command === "tempoUp" ||
     command === "tempoDown" ||
     command === "resetTempo" ||
+    command === "stretchNotes" ||
+    command === "compressNotes" ||
+    command === "resetNoteStretch" ||
     isLoopBoundaryCommand(command)
   ) return state;
   if (!state.active || timeline.length === 0) return state;
+  // The first moment of the score; a loop moves it on to the loop's first moment.
+  if (command === "rewind") return { ...state, currentMomentId: timeline[0].id };
   const destination = commandDestination(timeline, currentIndex(timeline, state), command);
   return { ...state, active: true, currentMomentId: timeline[destination].id };
 }

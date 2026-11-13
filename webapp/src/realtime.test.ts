@@ -5,12 +5,19 @@ import {
   expandPerformanceRoute,
   parseRealtimeMusicXml,
   RealtimeController,
+  realtimeLeadIn,
+  realtimePlayheadAt,
+  realtimeWaitPointIndex,
+  realtimeWaitPoints,
+  REALTIME_WAIT_LEAD_QUARTERS,
   scoreOffsetAfterSeconds,
   scoreOffsetToSeconds,
   seekStructuralPosition,
+  type PerformanceNote,
   type PerformanceRoute,
   type RealtimeAudioSink,
   type RealtimeClock,
+  type VisualNoteTarget,
 } from "./realtime";
 import { noteScoreFacts } from "./playback";
 import { pdfNoteGeometry } from "./sidecarNoteGeometry";
@@ -619,6 +626,49 @@ test("seeks notes, bars, and pages in structural score order", () => {
   });
 });
 
+test("moves by bars from a bar whose only note starts on its first beat", () => {
+  // Bar 2 holds one chord tied over from bar 1, then rests: past its first beat the
+  // next note start is already in bar 3, but the playhead is still in bar 2.
+  const parsed = parseRealtimeMusicXml(score(`
+    <measure number="1"><attributes><divisions>4</divisions></attributes>
+      ${quarter("a")}${quarter("b", "D")}${quarter("c", "E")}
+      <note id="tied"><pitch><step>F</step><octave>4</octave></pitch><duration>4</duration><tie type="start"/><voice>1</voice><type>quarter</type></note>
+    </measure>
+    <measure number="2">
+      <note id="held"><pitch><step>F</step><octave>4</octave></pitch><duration>12</duration><tie type="stop"/><voice>1</voice><type>half</type><dot/></note>
+      <note><rest/><duration>4</duration><voice>1</voice><type>quarter</type></note>
+    </measure>
+    <measure number="3">${quarter("d", "G")}</measure>
+  `));
+  const inBar2 = { measureIndex: 1, onset: 0.05 };
+  assert.deepEqual(seekStructuralPosition(parsed, inBar2, "backwardBar"), { measureIndex: 0, onset: 0 });
+  assert.deepEqual(seekStructuralPosition(parsed, inBar2, "forwardBar"), { measureIndex: 2, onset: 0 });
+  assert.deepEqual(seekStructuralPosition(parsed, { measureIndex: 1, onset: 3 }, "backwardBar"), { measureIndex: 0, onset: 0 });
+});
+
+test("moves by notes from the note being played, a little past its start during playback", () => {
+  const parsed = parseRealtimeMusicXml(score(`
+    <measure number="1"><attributes><divisions>4</divisions></attributes>
+      ${quarter("a")}${quarter("b", "D")}${quarter("c", "E")}${quarter("d", "F")}</measure>
+  `));
+  const playingB = { measureIndex: 0, onset: 1.05 };
+  assert.deepEqual(seekStructuralPosition(parsed, playingB, "backwardNote"), { measureIndex: 0, onset: 0 },
+    "the note before, not the one playing again");
+  assert.deepEqual(seekStructuralPosition(parsed, playingB, "forwardNote"), { measureIndex: 0, onset: 2 },
+    "the note after, not the one after that");
+  const pausedOnB = { measureIndex: 0, onset: 1 };
+  assert.deepEqual(seekStructuralPosition(parsed, pausedOnB, "backwardNote"), { measureIndex: 0, onset: 0 });
+  assert.deepEqual(seekStructuralPosition(parsed, pausedOnB, "forwardNote"), { measureIndex: 0, onset: 2 });
+  // A route's start before its first note, as in a count-in, moves to that note either way.
+  const parsedRest = parseRealtimeMusicXml(score(`
+    <measure number="1"><attributes><divisions>4</divisions></attributes>
+      <note><rest/><duration>4</duration><voice>1</voice><type>quarter</type></note>${quarter("a")}${quarter("b", "D")}</measure>
+  `));
+  const beforeFirst = { measureIndex: 0, onset: 0 };
+  assert.deepEqual(seekStructuralPosition(parsedRest, beforeFirst, "forwardNote"), { measureIndex: 0, onset: 1 });
+  assert.deepEqual(seekStructuralPosition(parsedRest, beforeFirst, "backwardNote"), { measureIndex: 0, onset: 1 });
+});
+
 test("converts score offsets through tempo changes and a live multiplier", () => {
   const route: PerformanceRoute = {
     occurrences: [],
@@ -836,6 +886,161 @@ test("controller pauses, resumes, changes tempo in place, and cancels sounding a
   assert.equal(tick, null);
 });
 
+test("a lead-in counts in at the opening tempo before the first note, and a loop starting over skips it", () => {
+  let now = 0;
+  let tick: (() => void) | null = null;
+  const attacks: string[][] = [];
+  let loops = 0;
+  const offsets: number[] = [];
+  const route: PerformanceRoute = {
+    occurrences: [],
+    notes: [
+      { id: "c", musicXmlId: "c", pitch: "C4", dynamic: "mp", onset: 0.5, release: 1, visual: null },
+      { id: "d", musicXmlId: "d", pitch: "D4", dynamic: "mp", onset: 1, release: 2, visual: null },
+    ],
+    events: [],
+    tempoSegments: [{ offset: 0, bpm: 120 }, { offset: 1, bpm: 60 }],
+    totalQuarters: 2,
+  };
+  // A beat is half a second at 120 BPM: three seconds are six beats, of which the
+  // half-beat rest the route opens on is the first half.
+  assert.equal(realtimeLeadIn(route, 0, 3), 5.5);
+  assert.equal(realtimeLeadIn(route, 0, 3, 0.5), 2.5, "half the tempo counts half the beats");
+  assert.equal(realtimeLeadIn(route, 0, 1.25), 1.5, "two and a half beats away counts the shorter two");
+  assert.equal(realtimeLeadIn(route, 0, 3, 0.1), 0.5, "however slow, at least a beat");
+  assert.equal(realtimeLeadIn(route, 0, 0), 0, "no count-in starts right on the first note");
+  assert.equal(scoreOffsetToSeconds(route, -1), -0.5, "at the opening tempo");
+  assert.equal(scoreOffsetAfterSeconds(route, -1.5, 0.5), -0.5);
+  assert.equal(scoreOffsetAfterSeconds(route, -1.5, 1), 0.5);
+
+  const controller = new RealtimeController(
+    { attack: (pitches) => attacks.push([...pitches]), release: () => undefined, stop: () => undefined },
+    { onFrame: (frame) => offsets.push(frame.offset), onComplete: () => undefined, onLoop: () => { loops += 1; } },
+    {
+      now: () => now,
+      setInterval: (callback) => { tick = callback; return 1; },
+      clearInterval: () => { tick = null; },
+    },
+  );
+  controller.setLooping(true);
+  controller.seek(route, "paused", 0, 1.5);
+  assert.equal(controller.getOffset(), -1.5, "paused, it waits at the start of the lead-in");
+  now = 5;
+  controller.resume();
+  now = 5.7;
+  (tick as (() => void) | null)?.();
+  assert.deepEqual(attacks, [], "nothing sounds while counting in");
+  assert.ok(Math.abs(controller.getOffset() - -0.1) < 1e-9);
+  now = 6.1;
+  (tick as (() => void) | null)?.();
+  assert.deepEqual(attacks, [["C4"]]);
+  // 0.75 s of lead-in, 0.5 s for the first beat and 1 s for the second: the pass ends at 7.25.
+  now = 7.3;
+  (tick as (() => void) | null)?.();
+  assert.equal(loops, 1);
+  assert.ok(Math.abs(controller.getOffset() - 0.1) < 1e-9, "the next pass starts at once");
+  assert.ok(offsets.every((offset) => offset >= -1.5));
+});
+
+test("the playhead meets each note just left of its notehead, a chord's leftmost", () => {
+  const visual = (id: string, x: number, left: number): VisualNoteTarget => ({
+    musicXmlId: id,
+    pageIndex: 0,
+    visualGroupId: id,
+    staffGroupIndex: 0,
+    x,
+    y: 100,
+    left,
+    systemRight: 500,
+    systemTop: 50,
+    systemBottom: 150,
+  });
+  const note = (id: string, onset: number, target: VisualNoteTarget): PerformanceNote =>
+    ({ id, musicXmlId: id, pitch: "C4", dynamic: "mp", onset, release: onset + 1, visual: target });
+  const route: PerformanceRoute = {
+    occurrences: [],
+    notes: [
+      note("a", 0, visual("a", 100, 90)),
+      // A chord's second notehead stands left of the first, as in a cluster.
+      note("b1", 1, visual("b1", 200, 190)),
+      note("b2", 1, visual("b2", 186, 176)),
+    ],
+    events: [],
+    tempoSegments: [{ offset: 0, bpm: 60 }],
+    totalQuarters: 2,
+  };
+  assert.equal(realtimePlayheadAt(route, 0, [])?.x, 90);
+  assert.equal(realtimePlayheadAt(route, 0.5, [])?.x, 133);
+  assert.equal(realtimePlayheadAt(route, 1, [])?.x, 176);
+});
+
+test("a loop that counts in to each pass waits through the count-in at its end", () => {
+  let now = 0;
+  let tick: (() => void) | null = null;
+  const attacks: string[][] = [];
+  const leadIns: number[] = [];
+  const route: PerformanceRoute = {
+    occurrences: [],
+    notes: [
+      { id: "c", musicXmlId: "c", pitch: "C4", dynamic: "mp", onset: 0, release: 1, visual: null },
+      { id: "d", musicXmlId: "d", pitch: "D4", dynamic: "mp", onset: 1, release: 2, visual: null },
+    ],
+    events: [],
+    tempoSegments: [{ offset: 0, bpm: 60 }],
+    totalQuarters: 2,
+  };
+  const controller = new RealtimeController(
+    { attack: (pitches) => attacks.push([...pitches]), release: () => undefined, stop: () => undefined },
+    { onFrame: () => undefined, onComplete: () => undefined, onLoop: (leadIn) => leadIns.push(leadIn) },
+    {
+      now: () => now,
+      setInterval: (callback) => { tick = callback; return 1; },
+      clearInterval: () => { tick = null; },
+    },
+  );
+  controller.setLooping(true);
+  controller.setLoopCountIn(2);
+  controller.play(route);
+  // Two seconds at a second a beat: two beats.
+  assert.equal(controller.loopLeadIn(), 2);
+  assert.deepEqual(attacks, [["C4"]]);
+  now = 2.25;
+  (tick as (() => void) | null)?.();
+  assert.deepEqual(leadIns, [2]);
+  assert.ok(Math.abs(controller.getOffset() - -1.75) < 1e-9, "counting in to the next pass");
+  now = 3.9;
+  (tick as (() => void) | null)?.();
+  assert.deepEqual(attacks, [["C4"]], "nothing sounds while counting in");
+  now = 4.1;
+  (tick as (() => void) | null)?.();
+  assert.deepEqual(attacks.at(-1), ["C4"]);
+  controller.setLoopCountIn(0);
+  assert.equal(controller.loopLeadIn(), 0, "looping immediately");
+});
+
+test("counts in beats of the time signature: dotted quarters in compound metre", () => {
+  const time = (beats: string, beatType: number) =>
+    `<attributes><divisions>4</divisions><time><beats>${beats}</beats><beat-type>${beatType}</beat-type></time></attributes>`;
+  const parsed = parseRealtimeMusicXml(score(`
+    <measure number="1">${time("6", 8)}${quarter("a")}</measure>
+    <measure number="2">${quarter("b")}</measure>
+    <measure number="3">${time("2", 2)}${quarter("c")}</measure>
+    <measure number="4">${time("3+2", 8)}${quarter("d")}</measure>
+    <measure number="5">${time("12", 16)}${quarter("e")}</measure>
+    <measure number="6">${time("3", 4)}${quarter("f")}</measure>
+  `));
+  assert.deepEqual(parsed.measures.map((measure) => measure.beat), [1.5, 1.5, 2, 0.5, 0.75, 1]);
+  assert.equal(parseRealtimeMusicXml(score(`<measure number="1">${quarter("a")}</measure>`)).measures[0].beat, 1,
+    "a quarter without a time signature");
+
+  const route = expandPerformanceRoute(parsed);
+  // At the default 120 BPM, a second and a half is two dotted quarters of 6/8, a bar;
+  // one half note of 2/2, the shorter of one and two; and three quarters of 3/4.
+  assert.equal(realtimeLeadIn(route, 0, 1.5), 3);
+  assert.equal(realtimeLeadIn(expandPerformanceRoute(parsed, { startMeasureIndex: 2 }), 0, 1.5), 2);
+  assert.equal(realtimeLeadIn(expandPerformanceRoute(parsed, { startMeasureIndex: 5 }), 0, 1.5), 3);
+});
+
 function sounding(xml: string): string[] {
   const route = expandPerformanceRoute(parseRealtimeMusicXml(xml));
   return route.notes.map((note) => `${note.pitch}@${+note.onset.toFixed(4)}-${+note.release.toFixed(4)}`);
@@ -912,4 +1117,119 @@ test("mordents play two 32nd notes with the neighbour above or below, then the m
     ["C5@0-0.125", "B♭4@0.125-0.25", "C5@0.25-1"]);
   assert.deepEqual(sounding(score(`<measure number="1"><attributes><divisions>4</divisions></attributes>${ornament("mordent", "<accidental-mark>flat</accidental-mark>")}</measure>`)),
     ["C5@0-0.125", "B♭4@0.125-0.25", "C5@0.25-1"]);
+});
+
+test("wait points take written notes, rolled ones in turn, and leave ornaments to play freely", () => {
+  const parsed = parseRealtimeMusicXml(score(`
+    <measure number="1">
+      <attributes><divisions>4</divisions><staves>2</staves></attributes>
+      <note id="grace"><grace slash="yes"/><pitch><step>D</step><octave>5</octave></pitch><voice>1</voice><staff>1</staff><type>eighth</type></note>
+      <note id="c5"><pitch><step>C</step><octave>5</octave></pitch><duration>4</duration><voice>1</voice><staff>1</staff></note>
+      <note id="e5"><chord/><pitch><step>E</step><octave>5</octave></pitch><duration>4</duration><voice>1</voice><staff>1</staff></note>
+      <note id="tied-start"><pitch><step>G</step><octave>5</octave></pitch><duration>4</duration><tie type="start"/><voice>1</voice><staff>1</staff></note>
+      <note id="tied-stop"><pitch><step>G</step><octave>5</octave></pitch><duration>4</duration><tie type="stop"/><voice>1</voice><staff>1</staff></note>
+      <note id="a5"><pitch><step>A</step><octave>5</octave></pitch><duration>4</duration><voice>1</voice><staff>1</staff><notations><arpeggiate/></notations></note>
+      <note id="c6"><chord/><pitch><step>C</step><octave>6</octave></pitch><duration>4</duration><voice>1</voice><staff>1</staff><notations><arpeggiate/></notations></note>
+      <backup><duration>16</duration></backup>
+      <note id="c3"><pitch><step>C</step><octave>3</octave></pitch><duration>8</duration><voice>2</voice><staff>2</staff></note>
+      <note id="g3"><pitch><step>G</step><octave>3</octave></pitch><duration>8</duration><voice>2</voice><staff>2</staff>
+        <notations><ornaments><trill-mark beats="4" start-note="upper"/></ornaments></notations>
+      </note>
+    </measure>
+  `));
+  const route = expandPerformanceRoute(parsed);
+  // A rolled chord is played, and waited for, one note after another, from the bottom.
+  const rollStep = route.notes.find((note) => note.musicXmlId === "c6")!.onset - 3;
+  assert.ok(rollStep > 0);
+  const summary = (include?: (note: PerformanceNote) => boolean) =>
+    realtimeWaitPoints(route, include).map((point) => [
+      point.onset,
+      point.notes.map((note) => note.musicXmlId).sort(),
+      [...point.ignoredPitches].sort(),
+    ]);
+  // The acciaccatura sounds on the beat, putting off the chord it leads to, and may be
+  // played or not around both. The trill, from its upper note, is waited for at its
+  // written note, and its other notes may be played around it and what follows.
+  const principal = 1 / 16;
+  assert.deepEqual(summary(), [
+    [0, ["c3"], ["D5"]],
+    [principal, ["c5", "e5"], ["D5"]],
+    [1, ["tied-start"], ["A3"]],
+    [2, ["g3"], ["A3"]],
+    [3, ["a5"], ["A3"]],
+    [3 + rollStep, ["c6"], ["A3", "G3"]],
+  ]);
+  assert.deepEqual(summary((note) => note.left === false), [
+    [principal, ["c5", "e5"], ["D5"]],
+    [1, ["tied-start"], []],
+    [3, ["a5"], []],
+    [3 + rollStep, ["c6"], []],
+  ]);
+  const points = realtimeWaitPoints(route);
+  assert.equal(realtimeWaitPointIndex(points, -1), 0);
+  assert.equal(realtimeWaitPointIndex(points, 1), 2);
+  assert.equal(realtimeWaitPointIndex(points, 1.5), 3);
+  assert.equal(realtimeWaitPointIndex(points, 3.5), 6);
+});
+
+test("controller holds before notes until released, then plays on from the hold", () => {
+  let now = 0;
+  let tick: (() => void) | null = null;
+  const attacks: string[][] = [];
+  const frames: { offset: number; waiting?: boolean }[] = [];
+  const route: PerformanceRoute = {
+    occurrences: [],
+    notes: [
+      { id: "a", musicXmlId: "a", pitch: "C4", dynamic: "mp", onset: 0, release: 1, visual: null },
+      { id: "b", musicXmlId: "b", pitch: "D4", dynamic: "mp", onset: 1, release: 2, visual: null },
+    ],
+    events: [],
+    tempoSegments: [{ offset: 0, bpm: 60 }],
+    totalQuarters: 2,
+  };
+  let completed = false;
+  const controller = new RealtimeController(
+    {
+      attack: (pitches) => attacks.push([...pitches]),
+      release: () => undefined,
+      stop: () => undefined,
+    },
+    {
+      onFrame: (frame) => frames.push({ offset: frame.offset, waiting: frame.waiting }),
+      onComplete: () => { completed = true; },
+    },
+    {
+      now: () => now,
+      setInterval: (callback) => { tick = callback; return 1; },
+      clearInterval: () => { tick = null; },
+    },
+  );
+
+  controller.play(route);
+  const hold = 1 - REALTIME_WAIT_LEAD_QUARTERS;
+  controller.setHold(hold);
+  now = 0.5;
+  (tick as (() => void) | null)?.();
+  assert.equal(frames.at(-1)?.waiting, false);
+  now = 5;
+  (tick as (() => void) | null)?.();
+  assert.equal(frames.at(-1)?.offset, hold);
+  assert.equal(frames.at(-1)?.waiting, true);
+  assert.equal(controller.getOffset(), hold);
+  assert.deepEqual(attacks, [["C4"]]);
+
+  controller.setHold(null);
+  now = 5.1;
+  (tick as (() => void) | null)?.();
+  assert.equal(frames.at(-1)?.waiting, false);
+  assert.ok(Math.abs((frames.at(-1)?.offset ?? 0) - (hold + 0.1)) < 1e-9);
+  assert.deepEqual(attacks, [["C4"], ["D4"]]);
+  assert.equal(completed, false);
+
+  // Seeking clears the hold.
+  controller.setHold(0.5);
+  controller.seek(route, "playing", 0);
+  now = 6.8;
+  (tick as (() => void) | null)?.();
+  assert.ok(Math.abs(controller.getOffset() - 1.7) < 1e-9);
 });

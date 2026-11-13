@@ -4,7 +4,7 @@
 // playback goes next while looping.
 import type { PageNoteGeometry } from "./noteGeometry";
 import type { LoopBoundaryCommand, PlaybackCommand, PlaybackMoment, PlaybackState } from "./playback";
-import type { PerformanceRoute, RouteEndBarline, StructuralPosition } from "./realtime";
+import type { PerformanceRoute, RouteBarline, StructuralPosition } from "./realtime";
 
 /**
  * Measures by their document position, from 0. Both ends lie on barlines: the loop
@@ -16,6 +16,26 @@ export interface LoopRegion {
 }
 
 export type LoopHandle = "start" | "end";
+
+/** What realtime does at a loop's end: start the next pass at once, or count in to it. */
+export const LOOP_RESTARTS = ["immediately", "count-in"] as const;
+export type LoopRestart = (typeof LOOP_RESTARTS)[number];
+export const DEFAULT_LOOP_RESTART: LoopRestart = "immediately";
+export const LOOP_RESTART_LABELS: Readonly<Record<LoopRestart, string>> = {
+  immediately: "Loop immediately",
+  "count-in": "Count in before looping",
+};
+/** Why counting in before looping cannot be chosen while the count-in is off. */
+export const LOOP_COUNT_IN_OFF_HINT =
+  "The count-in is off. Choose a count-in under Settings, Playback to count in before looping.";
+
+/**
+ * What a loop does at its end: counting in takes the count-in's length, so with the
+ * count-in off it loops immediately, keeping the choice for when it is back on.
+ */
+export function effectiveLoopRestart(restart: LoopRestart, countInOn: boolean): LoopRestart {
+  return countInOn ? restart : "immediately";
+}
 
 /** A system of the score, where the loop overlay is drawn. Coordinates are page pixels. */
 export interface LoopSystem {
@@ -265,8 +285,29 @@ export function loopRouteOffset(route: PerformanceRoute, position: StructuralPos
   return null;
 }
 
-/** Where a route's playhead is in the score: the measure and the time into it. */
-export function routeStructuralPosition(route: PerformanceRoute, offset: number): StructuralPosition | null {
+/**
+ * Where a step from inside a looping route lands in it: on `destination` when the loop
+ * plays it, otherwise on the loop's first note, at once and without a count-in, as
+ * note-by-note does. Leaving forwards from inside starts the loop's next pass.
+ */
+export function loopRouteStep(
+  route: PerformanceRoute,
+  destination: StructuralPosition,
+  command: PlaybackCommand,
+): { position: StructuralPosition; nextPass: boolean } {
+  if (loopRouteOffset(route, destination) !== null) return { position: destination, nextPass: false };
+  return {
+    position: routeStructuralPosition(route, 0) ?? destination,
+    nextPass: FORWARD_COMMANDS.has(command),
+  };
+}
+
+/**
+ * Where a route's playhead is in the score: the measure and the time into it. In the
+ * lead-in before the route begins, that is the route's start.
+ */
+export function routeStructuralPosition(route: PerformanceRoute, routeOffset: number): StructuralPosition | null {
+  const offset = Math.max(0, routeOffset);
   const occurrence = route.occurrences.filter((item) => item.scoreStart <= offset + 1e-6).at(-1);
   return occurrence
     ? {
@@ -276,8 +317,32 @@ export function routeStructuralPosition(route: PerformanceRoute, offset: number)
     : null;
 }
 
+/**
+ * Where note and bar steps start from at a route's playhead: its structural position,
+ * except counting in, when it stands just before the route's first note, so that a
+ * step forward lands on that note rather than the one after it.
+ */
+export function routeStepPosition(route: PerformanceRoute, routeOffset: number): StructuralPosition | null {
+  const position = routeStructuralPosition(route, routeOffset);
+  return position && routeOffset < 0 ? { ...position, onset: position.onset - 1e-3 } : position;
+}
+
+/**
+ * The barline before the first measure a route plays, where its playhead waits through a
+ * count-in; none when the route begins inside that measure.
+ */
+export function routeStartBarline(systems: readonly LoopSystem[], route: PerformanceRoute): RouteBarline | null {
+  const first = route.occurrences[0];
+  const placement = first && first.localStart === 0
+    ? loopBoundaryPlacement(systems, first.measureIndex, "start")
+    : null;
+  return placement
+    ? { pageIndex: placement.system.pageIndex, staffGroupIndex: placement.system.systemIndex, x: placement.x }
+    : null;
+}
+
 /** The barline after the last measure a route plays, where its playhead stops. */
-export function routeEndBarline(systems: readonly LoopSystem[], route: PerformanceRoute): RouteEndBarline | null {
+export function routeEndBarline(systems: readonly LoopSystem[], route: PerformanceRoute): RouteBarline | null {
   const last = route.occurrences.at(-1);
   const placement = last ? loopBoundaryPlacement(systems, last.measureIndex + 1, "end") : null;
   return placement

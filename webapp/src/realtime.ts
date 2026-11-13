@@ -124,6 +124,8 @@ export interface StructuralMeasure {
   endingNumbers: ReadonlySet<number>;
   sounds: NavigationSound[];
   fermatas: RealtimeFermata[];
+  /** The beat its time signature is counted in, in quarters; see timeSignatureBeat. */
+  beat: number;
 }
 
 export interface RealtimeScore {
@@ -135,6 +137,8 @@ export interface VisualNoteTarget extends VisualGroupRef {
   staffGroupIndex: number;
   x: number;
   y: number;
+  /** Where the playhead meets the note, a little left of its notehead; `x` when unknown. */
+  left?: number;
   systemRight: number;
   systemTop: number;
   systemBottom: number;
@@ -151,6 +155,8 @@ export interface PerformanceNote {
   fingeringMusicXmlId?: string | null;
   /** Left-hand note (see RealtimeScoreNote.left); absent when the hand is unknown. */
   left?: boolean;
+  /** Marks a grace note among PerformanceRoute.attacks; absent elsewhere. */
+  grace?: true;
 }
 
 export interface PerformanceOccurrence {
@@ -163,6 +169,8 @@ export interface PerformanceOccurrence {
   scoreStart: number;
   scoreEnd: number;
   localStart: number;
+  /** The measure's beat in quarters, as its time signature counts it; a quarter when unknown. */
+  beat?: number;
 }
 
 export interface PerformanceEvent {
@@ -180,6 +188,13 @@ export interface PerformanceRoute {
   occurrences: PerformanceOccurrence[];
   notes: PerformanceNote[];
   playheadNotes?: PerformanceNote[];
+  /**
+   * Every written note once, at its written pitch, when it is struck: grace notes,
+   * marked, in their own time before the note they lead to, each note of a rolled
+   * chord in its turn, and a trill, tremolo or mordent when its first note sounds.
+   * Ordered by onset.
+   */
+  attacks?: PerformanceNote[];
   events: PerformanceEvent[];
   tempoSegments: TempoSegment[];
   totalQuarters: number;
@@ -219,8 +234,8 @@ export interface RealtimePlayhead {
   y2: number;
 }
 
-/** The barline a route ends on, where the playhead stops after its last note. */
-export interface RouteEndBarline {
+/** A barline on a route's score: where its playhead starts before the first note, or stops after the last. */
+export interface RouteBarline {
   pageIndex: number;
   staffGroupIndex: number;
   x: number;
@@ -232,6 +247,8 @@ export interface RealtimeFrame {
   bpm: number;
   activeNotes: PerformanceNote[];
   playhead: RealtimePlayhead | null;
+  /** Playing, but held before notes the player has yet to play; see RealtimeController.setHold. */
+  waiting?: boolean;
 }
 
 function elements(parent: Element | Document, name?: string): Element[] {
@@ -263,6 +280,18 @@ function finiteNumber(value: string | null, fallback = 0): number {
   if (value === null || value.trim() === "") return fallback;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+/**
+ * The beat a time signature is counted in, in quarters: a dotted note in compound
+ * metre (6, 9 or 12 of anything), otherwise the note of its beat type. Additive
+ * signatures such as 3+2/8 count that note too.
+ */
+function timeSignatureBeat(time: Element): number | null {
+  const beatType = finiteNumber(text(time, "beat-type"), 0);
+  if (beatType <= 0) return null;
+  const unit = 4 / beatType;
+  return [6, 9, 12].includes(Number(text(time, "beats"))) ? 3 * unit : unit;
 }
 
 function yes(value: string | null): boolean {
@@ -947,6 +976,17 @@ export function parseRealtimeMusicXml(musicXml: string): RealtimeScore {
     partMeasures.push(parsed);
   });
 
+  // Beats follow the first part's time signatures, which every part shares.
+  const measureBeats: number[] = [];
+  let beat = 1;
+  for (const measure of elements(parts[0], "measure")) {
+    for (const attributes of elements(measure, "attributes")) {
+      const time = first(attributes, "time");
+      beat = (time && timeSignatureBeat(time)) ?? beat;
+    }
+    measureBeats.push(beat);
+  }
+
   const measureCount = Math.max(...partMeasures.map((part) => part.length));
   const measures: StructuralMeasure[] = [];
   let activeEnding = new Set<number>();
@@ -998,11 +1038,15 @@ export function parseRealtimeMusicXml(musicXml: string): RealtimeScore {
       endingNumbers: new Set(activeEnding),
       sounds: measureSounds,
       fermatas: [...fermatas.values()].sort((a, b) => a.onset - b.onset),
+      beat: measureBeats[index] ?? measureBeats.at(-1) ?? 1,
     });
     if (available.some((measure) => measure.endingStops)) activeEnding = new Set<number>();
   }
   return { measures };
 }
+
+/** How far left of a notehead the playhead meets it, in notehead widths. */
+const PLAYHEAD_NOTEHEAD_LEAD = 0.35;
 
 export function buildRealtimeVisualMap(
   geometry: readonly PageNoteGeometry[],
@@ -1030,6 +1074,7 @@ export function buildRealtimeVisualMap(
       const notehead = noteheads.get(note.noteheadId);
       if (!notehead) continue;
       const system = systems.get(notehead.systemIndex)!;
+      const [left, , right] = notehead.bounds;
       result.set(note.id, {
         musicXmlId: note.id,
         pageIndex: page.pageIndex,
@@ -1037,6 +1082,7 @@ export function buildRealtimeVisualMap(
         staffGroupIndex: notehead.systemIndex,
         x: notehead.center[0],
         y: notehead.center[1],
+        left: left - (right - left) * PLAYHEAD_NOTEHEAD_LEAD,
         systemRight: system.right,
         systemTop: system.top,
         systemBottom: system.bottom,
@@ -1402,6 +1448,7 @@ export function expandPerformanceRoute(
       occurrences: [],
       notes: [],
       playheadNotes: [],
+      attacks: [],
       events: [],
       tempoSegments: [{ offset: 0, bpm: 120 }],
       totalQuarters: 0,
@@ -1479,6 +1526,7 @@ export function expandPerformanceRoute(
         scoreStart: scoreOffset,
         scoreEnd: scoreOffset + duration,
         localStart,
+        beat: measure.beat,
       };
       occurrences.push(occurrence);
       for (const note of measure.notes) {
@@ -1586,6 +1634,12 @@ export function expandPerformanceRoute(
   placeGraceNotes(sounding);
   rollArpeggios(sounding, bpmAt);
   const performanceNotes = expandOrnamentNotes(sounding, options.visualMap);
+  const attacks = sounding
+    .map((note, index) => ({
+      ...performanceNote(note, note.onset, note.release, index, options.visualMap),
+      ...(note.grace ? { grace: true as const } : {}),
+    }))
+    .sort((left, right) => left.onset - right.onset || left.id.localeCompare(right.id));
   const eventsByOnset = new Map<number, PerformanceEvent>();
   for (const note of performanceNotes) {
     const event = eventsByOnset.get(note.onset);
@@ -1606,6 +1660,7 @@ export function expandPerformanceRoute(
     occurrences,
     notes: performanceNotes,
     playheadNotes,
+    attacks,
     events: performanceEvents,
     tempoSegments: sortedTempos,
     totalQuarters: scoreOffset,
@@ -1645,15 +1700,19 @@ export function seekStructuralPosition(
 ): StructuralPosition {
   const positions = playableStructuralPositions(score);
   if (positions.length === 0) return { measureIndex: 0, onset: 0 };
-  let currentIndex = positions.findIndex((position) =>
+  // The note being played: the last to start at or before the playhead, which during
+  // playback has always moved a little past it; -1 before the first, as in a count-in.
+  const after = positions.findIndex((position) =>
     position.measureIndex > current.measureIndex ||
-    (position.measureIndex === current.measureIndex && position.onset >= current.onset - 1e-6),
+    (position.measureIndex === current.measureIndex && position.onset > current.onset + 1e-6),
   );
-  if (currentIndex < 0) currentIndex = positions.length - 1;
+  const currentIndex = (after < 0 ? positions.length : after) - 1;
   if (command === "forwardNote") return positions[Math.min(positions.length - 1, currentIndex + 1)];
   if (command === "backwardNote") return positions[Math.max(0, currentIndex - 1)];
 
-  const currentMeasure = positions[currentIndex].measureIndex;
+  // The bar the playhead is in, even past its last note start, as in a bar holding one
+  // tied chord: the next note start is already in the bar after.
+  const currentMeasure = current.measureIndex;
   if (command === "forwardBar" || command === "backwardBar") {
     const direction = command === "forwardBar" ? 1 : -1;
     let measureIndex = currentMeasure + direction;
@@ -1746,17 +1805,50 @@ function timingSegmentAtOffset(index: RouteTimingIndex, offset: number): number 
   return result;
 }
 
+/** How long realtime counts in before the first note when it starts at the top of a score or loop. */
+export const REALTIME_COUNT_INS = ["none", "short", "long"] as const;
+export type RealtimeCountIn = (typeof REALTIME_COUNT_INS)[number];
+/** The time each count-in aims for, in seconds as heard. */
+export const REALTIME_COUNT_IN_SECONDS: Readonly<Record<RealtimeCountIn, number>> = {
+  none: 0,
+  short: 2,
+  long: 3,
+};
+export const DEFAULT_REALTIME_COUNT_IN: RealtimeCountIn = "short";
+
+/**
+ * How many quarters before `offset` playback should begin to count in for about
+ * `seconds`, as heard at `multiplier` times the tempo there: the whole number of beats
+ * of the first note's time signature nearest that time, the shorter of two as near,
+ * and at least one. Rests before the first note count toward it. So a slow tempo
+ * counts fewer beats and a fast one more, and the wait stays about the same.
+ */
+export function realtimeLeadIn(
+  route: PerformanceRoute,
+  offset: number,
+  seconds: number,
+  multiplier = 1,
+): number {
+  const first = route.notes.find((note) => note.onset >= offset - 1e-6);
+  if (!first || !(seconds > 0)) return 0;
+  const beat = route.occurrences.filter((item) => item.scoreStart <= first.onset + 1e-6).at(-1)?.beat ?? 1;
+  const beatSeconds = beat * 60 / (tempoAt(route, offset) * (multiplier > 0 ? multiplier : 1));
+  const beats = Math.max(1, Math.ceil(seconds / beatSeconds - 0.5 - 1e-9));
+  return Math.max(0, beats * beat - (first.onset - offset));
+}
+
 export function tempoAt(route: PerformanceRoute, offset: number): number {
   const timing = routeTiming(route);
   return timing.bpms[timingSegmentAtOffset(timing, offset)] ?? 120;
 }
 
+/** Before the route begins, in its lead-in, time runs at the opening tempo: negative seconds. */
 export function scoreOffsetToSeconds(
   route: PerformanceRoute,
   offset: number,
   multiplier = 1,
 ): number {
-  const end = Math.min(route.totalQuarters, Math.max(0, offset));
+  const end = Math.min(route.totalQuarters, offset);
   const timing = routeTiming(route);
   const segment = timingSegmentAtOffset(timing, end);
   const baseSeconds = timing.cumulativeSeconds[segment] +
@@ -1818,11 +1910,35 @@ function occurrenceEndAt(route: PerformanceRoute, offset: number): number | null
   return candidate?.scoreEnd ?? null;
 }
 
+/**
+ * Where the playhead meets the notes `visible` starts together at `index`, on its line:
+ * just left of the leftmost notehead, so the note plays as the playhead reaches it.
+ */
+function playheadXAt(visible: readonly PerformanceNote[], index: number): number {
+  const first = visible[index].visual!;
+  let x = first.left ?? first.x;
+  for (let other = index + 1; other < visible.length && visible[other].onset === visible[index].onset; other += 1) {
+    const visual = visible[other].visual!;
+    if (visual.pageIndex === first.pageIndex && visual.staffGroupIndex === first.staffGroupIndex) {
+      x = Math.min(x, visual.left ?? visual.x);
+    }
+  }
+  return x;
+}
+
+/**
+ * Where the playhead stands at `offset`: reaching a note as it plays, then moving
+ * toward the next. Before the first note, through the count-in from `startOffset` and
+ * any rest the route opens on, it moves from `routeStart`, the barline before it, to
+ * the note, arriving as it plays.
+ */
 export function realtimePlayheadAt(
   route: PerformanceRoute,
   offset: number,
   _pages: DocumentPage[],
-  routeEnd: RouteEndBarline | null = null,
+  routeEnd: RouteBarline | null = null,
+  routeStart: RouteBarline | null = null,
+  startOffset = 0,
 ): RealtimePlayhead | null {
   const visible = visibleRouteNotes(route);
   if (visible.length === 0) return null;
@@ -1843,6 +1959,23 @@ export function realtimePlayheadAt(
   }
   const current = visible[currentIndex];
   const visual = current.visual!;
+  const currentX = playheadXAt(visible, currentIndex);
+  if (
+    offset < current.onset &&
+    routeStart?.pageIndex === visual.pageIndex &&
+    routeStart.staffGroupIndex === visual.staffGroupIndex &&
+    routeStart.x < currentX
+  ) {
+    const from = Math.min(startOffset, offset);
+    const progress = current.onset > from ? (offset - from) / (current.onset - from) : 1;
+    return {
+      pageIndex: visual.pageIndex,
+      staffGroupIndex: visual.staffGroupIndex,
+      x: routeStart.x + (currentX - routeStart.x) * progress,
+      y1: visual.systemTop,
+      y2: visual.systemBottom,
+    };
+  }
   let nextIndex = currentIndex + 1;
   while (nextIndex < visible.length && visible[nextIndex].onset <= current.onset) nextIndex += 1;
   const next = visible[nextIndex];
@@ -1852,14 +1985,14 @@ export function realtimePlayheadAt(
     next?.visual?.pageIndex === visual.pageIndex &&
     next.visual.staffGroupIndex === visual.staffGroupIndex
   ) {
-    destinationX = next.visual.x;
+    destinationX = playheadXAt(visible, nextIndex);
     destinationOffset = next.onset;
   } else if (next) {
     destinationOffset = next.onset;
   } else if (
     routeEnd?.pageIndex === visual.pageIndex &&
     routeEnd.staffGroupIndex === visual.staffGroupIndex &&
-    routeEnd.x > visual.x
+    routeEnd.x > currentX
   ) {
     // The route's last note runs on to the barline the route ends on, not to the end of
     // the line: a loop starts over there.
@@ -1872,10 +2005,85 @@ export function realtimePlayheadAt(
   return {
     pageIndex: visual.pageIndex,
     staffGroupIndex: visual.staffGroupIndex,
-    x: visual.x + (destinationX - visual.x) * progress,
+    x: currentX + (destinationX - currentX) * progress,
     y1: visual.systemTop,
     y2: visual.systemBottom,
   };
+}
+
+/** Notes realtime can wait for the player to play: those starting together at `onset`. */
+export interface RealtimeWaitPoint {
+  onset: number;
+  notes: PerformanceNote[];
+  /**
+   * Pitches the player may play around these notes without spoiling them: grace notes
+   * and the notes trills, tremolos and mordents repeat, from the point before to the
+   * point after. None is one of the notes waited for.
+   */
+  ignoredPitches: string[];
+}
+
+/**
+ * How far before its notes realtime holds while waiting for them, in quarters: close
+ * enough that the playhead stands on them, early enough that none has sounded.
+ */
+export const REALTIME_WAIT_LEAD_QUARTERS = 1e-3;
+
+/** A written note's occurrence on its route, shared by every note it sounds as. */
+function writtenNoteKey(note: PerformanceNote): string {
+  return note.id.slice(0, note.id.lastIndexOf(":"));
+}
+
+/**
+ * The attacks of `route` that `include` keeps, grouped by the time they are struck:
+ * what the player is waited for. Ornaments are not waited for: grace notes are left
+ * out, and a trill, tremolo or mordent is waited for once, at its written note. Each
+ * note of a rolled chord is waited for in turn; see PerformanceRoute.attacks.
+ */
+export function realtimeWaitPoints(
+  route: PerformanceRoute,
+  include: (note: PerformanceNote) => boolean = () => true,
+): RealtimeWaitPoint[] {
+  const attacks = (route.attacks ?? route.notes).filter((note) => include(note));
+  const points: RealtimeWaitPoint[] = [];
+  const waited = attacks
+    .filter((attack) => !attack.grace)
+    .sort((left, right) => left.onset - right.onset);
+  for (const note of waited) {
+    const last = points.at(-1);
+    if (last && note.onset - last.onset <= 1e-6) last.notes.push(note);
+    else points.push({ onset: note.onset, notes: [note], ignoredPitches: [] });
+  }
+  // What ornaments add: every note a grace note sounds as, and every note a trill,
+  // tremolo or mordent sounds as but the first at its written pitch.
+  const graces = new Set(attacks.filter((attack) => attack.grace).map(writtenNoteKey));
+  const writtenPitches = new Map(attacks.map((attack) => [writtenNoteKey(attack), attack.pitch]));
+  const struck = new Set<string>();
+  const ornamental: PerformanceNote[] = [];
+  for (const note of [...route.notes].sort((left, right) => left.onset - right.onset)) {
+    if (!include(note)) continue;
+    const key = writtenNoteKey(note);
+    if (graces.has(key) || note.pitch !== writtenPitches.get(key) || struck.has(key)) {
+      ornamental.push(note);
+    } else {
+      struck.add(key);
+    }
+  }
+  points.forEach((point, index) => {
+    const from = points[index - 1]?.onset ?? -Infinity;
+    const to = points[index + 1]?.onset ?? Infinity;
+    const pitches = new Set(point.notes.map((note) => note.pitch));
+    point.ignoredPitches = [...new Set(ornamental
+      .filter((note) => note.onset >= from - 1e-6 && note.onset <= to + 1e-6 && !pitches.has(note.pitch))
+      .map((note) => note.pitch))];
+  });
+  return points;
+}
+
+/** The first of `points` not yet behind `offset`: the next the player is waited for. */
+export function realtimeWaitPointIndex(points: readonly { onset: number }[], offset: number): number {
+  const index = points.findIndex((point) => point.onset >= offset - 1e-6);
+  return index < 0 ? points.length : index;
 }
 
 export interface RealtimeAudioSink {
@@ -1905,8 +2113,11 @@ export interface AudibleHands {
 export interface RealtimeControllerCallbacks {
   onFrame(frame: Omit<RealtimeFrame, "playhead">): void;
   onComplete(): void;
-  /** A looping route played to its end and started over. */
-  onLoop?(): void;
+  /**
+   * A looping route played to its end and started over, after a count-in of `leadIn`
+   * quarters when the loop counts in to each pass; see setLoopCountIn.
+   */
+  onLoop?(leadIn: number): void;
 }
 
 export class RealtimeController {
@@ -1919,11 +2130,13 @@ export class RealtimeController {
   private muted = false;
   private audibleHands: AudibleHands = { left: true, right: true };
   private looping = false;
+  private loopCountInSeconds = 0;
   private timer: unknown = null;
   private soundingNotes = new Map<string, string>();
   private activeTimelineNotes = new Map<string, PerformanceNote>();
   private noteCursor = 0;
   private evaluatedOffset = -1;
+  private holdOffset: number | null = null;
 
   constructor(
     private readonly sink: RealtimeAudioSink,
@@ -1939,12 +2152,18 @@ export class RealtimeController {
 
   private currentOffset(): number {
     if (!this.route || this.status !== "playing") return this.offset;
-    return scoreOffsetAfterSeconds(
+    const offset = scoreOffsetAfterSeconds(
       this.route,
       this.anchorOffset,
       Math.max(0, this.clock.now() - this.anchorTime),
       this.tempoMultiplier,
     );
+    return this.holdOffset !== null && offset > this.holdOffset ? this.holdOffset : offset;
+  }
+
+  /** Playing, but stopped at the hold. */
+  private held(): boolean {
+    return this.status === "playing" && this.holdOffset !== null && this.offset >= this.holdOffset - 1e-9;
   }
 
   private silence(): void {
@@ -1987,26 +2206,28 @@ export class RealtimeController {
 
   /**
    * Starts a looping route over from where its end was reached, so the time spent past
-   * the end is not lost and every pass lasts as long as the first.
+   * the end is not lost and every pass lasts as long as the first: from its count-in,
+   * when it counts in to each pass.
    */
   private wrap(route: PerformanceRoute): void {
     const passSeconds = (
       scoreOffsetToSeconds(route, route.totalQuarters, 1) -
       scoreOffsetToSeconds(route, this.anchorOffset, 1)
     ) / this.tempoMultiplier;
+    const leadIn = this.loopLeadIn();
     this.anchorTime += passSeconds;
-    this.anchorOffset = 0;
+    this.anchorOffset = -leadIn;
     this.offset = this.currentOffset();
     if (this.offset >= route.totalQuarters) {
       // Further behind than a whole pass: start the pass now rather than skip it.
       this.anchorTime = this.clock.now();
-      this.offset = 0;
+      this.offset = -leadIn;
     }
     const sounding = Array.from(new Set(this.soundingNotes.values()));
     this.soundingNotes.clear();
     if (sounding.length > 0) this.sink.release(sounding);
     this.resetActiveNotes(this.offset);
-    this.callbacks.onLoop?.();
+    this.callbacks.onLoop?.(leadIn);
   }
 
   private publish(): void {
@@ -2019,6 +2240,12 @@ export class RealtimeController {
       this.status === "playing"
     ) {
       this.wrap(this.route);
+    }
+    const waiting = this.held();
+    if (waiting) {
+      // Time spent at the hold is not played: once released, the music goes on from it.
+      this.anchorOffset = this.offset;
+      this.anchorTime = this.clock.now();
     }
     if (this.offset >= this.route.totalQuarters && this.status === "playing") {
       this.offset = this.route.totalQuarters;
@@ -2072,15 +2299,18 @@ export class RealtimeController {
       offset: this.offset,
       bpm: tempoAt(this.route, this.offset) * this.tempoMultiplier,
       activeNotes,
+      waiting,
     });
   }
 
-  play(route: PerformanceRoute, offset = 0): void {
+  /** Plays from `offset`, counting `leadIn` quarters in before it at the opening tempo. */
+  play(route: PerformanceRoute, offset = 0, leadIn = 0): void {
     this.clearTimer();
     this.silence();
+    this.holdOffset = null;
     this.route = route;
     this.status = "playing";
-    this.offset = Math.min(route.totalQuarters, Math.max(0, offset));
+    this.offset = Math.min(route.totalQuarters, Math.max(0, offset)) - Math.max(0, leadIn);
     this.anchorOffset = this.offset;
     this.anchorTime = this.clock.now();
     this.resetActiveNotes(this.offset);
@@ -2108,20 +2338,38 @@ export class RealtimeController {
     this.timer = this.clock.setInterval(() => this.publish(), this.intervalMs);
   }
 
-  seek(route: PerformanceRoute, keepStatus: "playing" | "paused", offset = 0): void {
+  /** Paused, it waits at the start of the lead-in, which plays once resumed. */
+  seek(route: PerformanceRoute, keepStatus: "playing" | "paused", offset = 0, leadIn = 0): void {
     if (keepStatus === "playing") {
-      this.play(route, offset);
+      this.play(route, offset, leadIn);
       return;
     }
     this.clearTimer();
     this.silence();
+    this.holdOffset = null;
     this.route = route;
     this.status = "paused";
-    this.offset = Math.min(route.totalQuarters, Math.max(0, offset));
+    this.offset = Math.min(route.totalQuarters, Math.max(0, offset)) - Math.max(0, leadIn);
     this.anchorOffset = this.offset;
     this.anchorTime = this.clock.now();
     this.resetActiveNotes(this.offset);
     this.publish();
+  }
+
+  /**
+   * Holds playback at `offset` until the hold moves on or is cleared with null, as if
+   * paused there, but still playing: the notes already sounding ring on, and once
+   * released the music continues from the hold. Starting, seeking and stopping clear
+   * it. It takes effect from the next frame, so it is safe to set from a callback.
+   */
+  setHold(offset: number | null): void {
+    if (offset === this.holdOffset) return;
+    if (this.route && this.status === "playing") {
+      const current = this.currentOffset();
+      this.anchorOffset = current;
+      this.anchorTime = this.clock.now();
+    }
+    this.holdOffset = offset;
   }
 
   /** A looping route starts over when it reaches its end instead of completing. */
@@ -2129,8 +2377,24 @@ export class RealtimeController {
     this.looping = looping;
   }
 
+  /**
+   * Counts in for about `seconds` before each pass a loop starts over with, as
+   * realtimeLeadIn counts; 0 starts the next pass at once.
+   */
+  setLoopCountIn(seconds: number): void {
+    this.loopCountInSeconds = Math.max(0, seconds);
+  }
+
+  /** Quarters the next pass of the loop counts in, at the tempo playing now. */
+  loopLeadIn(): number {
+    return this.route && this.looping
+      ? realtimeLeadIn(this.route, 0, this.loopCountInSeconds, this.tempoMultiplier)
+      : 0;
+  }
+
   stop(): void {
     this.clearTimer();
+    this.holdOffset = null;
     this.status = "inactive";
     this.offset = 0;
     this.route = null;

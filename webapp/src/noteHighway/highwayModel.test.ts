@@ -3,20 +3,31 @@ import test from "node:test";
 import { PIANO_KEYS } from "../PianoKeyboard";
 import type { PerformanceNote, PerformanceRoute } from "../realtime";
 import {
-  BLACK_NOTE_HEIGHT,
   HIGHWAY_HALF_WIDTH,
   highwayCamera,
   highwayKeyLane,
+  highwayLayout,
+  highwayLookaheadQuarters,
+  highwayNoteInstances,
   highwayTrackForRoute,
   highwayTrackForSteps,
+  highwayTrackLooped,
   keyApproachProgress,
+  keyboardSurfaceMatrix,
+  keyboardSurfaceTransform,
+  NOTE_HEIGHTS,
   NOTE_INSTANCE_FLOATS,
+  NOTE_LANE_INSET,
+  noteNameCell,
   practiceStepPositions,
+  projectSurfacePoint,
   projectToNdc,
+  uprightX,
   visibleNoteRange,
-  WHITE_NOTE_HEIGHT,
+  wholeKeyNoteSpan,
 } from "./highwayModel";
-import { approachOpacity } from "./keyApproachPainter";
+import { approachLevel } from "./keyApproachPainter";
+import { FULL_KEYBOARD_RANGE } from "../keyboardView";
 
 function note(id: string, pitch: string, onset: number, release: number): PerformanceNote {
   return { id, musicXmlId: id, pitch, dynamic: "mp", onset, release, visual: null };
@@ -51,15 +62,124 @@ test("puts every key's lane under that key on the 88-key keyboard", () => {
   }
   assert.equal(highwayKeyLane(21)?.center, 0.5 - HIGHWAY_HALF_WIDTH);
   assert.equal(highwayKeyLane(108)?.center, HIGHWAY_HALF_WIDTH - 0.5);
-  // C#4 straddles the C4/D4 boundary.
+  // C#4 is the second of five equal parts across C4 to E4, a tenth of a white key
+  // left of the C4/D4 edge.
   const c4 = highwayKeyLane(60)!;
   const d4 = highwayKeyLane(62)!;
-  assert.equal(highwayKeyLane(61)?.center, (c4.center + d4.center) / 2);
+  assert.ok(Math.abs(highwayKeyLane(61)!.center - ((c4.center + d4.center) / 2 - 0.1)) < 1e-9);
   assert.equal(highwayKeyLane(20), null);
   assert.equal(highwayKeyLane(109), null);
 });
 
-test("builds note instances in score seconds with distinct black-key models", () => {
+test("lanes tile the keyboard edge to edge, as the floor draws them", () => {
+  const lanes = PIANO_KEYS.map((key) => highwayKeyLane(key.midi)!).sort((a, b) => a.left - b.left);
+  assert.equal(lanes[0].left, -HIGHWAY_HALF_WIDTH);
+  assert.equal(lanes.at(-1)!.right, HIGHWAY_HALF_WIDTH);
+  for (let index = 1; index < lanes.length; index += 1) {
+    assert.ok(Math.abs(lanes[index].left - lanes[index - 1].right) < 1e-9,
+      `${lanes[index - 1].midi} meets ${lanes[index].midi}`);
+  }
+  // Each lane is its key's back: a fifth of C to E, or a seventh of F to B.
+  const width = (midi: number) => highwayKeyLane(midi)!.right - highwayKeyLane(midi)!.left;
+  for (const midi of [60, 61, 62, 63, 64]) assert.ok(Math.abs(width(midi) - 3 / 5) < 1e-9, `${midi}`);
+  for (const midi of [65, 66, 67, 68, 69, 70, 71]) assert.ok(Math.abs(width(midi) - 4 / 7) < 1e-9, `${midi}`);
+  // The white keys' straight edges run on to the back.
+  assert.ok(Math.abs(highwayKeyLane(64)!.right - (highwayKeyLane(64)!.center + 0.5)) < 1e-9, "E4/F4");
+  assert.ok(Math.abs(highwayKeyLane(72)!.left - (highwayKeyLane(72)!.center - 0.5)) < 1e-9, "B4/C5");
+  // With no black key beyond them, A0 and C8 reach the keyboard's ends.
+  assert.ok(Math.abs(width(21) - 6 / 7) < 1e-9, "A0");
+  assert.equal(width(108), 1, "C8");
+});
+
+test("wider or narrower black keys take their lanes with them, the white backs sharing the rest", () => {
+  for (const blackKeyWidth of [0.5, 1.5]) {
+    const lane = (midi: number) => highwayKeyLane(midi, blackKeyWidth)!;
+    const width = (midi: number) => lane(midi).right - lane(midi).left;
+    const lanes = PIANO_KEYS.map((key) => lane(key.midi)).sort((a, b) => a.left - b.left);
+    assert.equal(lanes[0].left, -HIGHWAY_HALF_WIDTH);
+    assert.equal(lanes.at(-1)!.right, HIGHWAY_HALF_WIDTH);
+    for (let index = 1; index < lanes.length; index += 1) {
+      assert.ok(Math.abs(lanes[index].left - lanes[index - 1].right) < 1e-9,
+        `${blackKeyWidth}: ${lanes[index - 1].midi} meets ${lanes[index].midi}`);
+    }
+    for (const midi of [61, 63]) assert.ok(Math.abs(width(midi) - blackKeyWidth * 3 / 5) < 1e-9, `${midi}`);
+    for (const midi of [66, 68, 70]) assert.ok(Math.abs(width(midi) - blackKeyWidth * 4 / 7) < 1e-9, `${midi}`);
+    for (const midi of [60, 62, 64]) assert.ok(Math.abs(width(midi) - width(60)) < 1e-9, `${midi}`);
+    for (const midi of [65, 67, 69, 71]) assert.ok(Math.abs(width(midi) - width(65)) < 1e-9, `${midi}`);
+    assert.ok(Math.abs(lane(64).right - (lane(64).center + 0.5)) < 1e-9, "E4/F4");
+    assert.ok(Math.abs(lane(72).left - (lane(72).center - 0.5)) < 1e-9, "B4/C5");
+    // Each white key's track stays inside the key, where a whole-key note finds it.
+    for (const key of PIANO_KEYS.filter((candidate) => !candidate.black)) {
+      const { left, right } = lane(key.midi);
+      assert.ok(Math.abs(wholeKeyNoteSpan((left + right) / 2).center - lane(key.midi).center) < 1e-9, key.name);
+    }
+  }
+});
+
+test("a track's notes move into the lanes of wider or narrower black keys", () => {
+  const notes = highwayTrackForRoute(route(PIANO_KEYS.map((key) => note(key.name, key.name, 0, 1)))).notes;
+  assert.equal(highwayNoteInstances(notes, 1), notes.instances);
+  const instances = highwayNoteInstances(notes, 1.5);
+  assert.notEqual(instances, notes.instances);
+  for (let index = 0; index < notes.count; index += 1) {
+    const offset = index * NOTE_INSTANCE_FLOATS;
+    const lane = highwayKeyLane(notes.midis[index], 1.5)!;
+    assert.ok(Math.abs(instances[offset] - (lane.left + lane.right) / 2) < 1e-6, `${lane.midi} centre`);
+    assert.ok(Math.abs(instances[offset + 1] - ((lane.right - lane.left) / 2 - NOTE_LANE_INSET)) < 1e-6);
+    for (let field = 2; field < NOTE_INSTANCE_FLOATS; field += 1) {
+      assert.equal(instances[offset + field], notes.instances[offset + field]);
+    }
+  }
+});
+
+test("each note fills its key's lane, short of the edges, so neighbours never overlap", () => {
+  const notes = highwayTrackForRoute(route(PIANO_KEYS.map((key) => note(key.name, key.name, 0, 1)))).notes;
+  assert.equal(notes.count, PIANO_KEYS.length);
+  const spans = Array.from(notes.midis, (midi, index) => {
+    const center = notes.instances[index * NOTE_INSTANCE_FLOATS];
+    const half = notes.instances[index * NOTE_INSTANCE_FLOATS + 1];
+    const lane = highwayKeyLane(midi)!;
+    assert.ok(Math.abs(center - half - (lane.left + NOTE_LANE_INSET)) < 1e-6, `${midi} left`);
+    assert.ok(Math.abs(center + half - (lane.right - NOTE_LANE_INSET)) < 1e-6, `${midi} right`);
+    return { midi, left: center - half, right: center + half };
+  }).sort((a, b) => a.left - b.left);
+  for (let index = 1; index < spans.length; index += 1) {
+    assert.ok(spans[index].left - spans[index - 1].right > 2 * NOTE_LANE_INSET - 1e-6,
+      `${spans[index - 1].midi} and ${spans[index].midi} keep apart`);
+  }
+});
+
+test("a white-key note as wide as its whole key finds the key from its track", () => {
+  const notes = highwayTrackForRoute(route(PIANO_KEYS.map((key) => note(key.name, key.name, 0, 1)))).notes;
+  for (let index = 0; index < notes.count; index += 1) {
+    const lane = highwayKeyLane(notes.midis[index])!;
+    if (lane.black) continue;
+    const span = wholeKeyNoteSpan(notes.instances[index * NOTE_INSTANCE_FLOATS]);
+    assert.ok(Math.abs(span.center - lane.center) < 1e-6, `${lane.midi}: the key's middle`);
+    assert.ok(Math.abs(span.halfWidth - (0.5 - NOTE_LANE_INSET)) < 1e-9);
+  }
+});
+
+test("a raised note's top stands straight above its lane on screen", () => {
+  for (const tilt of [0, 34, 65]) {
+    const layout = highwayLayout({ range: FULL_KEYBOARD_RANGE, tilt, keyboard3d: false }, 1600, 480);
+    const camera = highwayCamera(1600 / 480, layout);
+    for (const x of [-25.5, -8.2, 0.3, 17, 26]) {
+      for (const z of [0, -camera.length / 2, -camera.length]) {
+        const floor = projectToNdc(camera.viewProjection, [x, 0, z])[0];
+        const top = projectToNdc(camera.viewProjection, [uprightX(camera.viewProjection, x, 0.3, z), 0.3, z])[0];
+        assert.ok(Math.abs(top - floor) < 1e-5, `tilt ${tilt}, x ${x}, z ${z}`);
+        // Left where it was, the top would lean out at the hit line: the shift is real.
+        if (Math.abs(x) > 8 && z === 0) {
+          const leaning = projectToNdc(camera.viewProjection, [x, 0.3, z])[0];
+          assert.ok(Math.abs(leaning - floor) > 1e-3, `tilt ${tilt}, x ${x}: leans unmoved`);
+        }
+      }
+    }
+  }
+});
+
+test("builds note instances in score seconds, black-key notes as wide and as tall", () => {
   const notes = highwayTrackForRoute(route([
     note("b", "C#4", 2, 3),
     note("a", "C4", 0, 1),
@@ -74,12 +194,109 @@ test("builds note instances in score seconds with distinct black-key models", ()
   assert.equal(notes.maxDuration, 0.5);
   const white = notes.instances.subarray(0, NOTE_INSTANCE_FLOATS);
   const black = notes.instances.subarray(NOTE_INSTANCE_FLOATS, NOTE_INSTANCE_FLOATS * 2);
-  assert.equal(white[3], 0);
-  assert.equal(black[3], 1);
-  assert.ok(Math.abs(white[2] - WHITE_NOTE_HEIGHT) < 1e-6);
-  assert.ok(Math.abs(black[2] - BLACK_NOTE_HEIGHT) < 1e-6);
-  assert.ok(black[1] < white[1], "black-key notes are narrower");
-  assert.ok(black[2] > white[2], "black-key notes are taller");
+  assert.equal(white[2], 0);
+  assert.equal(black[2], 1);
+  assert.ok(Math.abs(black[1] - white[1]) < 1e-6, "C4's and C♯4's notes are as wide");
+  assert.ok(black[1] * 2 < 0.6, "and narrower than their key");
+  for (const style of ["raised", "flat"] as const) {
+    const { white: whiteHeight, black: blackHeight } = NOTE_HEIGHTS[style];
+    assert.ok(blackHeight >= whiteHeight, `${style}: drawn over a white-key neighbour`);
+    assert.ok(blackHeight - whiteHeight < 0.02, `${style}: but the same height to the eye`);
+  }
+});
+
+test("keeps each note's hand and predicted finger", () => {
+  const twoHands = route([
+    { ...note("rh", "E5", 0, 1), left: false },
+    { ...note("lh", "C3", 0, 1), left: true },
+    { ...note("unknown", "G4", 1, 2) },
+    { ...note("tied", "A4", 2, 3), fingeringMusicXmlId: "rh" },
+  ]);
+  const fingerings = { rh: { finger: 3, left: false }, lh: { finger: 5, left: true } };
+  const notes = highwayTrackForRoute(twoHands, "both", fingerings).notes;
+  const byMidi = Object.fromEntries(Array.from(notes.midis, (midi, index) => [midi, {
+    left: notes.lefts[index],
+    shaderLeft: notes.instances[index * NOTE_INSTANCE_FLOATS + 3],
+    finger: notes.instances[index * NOTE_INSTANCE_FLOATS + 7],
+  }]));
+  assert.deepEqual(byMidi, {
+    76: { left: 0, shaderLeft: 0, finger: 3 },
+    48: { left: 1, shaderLeft: 1, finger: 5 },
+    67: { left: 0, shaderLeft: 0, finger: 0 },
+    69: { left: 0, shaderLeft: 0, finger: 3 },
+  });
+  assert.notEqual(highwayTrackForRoute(twoHands, "both"), highwayTrackForRoute(twoHands, "both", fingerings),
+    "new fingerings rebuild the cached track");
+
+  const hands = new Uint8Array(88);
+  const progress = new Float32Array(88);
+  keyApproachProgress(notes, -0.6, 1, progress, hands);
+  assert.equal(hands[76 - 21], 1);
+  assert.equal(hands[48 - 21], 2);
+  assert.equal(hands[67 - 21], 0, "beyond the window");
+
+  const looped = highwayTrackLooped(highwayTrackForRoute(twoHands, "both", fingerings), { start: 0, end: 2 }, 4);
+  const repeat = Array.from(looped.notes.midis).lastIndexOf(48);
+  assert.equal(looped.notes.lefts[repeat], 1, "a loop's repeats keep the hand");
+  assert.equal(looped.notes.instances[repeat * NOTE_INSTANCE_FLOATS + 7], 5, "and the finger");
+});
+
+test("names each note as the score spells it, for the note name atlas", () => {
+  // Letters across, double flat to double sharp down, from 1.
+  assert.equal(noteNameCell("C4"), 15);
+  assert.equal(noteNameCell("D♭5"), 9);
+  assert.equal(noteNameCell("C♯4"), 22);
+  assert.equal(noteNameCell("C#4"), 22, "a written sharp");
+  assert.equal(noteNameCell("Bbb3"), 7, "a written double flat");
+  assert.equal(noteNameCell("F♯♯2"), 32);
+  assert.equal(noteNameCell("C(+0.5)4"), 0, "no cell for a quarter tone");
+  // D♭ and C♯ share a key but keep their own names.
+  const notes = highwayTrackForRoute(route([note("flat", "D♭4", 0, 1), note("sharp", "C♯5", 1, 2)])).notes;
+  assert.deepEqual(
+    Array.from(notes.midis, (midi, index) => [midi, notes.instances[index * NOTE_INSTANCE_FLOATS + 9]]),
+    [[61, 9], [73, 22]],
+  );
+  const steps = highwayTrackForSteps([{ pitches: ["E♭4"], keyboardNotes: [{ pitch: "E♭4" }], barKey: "b1" }]).notes;
+  assert.equal(steps.instances[9], 10, "note-by-note too");
+  const looped = highwayTrackLooped(highwayTrackForRoute(route([note("flat", "D♭4", 0, 1)])), { start: 0, end: 1 }, 2);
+  assert.ok(Array.from({ length: looped.notes.count }, (_, index) => looped.notes.instances[index * NOTE_INSTANCE_FLOATS + 9])
+    .every((name) => name === 9), "and through a loop's passes");
+});
+
+test("takes note-by-note fingers and hands from the keyboard notes", () => {
+  const track = highwayTrackForSteps([{
+    pitches: ["C4", "C3"],
+    keyboardNotes: [{ pitch: "C4", left: false, finger: 1 }, { pitch: "C3", left: true, finger: 5 }],
+    notes: [
+      { pitch: "C4", left: false, startsAttack: true },
+      { pitch: "C3", left: true, startsAttack: true },
+    ],
+    barKey: "b1",
+  }]);
+  const byMidi = Object.fromEntries(Array.from(track.notes.midis, (midi, index) => [
+    midi,
+    [track.notes.lefts[index], track.notes.instances[index * NOTE_INSTANCE_FLOATS + 7]],
+  ]));
+  assert.deepEqual(byMidi, { 60: [0, 1], 48: [1, 5] });
+});
+
+test("a fixed-tempo track keeps every beat the same length through a tempo change", () => {
+  const changing = {
+    ...route([note("slow", "C4", 0, 1), note("fast", "D4", 2, 3)], 60),
+    tempoSegments: [{ offset: 0, bpm: 60 }, { offset: 2, bpm: 120 }],
+  };
+  // In seconds the quarter after the change is half as long, so its note is too.
+  const seconds = highwayTrackForRoute(changing).notes;
+  assert.deepEqual(Array.from(seconds.starts), [0, 2]);
+  assert.deepEqual(Array.from(seconds.ends), [1, 2.5]);
+  const quarters = highwayTrackForRoute(changing, "both", undefined, "quarters");
+  assert.notEqual(quarters, highwayTrackForRoute(changing), "cached per axis");
+  assert.deepEqual(Array.from(quarters.notes.starts), [0, 2]);
+  assert.deepEqual(Array.from(quarters.notes.ends), [1, 3]);
+  assert.deepEqual(Array.from(quarters.lines.times), [0, 1, 2, 3]);
+  // The window holds what the usual lookahead plays at the opening tempo.
+  assert.equal(highwayLookaheadQuarters(120), 6.4);
+  assert.equal(highwayLookaheadQuarters(60), 3.2);
 });
 
 test("marks bar starts strongly and quarters faintly", () => {
@@ -125,13 +342,121 @@ test("ghosts the other hand's notes and keeps them from lighting keys", () => {
   const left = highwayTrackForRoute(twoHands, "left").notes;
   const ghostByMidi = Object.fromEntries(Array.from(left.midis, (midi, index) => [midi, left.ghosts[index]]));
   assert.deepEqual(ghostByMidi, { 72: 1, 48: 0 });
-  const instanceGhost = left.instances[NOTE_INSTANCE_FLOATS - 1 + NOTE_INSTANCE_FLOATS * left.midis.indexOf(72)];
+  const instanceGhost = left.instances[6 + NOTE_INSTANCE_FLOATS * left.midis.indexOf(72)];
   assert.equal(instanceGhost, 1, "the shader receives the ghost flag");
 
   const progress = new Float32Array(88);
   keyApproachProgress(left, 0.5, 2, progress);
   assert.ok(progress[48 - 21] > 0);
   assert.equal(progress[72 - 21], 0);
+});
+
+function drawnNotes(notes: ReturnType<typeof highwayTrackForRoute>["notes"]) {
+  return Array.from(notes.midis, (midi, index) => ({
+    midi,
+    start: notes.starts[index],
+    end: notes.ends[index],
+    left: notes.lefts[index],
+    layer: notes.instances[index * NOTE_INSTANCE_FLOATS + 8],
+    finger: notes.instances[index * NOTE_INSTANCE_FLOATS + 7],
+  }));
+}
+
+test("a hand striking its own held key again cuts the note there and holds the new one on", () => {
+  const notes = highwayTrackForRoute(route([
+    note("held", "C5", 0, 4),
+    note("again", "C5", 1, 2),
+    note("unison", "E5", 0, 1),
+    note("unison-long", "E5", 0, 2),
+  ]), "both", { held: { finger: 4, left: false } }).notes;
+  assert.deepEqual(drawnNotes(notes).map(({ midi, start, end, layer, finger }) => ({ midi, start, end, layer, finger })), [
+    { midi: 72, start: 0, end: 0.5, layer: 0, finger: 4 },
+    { midi: 76, start: 0, end: 1, layer: 0, finger: 0 },
+    // With no finger of its own, the finger holding the key strikes it again.
+    { midi: 72, start: 0.5, end: 2, layer: 0, finger: 4 },
+  ]);
+  assert.deepEqual(Array.from(notes.writtenEnds), [2, 1, 1]);
+});
+
+test("the other hand striking a held key lays its note over the held one, both whole", () => {
+  const twoHands = route([
+    { ...note("rh", "C5", 0, 4), left: false },
+    { ...note("lh", "C5", 1, 2), left: true },
+    { ...note("rh-again", "C5", 3, 3.5), left: false },
+    { ...note("rh-d", "D5", 0, 2), left: false },
+    { ...note("lh-d", "D5", 1, 4), left: true },
+  ]);
+  const fingerings = {
+    rh: { finger: 2, left: false },
+    lh: { finger: 1, left: true },
+    "rh-again": { finger: 3, left: false },
+  };
+  const notes = highwayTrackForRoute(twoHands, "both", fingerings).notes;
+  assert.deepEqual(drawnNotes(notes).filter(({ midi }) => midi === 72), [
+    // Held until its own hand strikes the key again, which holds it on to the end.
+    { midi: 72, start: 0, end: 1.5, left: 0, layer: 0, finger: 2 },
+    { midi: 72, start: 0.5, end: 1, left: 1, layer: 1, finger: 1 },
+    { midi: 72, start: 1.5, end: 2, left: 0, layer: 0, finger: 3 },
+  ]);
+  assert.deepEqual(drawnNotes(notes).filter(({ midi }) => midi === 74), [
+    { midi: 74, start: 0, end: 1, left: 0, layer: 0, finger: 0 },
+    { midi: 74, start: 0.5, end: 2, left: 1, layer: 1, finger: 0 },
+  ], "a note over a held one stays over it past the held note's end");
+
+  const progress = new Float32Array(88);
+  const hands = new Uint8Array(88);
+  keyApproachProgress(notes, 0.3, 1, progress, hands);
+  assert.equal(hands[72 - 21], 2, "the other hand's strike lights the held key");
+
+  const looped = highwayTrackLooped(highwayTrackForRoute(twoHands, "both", fingerings), { start: 0, end: 2 }, 2);
+  const pass = drawnNotes(looped.notes).filter(({ start }) => start >= 0 && start < 2);
+  assert.deepEqual(pass, drawnNotes(notes), "a loop's pass strikes and layers its keys as the track does");
+});
+
+test("of two hands striking a key together, the shorter note lies over the longer", () => {
+  const notes = highwayTrackForRoute(route([
+    { ...note("lh", "E4", 0, 0.25), left: true },
+    { ...note("rh", "E4", 0, 2), left: false },
+    { ...note("lh-again", "E4", 0.5, 0.75), left: true },
+  ])).notes;
+  assert.deepEqual(drawnNotes(notes).map(({ start, end, left, layer }) => ({ start, end, left, layer })), [
+    { start: 0, end: 0.125, left: 1, layer: 1 },
+    { start: 0, end: 1, left: 0, layer: 0 },
+    { start: 0.25, end: 0.375, left: 1, layer: 1 },
+  ]);
+});
+
+test("counting in to a loop, no earlier pass lies behind the hit line", () => {
+  const track = highwayTrackForRoute(route([note("a", "C4", 0, 1), note("b", "D4", 1, 2)]));
+  const playing = highwayTrackLooped(track, { start: 0, end: 1 }, 2);
+  assert.ok(playing.notes.starts[0] < 0, "a pass lies behind while the loop plays");
+  const countingIn = highwayTrackLooped(track, { start: 0, end: 1 }, 2, true);
+  assert.notEqual(countingIn, playing);
+  assert.equal(countingIn.notes.starts[0], 0);
+  assert.equal(countingIn.lines.times[0], 0, "the loop's start line is the first");
+});
+
+test("a loop that counts in to each pass comes round again after the count-in", () => {
+  const track = highwayTrackForRoute(route([note("a", "C4", 0, 1), note("b", "D4", 1, 2)]));
+  const looped = highwayTrackLooped(track, { start: 0, end: 1, gap: 0.5 }, 3);
+  assert.notEqual(looped, highwayTrackLooped(track, { start: 0, end: 1 }, 3), "cached by the gap too");
+  const starts = Array.from(looped.notes.starts).filter((start) => start >= 0 && start < 4);
+  assert.deepEqual(starts, [0, 0.5, 1.5, 2, 3, 3.5]);
+  const lines = Array.from(looped.lines.times, (time, index) => [time, looped.lines.instances[index * 2 + 1]])
+    .filter(([time, strength]) => time >= 0 && time <= 3 && strength >= 1);
+  assert.deepEqual(lines, [[0, 2], [1, 1], [1.5, 2], [2.5, 1], [3, 2]],
+    "a bar line where each pass ends, the loop line where the next begins");
+});
+
+test("the other hand's ghosts never lie over the practised hand's notes", () => {
+  const notes = highwayTrackForRoute(route([
+    { ...note("rh", "C5", 0, 4), left: false },
+    { ...note("lh", "C5", 1, 2), left: true },
+  ]), "left").notes;
+  assert.deepEqual(drawnNotes(notes).map(({ start, end, layer }) => ({ start, end, layer })), [
+    { start: 0, end: 2, layer: 0 },
+    { start: 0.5, end: 1, layer: 0 },
+  ]);
 });
 
 test("spreads moments the practised hand skips between its steps", () => {
@@ -193,14 +518,98 @@ test("ramps each key toward its nearest upcoming note", () => {
   assert.equal(progress[64 - 21], 1, "and stays lit until the playing highlight takes over");
 });
 
-test("keeps far approaches faint and strengthens them near the keys", () => {
-  assert.equal(approachOpacity(0), 0);
-  const far = approachOpacity(0.05);
-  const halfway = approachOpacity(0.5);
-  const due = approachOpacity(1);
-  assert.ok(far > 0 && far <= 0.07, `far ${far}`);
-  assert.ok(halfway < (far + due) / 2, "eased, not linear");
-  assert.ok(due > halfway && due <= 0.7, `due ${due}`);
+test("paints approach progress in whole percent, never rounding a coming note away", () => {
+  assert.equal(approachLevel(0), 0);
+  assert.equal(approachLevel(1e-6), 0.01);
+  assert.equal(approachLevel(0.123), 0.12);
+  assert.equal(approachLevel(1), 1);
+});
+
+test("fits a range's hit line to the canvas width at any tilt, narrowing less the flatter it is", () => {
+  // C4 to C5: eight white keys.
+  const options = { range: { low: 60, high: 72 }, keyboard3d: false };
+  let previousNarrowing = 0;
+  for (const tilt of [0, 20, 34, 50, 65]) {
+    const layout = highwayLayout({ ...options, tilt }, 1200, 400);
+    assert.equal(layout.halfWidth, 4);
+    assert.equal(layout.center, highwayKeyLane(65)!.center + 0.5, "centred on the F4/G4 edge");
+    const camera = highwayCamera(3, layout);
+    const [leftX, leftY] = projectToNdc(camera.viewProjection, [layout.center - 4, 0, 0]);
+    const [rightX] = projectToNdc(camera.viewProjection, [layout.center + 4, 0, 0]);
+    const [farRightX, farY] = projectToNdc(camera.viewProjection, [layout.center + 4, 0, -camera.length]);
+    assert.ok(Math.abs(leftX + 1) < 1e-4 && Math.abs(rightX - 1) < 1e-4, `width at ${tilt}°`);
+    assert.ok(Math.abs(leftY + 1) < 1e-4, `bottom at ${tilt}°`);
+    assert.ok(Math.abs(farY - 1) < 1e-4, `top at ${tilt}°`);
+    const narrowing = 1 - farRightX;
+    if (tilt === 0) assert.ok(narrowing < 1e-4, "seen straight on, the far end is as wide");
+    else assert.ok(narrowing > previousNarrowing, `steeper perspective at ${tilt}°`);
+    previousNarrowing = narrowing;
+  }
+});
+
+test("lays a 3D keyboard on the floor in front of the hit line, inside the canvas", () => {
+  for (const [width, height, tilt] of [[1800, 500, 34], [1800, 500, 0], [1800, 500, 65], [900, 700, 34], [2400, 240, 50]]) {
+    const layout = highwayLayout({ range: FULL_KEYBOARD_RANGE, tilt, keyboard3d: true }, width, height);
+    const keyboard = layout.keyboard!;
+    assert.ok(keyboard.depth > 0 && keyboard.depth <= 6, `depth ${keyboard.depth}`);
+    const camera = highwayCamera(width / height, layout);
+    assert.ok(camera.length > 0, "the highway keeps its length");
+    const project = (point: [number, number, number]) => projectToNdc(camera.viewProjection, point);
+    // The bottom of the front faces fills the bottom edge.
+    const [frontLeftX, frontY] = project([-HIGHWAY_HALF_WIDTH, -keyboard.frontFace, keyboard.depth]);
+    assert.ok(Math.abs(frontLeftX + 1) < 1e-4 && Math.abs(frontY + 1) < 1e-4, `front edge ${width}x${height} ${tilt}°`);
+    const [, farY] = project([0, 0, -camera.length]);
+    assert.ok(Math.abs(farY - 1) < 1e-4, "far end on the top edge");
+    const [, hitY] = project([0, 0, 0]);
+    assert.ok((hitY + 1) / 2 <= 0.42 + 1e-3, `the keys leave the highway most of the canvas (${(hitY + 1) / 2})`);
+
+    // The CSS matrix agrees with the camera: the surface's corners land where the camera puts them.
+    const matrix = keyboardSurfaceMatrix(camera, layout, width, height);
+    const unitPx = width / (2 * layout.halfWidth);
+    const toPx = ([x, y]: [number, number, number]) => [(x + 1) / 2 * width, (1 - y) / 2 * height];
+    for (const [localX, localY, localZ, world] of [
+      [0, 0, 0, [-HIGHWAY_HALF_WIDTH, 0, 0]],
+      [width, keyboard.depth * unitPx, 0, [HIGHWAY_HALF_WIDTH, 0, keyboard.depth]],
+      [width / 2, 0, keyboard.blackHeight * unitPx, [0, keyboard.blackHeight, 0]],
+    ] as const) {
+      const [px, py] = projectSurfacePoint(matrix, localX, localY, localZ);
+      const [expectedX, expectedY] = toPx(project([...world]));
+      assert.ok(Math.abs(px - expectedX) < 0.01 && Math.abs(py - expectedY) < 0.01, `${localX},${localY},${localZ}`);
+    }
+  }
+  assert.equal(highwayLayout({ range: FULL_KEYBOARD_RANGE, tilt: 34, keyboard3d: false }, 1800, 500).keyboard, null);
+});
+
+test("splits the keyboard matrix into the parent's perspective and an affine transform", () => {
+  for (const [width, height, tilt] of [[1800, 500, 34], [1800, 500, 0], [1800, 500, 65], [900, 700, 34], [2400, 240, 50]]) {
+    const layout = highwayLayout({ range: FULL_KEYBOARD_RANGE, tilt, keyboard3d: true }, width, height);
+    const keyboard = layout.keyboard!;
+    const camera = highwayCamera(width / height, layout);
+    const matrix = keyboardSurfaceMatrix(camera, layout, width, height);
+    const { perspective, transform } = keyboardSurfaceTransform(camera, layout, width, height);
+    // WebKitGTK misdraws preserve-3d children when the element's own transform projects.
+    assert.deepEqual([transform[3], transform[7], transform[11], transform[15]], [0, 0, 0, 1]);
+    assert.ok(perspective > 0);
+    const unitPx = width / (2 * layout.halfWidth);
+    for (const [x, y, z] of [
+      [0, 0, 0],
+      [width, keyboard.depth * unitPx, 0],
+      [width / 2, keyboard.depth * unitPx, -keyboard.frontFace * unitPx],
+      [width / 3, 0, keyboard.blackHeight * unitPx],
+    ]) {
+      // CSS perspective about the parent's centre, after the element's own transform.
+      const ax = transform[0] * x + transform[4] * y + transform[8] * z + transform[12];
+      const ay = transform[1] * x + transform[5] * y + transform[9] * z + transform[13];
+      const az = transform[2] * x + transform[6] * y + transform[10] * z + transform[14];
+      const shrink = perspective / (perspective - az);
+      const [expectedX, expectedY] = projectSurfacePoint(matrix, x, y, z);
+      assert.ok(
+        Math.abs(width / 2 + (ax - width / 2) * shrink - expectedX) < 0.05 &&
+          Math.abs(height / 2 + (ay - height / 2) * shrink - expectedY) < 0.05,
+        `${width}x${height} ${tilt}° at ${x},${y},${z}`,
+      );
+    }
+  }
 });
 
 test("fits the hit line to the canvas bottom and the far end to its top", () => {

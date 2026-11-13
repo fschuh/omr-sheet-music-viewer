@@ -1,0 +1,373 @@
+import { pitchToMidi } from "./piano";
+import { noteInPracticeHand, type PracticeHand } from "./playback";
+
+export const FIRST_PIANO_MIDI = 21; // A0
+export const LAST_PIANO_MIDI = 108; // C8
+const BLACK_PITCH_CLASSES = new Set([1, 3, 6, 8, 10]);
+
+export const WHITE_KEY_COUNT = 52;
+const SHARP_NAMES = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"];
+
+export function isBlackKey(midi: number): boolean {
+  return BLACK_PITCH_CLASSES.has(((midi % 12) + 12) % 12);
+}
+
+/** A stretch across the keyboard, in white keys from A0's left edge. */
+export interface KeySpan {
+  left: number;
+  right: number;
+}
+
+export interface PianoKey {
+  midi: number;
+  name: string;
+  black: boolean;
+  /** White keys below this one; a black key shares the index of the white key above it. */
+  whiteIndex: number;
+  /** The key's width at the back, where the black keys are; see pianoKeyBackSpan. */
+  back: KeySpan;
+}
+
+export function pianoKeyName(midi: number): string {
+  return `${SHARP_NAMES[midi % 12]}${Math.floor(midi / 12) - 1}`;
+}
+
+/**
+ * Where a key sits at the back of the keyboard, in white keys from A0's left edge.
+ * As on a real piano, the back of C to E is split into five equal parts and F to B
+ * into seven, so within each group the black keys and the white keys' backs between
+ * them are equally wide, and the E–F and B–C edges run straight from front to back.
+ * A0 and C8 have no black key beyond them and keep their full width at that side.
+ * `blackKeyWidth` scales the black keys from that width; the white keys' backs in
+ * each group share what is left equally.
+ */
+export function pianoKeyBackSpan(midi: number, blackKeyWidth = 1): KeySpan {
+  const pitchClass = ((midi % 12) + 12) % 12;
+  // C of this octave, in white keys from A0: C1 (MIDI 24) is the third white key.
+  const c = 7 * Math.floor(midi / 12) - 12;
+  const [start, whites, index] = pitchClass <= 4
+    ? [c, 3, pitchClass]
+    : [c + 3, 4, pitchClass - 5];
+  // White backs and black keys take turns, so before part i come i parts, ceil(i/2) of
+  // them white backs, each 1 - blackKeyWidth wider than a black key.
+  const black = (blackKeyWidth * whites) / (2 * whites - 1);
+  const edge = (part: number) => start + part * black + Math.ceil(part / 2) * (1 - blackKeyWidth);
+  const left = midi === FIRST_PIANO_MIDI ? 0 : edge(index);
+  const right = midi === LAST_PIANO_MIDI ? WHITE_KEY_COUNT : edge(index + 1);
+  return { left, right };
+}
+
+function buildPianoKeys(blackKeyWidth: number): PianoKey[] {
+  const keys: PianoKey[] = [];
+  let whiteIndex = 0;
+  for (let midi = FIRST_PIANO_MIDI; midi <= LAST_PIANO_MIDI; midi += 1) {
+    const black = isBlackKey(midi);
+    keys.push({ midi, name: pianoKeyName(midi), black, whiteIndex, back: pianoKeyBackSpan(midi, blackKeyWidth) });
+    if (!black) whiteIndex += 1;
+  }
+  return keys;
+}
+
+const pianoKeyLayouts = new Map<number, readonly PianoKey[]>();
+
+/** The 88 keys, with black keys `blackKeyWidth` times a real piano's; see pianoKeyBackSpan. */
+export function pianoKeys(blackKeyWidth = 1): readonly PianoKey[] {
+  let keys = pianoKeyLayouts.get(blackKeyWidth);
+  if (!keys) {
+    keys = buildPianoKeys(blackKeyWidth);
+    pianoKeyLayouts.set(blackKeyWidth, keys);
+  }
+  return keys;
+}
+
+export const PIANO_KEYS: readonly PianoKey[] = pianoKeys();
+
+/** The key's whiteIndex; see PianoKey. */
+export function pianoKeyWhiteIndex(midi: number): number {
+  const clamped = Math.min(LAST_PIANO_MIDI, Math.max(FIRST_PIANO_MIDI, midi));
+  return PIANO_KEYS[clamped - FIRST_PIANO_MIDI].whiteIndex;
+}
+
+/** Which keys the keyboard and the highway show. */
+export type KeyboardRangeMode = "full" | "song" | "practiced-hand";
+
+/** How a key shows that its next note is on the way down the highway. */
+export type UpcomingKeyEffect = "off" | "top-edge" | "tint" | "growing-tint" | "filling-meter";
+
+/** Note blocks on the highway: boxes with a little volume, or flat tiles on its floor. */
+export type HighwayNoteStyle = "raised" | "flat";
+
+/**
+ * How playback speed shows on the highway. "steady-speed": notes always take the same
+ * real time to reach the keys, so a faster tempo fits more of the score on the highway
+ * and its notes shorten. "fixed-tempo": a beat is always the same length, so notes keep
+ * their size and come down faster or slower with the tempo.
+ */
+export type HighwayTimeScale = "steady-speed" | "fixed-tempo";
+
+/**
+ * How wide a white key's notes are on the highway: its track, the key's back between
+ * the black keys, as black-key notes are; or the whole key, reaching under the black
+ * keys' tracks beside it, so white-key notes stand out from black-key ones.
+ */
+export type WhiteNoteWidth = "track" | "whole-key";
+
+/** What a highway note block shows at its front end: nothing, its finger, or its name as engraved. */
+export type HighwayNoteLabels = "none" | "finger" | "name";
+
+export interface KeyboardViewSettings {
+  range: KeyboardRangeMode;
+  /** The narrowest a song or hand range gets, in white keys. */
+  minimumWhiteKeys: number;
+  /**
+   * The black keys' width as a share of a real piano's, about three fifths of a white
+   * key; the highway's tracks follow the keys.
+   */
+  blackKeyWidth: number;
+  /** Names every C (C1, C2…) on its key, so an octave can be found at a glance. */
+  octaveLabels: boolean;
+  /** A circle with the finger number on each played key. */
+  fingerNumbers: boolean;
+  /** The note name on each played key. */
+  noteNames: boolean;
+  upcomingEffect: UpcomingKeyEffect;
+  /** How far up the highway a note is when its key starts to show it, as a share of the highway. */
+  upcomingLead: number;
+  rightHandColor: string;
+  leftHandColor: string;
+  /** How far the highway leans back from the screen, in degrees: 0 is seen straight on. */
+  tilt: number;
+  /** The keys lie on the highway's floor, tilted with it, instead of standing flat below it. */
+  keyboard3d: boolean;
+  noteStyle: HighwayNoteStyle;
+  timeScale: HighwayTimeScale;
+  whiteNoteWidth: WhiteNoteWidth;
+  /**
+   * Stretches the highway's time: 2 shows half as much time ahead, with every note
+   * twice as long and twice as far from the next.
+   */
+  timeZoom: number;
+  /** What each note block of the practised hand shows: nothing, its finger, or its name. */
+  highwayNoteLabels: HighwayNoteLabels;
+}
+
+export const KEYBOARD_RANGE_MODES: readonly KeyboardRangeMode[] = ["full", "song", "practiced-hand"];
+export const UPCOMING_KEY_EFFECTS: readonly UpcomingKeyEffect[] = [
+  "off", "top-edge", "tint", "growing-tint", "filling-meter",
+];
+export const HIGHWAY_NOTE_STYLES: readonly HighwayNoteStyle[] = ["raised", "flat"];
+export const HIGHWAY_TIME_SCALES: readonly HighwayTimeScale[] = ["steady-speed", "fixed-tempo"];
+export const WHITE_NOTE_WIDTHS: readonly WhiteNoteWidth[] = ["track", "whole-key"];
+export const HIGHWAY_NOTE_LABELS: readonly HighwayNoteLabels[] = ["none", "finger", "name"];
+export const UPCOMING_LEADS: readonly number[] = [0.125, 0.25, 0.5, 1];
+
+export const MIN_TIME_ZOOM = 0.5;
+export const MAX_TIME_ZOOM = 8;
+/** One press of the stretch and compress shortcuts, as one notch of the note stretch slider. */
+export const TIME_ZOOM_STEP = 0.1;
+
+/** `zoom` moved `steps` notches, kept on the slider's tenths and within its range. */
+export function steppedTimeZoom(zoom: number, steps: number): number {
+  const stepped = Math.round((zoom + steps * TIME_ZOOM_STEP) / TIME_ZOOM_STEP) * TIME_ZOOM_STEP;
+  return Math.round(10 * Math.min(MAX_TIME_ZOOM, Math.max(MIN_TIME_ZOOM, stepped))) / 10;
+}
+export const MIN_TILT = 0;
+export const MAX_TILT = 65;
+export const MIN_WHITE_KEYS = 7;
+export const MAX_WHITE_KEYS = 52;
+export const MIN_BLACK_KEY_WIDTH = 0.5;
+export const MAX_BLACK_KEY_WIDTH = 1.5;
+
+export const DEFAULT_RIGHT_HAND_COLOR = "#2fbfa5";
+export const DEFAULT_LEFT_HAND_COLOR = "#f28c38";
+
+export const DEFAULT_KEYBOARD_VIEW_SETTINGS: Readonly<KeyboardViewSettings> = Object.freeze({
+  range: "practiced-hand",
+  minimumWhiteKeys: 15,
+  blackKeyWidth: 1,
+  octaveLabels: true,
+  fingerNumbers: true,
+  noteNames: true,
+  upcomingEffect: "tint",
+  upcomingLead: 0.25,
+  rightHandColor: DEFAULT_RIGHT_HAND_COLOR,
+  leftHandColor: DEFAULT_LEFT_HAND_COLOR,
+  tilt: 50,
+  keyboard3d: false,
+  noteStyle: "flat",
+  timeScale: "fixed-tempo",
+  whiteNoteWidth: "whole-key",
+  timeZoom: 2.3,
+  highwayNoteLabels: "finger",
+});
+
+const HEX_COLOR = /^#[0-9a-f]{6}$/i;
+
+function oneOf<T>(options: readonly T[], value: unknown, fallback: T): T {
+  return options.includes(value as T) ? (value as T) : fallback;
+}
+
+function clampedNumber(value: unknown, min: number, max: number, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.min(max, Math.max(min, value))
+    : fallback;
+}
+
+function flag(value: unknown, fallback: boolean): boolean {
+  return typeof value === "boolean" ? value : fallback;
+}
+
+function color(value: unknown, fallback: string): string {
+  return typeof value === "string" && HEX_COLOR.test(value) ? value.toLowerCase() : fallback;
+}
+
+/** Fills in, field by field, whatever a stored value is missing or got wrong. */
+export function normalizeKeyboardViewSettings(stored: unknown): KeyboardViewSettings {
+  const raw = (stored && typeof stored === "object" ? stored : {}) as Record<string, unknown>;
+  const defaults = DEFAULT_KEYBOARD_VIEW_SETTINGS;
+  return {
+    range: oneOf(KEYBOARD_RANGE_MODES, raw.range, defaults.range),
+    minimumWhiteKeys: Math.round(
+      clampedNumber(raw.minimumWhiteKeys, MIN_WHITE_KEYS, MAX_WHITE_KEYS, defaults.minimumWhiteKeys),
+    ),
+    blackKeyWidth: Math.round(
+      20 * clampedNumber(raw.blackKeyWidth, MIN_BLACK_KEY_WIDTH, MAX_BLACK_KEY_WIDTH, defaults.blackKeyWidth),
+    ) / 20,
+    octaveLabels: flag(raw.octaveLabels, defaults.octaveLabels),
+    fingerNumbers: flag(raw.fingerNumbers, defaults.fingerNumbers),
+    noteNames: flag(raw.noteNames, defaults.noteNames),
+    upcomingEffect: oneOf(UPCOMING_KEY_EFFECTS, raw.upcomingEffect, defaults.upcomingEffect),
+    upcomingLead: oneOf(UPCOMING_LEADS, raw.upcomingLead, defaults.upcomingLead),
+    rightHandColor: color(raw.rightHandColor, defaults.rightHandColor),
+    leftHandColor: color(raw.leftHandColor, defaults.leftHandColor),
+    tilt: Math.round(clampedNumber(raw.tilt, MIN_TILT, MAX_TILT, defaults.tilt)),
+    keyboard3d: flag(raw.keyboard3d, defaults.keyboard3d),
+    noteStyle: oneOf(HIGHWAY_NOTE_STYLES, raw.noteStyle, defaults.noteStyle),
+    timeScale: oneOf(HIGHWAY_TIME_SCALES, raw.timeScale, defaults.timeScale),
+    whiteNoteWidth: oneOf(WHITE_NOTE_WIDTHS, raw.whiteNoteWidth, defaults.whiteNoteWidth),
+    timeZoom: Math.round(10 * clampedNumber(raw.timeZoom, MIN_TIME_ZOOM, MAX_TIME_ZOOM, defaults.timeZoom)) / 10,
+    // Before the names, the blocks showed finger numbers or nothing.
+    highwayNoteLabels: oneOf(
+      HIGHWAY_NOTE_LABELS,
+      raw.highwayNoteLabels,
+      raw.highwayFingerNumbers === false ? "none" : defaults.highwayNoteLabels,
+    ),
+  };
+}
+
+/** A hex colour scaled toward black by `factor`. */
+export function shadeColor(hex: string, factor: number): string {
+  const channels = [1, 3, 5].map((start) =>
+    Math.round(Math.min(255, Math.max(0, parseInt(hex.slice(start, start + 2), 16) * factor))),
+  );
+  return `#${channels.map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
+}
+
+export function colorChannels(hex: string): [number, number, number] {
+  return [1, 3, 5].map((start) => parseInt(hex.slice(start, start + 2), 16) / 255) as [number, number, number];
+}
+
+/** One hand's colours: notes on white keys take the base, notes on black keys the darker shade. */
+export interface HandColor {
+  base: string;
+  dark: string;
+}
+
+export interface HandColors {
+  right: HandColor;
+  left: HandColor;
+}
+
+export function handColors(settings: Pick<KeyboardViewSettings, "rightHandColor" | "leftHandColor">): HandColors {
+  return {
+    right: { base: settings.rightHandColor, dark: shadeColor(settings.rightHandColor, 0.58) },
+    left: { base: settings.leftHandColor, dark: shadeColor(settings.leftHandColor, 0.6) },
+  };
+}
+
+/** The CSS custom properties the keyboard and its labels are coloured with. */
+export function handColorProperties(colors: HandColors): Record<string, string> {
+  return {
+    "--hand-right": colors.right.base,
+    "--hand-right-dark": colors.right.dark,
+    "--hand-left": colors.left.base,
+    "--hand-left-dark": colors.left.dark,
+  };
+}
+
+/** A span of keys from `low` to `high`, both white keys, both included. */
+export interface KeyboardRange {
+  low: number;
+  high: number;
+}
+
+export const FULL_KEYBOARD_RANGE: Readonly<KeyboardRange> = Object.freeze({
+  low: FIRST_PIANO_MIDI,
+  high: LAST_PIANO_MIDI,
+});
+
+function whiteBelow(midi: number): number {
+  let next = midi - 1;
+  while (isBlackKey(next)) next -= 1;
+  return next;
+}
+
+function whiteAbove(midi: number): number {
+  let next = midi + 1;
+  while (isBlackKey(next)) next += 1;
+  return next;
+}
+
+export function whiteKeyCount({ low, high }: KeyboardRange): number {
+  let count = 0;
+  for (let midi = low; midi <= high; midi += 1) if (!isBlackKey(midi)) count += 1;
+  return count;
+}
+
+/**
+ * The keys from the lowest to the highest note, with one more white key on each
+ * side so the outer notes are not on the keyboard's edge, widened a white key at a
+ * time (above first, then below) until it is `minimumWhiteKeys` wide. No notes,
+ * or none on the piano, give the full keyboard.
+ */
+export function keyboardRangeForNotes(midis: Iterable<number>, minimumWhiteKeys: number): KeyboardRange {
+  let lowest = Infinity;
+  let highest = -Infinity;
+  for (const midi of midis) {
+    if (midi < FIRST_PIANO_MIDI || midi > LAST_PIANO_MIDI) continue;
+    lowest = Math.min(lowest, midi);
+    highest = Math.max(highest, midi);
+  }
+  if (!Number.isFinite(lowest)) return { ...FULL_KEYBOARD_RANGE };
+  // A black key's neighbours share its lane edges, so the white key under it counts as played.
+  let low = Math.max(FIRST_PIANO_MIDI, whiteBelow(isBlackKey(lowest) ? lowest - 1 : lowest));
+  let high = Math.min(LAST_PIANO_MIDI, whiteAbove(isBlackKey(highest) ? highest + 1 : highest));
+  let count = whiteKeyCount({ low, high });
+  const target = Math.min(MAX_WHITE_KEYS, minimumWhiteKeys);
+  let above = true;
+  while (count < target) {
+    if ((above && high < LAST_PIANO_MIDI) || low <= FIRST_PIANO_MIDI) high = whiteAbove(high);
+    else low = whiteBelow(low);
+    above = !above;
+    count += 1;
+  }
+  return { low, high };
+}
+
+/** The range a keyboard setting asks for, from every note of the score. */
+export function keyboardRangeForSetting(
+  mode: KeyboardRangeMode,
+  minimumWhiteKeys: number,
+  notes: Iterable<{ pitch: string; left?: boolean }>,
+  practiceHand: PracticeHand,
+): KeyboardRange {
+  if (mode === "full") return { ...FULL_KEYBOARD_RANGE };
+  const hand = mode === "practiced-hand" ? practiceHand : "both";
+  const midis: number[] = [];
+  for (const note of notes) {
+    if (!noteInPracticeHand(note.left, hand)) continue;
+    const midi = pitchToMidi(note.pitch);
+    if (midi !== null) midis.push(midi);
+  }
+  return keyboardRangeForNotes(midis, minimumWhiteKeys);
+}

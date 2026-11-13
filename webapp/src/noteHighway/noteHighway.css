@@ -10,6 +10,10 @@
   z-index: 4;
 }
 
+/* A 3D keyboard lies on the highway's floor, so the canvas reaches down over the
+   keyboard's box too; PianoKeyboard places its keys in the same box. */
+.note-highway.keyboard-3d { bottom: 0; }
+
 .note-highway-canvas {
   display: block;
   height: 100%;

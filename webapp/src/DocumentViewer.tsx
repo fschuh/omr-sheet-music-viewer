@@ -35,8 +35,14 @@ import {
   loopSegments,
   loopSystems,
   moveLoopHandleTo,
+  DEFAULT_LOOP_RESTART,
+  effectiveLoopRestart,
+  LOOP_COUNT_IN_OFF_HINT,
+  LOOP_RESTART_LABELS,
+  LOOP_RESTARTS,
   type LoopHandle,
   type LoopRegion,
+  type LoopRestart,
   type ScreenLoopSystem,
 } from "./loop";
 import { LOOP_HANDLE_REACH, LoopPageLayer, LoopPageTint, type LoopHandleEvents } from "./LoopOverlay";
@@ -99,6 +105,41 @@ function LoopIcon() {
       <path d="M19.5 12.5V14a3 3 0 0 1-3 3h-12" />
     </svg>
   );
+}
+
+/*
+ * Transport icons are drawn rather than typed, so they look the same on every platform:
+ * text glyphs like ▶ and Ⅱ take their shape and baseline from whichever font the system
+ * falls back to. All but the pause bars have even widths and heights and whole-pixel
+ * edges, so they sit exactly in the middle of a 30px button. The square shapes are CSS
+ * boxes rather than SVG: WebKitGTK at 2x scaling snaps an SVG's drawing to pixels
+ * differently from the button's border, which pushed the stop square a pixel off centre.
+ */
+function RewindIcon() {
+  // Its weight sits on the right (the triangle's base and the bar), so 2px of empty space
+  // on the right draws it 1px left of the box centre, where it looks centred.
+  return (
+    <svg className="transport-icon" width="16" height="12" viewBox="0 0 16 12" aria-hidden="true" focusable="false">
+      <path d="M10 0 0 6l10 6z" />
+      <rect x="12" y="0" width="2" height="12" />
+    </svg>
+  );
+}
+
+function PlayIcon() {
+  return (
+    <svg className="transport-icon" width="10" height="12" viewBox="0 0 10 12" aria-hidden="true" focusable="false">
+      <path d="M0 0l10 6-10 6z" />
+    </svg>
+  );
+}
+
+function PauseIcon() {
+  return <span className="transport-icon pause-icon" aria-hidden="true" />;
+}
+
+function StopIcon() {
+  return <span className="transport-icon stop-icon" aria-hidden="true" />;
 }
 
 function ResetZoomIcon() {
@@ -178,6 +219,11 @@ interface DocumentViewerProps {
   realtimePlayhead?: RealtimePlayhead | null;
   getRealtimePlayhead?: () => RealtimePlayhead | null;
   realtimePlayheadAnimating?: boolean;
+  /**
+   * Changes whenever the playhead may have moved while not animating, such as after a
+   * seek or a rewind while paused; the playhead is drawn again then.
+   */
+  realtimePlayheadRevision?: unknown;
   realtimeGroupIdsByPage?: Readonly<Record<number, readonly string[]>>;
   tempoBpm?: number;
   tempoMultiplier?: number;
@@ -191,6 +237,10 @@ interface DocumentViewerProps {
   /** The highway is on screen, so playback scrolling keeps the staff above it. */
   noteHighwayVisible?: boolean;
   listenFeedback: ListenModeFeedback;
+  /** Realtime waits at each note, while listening, until the player plays it. */
+  realtimeWaitEnabled?: boolean;
+  /** Realtime is held now, waiting for the player. */
+  realtimeWaiting?: boolean;
   /** Loop mode is on; the Loop button is hidden without onLoopToggle. */
   loopMode?: boolean;
   /** The loop drawn on the score, while loop mode is on during playback. */
@@ -201,6 +251,11 @@ interface DocumentViewerProps {
   loopPlaying?: boolean;
   /** Dim the bars outside the loop. */
   loopDimOutside?: boolean;
+  /** What realtime does at a loop's end; chosen on the Loop button's menu, shown with onLoopRestartChange. */
+  loopRestart?: LoopRestart;
+  onLoopRestartChange?: (restart: LoopRestart) => void;
+  /** The count-in is on, so a loop can count in to each pass; see effectiveLoopRestart. */
+  loopCountInAvailable?: boolean;
   onLoopToggle?: () => void;
   /** A handle was moved to another barline, by dragging or with the arrow keys. */
   onLoopChange?: (region: LoopRegion) => void;
@@ -878,6 +933,7 @@ export function DocumentViewer({
   realtimePlayhead = null,
   getRealtimePlayhead,
   realtimePlayheadAnimating = false,
+  realtimePlayheadRevision,
   realtimeGroupIdsByPage,
   tempoBpm = 120,
   tempoMultiplier = 1,
@@ -887,11 +943,16 @@ export function DocumentViewer({
   noteHighwayEnabled = false,
   noteHighwayVisible = false,
   listenFeedback,
+  realtimeWaitEnabled = false,
+  realtimeWaiting = false,
   loopMode = false,
   loop = null,
   loopPass = 1,
   loopPlaying = false,
   loopDimOutside = true,
+  loopRestart = DEFAULT_LOOP_RESTART,
+  onLoopRestartChange,
+  loopCountInAvailable = true,
   onLoopToggle,
   onLoopChange,
   onLoopDragChange,
@@ -929,8 +990,10 @@ export function DocumentViewer({
   const [isPointerPanning, setIsPointerPanning] = useState(false);
   const [tempoPopoverOpen, setTempoPopoverOpen] = useState(false);
   const [handSoundMenuOpen, setHandSoundMenuOpen] = useState(false);
+  const [loopMenuOpen, setLoopMenuOpen] = useState(false);
   const tempoControlRef = useRef<HTMLDivElement | null>(null);
   const handSoundControlRef = useRef<HTMLDivElement | null>(null);
+  const loopControlRef = useRef<HTMLDivElement | null>(null);
   const realtimeUnavailableTooltipId = useId();
   const tempoPercentage = Math.round(tempoMultiplier * 100);
   const [tempoPercentageText, setTempoPercentageText] = useState(String(tempoPercentage));
@@ -947,11 +1010,11 @@ export function DocumentViewer({
       : effectiveStatus === "note-by-note"
         ? "Stop playback"
         : "Play";
-  const primarySymbol = effectiveStatus === "playing"
-    ? "Ⅱ"
+  const primaryIcon = effectiveStatus === "playing"
+    ? <PauseIcon />
     : effectiveStatus === "note-by-note"
-      ? "■"
-      : "▶";
+      ? <StopIcon />
+      : <PlayIcon />;
   const pages = useMemo(
     () => documentPages.filter((page) => page.status !== "skipped"),
     [documentPages],
@@ -995,7 +1058,12 @@ export function DocumentViewer({
       const playing = listenFeedback.recognizedActivePitches
         .map(({ midi }) => midiToPitchName(midi))
         .join(" ");
-      return `${inputLabel} ready · ${playing ? `Playing ${playing}` : "Waiting for notes"}`;
+      const next = listenFeedback.targetPitches.map(midiToPitchName).join(" ");
+      return [
+        `${inputLabel} ready`,
+        next ? `Next ${next}` : "",
+        playing ? `Playing ${playing}` : "Waiting for notes",
+      ].filter(Boolean).join(" · ");
     }
     const target = listenFeedback.targetPitches.map(midiToPitchName).join(" ") || "no pitched notes";
     const heard = listenFeedback.detectedTargetPitches.map(midiToPitchName).join(" ");
@@ -1327,6 +1395,20 @@ export function DocumentViewer({
 
   useCloseOnPressOutside(tempoPopoverOpen, tempoControlRef, () => setTempoPopoverOpen(false));
   useCloseOnPressOutside(handSoundMenuOpen, handSoundControlRef, () => setHandSoundMenuOpen(false));
+  useCloseOnPressOutside(loopMenuOpen, loopControlRef, () => setLoopMenuOpen(false));
+
+  useEffect(() => {
+    if (!loopMenuOpen) return;
+    function closeLoopMenu(event: KeyboardEvent) {
+      if (event.code !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      setLoopMenuOpen(false);
+    }
+    window.addEventListener("keydown", closeLoopMenu, true);
+    return () => window.removeEventListener("keydown", closeLoopMenu, true);
+  }, [loopMenuOpen]);
 
   useEffect(() => {
     if (playbackMode !== "realtime") setTempoPopoverOpen(false);
@@ -1407,7 +1489,7 @@ export function DocumentViewer({
       if (animationFrame !== null) cancelAnimationFrame(animationFrame);
       if (visibleLine) visibleLine.style.display = "none";
     };
-  }, [documentKey, getRealtimePlayhead, pages, realtimePlayheadAnimating]);
+  }, [documentKey, getRealtimePlayhead, pages, realtimePlayheadAnimating, realtimePlayheadRevision]);
 
   /**
    * Where, from the top of the view, the score stops being visible during playback: the
@@ -1854,6 +1936,16 @@ export function DocumentViewer({
           ) : null}
           <button
             type="button"
+            className="rewind-button"
+            aria-label="Rewind"
+            title={loopMode
+              ? "Rewind to the start of the loop (Backspace)"
+              : "Rewind to the start of the score (Backspace)"}
+            disabled={!effectivelyActive}
+            onClick={() => onPlaybackCommand("rewind")}
+          ><RewindIcon /></button>
+          <button
+            type="button"
             className={`playback-toggle${effectivelyActive ? " active" : ""}`}
             aria-label={primaryLabel}
             aria-pressed={effectivelyActive}
@@ -1862,7 +1954,7 @@ export function DocumentViewer({
               playbackMode === "realtime" ? !realtimeAvailable : !playbackAvailable
             )}
             onClick={() => onPlaybackCommand("togglePlayback")}
-          >{primarySymbol}</button>
+          >{primaryIcon}</button>
           {playbackMode === "realtime" && effectivelyActive ? (
             <button
               type="button"
@@ -1870,25 +1962,65 @@ export function DocumentViewer({
               aria-label="Stop playback"
               title="Stop playback (Escape)"
               onClick={() => onPlaybackCommand("stopPlayback")}
-            >■</button>
+            ><StopIcon /></button>
           ) : null}
           {onLoopToggle ? (
-            <button
-              type="button"
-              className={`loop-toggle${loopMode ? " active" : ""}${loopMode && loopPlaying ? " looping" : ""}`}
-              aria-label={loopMode ? "Turn loop mode off" : "Turn loop mode on"}
-              aria-pressed={loopMode}
-              title={loopMode
-                ? "Stop looping (L)"
-                : "Loop the bar being played; drag the handles to loop more (L)"}
-              disabled={!effectivelyActive && !loopMode}
-              onClick={onLoopToggle}
-            >
-              <LoopIcon />
-              <span className="loop-toggle-label">
-                {loopMode && loopPlaying ? `Pass ${loopPass}` : "Loop"}
-              </span>
-            </button>
+            <div ref={loopControlRef} className="loop-control">
+              <button
+                type="button"
+                className={`loop-toggle${loopMode ? " active" : ""}${loopMode && loopPlaying ? " looping" : ""}`}
+                aria-label={loopMode ? "Turn loop mode off" : "Turn loop mode on"}
+                aria-pressed={loopMode}
+                title={loopMode
+                  ? "Stop looping (L)"
+                  : "Loop the bar being played; drag the handles to loop more (L)"}
+                disabled={!effectivelyActive && !loopMode}
+                onClick={onLoopToggle}
+              >
+                <LoopIcon />
+                <span className="loop-toggle-label">
+                  {loopMode && loopPlaying ? `Pass ${loopPass}` : "Loop"}
+                </span>
+              </button>
+              {onLoopRestartChange ? (
+                <button
+                  type="button"
+                  className="loop-menu-button"
+                  aria-label="Loop options"
+                  aria-expanded={loopMenuOpen}
+                  aria-haspopup="dialog"
+                  title="Choose what happens at the loop's end"
+                  onClick={() => setLoopMenuOpen((open) => !open)}
+                >▾</button>
+              ) : null}
+              {loopMenuOpen && onLoopRestartChange ? (
+                <div className="loop-popover" role="dialog" aria-label="At the loop's end">
+                  {LOOP_RESTARTS.map((restart) => {
+                    const unavailable = restart === "count-in" && !loopCountInAvailable;
+                    return (
+                      <label
+                        key={restart}
+                        className={`checkbox-row${unavailable ? " disabled" : ""}`}
+                        title={unavailable ? LOOP_COUNT_IN_OFF_HINT : undefined}
+                      >
+                        <input
+                          type="radio"
+                          name="loop-restart"
+                          value={restart}
+                          checked={effectiveLoopRestart(loopRestart, loopCountInAvailable) === restart}
+                          disabled={unavailable}
+                          onChange={() => onLoopRestartChange(restart)}
+                        />
+                        {LOOP_RESTART_LABELS[restart]}
+                      </label>
+                    );
+                  })}
+                  {playbackMode === "realtime" ? null : (
+                    <p className="loop-popover-note">Applies to Realtime playback.</p>
+                  )}
+                </div>
+              ) : null}
+            </div>
           ) : null}
           <div ref={handSoundControlRef} className="hand-sound-control">
             <button
@@ -1957,6 +2089,23 @@ export function DocumentViewer({
             disabled={!playbackActive}
             onClick={() => onPlaybackCommand("toggleListenMode")}
           >🎙</button>
+          {playbackMode === "realtime" ? (
+            <button
+              type="button"
+              className={`wait-toggle${realtimeWaitEnabled ? " active" : ""}${
+                realtimeWaiting ? " waiting" : ""
+              }`}
+              aria-label={realtimeWaitEnabled ? "Stop waiting for notes" : "Wait for notes"}
+              aria-pressed={realtimeWaitEnabled}
+              title={realtimeWaitEnabled
+                ? "Stop waiting for the notes you play (W)"
+                : listenActive
+                  ? "Wait at each note until you play it (W)"
+                  : "Turn on listen mode to wait for the notes you play"}
+              disabled={!listenActive}
+              onClick={() => onPlaybackCommand("toggleRealtimeWait")}
+            >⏳</button>
+          ) : null}
           <button
             type="button"
             className="audition-button"
