@@ -189,6 +189,8 @@ interface SettingsPageProps {
   listenInputSource: ListenInputSource;
   /** Whether loop mode dims the bars outside the loop. */
   loopDimOutside?: boolean;
+  /** Whether the 3D note highway is shown above the keyboard during playback. */
+  noteHighwayEnabled?: boolean;
   /** What realtime does at a loop's end. */
   loopRestart?: LoopRestart;
   /** How long realtime counts in before the first note of the score or loop. */
@@ -208,6 +210,7 @@ interface SettingsPageProps {
   onChangePlaybackPiano: (pianoId: PianoId) => void;
   onChangeListenInputSource: (inputSource: ListenInputSource) => void;
   onChangeLoopDimOutside?: (enabled: boolean) => void;
+  onChangeNoteHighwayEnabled?: (enabled: boolean) => void;
   onChangeLoopRestart?: (restart: LoopRestart) => void;
   onChangeRealtimeCountIn?: (countIn: RealtimeCountIn) => void;
   onChangeKeyboardView?: (settings: KeyboardViewSettings) => void;
@@ -230,6 +233,7 @@ export function SettingsPage({
   playbackPiano,
   listenInputSource,
   loopDimOutside = true,
+  noteHighwayEnabled = false,
   loopRestart = DEFAULT_LOOP_RESTART,
   realtimeCountIn = DEFAULT_REALTIME_COUNT_IN,
   keyboardView = DEFAULT_KEYBOARD_VIEW_SETTINGS,
@@ -247,6 +251,7 @@ export function SettingsPage({
   onChangePlaybackPiano,
   onChangeListenInputSource,
   onChangeLoopDimOutside,
+  onChangeNoteHighwayEnabled,
   onChangeLoopRestart,
   onChangeRealtimeCountIn,
   onChangeKeyboardView,
@@ -738,6 +743,23 @@ export function SettingsPage({
             </div>
 
             <h4 className="settings-group-title">3D note highway</h4>
+            {onChangeNoteHighwayEnabled ? (
+              <label className="settings-toggle-row">
+                <input
+                  type="checkbox"
+                  aria-label="Show the 3D note highway"
+                  checked={noteHighwayEnabled}
+                  onChange={(event) => onChangeNoteHighwayEnabled(event.target.checked)}
+                />
+                <span>
+                  <strong>Show the 3D note highway</strong>
+                  <small>
+                    Notes travel down a highway onto the keyboard during playback. The highway
+                    button on the toolbar switches it too.
+                  </small>
+                </span>
+              </label>
+            ) : null}
             <label className="settings-select-row">
               <span>
                 <strong>Tilt</strong>

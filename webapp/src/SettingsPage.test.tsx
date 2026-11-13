@@ -230,6 +230,16 @@ test("highway notes show finger numbers by default, or nothing, or their names",
   assert.match(markup, /<option value="name">Note names<\/option>/);
 });
 
+test("the 3D note highway can be shown or hidden from settings, off by default", () => {
+  assert.doesNotMatch(renderSettings(), /Show the 3D note highway/, "hidden where it cannot be changed");
+  const toggle = (markup: string) => /<input type="checkbox" aria-label="Show the 3D note highway"[^>]*>/.exec(markup)?.[0];
+  const off = toggle(renderSettings({ onChangeNoteHighwayEnabled: () => undefined }));
+  assert.ok(off);
+  assert.doesNotMatch(off, /checked/);
+  const on = toggle(renderSettings({ noteHighwayEnabled: true, onChangeNoteHighwayEnabled: () => undefined }));
+  assert.match(on ?? "", /checked=""/);
+});
+
 test("the count-in offers none, short and long, short by default, and persists a valid choice", () => {
   assert.doesNotMatch(renderSettings(), /aria-label="Count-in"/, "hidden where it cannot be changed");
   const markup = renderSettings({ onChangeRealtimeCountIn: () => undefined });

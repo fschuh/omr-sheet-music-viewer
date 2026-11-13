@@ -810,11 +810,13 @@ export function App() {
   }, [otherHandAudible, practiceHand, practicedHandAudible]);
   const practicedHandAudibleRef = useRef(practicedHandAudible);
   practicedHandAudibleRef.current = practicedHandAudible;
+  const changeNoteHighwayEnabled = useCallback((enabled: boolean) => {
+    saveNoteHighwayEnabled(enabled);
+    setNoteHighwayEnabled(enabled);
+  }, []);
   const toggleNoteHighway = useCallback(() => {
-    const next = !noteHighwayEnabled;
-    saveNoteHighwayEnabled(next);
-    setNoteHighwayEnabled(next);
-  }, [noteHighwayEnabled]);
+    changeNoteHighwayEnabled(!noteHighwayEnabled);
+  }, [changeNoteHighwayEnabled, noteHighwayEnabled]);
   const handlePracticeHandChange = useCallback((hand: PracticeHand) => {
     if (hand === practiceHand) return;
     setPracticeHand(hand);
@@ -2744,6 +2746,8 @@ export function App() {
           }}
           keyboardView={keyboardView}
           onChangeKeyboardView={changeKeyboardView}
+          noteHighwayEnabled={noteHighwayEnabled}
+          onChangeNoteHighwayEnabled={changeNoteHighwayEnabled}
           onChangeListenInputSource={(inputSource) => {
             stopListenMode();
             setListenInputSource(inputSource);
