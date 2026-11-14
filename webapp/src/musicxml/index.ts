@@ -5,6 +5,7 @@ import { musicXmlLoadedDocument } from "./document/loadedDocument";
 import { pageNoteGeometry, viewerIds } from "./geometry/pageNoteGeometry";
 import { documentMusicXml } from "./import/documentMusicXml";
 import { importMusicXml } from "./import/parseMusicXml";
+import type { ScoreModel } from "./model/score";
 import { pageFormat } from "./layout/pageFormat";
 import { layoutScore, type LayoutOptions } from "./layout/pages";
 import type { FingeringPredictor } from "../fingering";
@@ -20,6 +21,7 @@ import { readScoreFile, scoreDataStore, type MusicXmlScoreFile } from "./scoreDa
 export type { LayoutPage as MusicXmlPage } from "./model/layout";
 export {
   fingeringLabelLayout,
+  labelsNeedRoom,
   type FingeringLabelLayout,
   type FingeringLabelPlacement,
   type FingeringLabelStack,
@@ -47,36 +49,72 @@ export function isMusicXmlPath(path: string): boolean {
   return MUSIC_XML_EXTENSION.test(path);
 }
 
-function laidOut(jobId: string, file: MusicXmlScoreFile, options: LayoutOptions): LoadedDocument {
+function laidOut(jobId: string, file: MusicXmlScoreFile, options: LayoutOptions): { document: LoadedDocument; score: ScoreModel } {
   const imported = importMusicXml(file.musicXml);
-  const layout = layoutScore(imported.score, pageFormat(imported.score.defaults), options);
+  // Writing the document MusicXML takes the imported XML apart; the score model is kept whole.
+  const score = imported.score;
+  const layout = layoutScore(score, pageFormat(score.defaults), options);
   const pageStarts = new Map(layout.pages.slice(1).map((page) => [page.firstMeasure, page.index + 1]));
-  return musicXmlLoadedDocument(jobId, file, layout, documentMusicXml(imported, viewerIds(layout), pageStarts));
+  return { document: musicXmlLoadedDocument(jobId, file, layout, documentMusicXml(imported, viewerIds(layout), pageStarts)), score };
 }
 
-// The open score's file and its layouts, by whether they make room for fingering labels, so
-// that switching between them lays the score out once each.
-let opened: { jobId: string; file: MusicXmlScoreFile; layouts: Map<boolean, LoadedDocument> } | null = null;
+/**
+ * The open score laid out again from its score model, with the usual document MusicXML's note
+ * IDs moved to the pages they are on now. Its page breaks stay the usual layout's, which only
+ * realtime's page steps read; it serves while editing fingers, where playback is off.
+ */
+function laidOutAgain(base: LoadedDocument, score: ScoreModel, file: MusicXmlScoreFile, options: LayoutOptions): LoadedDocument {
+  const layout = layoutScore(score, pageFormat(score.defaults), options);
+  const ids = viewerIds(layout);
+  const musicXml = (base.documentMusicXml ?? "").replace(/(<note\b[^>]*\bid=")page-\d+-([^"]+)"/g, (match, start: string, key: string) => {
+    const id = ids.get(key);
+    return id ? `${start}${id}"` : match;
+  });
+  return musicXmlLoadedDocument(base.jobId, file, layout, musicXml);
+}
+
+// The open score's file and its layouts: the usual one, and the last one with room for
+// fingering labels, for the hands the notes were then played by. Switching between them lays
+// the score out again only when hands have changed.
+let opened: {
+  jobId: string;
+  file: MusicXmlScoreFile;
+  score: ScoreModel;
+  plain: LoadedDocument;
+  roomy: { hands: string; layout: LoadedDocument } | null;
+} | null = null;
 
 /** Imports and lays out a score file that has been read. */
 export function musicXmlScoreDocument(jobId: string, file: MusicXmlScoreFile): LoadedDocument {
-  const document = laidOut(jobId, file, {});
-  opened = { jobId, file, layouts: new Map([[false, document]]) };
+  const { document, score } = laidOut(jobId, file, {});
+  opened = { jobId, file, score, plain: document, roomy: null };
   return document;
 }
 
 /**
  * The open score laid out again, with room for a fingering label by every note or without:
  * its pages and document MusicXML change, and everything else about the document is kept.
- * Notes keep their structural keys, but may move to other pages, so viewer IDs change.
- * Null for a document that is not the open MusicXML score.
+ * With room, `movedHands` gives the notes moved to the other hand, by structural key (true for
+ * the left), whose labels need room on that side. Notes keep their structural keys, but may
+ * move to other pages, so viewer IDs change. Null for a document that is not the open
+ * MusicXML score.
  */
-export function relayoutMusicXmlScore(document: LoadedDocument, fingeringRoom: boolean): LoadedDocument | null {
+export function relayoutMusicXmlScore(
+  document: LoadedDocument,
+  fingeringRoom: boolean,
+  movedHands: Readonly<Record<string, boolean>> = {},
+): LoadedDocument | null {
   if (document.source.kind !== "musicxml" || opened?.jobId !== document.jobId) return null;
-  let layout = opened.layouts.get(fingeringRoom);
-  if (!layout) {
-    layout = laidOut(document.jobId, opened.file, { fingeringRoom });
-    opened.layouts.set(fingeringRoom, layout);
+  let layout = opened.plain;
+  if (fingeringRoom) {
+    const hands = JSON.stringify(Object.entries(movedHands).sort(([a], [b]) => a.localeCompare(b)));
+    if (opened.roomy?.hands !== hands) {
+      opened.roomy = {
+        hands,
+        layout: laidOutAgain(opened.plain, opened.score, opened.file, { fingeringRoom, movedHand: (key) => movedHands[key] }),
+      };
+    }
+    layout = opened.roomy.layout;
   }
   return { ...document, pageCount: layout.pageCount, pages: layout.pages, documentMusicXml: layout.documentMusicXml };
 }

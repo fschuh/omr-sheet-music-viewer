@@ -243,16 +243,21 @@ export function startRepeatOffset(measure: PreparedMeasure): number {
  * Where a chord's fingering labels go: `above` its part for the hand of the part's top staff,
  * below it for the other. A part of one staff is played by the left hand in a bass clef.
  */
-export function labelSide(score: PreparedScore, chord: PreparedChord): string {
+export function labelSide(score: PreparedScore, chord: PreparedChord, left?: boolean): string {
   const staves = score.partStaves[chord.part];
-  const above = staves.length > 1 ? chord.staff === staves[0] : chord.clef.sign !== "F";
+  const above = left === undefined
+    ? (staves.length > 1 ? chord.staff === staves[0] : chord.clef.sign !== "F")
+    : !left;
   return `${chord.part}|${above ? "above" : "below"}`;
 }
 
-function labelSides(score: PreparedScore, segment: Segment): Set<string> {
+/** The hand a note was moved to, by structural key: true for the left; undefined when not moved. */
+export type MovedHand = (noteKey: string) => boolean | undefined;
+
+function labelSides(score: PreparedScore, segment: Segment, movedHand?: MovedHand): Set<string> {
   return new Set(segment.chords
-    .filter((chord) => !chord.model.measureRest && chord.model.notes.length > 0)
-    .map((chord) => labelSide(score, chord)));
+    .filter((chord) => !chord.model.measureRest)
+    .flatMap((chord) => chord.model.notes.map((note) => labelSide(score, chord, movedHand?.(note.key)))));
 }
 
 /**
@@ -265,10 +270,11 @@ export function measureSpacing(
   shapes: Map<PreparedChord, ChordShape>,
   next?: PreparedMeasure,
   room = 0,
+  movedHand?: MovedHand,
 ): MeasureSpacing {
   const staffCount = score.staves.length;
   const extents = measure.segments.map((segment) => segmentExtent(segment, staffCount, shapes, room));
-  const sides = room > 0 ? measure.segments.map((segment) => labelSides(score, segment)) : [];
+  const sides = room > 0 ? measure.segments.map((segment) => labelSides(score, segment, movedHand)) : [];
   const firstLeft = Math.max(0, ...extents[0].left);
   const showTime = measure.index === 0 || measure.timeChange !== null;
   const changes = startChangesWidth(measure);

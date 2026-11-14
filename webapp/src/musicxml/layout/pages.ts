@@ -9,7 +9,7 @@ import { avoidRestCollisions, layoutChord, stackSharedAccidentals, type ChordSha
 import { layoutDirections, type Box } from "./directions";
 import { titleBlock } from "./credits";
 import { drawPage } from "./drawing";
-import { gapWidth, graceOffsets, labelSide, measureSpacing, springWidth, type MeasureSpacing } from "./horizontal";
+import { gapWidth, graceOffsets, labelSide, measureSpacing, springWidth, type MeasureSpacing, type MovedHand } from "./horizontal";
 import { prepareScore, type PreparedChord, type PreparedScore } from "./measureContent";
 import { layoutMarks } from "./marks";
 import { chordExtent, layoutSlurs, layoutTies, layoutTuplets, layoutVoltas, mergeSpanners, notePlaces } from "./spanners";
@@ -212,19 +212,23 @@ function skylineDistance(upper: Box[], lower: Box[]): number {
  */
 function addFingeringLabels(
   system: PlacedSystem, skyline: Box[][], prepared: PreparedScore, shapes: Map<PreparedChord, ChordShape>,
+  movedHand?: MovedHand,
 ): void {
   const columns = new Map<string, { x: number; notes: number; above: boolean; staff: number }>();
   for (const chord of systemChords(system)) {
-    if (chord.model.measureRest || chord.model.notes.length === 0 || !chord.model.printed) continue;
+    if (chord.model.measureRest || !chord.model.printed) continue;
     const staves = prepared.partStaves[chord.part];
-    const above = labelSide(prepared, chord).endsWith("above");
-    const staff = above ? staves[0] : staves[staves.length - 1];
     // Labels centre on the noteheads.
     const x = system.chords.get(chord)! + 0.6 * shapes.get(chord)!.scale;
-    const key = `${staff}|${above}|${x.toFixed(2)}`;
-    const column = columns.get(key) ?? { x, notes: 0, above, staff };
-    column.notes += chord.model.notes.length;
-    columns.set(key, column);
+    // Each note's label goes to its hand's side, which the player may have changed.
+    for (const note of chord.model.notes) {
+      const above = labelSide(prepared, chord, movedHand?.(note.key)).endsWith("above");
+      const staff = above ? staves[0] : staves[staves.length - 1];
+      const key = `${staff}|${above}|${x.toFixed(2)}`;
+      const column = columns.get(key) ?? { x, notes: 0, above, staff };
+      column.notes += 1;
+      columns.set(key, column);
+    }
   }
   for (const column of columns.values()) {
     const height = LABEL_SIZE + (column.notes - 1) * (LABEL_SIZE + STACK_GAP);
@@ -262,6 +266,8 @@ function topsFromGaps(gaps: number[]): number[] {
 export interface LayoutOptions {
   /** Space notes and systems so that a fingering label fits by every note. */
   fingeringRoom?: boolean;
+  /** Notes the player moved to the other hand, whose labels need room on that hand's side. */
+  movedHand?: MovedHand;
 }
 
 export function layoutScore(score: ScoreModel, format: PageFormat, options: LayoutOptions = {}): LayoutModel {
@@ -285,7 +291,7 @@ export function layoutScore(score: ScoreModel, format: PageFormat, options: Layo
     }
   }
   const spacings = prepared.measures.map((measure, index) =>
-    measureSpacing(prepared, measure, shapes, prepared.measures[index + 1], room));
+    measureSpacing(prepared, measure, shapes, prepared.measures[index + 1], room, options.movedHand));
 
   const sp = format.staffSpace;
   const pageWidth = format.width / sp;
@@ -330,7 +336,7 @@ export function layoutScore(score: ScoreModel, format: PageFormat, options: Layo
   const draft = annotate(score, prepared, systems, shapes, sp, crossStaff).directions.boxes;
   const skylines = new Map(systems.map((system) => {
     const skyline = staffSkylines(system, draft.get(system) ?? [], shapes, staffCount, crossStaff);
-    if (room > 0) addFingeringLabels(system, skyline, prepared, shapes);
+    if (room > 0) addFingeringLabels(system, skyline, prepared, shapes, options.movedHand);
     const gaps = system.staffTops.slice(1).map((top, index) => top - system.staffTops[index] - 4);
     const beamed = system.plan.measures.flatMap((measure) => groups[measure]).map((group) => crossStaffBeamGaps(group, shapes));
     const needed = gaps.map((gap, index) => Math.max(

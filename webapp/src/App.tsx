@@ -138,6 +138,7 @@ import {
   isMusicXmlPath,
   musicXmlFingerings,
   openMusicXmlScore,
+  labelsNeedRoom,
   preparePageImages,
   relayoutMusicXmlScore,
   showScoreDataFolder,
@@ -275,6 +276,15 @@ function statusLabel(document: LoadedDocument): string {
   if (document.fingeringStatus === "predicting") return "Predicting piano fingerings…";
   if (document.fingeringStatus === "failed") return "Recognition complete · fingerings unavailable";
   return source.cacheStatus === "complete" ? "Loaded from cache" : "Recognition complete";
+}
+
+/** The notes the player moved to the other hand, by structural key: true for the left. */
+function movedHands(document: LoadedDocument | null): Record<string, boolean> {
+  const result: Record<string, boolean> = {};
+  for (const [key, override] of Object.entries(document?.fingeringLayers?.overrides ?? {})) {
+    if (override.left !== undefined) result[key] = override.left;
+  }
+  return result;
 }
 
 function isEditableKeyboardTarget(target: EventTarget | null): boolean {
@@ -1397,7 +1407,7 @@ export function App() {
   documentRef.current = document;
   const relayoutForFingering = useCallback((room: boolean): LoadedDocument | null => {
     const current = documentRef.current;
-    const next = current ? relayoutMusicXmlScore(current, room) : null;
+    const next = current ? relayoutMusicXmlScore(current, room, movedHands(current)) : null;
     if (!next || !next.documentMusicXml) return null;
     const result = next.fingeringLayers
       ? withFingeringLayers(next, rekeyFingeringLayers(next.fingeringLayers, viewerIdsByKey(next.documentMusicXml)))
@@ -1429,11 +1439,47 @@ export function App() {
     setResumeAfterEditing(false);
     handlePlaybackCommandRef.current("togglePlayback");
   }, [resumeAfterEditing]);
+  // Moving a note to the other hand moves its label to that hand's side. Where the layout has
+  // no room for it there, the score is laid out again, before the browser paints, so the label
+  // appears where it belongs; where it fits, the layout stays as it is.
+  const movedHandsKey = useMemo(
+    () => JSON.stringify(movedHands(document)),
+    [document?.fingeringLayers?.overrides],
+  );
+  const fingerEditingForLayout = useRef(false);
+  const checkedHands = useRef<Record<string, boolean>>({});
+  useLayoutEffect(() => {
+    const current = documentRef.current;
+    if (!fingerEditingForLayout.current || !current?.resolvedFingerings) return;
+    const hands = movedHands(current);
+    const previous = checkedHands.current;
+    checkedHands.current = hands;
+    const changed = new Set([...Object.keys(hands), ...Object.keys(previous)].filter((key) => hands[key] !== previous[key]));
+    if (changed.size === 0) return;
+    const resolved = current.resolvedFingerings;
+    const crowded = current.pages.some((page) => {
+      const surface = page.surface;
+      if (!surface) return false;
+      const notes = new Map(surface.chords.flatMap((chord) => chord.notes.map((note) => [note.key, note] as const)));
+      if (![...changed].some((key) => notes.has(key))) return false;
+      // The labels as the editor draws them: none for a held note or a printed finger kept.
+      return labelsNeedRoom(surface, (key) => {
+        const fingering = resolved[`page-${page.index + 1}-${key}`];
+        if (!fingering || fingering.tiedTo) return undefined;
+        if (fingering.source === "printed" && notes.get(key)?.printedFingering) return undefined;
+        return fingering.left;
+      });
+    });
+    if (crowded) relayoutForFingering(true);
+  }, [movedHandsKey, relayoutForFingering]);
   const enterFingerEditor = useCallback(() => {
+    fingerEditingForLayout.current = true;
+    checkedHands.current = movedHands(documentRef.current);
     setReturnFocus(null);
     relayoutForFingering(true);
   }, [relayoutForFingering]);
   const leaveFingerEditor = useCallback((cursor: EditTarget | null, resume: boolean) => {
+    fingerEditingForLayout.current = false;
     const laidOut = relayoutForFingering(false);
     if (cursor) {
       // The note's page in the layout playback returns to.
@@ -1474,7 +1520,7 @@ export function App() {
     const idle = requestIdleCallback(() => {
       const current = documentRef.current;
       if (!current || current.jobId !== fingeringsReadyJob) return;
-      const roomy = relayoutMusicXmlScore(current, true);
+      const roomy = relayoutMusicXmlScore(current, true, movedHands(current));
       if (roomy) stopImages = preparePageImages(roomy.pages.flatMap((page) => (page.surface ? [page.surface] : [])));
     }, { timeout: 4000 });
     return () => {

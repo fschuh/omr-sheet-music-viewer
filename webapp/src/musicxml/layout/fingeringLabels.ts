@@ -190,3 +190,49 @@ export function fingeringLabelLayout(
   }
   return { size, labels, stacks };
 }
+
+/**
+ * Whether the page's labels, placed for the given hands, need more room than its layout gives
+ * them: a stack below a system reaching the next system or the labels above it, a stack above
+ * reaching the system before or the labels below that, or two stacks side by side on one side
+ * of a system overlapping. Moving a note to the other hand can do any of these; otherwise its
+ * label fits where the layout made room, and the score need not be laid out again.
+ */
+export function labelsNeedRoom(page: LayoutPage, handOf: (key: string) => boolean | undefined): boolean {
+  const layout = fingeringLabelLayout(page, handOf);
+  const half = layout.size / 2;
+  const gap = STACK_GAP * page.staffSpace;
+  const systemOf = (label: FingeringLabelPlacement) => Number(label.stackId.slice(0, label.stackId.indexOf("|")));
+  const bySystem = new Map<number, FingeringLabelPlacement[]>();
+  for (const label of layout.labels) {
+    const system = systemOf(label);
+    bySystem.set(system, [...(bySystem.get(system) ?? []), label]);
+  }
+  for (let index = 0; index < page.systems.length; index += 1) {
+    const labels = bySystem.get(index) ?? [];
+    const next = page.systems[index + 1];
+    if (next) {
+      const lowest = Math.max(-Infinity, ...labels.filter((label) => label.left).map((label) => label.y + half));
+      const nextLabels = bySystem.get(index + 1) ?? [];
+      const ceiling = Math.min(next.top, ...nextLabels.filter((label) => !label.left).map((label) => label.y - half));
+      if (lowest > ceiling - gap) return true;
+    }
+    // Stacks of one side, left to right: neighbours closer than a label overlap where their
+    // heights meet.
+    for (const left of [true, false]) {
+      const stacks = new Map<string, { x: number; top: number; bottom: number }>();
+      for (const label of labels.filter((candidate) => candidate.left === left)) {
+        const stack = stacks.get(label.stackId) ?? { x: label.x, top: Infinity, bottom: -Infinity };
+        stack.top = Math.min(stack.top, label.y - half);
+        stack.bottom = Math.max(stack.bottom, label.y + half);
+        stacks.set(label.stackId, stack);
+      }
+      const row = [...stacks.values()].sort((a, b) => a.x - b.x);
+      for (let position = 1; position < row.length; position += 1) {
+        const [a, b] = [row[position - 1], row[position]];
+        if (b.x - a.x < layout.size - 0.5 && a.top < b.bottom && b.top < a.bottom) return true;
+      }
+    }
+  }
+  return false;
+}

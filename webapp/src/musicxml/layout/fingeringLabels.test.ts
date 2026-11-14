@@ -3,7 +3,7 @@ import test from "node:test";
 import { parseMusicXml } from "../import/parseMusicXml";
 import type { LayoutNote, LayoutPage } from "../model/layout";
 import { note, piano, score } from "../testScores";
-import { fingeringLabelLayout } from "./fingeringLabels";
+import { fingeringLabelLayout, labelsNeedRoom } from "./fingeringLabels";
 import { pageFormat } from "./pageFormat";
 import { layoutScore } from "./pages";
 
@@ -129,4 +129,38 @@ test("with room for fingerings, a page's labels clear one another", () => {
       assert.ok(apart >= layout.size - 0.5, `${a.key} and ${b.key} overlap`);
     }
   }
+});
+
+test("notes moved to the left hand get their labels' room below the part", () => {
+  const parsed = parseMusicXml(denseScore());
+  // Every right-hand note moved to the left hand: each stack below grows by two labels.
+  const moved = layoutScore(parsed, pageFormat(parsed.defaults), {
+    fingeringRoom: true,
+    movedHand: (key) => (/-s1-/.test(key) ? true : undefined),
+  }).pages[0];
+  assert.ok(moved.systems.length > 1);
+  const layout = fingeringLabelLayout(moved, () => true);
+  const tallest = Math.max(...layout.stacks.map((stack) => (stack.bottom - stack.top) / moved.staffSpace));
+  assert.ok(Math.abs(tallest - (1.7 + 2 * 1.85)) < 0.01, "stacks of three labels");
+  // Placed for those hands, the labels below each system stay clear of the next.
+  for (let index = 0; index + 1 < moved.systems.length; index += 1) {
+    const below = layout.labels.filter((label) => label.y > moved.systems[index].bottom && label.y < moved.systems[index + 1].top);
+    assert.ok(below.length > 0);
+    assert.ok(Math.max(...below.map((label) => label.y + layout.size / 2)) < moved.systems[index + 1].top, `system ${index + 1} clear`);
+  }
+});
+
+test("labels need room only where their hands are not those the layout made room for", () => {
+  const parsed = parseMusicXml(denseScore());
+  const format = pageFormat(parsed.defaults);
+  // The right hand's notes of the first bar moved to the left hand; the next system keeps its
+  // right-hand labels above it.
+  const firstBarLeft = (key: string) => (/^P1-m1-s1-/.test(key) ? true : undefined);
+  const hands = (key: string) => firstBarLeft(key) ?? staffHand(key);
+  const staffHands = layoutScore(parsed, format, { fingeringRoom: true }).pages[0];
+  assert.ok(staffHands.systems.length > 1);
+  assert.equal(labelsNeedRoom(staffHands, staffHand), false, "fits the hands it was laid out for");
+  assert.equal(labelsNeedRoom(staffHands, hands), true, "the moved bar's stacks below reach the next system's labels");
+  const moved = layoutScore(parsed, format, { fingeringRoom: true, movedHand: firstBarLeft }).pages[0];
+  assert.equal(labelsNeedRoom(moved, hands), false, "fits once laid out for those hands");
 });
