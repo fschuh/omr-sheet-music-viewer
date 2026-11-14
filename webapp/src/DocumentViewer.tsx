@@ -2,6 +2,7 @@ import {
   memo,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -1851,8 +1852,10 @@ export function DocumentViewer({
     }
   }
 
-  useEffect(() => {
-    const followed = playbackActive ? playbackMoment : followMoment;
+  // Before the browser paints, so a score laid out again never shows a frame at the old place.
+  useLayoutEffect(() => {
+    // Playback's moment, or, while it has none yet, as realtime before its first frame, the one asked for.
+    const followed = (playbackActive ? playbackMoment : null) ?? followMoment;
     if (!followed) return;
     // The view is the loop handle's while one is dragged, and in realtime, where the
     // playhead moves on regardless, for a moment after a loop end moved.

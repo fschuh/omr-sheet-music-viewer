@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { DocumentViewer, heldTempoStep, steppedTempoMultiplier, type NoteHighlight } from "./DocumentViewer";
 import { printedValueSummary } from "./noteValues";
 import {
@@ -1421,6 +1421,14 @@ export function App() {
     const done = window.setTimeout(() => setReturnFocus(null), 500);
     return () => window.clearTimeout(done);
   }, [returnMoment]);
+  // Playback resumes once the selection it starts at has rendered, before the browser paints,
+  // so the new layout, the playhead and the view arrive in one frame.
+  const [resumeAfterEditing, setResumeAfterEditing] = useState(false);
+  useLayoutEffect(() => {
+    if (!resumeAfterEditing) return;
+    setResumeAfterEditing(false);
+    handlePlaybackCommandRef.current("togglePlayback");
+  }, [resumeAfterEditing]);
   const enterFingerEditor = useCallback(() => {
     setReturnFocus(null);
     relayoutForFingering(true);
@@ -1434,9 +1442,7 @@ export function App() {
       setSelectedGroup({ pageIndex, visualGroupId: cursor.key });
       setReturnFocus({ pageIndex, visualGroupId: cursor.key });
     }
-    if (!resume) return;
-    // Once the selection has rendered, playback starts at it.
-    window.setTimeout(() => handlePlaybackCommandRef.current("togglePlayback"), 0);
+    if (resume) setResumeAfterEditing(true);
   }, [relayoutForFingering]);
   const fingerEditor = useFingeringEditor({
     document,
