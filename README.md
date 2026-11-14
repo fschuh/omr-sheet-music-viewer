@@ -46,7 +46,10 @@ finger, `H` moves the note to the other hand, `Alt`+`Up` and `Alt`+`Down` move w
 chord, and `Ctrl`+`Z` undoes. The note, bar and page keys move between notes without
 sounding them, `P` plays them, and LH and RH limit the walk to one hand. Playback's own
 controls are off while editing; `F` or `Esc` goes back to the playback you came from, at
-the ringed note, with realtime paused there. Clicking a label or notehead
+the ringed note, with realtime paused there. While editing, the score is laid out again
+with room for a label by every note: notes of one hand stand a label apart and systems
+spread to clear the labels, so a long score can gain pages; leaving the editor restores the
+usual layout. Clicking a label or notehead
 opens a finger picker for that note. Every key can be
 reassigned, or bound to MIDI, in **Settings**. Your fingers win over printed and
 predicted ones on the score, the keyboard and the highway, and a note moved to the

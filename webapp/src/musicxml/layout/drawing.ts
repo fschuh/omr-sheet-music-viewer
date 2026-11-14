@@ -45,6 +45,8 @@ export interface DrawContext {
   spanners: Map<PlacedSystem, Drawable[]>;
   /** Where each note's printed fingering stands, by note key, in staff spaces. */
   printedFingerings?: ReadonlyMap<string, readonly [number, number, number, number]>;
+  /** The pages make room for fingering labels. */
+  fingeringRoom?: boolean;
 }
 
 function pitchName(step: string, alter: number, octave: number): string {
@@ -167,6 +169,7 @@ export function drawPage(index: number, systems: PlacedSystem[], context: DrawCo
     items,
     chords,
     systems: layoutSystems,
+    ...(context.fingeringRoom ? { fingeringRoom: true } : {}),
   };
 }
 

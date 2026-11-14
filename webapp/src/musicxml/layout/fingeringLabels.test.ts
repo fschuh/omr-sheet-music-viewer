@@ -84,3 +84,49 @@ test("a printed fingering's place is recorded on its note", () => {
   assert.ok(bottom < noteOf(page, "C5").headBounds[1], "above the note it fingers");
   assert.equal(noteOf(page, "A4").printedFingering, undefined);
 });
+
+// Bars of sixteenth-note chords in the right hand over held left-hand notes, packed several
+// to a system as in a real passage; the first opens with a grace note.
+function denseScore(): string {
+  const chord = (low: string, high: string) =>
+    note(low, 1, { type: "16th", staff: 1 }) + note(high, 1, { chord: true, type: "16th", staff: 1 });
+  const run = ["E4", "F4", "G4", "A4"].map((low, index) => chord(low, ["G4", "A4", "B4", "C5"][index])).join("").repeat(4);
+  const bar = (grace: boolean) =>
+    (grace ? note("C5", 0, { grace: true, type: "eighth", staff: 1 }) : "") + run +
+    "<backup><duration>16</duration></backup>" +
+    note("C3", 16, { type: "whole", staff: 2, voice: 5 });
+  return score([piano([bar(true), bar(false), bar(false), bar(false), bar(false), bar(false)])]);
+}
+
+function laidOut(fingeringRoom: boolean): LayoutPage {
+  const parsed = parseMusicXml(denseScore());
+  return layoutScore(parsed, pageFormat(parsed.defaults), { fingeringRoom }).pages[0];
+}
+
+test("with room for fingerings, notes of one hand stand a label apart and the page says so", () => {
+  const roomy = laidOut(true);
+  const plain = laidOut(false);
+  assert.equal(roomy.fingeringRoom, true);
+  assert.equal(plain.fingeringRoom, undefined);
+  // Within the first system, where the passage is packed.
+  const centres = (page: LayoutPage, grace: boolean) => [...new Set(page.chords
+    .filter((chord) => chord.systemIndex === 0 && chord.notes.some((value) => /-s1-/.test(value.key) && value.grace === grace))
+    .map((chord) => chord.notes[0].center[0]))].sort((a, b) => a - b);
+  const closest = (xs: number[]) => Math.min(...xs.slice(1).map((x, index) => x - xs[index]));
+  const label = (page: LayoutPage) => 1.85 * page.staffSpace;
+  assert.ok(closest(centres(roomy, false)) >= label(roomy) - 0.5, "sixteenths a label apart");
+  const grace = centres(roomy, true)[0];
+  assert.ok(centres(roomy, false)[0] - grace >= label(roomy) - 0.5, "a grace note a label from its note");
+});
+
+test("with room for fingerings, a page's labels clear one another", () => {
+  const page = laidOut(true);
+  const layout = fingeringLabelLayout(page, staffHand);
+  for (const a of layout.labels) {
+    for (const b of layout.labels) {
+      if (a === b) continue;
+      const apart = Math.hypot(a.x - b.x, a.y - b.y);
+      assert.ok(apart >= layout.size - 0.5, `${a.key} and ${b.key} overlap`);
+    }
+  }
+});

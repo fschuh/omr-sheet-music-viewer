@@ -52,6 +52,23 @@ function pageImage(page: LayoutPage): Promise<string> {
   return image;
 }
 
+/** Prepares the pages' images one by one in idle time, so they are ready when first shown. */
+export function preparePageImages(pages: readonly LayoutPage[]): () => void {
+  let cancelled = false;
+  let handle: number | null = null;
+  const next = (index: number) => {
+    if (cancelled || index >= pages.length || typeof requestIdleCallback === "undefined") return;
+    handle = requestIdleCallback(() => {
+      void pageImage(pages[index]).catch(() => undefined).finally(() => next(index + 1));
+    }, { timeout: 5000 });
+  };
+  next(0);
+  return () => {
+    cancelled = true;
+    if (handle !== null) cancelIdleCallback(handle);
+  };
+}
+
 /**
  * The URL of the page's image once it is decoded, while `wanted`; null before. It is
  * prepared in idle time beforehand, so that it is usually ready when first wanted.

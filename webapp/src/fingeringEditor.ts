@@ -9,6 +9,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type 
 import type { FingeringPredictor, PredictedFingering } from "./fingering";
 import {
   constraintSignature,
+  noteKeyOf,
   refitMusicXmlFingerings,
   resolveFingering,
   resolveFingerings,
@@ -46,6 +47,28 @@ function pitchMidi(pitch: string): number {
     midiByPitch.set(pitch, midi);
   }
   return midi;
+}
+
+/**
+ * Fingering layers carried over to a new layout of the same score: the same notes, by
+ * structural key, under their new viewer IDs.
+ */
+export function rekeyFingeringLayers(layers: FingeringLayers, idsByKey: ReadonlyMap<string, string>): FingeringLayers {
+  const rekey = <T>(record: Readonly<Record<string, T>>): Record<string, T> => {
+    const result: Record<string, T> = {};
+    for (const [id, value] of Object.entries(record)) {
+      const next = idsByKey.get(noteKeyOf(id));
+      if (next) result[next] = value;
+    }
+    return result;
+  };
+  const tiedTo: Record<string, string> = {};
+  for (const [held, start] of Object.entries(layers.tiedTo)) {
+    const heldId = idsByKey.get(noteKeyOf(held));
+    const startId = idsByKey.get(noteKeyOf(start));
+    if (heldId && startId) tiedTo[heldId] = startId;
+  }
+  return { ...layers, predicted: rekey(layers.predicted), printed: rekey(layers.printed), tiedTo };
 }
 
 /** A note the editor can set a finger for. */
@@ -181,7 +204,8 @@ export function navigateWalk(walk: readonly EditTarget[], index: number, command
 
 interface HistoryEntry {
   overrides: FingeringOverrides;
-  cursorId: string | null;
+  /** The ringed note's structural key, which holds across layouts. */
+  cursorKey: string | null;
 }
 
 const HISTORY_LIMIT = 200;
@@ -204,6 +228,8 @@ export interface FingeringEditorOptions {
   onPracticeHandChange: (hand: PracticeHand) => void;
   /** Stops playback of either kind. */
   stopPlayback: () => void;
+  /** Called on entering edit mode, after playback has stopped. */
+  onEnter: () => void;
   /**
    * Called on leaving edit mode, with the note last ringed; `resume` when playback was on
    * when edit mode began.
@@ -270,14 +296,16 @@ function errorText(error: unknown): string {
 export function useFingeringEditor(options: FingeringEditorOptions): FingeringEditor {
   const {
     document, setDocument, timeline, playbackActive, startMomentId, playheadNoteIds, startNoteId, practiceHand,
-    onPracticeHandChange, stopPlayback, onLeave, audition, predict, onError,
+    onPracticeHandChange, stopPlayback, onEnter, onLeave, audition, predict, onError,
   } = options;
   const layers = document?.source.kind === "musicxml" && document.fingeringStatus === "ready"
     ? document.fingeringLayers ?? null
     : null;
   const available = layers !== null;
   const [editing, setEditing] = useState(false);
-  const [cursorId, setCursorId] = useState<string | null>(null);
+  // The ringed note by structural key: the score may be laid out again while editing, which
+  // moves notes to other pages and so changes their viewer IDs.
+  const [cursorKey, setCursorKey] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [refitting, setRefitting] = useState(false);
@@ -292,9 +320,9 @@ export function useFingeringEditor(options: FingeringEditorOptions): FingeringEd
   );
   const walk = useMemo(() => (fingerings ? editWalk(timeline, fingerings) : []), [fingerings, timeline]);
   const cursorIndex = useMemo(() => {
-    const index = walk.findIndex((target) => target.id === cursorId);
+    const index = walk.findIndex((target) => target.key === cursorKey);
     return index < 0 && walk.length > 0 ? 0 : index;
-  }, [cursorId, walk]);
+  }, [cursorKey, walk]);
   const cursor = editing ? walk[cursorIndex] ?? null : null;
   const cursorMoment = useMemo(
     () => (cursor ? timeline.find((moment) => moment.id === cursor.momentId) ?? null : null),
@@ -313,7 +341,7 @@ export function useFingeringEditor(options: FingeringEditorOptions): FingeringEd
   const jobId = document?.jobId;
   useEffect(() => {
     setEditing(false);
-    setCursorId(null);
+    setCursorKey(null);
     setPickerOpen(false);
     setHistory([]);
     setRefitting(false);
@@ -335,7 +363,7 @@ export function useFingeringEditor(options: FingeringEditorOptions): FingeringEd
   }, [playbackActive]);
 
   const moveTo = useCallback((target: EditTarget | null | undefined) => {
-    if (target) setCursorId(target.id);
+    if (target) setCursorKey(target.key);
   }, []);
 
   const save = useCallback((overrides: FingeringOverrides) => {
@@ -350,7 +378,7 @@ export function useFingeringEditor(options: FingeringEditorOptions): FingeringEd
     if (!layers || !document) return;
     moveTo(after);
     if (JSON.stringify(next) === JSON.stringify(layers.overrides)) return;
-    setHistory((entries) => [...entries, { overrides: layers.overrides, cursorId: cursor?.id ?? null }].slice(-HISTORY_LIMIT));
+    setHistory((entries) => [...entries, { overrides: layers.overrides, cursorKey: cursor?.key ?? null }].slice(-HISTORY_LIMIT));
     setDocument((value) =>
       value?.jobId === document.jobId && value.fingeringLayers
         ? withFingeringLayers(value, { ...value.fingeringLayers, overrides: next })
@@ -403,12 +431,13 @@ export function useFingeringEditor(options: FingeringEditorOptions): FingeringEd
         ? withFingeringLayers(value, { ...value.fingeringLayers, overrides: last.overrides })
         : value,
     );
-    if (last.cursorId) {
-      setCursorId(last.cursorId);
-      setFlash((value) => ({ ids: [last.cursorId!], serial: value.serial + 1 }));
+    if (last.cursorKey) {
+      setCursorKey(last.cursorKey);
+      const restored = walk.find((target) => target.key === last.cursorKey);
+      if (restored) setFlash((value) => ({ ids: [restored.id], serial: value.serial + 1 }));
     }
     save(last.overrides);
-  }, [document, history, save, setDocument]);
+  }, [document, history, save, setDocument, walk]);
 
   const refit = useCallback(() => {
     if (!layers || !document || refitting) return;
@@ -435,11 +464,12 @@ export function useFingeringEditor(options: FingeringEditorOptions): FingeringEd
     const fromRealtime = played.size ? walk.find((target) => played.has(target.id)) : undefined;
     const fromSelection = startNoteId ? walk.find((target) => target.id === startNoteId) : undefined;
     const start = fromPlayhead ?? fromRealtime ?? fromSelection;
-    if (start) setCursorId(start.id);
+    if (start) setCursorKey(start.key);
     resumePlayback.current = playbackActive;
     if (playbackActive) stopPlayback();
     setEditing(true);
-  }, [available, fingerings, playbackActive, playheadNoteIds, startMomentId, startNoteId, stopPlayback, walk]);
+    onEnter();
+  }, [available, fingerings, onEnter, playbackActive, playheadNoteIds, startMomentId, startNoteId, stopPlayback, walk]);
   // Whether playback was on when edit mode began, so leaving it goes back to playback.
   const resumePlayback = useRef(false);
   const exit = useCallback(() => {
@@ -455,7 +485,7 @@ export function useFingeringEditor(options: FingeringEditorOptions): FingeringEd
     const id = fingerings?.[clicked]?.tiedTo ?? clicked;
     if (!fingerings?.[id]) return;
     if (!editing) enter();
-    setCursorId(id);
+    setCursorKey(noteKeyOf(id));
     // A note of the hand not being practised is reached by walking both.
     if (!walk.some((target) => target.id === id)) onPracticeHandChange("both");
     setPickerOpen(openPicker);

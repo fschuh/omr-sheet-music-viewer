@@ -138,10 +138,19 @@ import {
   isMusicXmlPath,
   musicXmlFingerings,
   openMusicXmlScore,
+  preparePageImages,
+  relayoutMusicXmlScore,
   showScoreDataFolder,
   showScoreSource,
+  viewerIdsByKey,
 } from "./musicxml";
-import { isEditNavigation, useFingeringEditor, withFingeringLayers, type EditTarget } from "./fingeringEditor";
+import {
+  isEditNavigation,
+  rekeyFingeringLayers,
+  useFingeringEditor,
+  withFingeringLayers,
+  type EditTarget,
+} from "./fingeringEditor";
 import { FingeringPageLayer, FingeringStatusStrip, FingeringToolbar } from "./FingeringEditorView";
 import {
   useNoteByNoteHighwaySource,
@@ -1382,12 +1391,53 @@ export function App() {
    * Back from the fingering editor to the playback it began in, at the note it last ringed,
    * realtime paused there; with no playback to go back to, the note is selected.
    */
+  // While editing fingers, a MusicXML score is laid out with room for a label by every note.
+  // The layout changes which page a note is on, so the fingerings move to the new viewer IDs.
+  const documentRef = useRef(document);
+  documentRef.current = document;
+  const relayoutForFingering = useCallback((room: boolean): LoadedDocument | null => {
+    const current = documentRef.current;
+    const next = current ? relayoutMusicXmlScore(current, room) : null;
+    if (!next || !next.documentMusicXml) return null;
+    const result = next.fingeringLayers
+      ? withFingeringLayers(next, rekeyFingeringLayers(next.fingeringLayers, viewerIdsByKey(next.documentMusicXml)))
+      : next;
+    documentRef.current = result;
+    setDocument(result);
+    return result;
+  }, []);
+  // Leaving the editor lays the score out again, which moves every note; the view then follows
+  // the note the editor last ringed, once, to where it now stands.
+  const [returnFocus, setReturnFocus] = useState<VisualGroupRef | null>(null);
+  const returnMoment = useMemo(
+    () => returnFocus
+      ? fullPlaybackTimeline.find((moment) =>
+        moment.pageIndex === returnFocus.pageIndex && moment.visualGroupIds.includes(returnFocus.visualGroupId)) ?? null
+      : null,
+    [fullPlaybackTimeline, returnFocus],
+  );
+  useEffect(() => {
+    if (!returnMoment) return;
+    const done = window.setTimeout(() => setReturnFocus(null), 500);
+    return () => window.clearTimeout(done);
+  }, [returnMoment]);
+  const enterFingerEditor = useCallback(() => {
+    setReturnFocus(null);
+    relayoutForFingering(true);
+  }, [relayoutForFingering]);
   const leaveFingerEditor = useCallback((cursor: EditTarget | null, resume: boolean) => {
-    if (cursor) setSelectedGroup({ pageIndex: cursor.pageIndex, visualGroupId: cursor.key });
+    const laidOut = relayoutForFingering(false);
+    if (cursor) {
+      // The note's page in the layout playback returns to.
+      const pageIndex = laidOut?.pages.find((page) => page.surface?.chords.some((chord) => chord.notes.some((note) => note.key === cursor.key)))?.index
+        ?? cursor.pageIndex;
+      setSelectedGroup({ pageIndex, visualGroupId: cursor.key });
+      setReturnFocus({ pageIndex, visualGroupId: cursor.key });
+    }
     if (!resume) return;
     // Once the selection has rendered, playback starts at it.
     window.setTimeout(() => handlePlaybackCommandRef.current("togglePlayback"), 0);
-  }, []);
+  }, [relayoutForFingering]);
   const fingerEditor = useFingeringEditor({
     document,
     setDocument,
@@ -1399,6 +1449,7 @@ export function App() {
     practiceHand,
     onPracticeHandChange: handlePracticeHandChange,
     stopPlayback: stopAnyPlayback,
+    onEnter: enterFingerEditor,
     onLeave: leaveFingerEditor,
     audition: auditionEditedMoment,
     predict: predictFingeringsWithModel,
@@ -1406,6 +1457,25 @@ export function App() {
   });
   const fingerEditorRef = useRef(fingerEditor);
   fingerEditorRef.current = fingerEditor;
+  // The roomy layout and its pages' images are prepared in idle time once a MusicXML score's
+  // fingerings are ready, so that entering the editor is quick.
+  const fingeringsReadyJob = document?.source.kind === "musicxml" && document.fingeringStatus === "ready"
+    ? document.jobId
+    : null;
+  useEffect(() => {
+    if (!fingeringsReadyJob || typeof requestIdleCallback === "undefined") return;
+    let stopImages: (() => void) | null = null;
+    const idle = requestIdleCallback(() => {
+      const current = documentRef.current;
+      if (!current || current.jobId !== fingeringsReadyJob) return;
+      const roomy = relayoutMusicXmlScore(current, true);
+      if (roomy) stopImages = preparePageImages(roomy.pages.flatMap((page) => (page.surface ? [page.surface] : [])));
+    }, { timeout: 4000 });
+    return () => {
+      cancelIdleCallback(idle);
+      stopImages?.();
+    };
+  }, [fingeringsReadyJob]);
   // The editor's cursor replaces the selection while it is on.
   const fingerEditing = fingerEditor.editing;
   useEffect(() => {
@@ -3069,7 +3139,7 @@ export function App() {
                 : undefined}
               footer={<FingeringStatusStrip editor={fingerEditor} shortcuts={shortcuts} />}
               noteHighlight={fingerNoteHighlight}
-              followMoment={fingerEditor.cursorMoment}
+              followMoment={fingerEditor.cursorMoment ?? returnMoment}
               stillPages={fingerEditor.editing}
               playbackLocked={fingerEditor.editing}
             />

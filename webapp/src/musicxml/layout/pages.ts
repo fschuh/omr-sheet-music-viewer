@@ -2,13 +2,14 @@
 // result into what rendering draws. Everything is computed in staff spaces and converted to
 // page pixels when drawn.
 import type { LayoutModel, PageFormat } from "../model/layout";
+import { LABEL_GAP, LABEL_SIZE, STACK_GAP } from "./fingeringLabels";
 import type { ScoreModel } from "../model/score";
 import { beamGroups, crossStaffBeamGaps, layoutBeam, stemDirections, type BeamDrawing, type BeamGroup, type PlacedChord } from "./beams";
 import { avoidRestCollisions, layoutChord, stackSharedAccidentals, type ChordShape } from "./chords";
 import { layoutDirections, type Box } from "./directions";
 import { titleBlock } from "./credits";
 import { drawPage } from "./drawing";
-import { gapWidth, graceOffsets, measureSpacing, springWidth, type MeasureSpacing } from "./horizontal";
+import { gapWidth, graceOffsets, labelSide, measureSpacing, springWidth, type MeasureSpacing } from "./horizontal";
 import { prepareScore, type PreparedChord, type PreparedScore } from "./measureContent";
 import { layoutMarks } from "./marks";
 import { chordExtent, layoutSlurs, layoutTies, layoutTuplets, layoutVoltas, mergeSpanners, notePlaces } from "./spanners";
@@ -53,6 +54,7 @@ function placeHorizontally(
   spacings: MeasureSpacing[],
   shapes: Map<PreparedChord, ChordShape>,
   left: number,
+  room = 0,
 ): Omit<PlacedSystem, "staffTops" | "top" | "beams"> {
   let cursor = left;
   const chords = new Map<PreparedChord, number>();
@@ -83,7 +85,7 @@ function placeHorizontally(
         const graces = segment.graces.filter((chord) => chord.staff === staff);
         if (graces.length === 0) continue;
         const mainLeft = Math.max(0, ...segment.chords.filter((chord) => chord.staff === staff).map((chord) => shapes.get(chord)!.left));
-        for (const [grace, offset] of graceOffsets(graces, shapes, mainLeft).offsets) chords.set(grace, segmentLeft + offset);
+        for (const [grace, offset] of graceOffsets(graces, shapes, mainLeft, room).offsets) chords.set(grace, segmentLeft + offset);
       }
     });
     return { spacing, left: measureLeft, segmentX, barlineX };
@@ -203,6 +205,42 @@ function skylineDistance(upper: Box[], lower: Box[]): number {
   return distance;
 }
 
+/**
+ * Room for fingering labels, added to the staves' skylines so that staves and systems are
+ * spaced to clear them: each column's stack above its part's top staff for one hand and
+ * below its bottom staff for the other, beyond whatever the staff already reaches there.
+ */
+function addFingeringLabels(
+  system: PlacedSystem, skyline: Box[][], prepared: PreparedScore, shapes: Map<PreparedChord, ChordShape>,
+): void {
+  const columns = new Map<string, { x: number; notes: number; above: boolean; staff: number }>();
+  for (const chord of systemChords(system)) {
+    if (chord.model.measureRest || chord.model.notes.length === 0 || !chord.model.printed) continue;
+    const staves = prepared.partStaves[chord.part];
+    const above = labelSide(prepared, chord).endsWith("above");
+    const staff = above ? staves[0] : staves[staves.length - 1];
+    // Labels centre on the noteheads.
+    const x = system.chords.get(chord)! + 0.6 * shapes.get(chord)!.scale;
+    const key = `${staff}|${above}|${x.toFixed(2)}`;
+    const column = columns.get(key) ?? { x, notes: 0, above, staff };
+    column.notes += chord.model.notes.length;
+    columns.set(key, column);
+  }
+  for (const column of columns.values()) {
+    const height = LABEL_SIZE + (column.notes - 1) * (LABEL_SIZE + STACK_GAP);
+    const x1 = column.x - LABEL_SIZE / 2;
+    const x2 = column.x + LABEL_SIZE / 2;
+    const near = skyline[column.staff].filter((box) => box.x1 < x2 && box.x2 > x1);
+    if (column.above) {
+      const bottom = Math.min(0, ...near.map((box) => box.top)) - LABEL_GAP;
+      skyline[column.staff].push({ x1, x2, top: bottom - height, bottom });
+    } else {
+      const top = Math.max(4, ...near.map((box) => box.bottom)) + LABEL_GAP;
+      skyline[column.staff].push({ x1, x2, top, bottom: top + height });
+    }
+  }
+}
+
 /** Chord marks, slurs, tuplets and directions, each kept clear of those placed before it. */
 function annotate(
   score: ScoreModel, prepared: PreparedScore, systems: PlacedSystem[], shapes: Map<PreparedChord, ChordShape>, sp: number,
@@ -221,7 +259,14 @@ function topsFromGaps(gaps: number[]): number[] {
   return tops;
 }
 
-export function layoutScore(score: ScoreModel, format: PageFormat): LayoutModel {
+export interface LayoutOptions {
+  /** Space notes and systems so that a fingering label fits by every note. */
+  fingeringRoom?: boolean;
+}
+
+export function layoutScore(score: ScoreModel, format: PageFormat, options: LayoutOptions = {}): LayoutModel {
+  // Labels in a row stand this far apart, centre to centre.
+  const room = options.fingeringRoom ? LABEL_SIZE + STACK_GAP : 0;
   const prepared = prepareScore(score);
   const staffCount = prepared.staves.length;
   const shapes = new Map<PreparedChord, ChordShape>();
@@ -240,7 +285,7 @@ export function layoutScore(score: ScoreModel, format: PageFormat): LayoutModel 
     }
   }
   const spacings = prepared.measures.map((measure, index) =>
-    measureSpacing(prepared, measure, shapes, prepared.measures[index + 1]));
+    measureSpacing(prepared, measure, shapes, prepared.measures[index + 1], room));
 
   const sp = format.staffSpace;
   const pageWidth = format.width / sp;
@@ -269,7 +314,7 @@ export function layoutScore(score: ScoreModel, format: PageFormat): LayoutModel 
   const crossStaff = new Set(groups.flat().filter((group) => new Set(group.map((chord) => chord.staff)).size > 1).flat());
   // Systems: horizontal placement, then staves spaced so their content does not collide.
   const systems: PlacedSystem[] = plans.map((plan) => {
-    const placed = placeHorizontally(plan, spacings, shapes, margins.left + systemMargins(plan.measures[0]).left);
+    const placed = placeHorizontally(plan, spacings, shapes, margins.left + systemMargins(plan.measures[0]).left, room);
     const chords = systemChords(placed);
     let staffTops = topsFromGaps(staffGaps(score, prepared, null));
     let beams = layoutBeams({ ...placed, staffTops }, groups, shapes);
@@ -285,6 +330,7 @@ export function layoutScore(score: ScoreModel, format: PageFormat): LayoutModel 
   const draft = annotate(score, prepared, systems, shapes, sp, crossStaff).directions.boxes;
   const skylines = new Map(systems.map((system) => {
     const skyline = staffSkylines(system, draft.get(system) ?? [], shapes, staffCount, crossStaff);
+    if (room > 0) addFingeringLabels(system, skyline, prepared, shapes);
     const gaps = system.staffTops.slice(1).map((top, index) => top - system.staffTops[index] - 4);
     const beamed = system.plan.measures.flatMap((measure) => groups[measure]).map((group) => crossStaffBeamGaps(group, shapes));
     const needed = gaps.map((gap, index) => Math.max(
@@ -376,7 +422,7 @@ export function layoutScore(score: ScoreModel, format: PageFormat): LayoutModel 
   );
   const pages = pagesOfSystems.map((page, pageIndex) =>
     drawPage(pageIndex, page.map((entry) => entry.system), {
-      score, prepared, shapes, format, sp, firstSystem: systems[0], spanners, printedFingerings: marks.fingerings,
+      score, prepared, shapes, format, sp, firstSystem: systems[0], spanners, printedFingerings: marks.fingerings, fingeringRoom: room > 0,
     }),
   );
   return { format, pages };

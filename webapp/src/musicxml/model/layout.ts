@@ -90,6 +90,8 @@ export interface LayoutPage {
   chords: LayoutChord[];
   /** From the top, numbered as LayoutChord.systemIndex numbers them. */
   systems: LayoutSystem[];
+  /** Laid out with room for a fingering label by every note, clear of everything else. */
+  fingeringRoom?: boolean;
 }
 
 export interface LayoutModel {

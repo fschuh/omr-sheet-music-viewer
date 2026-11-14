@@ -7,13 +7,17 @@ import { glyphBox } from "../fonts/smufl";
 import type { Bounds, Drawable, LayoutPage } from "../model/layout";
 
 /** A label's diameter, in staff spaces. */
-const LABEL_SIZE = 1.7;
+export const LABEL_SIZE = 1.7;
 /** Between the music and the nearest label, in staff spaces. */
-const LABEL_GAP = 0.6;
+export const LABEL_GAP = 0.6;
 /** Between two labels of a stack, in staff spaces. */
-const STACK_GAP = 0.15;
-/** Labels step past marks in their way by at most this, in staff spaces; further, they overlap. */
+export const STACK_GAP = 0.15;
+/**
+ * Labels step past marks in their way by at most this, in staff spaces; further, they overlap.
+ * A page laid out with room for them has that room wherever they need it.
+ */
 const MAXIMUM_SHIFT = 5;
+const ROOMY_MAXIMUM_SHIFT = 40;
 
 export interface FingeringLabelPlacement {
   /** The note's structural key. */
@@ -156,7 +160,7 @@ export function fingeringLabelLayout(
         moved = true;
       }
       if (!moved) return edge;
-      if (Math.abs(edge - start) > MAXIMUM_SHIFT * sp) return start;
+      if (Math.abs(edge - start) > (page.fingeringRoom ? ROOMY_MAXIMUM_SHIFT : MAXIMUM_SHIFT) * sp) return start;
     }
     return start;
   }

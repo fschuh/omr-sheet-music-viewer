@@ -106,18 +106,25 @@ function clefWidth(clef: Clef, change: boolean): number {
   return glyph ? glyphBox(glyph.glyph).right : 0;
 }
 
-/** Where each grace chord's origin sits, left of its main chord, and how far they reach. */
+/**
+ * Where each grace chord's origin sits, left of its main chord, and how far they reach. With
+ * `room`, each stands at least that far from the chord after it, so their fingering labels
+ * fit side by side.
+ */
 export function graceOffsets(
   graces: PreparedChord[],
   shapes: Map<PreparedChord, ChordShape>,
   mainLeft: number,
+  room = 0,
 ): { offsets: Map<PreparedChord, number>; reach: number } {
   const offsets = new Map<PreparedChord, number>();
   let edge = -(mainLeft + GRACE_TO_MAIN_DISTANCE);
+  let after = 0;
   for (const grace of [...graces].reverse()) {
     const shape = shapes.get(grace)!;
-    const x = edge - shape.right;
+    const x = room > 0 ? Math.min(edge - shape.right, after - room) : edge - shape.right;
     offsets.set(grace, x);
+    after = x;
     edge = x - shape.left - GRACE_TO_GRACE_DISTANCE;
   }
   return { offsets, reach: graces.length ? -(edge + GRACE_TO_GRACE_DISTANCE) : mainLeft };
@@ -133,6 +140,7 @@ export function segmentExtent(
   segment: Segment,
   staffCount: number,
   shapes: Map<PreparedChord, ChordShape>,
+  room = 0,
 ): SegmentExtent {
   const left = new Array<number>(staffCount).fill(0);
   const right = new Array<number>(staffCount).fill(0);
@@ -144,7 +152,7 @@ export function segmentExtent(
   }
   for (let staff = 0; staff < staffCount; staff += 1) {
     const graces = segment.graces.filter((chord) => chord.staff === staff);
-    if (graces.length) left[staff] = graceOffsets(graces, shapes, left[staff]).reach;
+    if (graces.length) left[staff] = graceOffsets(graces, shapes, left[staff], room).reach;
     const clef = segment.clefChanges.find((change) => change.staff === staff);
     if (clef) left[staff] += clefWidth(clef.clef, true) + CHANGE_DISTANCE;
   }
@@ -231,14 +239,36 @@ export function startRepeatOffset(measure: PreparedMeasure): number {
   return changes.hard > 0 ? changes.hard + changes.padding : -BARLINE_WIDTH;
 }
 
+/**
+ * Where a chord's fingering labels go: `above` its part for the hand of the part's top staff,
+ * below it for the other. A part of one staff is played by the left hand in a bass clef.
+ */
+export function labelSide(score: PreparedScore, chord: PreparedChord): string {
+  const staves = score.partStaves[chord.part];
+  const above = staves.length > 1 ? chord.staff === staves[0] : chord.clef.sign !== "F";
+  return `${chord.part}|${above ? "above" : "below"}`;
+}
+
+function labelSides(score: PreparedScore, segment: Segment): Set<string> {
+  return new Set(segment.chords
+    .filter((chord) => !chord.model.measureRest && chord.model.notes.length > 0)
+    .map((chord) => labelSide(score, chord)));
+}
+
+/**
+ * How a measure is spaced. With `room`, notes whose fingering labels share a side stand at
+ * least that far apart, so the labels fit side by side.
+ */
 export function measureSpacing(
   score: PreparedScore,
   measure: PreparedMeasure,
   shapes: Map<PreparedChord, ChordShape>,
   next?: PreparedMeasure,
+  room = 0,
 ): MeasureSpacing {
   const staffCount = score.staves.length;
-  const extents = measure.segments.map((segment) => segmentExtent(segment, staffCount, shapes));
+  const extents = measure.segments.map((segment) => segmentExtent(segment, staffCount, shapes, room));
+  const sides = room > 0 ? measure.segments.map((segment) => labelSides(score, segment)) : [];
   const firstLeft = Math.max(0, ...extents[0].left);
   const showTime = measure.index === 0 || measure.timeChange !== null;
   const changes = startChangesWidth(measure);
@@ -259,7 +289,8 @@ export function measureSpacing(
     const extent = extents[index];
     if (index + 1 < measure.segments.length) {
       const next = extents[index + 1];
-      const hard = Math.max(...extent.right.map((right, staff) => right + next.left[staff]));
+      let hard = Math.max(...extent.right.map((right, staff) => right + next.left[staff]));
+      if (room > 0 && [...sides[index]].some((side) => sides[index + 1].has(side))) hard = Math.max(hard, room);
       return { hard, padding: MIN_NOTE_DISTANCE, stretch };
     }
     return { hard: Math.max(...extent.right), padding: NOTE_BAR_DISTANCE, stretch };

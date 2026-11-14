@@ -145,7 +145,8 @@ export interface ScoreFingerings {
   fromStore: boolean;
 }
 
-function viewerIdsByKey(documentMusicXml: string): Map<string, string> {
+/** Each note's viewer ID, by structural key, from a document MusicXML. */
+export function viewerIdsByKey(documentMusicXml: string): Map<string, string> {
   const result = new Map<string, string>();
   for (const match of documentMusicXml.matchAll(/<note\b[^>]*\bid="([^"]+)"/g)) {
     result.set(noteKeyOf(match[1]), match[1]);
