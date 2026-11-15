@@ -215,6 +215,13 @@ function addFingeringLabels(
   movedHand?: MovedHand,
 ): void {
   const columns = new Map<string, { x: number; notes: number; above: boolean; staff: number }>();
+  // Each part's outer staves are solid from end to end, so that labels next to them are spaced
+  // clear of their lines, not only of what happens to stand above or below them.
+  for (const staves of prepared.partStaves) {
+    for (const staff of new Set([staves[0], staves[staves.length - 1]])) {
+      skyline[staff].push({ x1: system.left, x2: system.right, top: 0, bottom: 4 });
+    }
+  }
   for (const chord of systemChords(system)) {
     if (chord.model.measureRest || !chord.model.printed) continue;
     const staves = prepared.partStaves[chord.part];
@@ -234,7 +241,18 @@ function addFingeringLabels(
     const height = LABEL_SIZE + (column.notes - 1) * (LABEL_SIZE + STACK_GAP);
     const x1 = column.x - LABEL_SIZE / 2;
     const x2 = column.x + LABEL_SIZE / 2;
-    const near = skyline[column.staff].filter((box) => box.x1 < x2 && box.x2 > x1);
+    // The staff's content in the column, beams included, as the labels are placed against it.
+    const staffTop = system.staffTops[column.staff];
+    const beams = system.beams.flatMap((beam) => beam.segments.map((segment) => {
+      const ys = [segment.y1, segment.y2, segment.y1 + segment.thickness, segment.y2 + segment.thickness];
+      return {
+        x1: Math.min(segment.x1, segment.x2),
+        x2: Math.max(segment.x1, segment.x2),
+        top: Math.min(...ys) - staffTop,
+        bottom: Math.max(...ys) - staffTop,
+      };
+    }));
+    const near = [...skyline[column.staff], ...beams].filter((box) => box.x1 < x2 && box.x2 > x1);
     if (column.above) {
       const bottom = Math.min(0, ...near.map((box) => box.top)) - LABEL_GAP;
       skyline[column.staff].push({ x1, x2, top: bottom - height, bottom });

@@ -142,9 +142,11 @@ export function fingeringLabelLayout(
 
   /**
    * How far from `start` a stack of `height` must stand, going down (or up, for the right
-   * hand), to clear every obstacle in its column; `start` itself when it cannot within reach.
+   * hand), to clear every obstacle in its column; `start` itself when it cannot within reach,
+   * or without crossing `limit`, the edge of the next system (or the one before): a label
+   * that cannot fit in its own system overlaps there rather than land in another.
    */
-  function clearOf(x: number, start: number, height: number, down: boolean, more: readonly Bounds[] = []): number {
+  function clearOf(x: number, start: number, height: number, down: boolean, limit: number, more: readonly Bounds[] = []): number {
     const left = x - size / 2 - gap / 2;
     const right = x + size / 2 + gap / 2;
     let edge = start;
@@ -159,6 +161,7 @@ export function fingeringLabelLayout(
         edge = down ? Math.max(edge, y2 + gap) : Math.min(edge, y1 - gap);
         moved = true;
       }
+      if (down ? edge + height > limit : edge - height < limit) return start;
       if (!moved) return edge;
       if (Math.abs(edge - start) > (page.fingeringRoom ? ROOMY_MAXIMUM_SHIFT : MAXIMUM_SHIFT) * sp) return start;
     }
@@ -177,9 +180,10 @@ export function fingeringLabelLayout(
     const x = notes.reduce((total, note) => total + note.x, 0) / notes.length;
     const count = notes.length;
     const height = size + (count - 1) * step;
+    const system = Number(group.place.split("|")[0]);
     const first = group.left
-      ? clearOf(x, extent.bottom + gap, height, true, rightLabels) + size / 2
-      : clearOf(x, extent.top - gap, height, false) - height + size / 2;
+      ? clearOf(x, extent.bottom + gap, height, true, page.systems[system + 1]?.top ?? Infinity, rightLabels) + size / 2
+      : clearOf(x, extent.top - gap, height, false, page.systems[system - 1]?.bottom ?? -Infinity) - height + size / 2;
     if (!group.left) rightLabels.push([x - size / 2, first - size / 2, x + size / 2, first - size / 2 + height]);
     notes.forEach((note, index) => {
       labels.push({ key: note.key, x, y: first + index * step, left: group.left, stackId: id });

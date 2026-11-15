@@ -164,3 +164,28 @@ test("labels need room only where their hands are not those the layout made room
   const moved = layoutScore(parsed, format, { fingeringRoom: true, movedHand: firstBarLeft }).pages[0];
   assert.equal(labelsNeedRoom(moved, hands), false, "fits once laid out for those hands");
 });
+
+test("with room for fingerings, every label stays within its own system", () => {
+  // High right-hand chords over a resting left hand, on pages full enough that systems close up:
+  // nothing reaches below a system, so only its staff lines keep the next system's labels off it.
+  const chord = (notes: string[]) =>
+    notes.map((pitch, index) => note(pitch, 2, { chord: index > 0, type: "eighth", staff: 1 })).join("");
+  const bar = [
+    ...Array.from({ length: 8 }, () => chord(["A5", "C6", "E6"])),
+    "<backup><duration>16</duration></backup>",
+    note(null, 16, { measureRest: true, staff: 2, voice: 5 }),
+  ].join("");
+  const parsed = parseMusicXml(score([piano(Array.from({ length: 40 }, () => bar))]));
+  const pages = layoutScore(parsed, pageFormat(parsed.defaults), { fingeringRoom: true }).pages;
+  for (const page of pages) {
+    const layout = fingeringLabelLayout(page, staffHand);
+    const half = layout.size / 2;
+    for (const label of layout.labels) {
+      const system = Number(label.stackId.split("|")[0]);
+      const next = page.systems[system + 1];
+      const previous = page.systems[system - 1];
+      if (label.left && next) assert.ok(label.y + half <= next.top, `${label.key} reaches the next system`);
+      if (!label.left && previous) assert.ok(label.y - half >= previous.bottom, `${label.key} reaches the system before`);
+    }
+  }
+});
