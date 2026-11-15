@@ -4,7 +4,7 @@
 // a predicted finger is an outline in its hand's colour, the player's own is filled, and a
 // printed one stays the score's own digit.
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
-import type { FingeringEditor } from "./fingeringEditor";
+import { editorLabelHand, printedFingerReplaced, type FingeringEditor } from "./fingeringEditor";
 import { fingeringLabelLayout, type EffectiveFingering, type MusicXmlPage } from "./musicxml";
 import { formatKeyboardShortcut, type PlaybackShortcuts } from "./shortcuts";
 import type { PlaybackCommand } from "./playback";
@@ -252,13 +252,9 @@ export const FingeringPageLayer = memo(function FingeringPageLayer({
   // does not place the page's labels again.
   const hands = useMemo(() => {
     const result = new Map<string, boolean>();
-    for (const key of notes.keys()) {
-      const fingering = fingerings?.[prefix + key];
-      // A held note is played by the finger holding it, which its tie's first note shows.
-      if (!fingering || fingering.tiedTo) continue;
-      // A printed finger the player kept is the score's own digit, not a label.
-      if (fingering.source === "printed" && notes.get(key)?.printedFingering) continue;
-      result.set(key, fingering.left);
+    for (const [key, note] of notes) {
+      const left = editorLabelHand(fingerings?.[prefix + key], Boolean(note.printedFingering));
+      if (left !== undefined) result.set(key, left);
     }
     return result;
   }, [fingerings, notes, prefix]);
@@ -323,7 +319,7 @@ export const FingeringPageLayer = memo(function FingeringPageLayer({
         {printedTargets.map(({ note, fingering }) => {
           const id = prefix + note.key;
           const [left, top, right, bottom] = note.printedFingering!;
-          const replaced = fingering.source === "yours";
+          const replaced = printedFingerReplaced(fingering);
           return (
             <g key={`printed-${note.key}`}>
               {replaced ? (

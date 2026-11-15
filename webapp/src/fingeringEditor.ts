@@ -72,6 +72,26 @@ export function rekeyFingeringLayers(layers: FingeringLayers, idsByKey: Readonly
   return { ...layers, predicted: rekey(layers.predicted), printed: rekey(layers.printed), tiedTo };
 }
 
+/**
+ * The side of the staff a note's label stands on while editing, true for the left hand's;
+ * undefined when it has no label. A held note has none: the finger holding it is its tie's
+ * first note's. Nor has a finger printed in the score, `printed`, while the player keeps it
+ * as printed: the score's own digit shows it. Moved to the other hand, it gets a label there.
+ */
+export function editorLabelHand(fingering: EffectiveFingering | undefined, printed: boolean): boolean | undefined {
+  if (!fingering || fingering.tiedTo) return undefined;
+  if (printed && fingering.source === "printed" && !fingering.handMoved) return undefined;
+  return fingering.left;
+}
+
+/**
+ * Whether a printed finger no longer says how the note is played, so it is struck out: the
+ * player gave the note another finger, or moved it to the other hand.
+ */
+export function printedFingerReplaced(fingering: EffectiveFingering): boolean {
+  return fingering.source === "yours" || fingering.handMoved;
+}
+
 /** A note the editor can set a finger for. */
 export interface EditTarget {
   /** Viewer ID. */

@@ -146,6 +146,7 @@ import {
   viewerIdsByKey,
 } from "./musicxml";
 import {
+  editorLabelHand,
   isEditNavigation,
   rekeyFingeringLayers,
   useFingeringEditor,
@@ -1463,13 +1464,9 @@ export function App() {
       if (!surface) return false;
       const notes = new Map(surface.chords.flatMap((chord) => chord.notes.map((note) => [note.key, note] as const)));
       if (![...changed].some((key) => notes.has(key))) return false;
-      // The labels as the editor draws them: none for a held note or a printed finger kept.
-      return labelsNeedRoom(surface, (key) => {
-        const fingering = resolved[`page-${page.index + 1}-${key}`];
-        if (!fingering || fingering.tiedTo) return undefined;
-        if (fingering.source === "printed" && notes.get(key)?.printedFingering) return undefined;
-        return fingering.left;
-      });
+      // The labels as the editor draws them.
+      return labelsNeedRoom(surface, (key) =>
+        editorLabelHand(resolved[`page-${page.index + 1}-${key}`], Boolean(notes.get(key)?.printedFingering)));
     });
     if (crowded) relayoutForFingering(true);
   }, [movedHandsKey, relayoutForFingering]);

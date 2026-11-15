@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { applyTypedRun, editWalk, momentTargets, navigateWalk, withFingeringLayers } from "./fingeringEditor";
+import { applyTypedRun, editorLabelHand, editWalk, momentTargets, navigateWalk, printedFingerReplaced, withFingeringLayers } from "./fingeringEditor";
 import { resolveFingerings, type FingeringOverrides } from "./musicxml";
 import { buildPlaybackTimeline, timelineForPracticeHand, type PlaybackMoment } from "./playback";
 import type { FingeringLayers, LoadedDocument } from "./types";
@@ -157,4 +157,22 @@ test("the cursor steps by system to the note across from it, nearest in pitch of
   assert.equal(step("c-low", "backwardSystem"), "a-low");
   assert.equal(step("d", "forwardSystem"), "e", "on to the next page");
   assert.equal(step("e", "forwardSystem"), "e", "the last system stays");
+});
+
+test("a printed finger gets a label once its note moves to the other hand, and is struck out", () => {
+  const printed = { [id("a")]: { finger: 3, left: false } };
+  const resolve = (overrides: FingeringOverrides) => resolveFingerings({ predicted: {}, printed }, overrides)[id("a")];
+  const kept = resolve({});
+  assert.equal(editorLabelHand(kept, true), undefined, "the score's digit shows it");
+  assert.equal(printedFingerReplaced(kept), false);
+  const moved = resolve({ a: { left: true } });
+  assert.equal(moved.source, "printed");
+  assert.equal(editorLabelHand(moved, true), true, "a label on the left hand's side");
+  assert.equal(printedFingerReplaced(moved), true);
+  const refingered = resolve({ a: { finger: 1 } });
+  assert.equal(editorLabelHand(refingered, true), false);
+  assert.equal(printedFingerReplaced(refingered), true);
+  // A printed finger the page does not show as a digit, and a held note.
+  assert.equal(editorLabelHand(kept, false), false);
+  assert.equal(editorLabelHand({ ...kept, tiedTo: id("b") }, false), undefined);
 });
