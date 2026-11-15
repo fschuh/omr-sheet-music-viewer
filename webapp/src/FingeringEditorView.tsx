@@ -7,6 +7,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import { editorLabelHand, printedFingerReplaced, type FingeringEditor } from "./fingeringEditor";
 import { fingeringLabelLayout, labelColumn, type EffectiveFingering, type MusicXmlPage } from "./musicxml";
 import { formatKeyboardShortcut, type PlaybackShortcuts } from "./shortcuts";
+import { createPortal } from "react-dom";
 import type { RevealElement } from "./DocumentViewer";
 import type { PlaybackCommand } from "./playback";
 
@@ -86,6 +87,16 @@ function labelText(id: string, fingering: EffectiveFingering, pitch: string | nu
   return `${pitch ?? id}, ${hand} hand finger ${fingering.finger}, ${who}`;
 }
 
+/** Where a page stands in the layer that holds the pages, in that layer's own pixels. */
+interface PageFrame {
+  host: HTMLElement;
+  page: HTMLElement;
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
 /** The finger picker, standing just outside the ringed note's label. */
 function FingerPicker({
   editor,
@@ -95,6 +106,7 @@ function FingerPicker({
   scale,
   pageWidth,
   pageHeight,
+  frame,
   reveal,
 }: {
   editor: FingeringEditor;
@@ -104,6 +116,8 @@ function FingerPicker({
   scale: number;
   pageWidth: number;
   pageHeight: number;
+  /** Where its page stands in the layer that holds the pages, which the picker is drawn in. */
+  frame: PageFrame;
   /** Scrolls the picker into view. */
   reveal?: RevealElement;
 }) {
@@ -117,8 +131,8 @@ function FingerPicker({
   useLayoutEffect(() => {
     const picker = pickerRef.current;
     const stage = picker?.closest(".viewer-stage")?.getBoundingClientRect();
-    const page = picker?.closest(".document-page")?.getBoundingClientRect();
-    if (!picker || !stage || !page) return;
+    const page = frame.page.getBoundingClientRect();
+    if (!picker || !stage) return;
     const view = { left: Math.max(stage.left, page.left), right: Math.min(stage.right, page.right) };
     const box = picker.getBoundingClientRect();
     // Where it would stand centred on the note.
@@ -141,15 +155,17 @@ function FingerPicker({
   const other = fingering.left ? "right" : "left";
   const resetLabel = fingering.basePrinted ? "Use the printed finger" : "Use the predicted finger";
   const hasOverride = fingering.source === "yours" || fingering.handMoved;
-  return (
+  // Over its page but outside it: a page clips what stands past its edges, and the picker of
+  // a note near the page's top or bottom stands past them.
+  return createPortal(
     <div
       ref={pickerRef}
       className={`finger-picker ${handClass(fingering.left)}${above ? " above" : " below"}`}
       role="group"
       aria-label={`Finger for ${cursor.pitch}`}
       style={{
-        left: `${(anchor.x / pageWidth) * 100}%`,
-        top: `${(anchor.y / pageHeight) * 100}%`,
+        left: frame.left + (anchor.x / pageWidth) * frame.width,
+        top: frame.top + (anchor.y / pageHeight) * frame.height,
         transform: `translate(calc(-50% + ${slide / scale}px), ${above ? "-100%" : "0"}) scale(${1 / scale})`,
         transformOrigin: above ? "50% 100%" : "50% 0",
         ["--caret-slide" as string]: `${-slide}px`,
@@ -209,7 +225,8 @@ function FingerPicker({
         disabled={!hasOverride}
         onClick={editor.resetHere}
       >↺</button>
-    </div>
+    </div>,
+    frame.host,
   );
 }
 
@@ -441,6 +458,26 @@ export const FingeringPageLayer = memo(function FingeringPageLayer({
       </>
     );
   }, [fingerings, hover, hoverId, layout, movedHeads, notes, page.staffSpace, pick, prefix, printedTargets]);
+  // Where this page stands among the pages, for the picker drawn over it: measured once per
+  // layout and page size, not on every move of the cursor.
+  const markerRef = useRef<HTMLSpanElement>(null);
+  const [frame, setFrame] = useState<PageFrame | null>(null);
+  useLayoutEffect(() => {
+    const page = markerRef.current?.closest<HTMLElement>(".document-page");
+    const host = page?.parentElement;
+    if (!page || !host) return;
+    const pageBox = page.getBoundingClientRect();
+    const hostBox = host.getBoundingClientRect();
+    const zoom = page.offsetWidth > 0 ? pageBox.width / page.offsetWidth : 1;
+    setFrame({
+      host,
+      page,
+      left: (pageBox.left - hostBox.left) / zoom,
+      top: (pageBox.top - hostBox.top) / zoom,
+      width: page.offsetWidth,
+      height: page.offsetHeight,
+    });
+  }, [page, displayWidth, editor.editing]);
   if (!editor.editing || !fingerings) return null;
 
   const cursorId = editor.cursor?.id ?? null;
@@ -581,6 +618,7 @@ export const FingeringPageLayer = memo(function FingeringPageLayer({
   });
   return (
     <>
+      <span ref={markerRef} hidden />
       {band ? (
         <div
           className="fingering-band"
@@ -654,7 +692,7 @@ export const FingeringPageLayer = memo(function FingeringPageLayer({
           />
         </>
       ) : null}
-      {editor.pickerOpen && anchor && cursorFingering ? (
+      {editor.pickerOpen && anchor && cursorFingering && frame ? (
         <FingerPicker
           editor={editor}
           fingering={cursorFingering}
@@ -663,6 +701,7 @@ export const FingeringPageLayer = memo(function FingeringPageLayer({
           scale={scale}
           pageWidth={page.width}
           pageHeight={page.height}
+          frame={frame}
           reveal={reveal}
         />
       ) : null}
