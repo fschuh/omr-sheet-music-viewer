@@ -404,10 +404,30 @@ export const FingeringPageLayer = memo(function FingeringPageLayer({
     const stack = layout.stacks.find((candidate) => candidate.id === cursorLabel.stackId);
     const above = !cursorLabel.left;
     if (stack) {
-      const x = stack.x + layout.size * 0.95;
       const y = above ? stack.top - layout.size * 0.12 - radius * 0.6 : stack.bottom + layout.size * 0.12 + radius * 0.6;
-      anchor = { x, y, above };
-      lead = { x, from: y, to: cursorLabel.y, tickTo: cursorLabel.x + radius + layout.size * 0.08 };
+      // The line runs down whichever side of the stack is clear of other labels and stacks,
+      // the right first; with neither clear, the caret points at the stack and the ring alone
+      // marks the note.
+      const clear = (x: number) => {
+        const left = x - layout.size * 0.15;
+        const right = x + layout.size * 0.15;
+        const top = Math.min(y, cursorLabel.y);
+        const bottom = Math.max(y, cursorLabel.y);
+        const labelInWay = layout.labels.some((label) => label.stackId !== stack.id &&
+          label.x + radius > left && label.x - radius < right && label.y + radius > top && label.y - radius < bottom);
+        const stackInWay = layout.stacks.some((other) => other.id !== stack.id &&
+          other.x + layout.size * 0.62 > left && other.x - layout.size * 0.62 < right &&
+          other.bottom + layout.size * 0.12 > top && other.top - layout.size * 0.12 < bottom);
+        return !labelInWay && !stackInWay;
+      };
+      const side = [1, -1].find((direction) => clear(stack.x + direction * layout.size * 0.95));
+      if (side === undefined) {
+        anchor = { x: stack.x, y, above };
+      } else {
+        const x = stack.x + side * layout.size * 0.95;
+        anchor = { x, y, above };
+        lead = { x, from: y, to: cursorLabel.y, tickTo: cursorLabel.x + side * (radius + layout.size * 0.08) };
+      }
     }
   }
   if (!anchor && ring) {
@@ -494,9 +514,9 @@ export const FingeringPageLayer = memo(function FingeringPageLayer({
             className="finger-picker-lead"
             aria-hidden="true"
             style={{
-              left: lead.tickTo * k,
+              left: Math.min(lead.x, lead.tickTo) * k - (lead.x < lead.tickTo ? 0.75 / scale : 0),
               top: lead.to * k - 0.75 / scale,
-              width: (lead.x - lead.tickTo) * k + 0.75 / scale,
+              width: Math.abs(lead.x - lead.tickTo) * k + 0.75 / scale,
               height: 1.5 / scale,
             }}
           />
