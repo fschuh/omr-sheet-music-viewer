@@ -13,11 +13,13 @@ const PAGE_STYLE =
   // The note the fingering editor points at, in its hand's colour, with its chord's stem;
   // the chord's other notes stay black, so the note stands out within it.
   ".mx-left-hand{color:var(--hand-left,#f28c38)}.mx-right-hand{color:var(--hand-right,#2fbfa5)}" +
-  ".mx-chord.mx-left-hand .mx-note:not(.mx-left-hand),.mx-chord.mx-right-hand .mx-note:not(.mx-right-hand){color:#000}";
+  ".mx-chord.mx-left-hand .mx-note:not(.mx-left-hand),.mx-chord.mx-right-hand .mx-note:not(.mx-right-hand){color:#000}" +
+  // A note the pointer is over while editing fingers, in its hand's darker colour.
+  ".mx-left-hover{color:var(--hand-left-dark,#915421)}.mx-right-hover{color:var(--hand-right-dark,#1b6f60)}";
 /** SMuFL fonts are scaled so one em is four staff spaces. */
 const EM_PER_STAFF_SPACE = 4;
 
-export type HighlightKind = "selected" | "playback" | "left-hand" | "right-hand";
+export type HighlightKind = "selected" | "playback" | "left-hand" | "right-hand" | "left-hover" | "right-hover";
 
 function draw(item: Drawable, staffSpace: number, key: number): ReactElement {
   switch (item.kind) {
@@ -156,10 +158,13 @@ export const MusicXmlNoteMarks = memo(function MusicXmlNoteMarks({
   page,
   keys,
   kind,
+  stems = true,
 }: {
   page: LayoutPage;
   keys: readonly string[];
   kind: HighlightKind;
+  /** Draw the chords' stems too; without, only the notes themselves. */
+  stems?: boolean;
 }) {
   const marked = new Set(keys);
   const chords = page.chords.filter((chord) => chord.notes.some((note) => marked.has(note.key)));
@@ -173,7 +178,7 @@ export const MusicXmlNoteMarks = memo(function MusicXmlNoteMarks({
       <style>{PAGE_STYLE}</style>
       {chords.map((chord) => (
         <g key={chord.id} className={`mx-${kind}`}>
-          {chord.items.map((item, index) => draw(item, page.staffSpace, index))}
+          {stems ? chord.items.map((item, index) => draw(item, page.staffSpace, index)) : null}
           {chord.notes.filter((note) => marked.has(note.key)).map((note) => (
             <g key={note.key}>{note.items.map((item, index) => draw(item, page.staffSpace, index))}</g>
           ))}

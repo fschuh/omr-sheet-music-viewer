@@ -295,6 +295,10 @@ export interface FingeringEditor {
   refit: () => void;
   /** Points the cursor at a note, entering edit mode, and unless told otherwise opens its picker. */
   select: (id: string, openPicker?: boolean) => void;
+  /** The note the pointer is over while editing, by viewer ID, as clicking it would select it. */
+  hoverId: string | null;
+  /** The pointer is over a note's label or notehead, or, with null, off them. */
+  hover: (id: string | null) => void;
   navigate: (command: EditNavigation) => void;
   /** Moves within the moment: -1 to the note above, 1 to the note below. */
   moveInMoment: (direction: -1 | 1) => void;
@@ -507,6 +511,17 @@ export function useFingeringEditor(options: FingeringEditorOptions): FingeringEd
     setPickerOpen(openPicker);
   }, [editing, enter, fingerings, onPracticeHandChange, walk]);
 
+  const [hovered, setHovered] = useState<string | null>(null);
+  const hover = useCallback((id: string | null) => {
+    // A held note is hovered as the note that starts its tie, which clicking it selects.
+    const target = id === null ? null : fingerings?.[id]?.tiedTo ?? id;
+    setHovered(target !== null && fingerings?.[target] ? target : null);
+  }, [fingerings]);
+  // Back in edit mode, nothing is hovered until the pointer moves.
+  useEffect(() => {
+    if (!editing) setHovered(null);
+  }, [editing]);
+
   const navigate = useCallback((command: EditNavigation) => {
     if (!editing) return;
     moveTo(walk[navigateWalk(walk, cursorIndex, command)]);
@@ -547,6 +562,8 @@ export function useFingeringEditor(options: FingeringEditorOptions): FingeringEd
     undo,
     refit,
     select,
+    hoverId: editing ? hovered : null,
+    hover,
     navigate,
     moveInMoment,
     audition: auditionCursor,

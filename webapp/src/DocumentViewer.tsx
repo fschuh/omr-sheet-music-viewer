@@ -288,6 +288,10 @@ interface DocumentViewerProps {
   footer?: ReactNode;
   /** Notes of an engraved page to colour while playback is stopped, such as the fingering editor's. */
   noteHighlight?: NoteHighlight | null;
+  /** Notes drawn over `noteHighlight` without their stems, such as the one the pointer is over. */
+  hoverHighlight?: NoteHighlight | null;
+  /** Given, the notehead under a mouse pointer is reported as it moves, and null off any. */
+  onHoverGroup?: (group: VisualGroupRef | null) => void;
   /** A moment to keep in view while playback is stopped. */
   followMoment?: PlaybackMoment | null;
   /**
@@ -907,6 +911,8 @@ const EngravedPage = memo(function EngravedPage({
   playbackGroupIds,
   noteKeys,
   noteKind,
+  hoverKeys,
+  hoverKind,
   still,
 }: {
   surface: MusicXmlPage;
@@ -918,6 +924,9 @@ const EngravedPage = memo(function EngravedPage({
   /** Notes coloured `noteKind` in place of any other highlight, while playback is stopped. */
   noteKeys: readonly string[];
   noteKind: HighlightKind;
+  /** Notes drawn `hoverKind` over everything else, without their stems. */
+  hoverKeys: readonly string[];
+  hoverKind: HighlightKind;
   /** Drawn as one image, with `noteKeys` drawn over it. */
   still: boolean;
 }) {
@@ -945,6 +954,7 @@ const EngravedPage = memo(function EngravedPage({
           {noteKeys.length > 0 ? <MusicXmlNoteMarks page={surface} keys={noteKeys} kind={noteKind} /> : null}
         </>
       ) : null}
+      {hoverKeys.length > 0 ? <MusicXmlNoteMarks page={surface} keys={hoverKeys} kind={hoverKind} stems={false} /> : null}
     </>
   );
 });
@@ -1032,6 +1042,8 @@ export function DocumentViewer({
   renderPageExtra,
   footer,
   noteHighlight = null,
+  hoverHighlight = null,
+  onHoverGroup,
   followMoment = null,
   stillPages = false,
   playbackLocked = false,
@@ -1781,7 +1793,11 @@ export function DocumentViewer({
   }
 
   function handlePointerMove(event: React.PointerEvent<HTMLDivElement>) {
-    if (!activePointers.current.has(event.pointerId)) return;
+    if (!activePointers.current.has(event.pointerId)) {
+      if (event.pointerType !== "touch") hoverAt(event.clientX, event.clientY);
+      return;
+    }
+    hoverAt(null);
     updatePointer(event);
     const pointers = Array.from(activePointers.current.values());
     if (pointers.length === 1 && dragStart.current) {
@@ -1812,7 +1828,16 @@ export function DocumentViewer({
     }
   }
 
+  // Every move reports what is under the pointer; reporting the same note again changes nothing.
+  function hoverAt(clientX: number | null, clientY = 0) {
+    onHoverGroup?.(clientX === null ? null : groupAt(clientX, clientY));
+  }
+
   function selectAt(clientX: number, clientY: number) {
+    onSelectGroup(groupAt(clientX, clientY));
+  }
+
+  function groupAt(clientX: number, clientY: number): VisualGroupRef | null {
     for (const page of pages) {
       const geometry = geometryByPage.get(page.index);
       if (!geometry) continue;
@@ -1830,12 +1855,9 @@ export function DocumentViewer({
         pageDiagnosticNoteheads(page, showDiagnosticVisualGroups),
         point,
       );
-      onSelectGroup(
-        notehead ? { pageIndex: page.index, visualGroupId: notehead.id } : null,
-      );
-      return;
+      return notehead ? { pageIndex: page.index, visualGroupId: notehead.id } : null;
     }
-    onSelectGroup(null);
+    return null;
   }
 
   function handlePointerUp(event: React.PointerEvent<HTMLDivElement>) {
@@ -2347,6 +2369,7 @@ export function DocumentViewer({
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerUp}
+        onPointerLeave={() => hoverAt(null)}
       >
         <div
           className="document-content"
@@ -2381,6 +2404,8 @@ export function DocumentViewer({
                   }
                   noteKeys={noteHighlight?.pageIndex === page.index ? noteHighlight.keys : NO_NOTE_KEYS}
                   noteKind={noteHighlight?.kind ?? "selected"}
+                  hoverKeys={hoverHighlight?.pageIndex === page.index ? hoverHighlight.keys : NO_NOTE_KEYS}
+                  hoverKind={hoverHighlight?.kind ?? "selected"}
                   still={stillPages}
                 />
               ) : page.imageUrl ? (

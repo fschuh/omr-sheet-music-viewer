@@ -1553,6 +1553,19 @@ export function App() {
       : null,
     [fingerCursor, fingerCursorLeft],
   );
+  // The note the pointer is over, in its hand's darker colour; the edited note keeps its own.
+  const fingerHoverId = fingerEditor.hoverId;
+  const fingerHoverLeft = fingerHoverId ? fingerEditor.fingerings?.[fingerHoverId]?.left : undefined;
+  const fingerHoverHighlight = useMemo<NoteHighlight | null>(() => {
+    const match = fingerHoverId && fingerHoverId !== fingerCursor?.id ? /^page-(\d+)-(.+)$/.exec(fingerHoverId) : null;
+    return match && fingerHoverLeft !== undefined
+      ? { pageIndex: Number(match[1]) - 1, keys: [match[2]], kind: fingerHoverLeft ? "left-hover" : "right-hover" }
+      : null;
+  }, [fingerCursor?.id, fingerHoverId, fingerHoverLeft]);
+  const fingerHover = fingerEditor.hover;
+  const handleViewerHoverGroup = useCallback((group: VisualGroupRef | null) => {
+    fingerHover(group ? `page-${group.pageIndex + 1}-${group.visualGroupId}` : null);
+  }, [fingerHover]);
 
   /**
    * Note-by-note commits the flag, silencing its playhead sounds; realtime keeps
@@ -3192,6 +3205,8 @@ export function App() {
                 : undefined}
               footer={<FingeringStatusStrip editor={fingerEditor} shortcuts={shortcuts} />}
               noteHighlight={fingerNoteHighlight}
+              hoverHighlight={fingerHoverHighlight}
+              onHoverGroup={fingerEditor.editing ? handleViewerHoverGroup : undefined}
               followMoment={fingerEditor.cursorMoment ?? returnMoment}
               stillPages={fingerEditor.editing}
               playbackLocked={fingerEditor.editing}

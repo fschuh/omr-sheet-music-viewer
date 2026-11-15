@@ -2714,13 +2714,17 @@ button:disabled {
 .fingering-layer .fingering-label.right-hand { --hand: var(--hand-right); --hand-ink: var(--hand-right-dark); }
 .fingering-layer .fingering-label.left-hand { --hand: var(--hand-left); --hand-ink: var(--hand-left-dark); }
 
-.fingering-layer .fingering-label.predicted circle:not(.fingering-ring) { fill: #fff; stroke: var(--hand); }
+.fingering-layer .fingering-label.predicted .fingering-face { fill: #fff; stroke: var(--hand); }
 .fingering-layer .fingering-label.predicted text { fill: var(--hand-ink); }
-.fingering-layer .fingering-label.yours circle:not(.fingering-ring) { fill: var(--hand-ink); stroke: var(--hand-ink); }
+.fingering-layer .fingering-label.yours .fingering-face { fill: var(--hand-ink); stroke: var(--hand-ink); }
 .fingering-layer .fingering-label.yours text { fill: #fff; }
 
-/* Hover changes only a colour: a filter would make the browser lay out the page anew. */
-.fingering-layer .fingering-label:hover circle { stroke: var(--hand-ink); }
+/* The note the pointer is over, on its label or its notehead: the cursor's ring, in its
+   hand's lighter colour. */
+.fingering-layer .fingering-hover.right-hand { --hand: var(--hand-right); }
+.fingering-layer .fingering-hover.left-hand { --hand: var(--hand-left); }
+.fingering-layer .fingering-hover-ground { fill: #fff; }
+.fingering-layer .fingering-hover-ring { fill: none; stroke: var(--hand); }
 
 /* The ring, the band and an edit's pop move on layers of their own, so the browser slides
    them without painting the engraved page again. */
@@ -2798,7 +2802,8 @@ button:disabled {
   stroke-width: 3;
 }
 
-.fingering-layer .fingering-printed:hover { stroke: #a39b91; }
+.fingering-layer .fingering-printed.hovered.right-hand { stroke: var(--hand-right); }
+.fingering-layer .fingering-printed.hovered.left-hand { stroke: var(--hand-left); }
 
 .fingering-layer .fingering-printed-strike { stroke: #24211d; }
 

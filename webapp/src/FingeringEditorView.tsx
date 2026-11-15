@@ -3,7 +3,7 @@
 // layers apart rather than hue, so it survives custom hand colours and colour blindness:
 // a predicted finger is an outline in its hand's colour, the player's own is filled, and a
 // printed one stays the score's own digit.
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import type { FingeringEditor } from "./fingeringEditor";
 import { fingeringLabelLayout, type EffectiveFingering, type MusicXmlPage } from "./musicxml";
 import { formatKeyboardShortcut, type PlaybackShortcuts } from "./shortcuts";
@@ -121,6 +121,7 @@ function FingerPicker({
         transformOrigin: above ? "50% 100%" : "50% 0",
       }}
       onPointerDown={stop}
+      onPointerMove={stop}
     >
       {chord.length > 1 ? (
         <div className="finger-picker-chord" role="group" aria-label="Move within the chord">
@@ -178,9 +179,19 @@ function FingerPicker({
   );
 }
 
+/** A label's circle and digit, centred on the origin. */
+function LabelFace({ size, finger }: { size: number; finger: number }) {
+  return (
+    <g className="fingering-label-body">
+      <circle className="fingering-face" r={size / 2 - size * 0.04} strokeWidth={size * 0.08} />
+      <text dy="0.36em" fontSize={size * 0.62}>{finger}</text>
+    </g>
+  );
+}
+
 /** One finger label. Its props are plain values, so an edit redraws only the labels it changes. */
 const FingeringLabel = memo(function FingeringLabel({
-  id, x, y, size, left, finger, yours, text, onPick,
+  id, x, y, size, left, finger, yours, text, onPick, onHover,
 }: {
   id: string;
   x: number;
@@ -191,6 +202,7 @@ const FingeringLabel = memo(function FingeringLabel({
   yours: boolean;
   text: string;
   onPick: (id: string) => void;
+  onHover: (id: string | null) => void;
 }) {
   return (
     <g
@@ -199,12 +211,13 @@ const FingeringLabel = memo(function FingeringLabel({
       role="button"
       aria-label={text}
       onPointerDown={stop}
+      // The page looks for a notehead under the pointer; over a label there is none to find.
+      onPointerMove={stop}
+      onPointerEnter={() => onHover(id)}
+      onPointerLeave={() => onHover(null)}
       onClick={() => onPick(id)}
     >
-      <g className="fingering-label-body">
-        <circle r={size / 2 - size * 0.04} strokeWidth={size * 0.08} />
-        <text dy="0.36em" fontSize={size * 0.62}>{finger}</text>
-      </g>
+      <LabelFace size={size} finger={finger} />
     </g>
   );
 });
@@ -284,6 +297,9 @@ export const FingeringPageLayer = memo(function FingeringPageLayer({
     if (current.cursor?.id === id) current.togglePicker();
     else current.select(id);
   }, []);
+  const hover = useCallback((id: string | null) => editorRef.current.hover(id), []);
+  // The ringed note has the cursor's ring, so the pointer over it adds none.
+  const hoverId = editor.hoverId !== editor.cursor?.id ? editor.hoverId : null;
   const printedTargets = useMemo(() => [...notes.values()].flatMap((note) => {
     const fingering = fingerings?.[prefix + note.key];
     return note.printedFingering && fingering?.basePrinted && !fingering.tiedTo ? [{ note, fingering }] : [];
@@ -321,7 +337,7 @@ export const FingeringPageLayer = memo(function FingeringPageLayer({
                 />
               ) : (
                 <rect
-                  className={`fingering-printed ${handClass(fingering.left)}`}
+                  className={`fingering-printed ${handClass(fingering.left)}${hoverId === id ? " hovered" : ""}`}
                   x={left - layout.size * 0.1}
                   y={top - layout.size * 0.1}
                   width={right - left + layout.size * 0.2}
@@ -330,6 +346,9 @@ export const FingeringPageLayer = memo(function FingeringPageLayer({
                   role="button"
                   aria-label={labelText(id, fingering, note.pitch)}
                   onPointerDown={stop}
+                  onPointerMove={stop}
+                  onPointerEnter={() => hover(id)}
+                  onPointerLeave={() => hover(null)}
                   onClick={() => pick(id)}
                 />
               )}
@@ -351,12 +370,13 @@ export const FingeringPageLayer = memo(function FingeringPageLayer({
               yours={fingering.source === "yours"}
               text={labelText(id, fingering, notes.get(label.key)?.pitch ?? null)}
               onPick={pick}
+              onHover={hover}
             />
           );
         })}
       </>
     );
-  }, [fingerings, layout, notes, pick, prefix, printedTargets]);
+  }, [fingerings, hover, hoverId, layout, notes, pick, prefix, printedTargets]);
   if (!editor.editing || !fingerings) return null;
 
   const cursorId = editor.cursor?.id ?? null;
@@ -375,6 +395,40 @@ export const FingeringPageLayer = memo(function FingeringPageLayer({
       r: Math.max(radius, (right - left) / 2) + layout.size * 0.2,
       left: cursorPrinted.fingering.left,
     };
+  }
+  // The note the pointer is over: the cursor's ring, in its hand's lighter colour, over the
+  // labels as the cursor's is. Inside it the page is white, so that neither a chord's outline
+  // nor its next label shows between the ring and the label, which is drawn again on top.
+  // Where it meets the cursor's ring, as in a chord, the cursor's stays in front, whole.
+  const hovered = hoverId ? layout.labels.find((label) => prefix + label.key === hoverId) : undefined;
+  const hoveredFingering = hovered ? fingerings[prefix + hovered.key] : undefined;
+  let hoverRing: ReactNode = null;
+  if (hovered && hoveredFingering) {
+    const outer = radius + layout.size * 0.2;
+    const ringWidth = layout.size * 0.1;
+    const cut = ring && Math.hypot(ring.x - hovered.x, ring.y - hovered.y) < ring.r + outer ? ring : null;
+    const maskId = `fingering-hover-cut-${page.index}`;
+    hoverRing = (
+      <g mask={cut ? `url(#${maskId})` : undefined} aria-hidden="true">
+        {cut ? (
+          <mask id={maskId} maskUnits="userSpaceOnUse" x={hovered.x - outer} y={hovered.y - outer} width={outer * 2} height={outer * 2}>
+            <rect x={hovered.x - outer} y={hovered.y - outer} width={outer * 2} height={outer * 2} fill="#fff" />
+            <circle cx={cut.x} cy={cut.y} r={cut.r} fill="#000" />
+          </mask>
+        ) : null}
+        <g className={`fingering-hover ${handClass(hovered.left)}`} transform={`translate(${hovered.x} ${hovered.y})`}>
+          <circle className="fingering-hover-ground" r={outer} />
+          <g
+            className={`fingering-label ${handClass(hovered.left)} ${hoveredFingering.source === "yours" ? "yours" : "predicted"}`}
+            // Only the label underneath takes the pointer, so the hover holds while it is there.
+            style={{ pointerEvents: "none" }}
+          >
+            <LabelFace size={layout.size} finger={hoveredFingering.finger} />
+          </g>
+          <circle className="fingering-hover-ring" r={outer - ringWidth / 2} strokeWidth={ringWidth} />
+        </g>
+      </g>
+    );
   }
   let band: { x: number; y: number; width: number; height: number } | null = null;
   const cursorChord = editor.cursor && editor.cursor.pageIndex === page.index ? chordOf.get(editor.cursor.key) : undefined;
@@ -469,6 +523,7 @@ export const FingeringPageLayer = memo(function FingeringPageLayer({
         aria-label="Fingerings"
       >
         {marks}
+        {hoverRing}
       </svg>
       {pops.map(({ id, label, fingering }) => (
         <div
