@@ -174,6 +174,8 @@ export function momentTargets(
     if (!note.startsAttack) continue;
     const id = `page-${moment.pageIndex + 1}-${note.visualGroupId}`;
     if (seen.has(id) || !fingerings[id]) continue;
+    // A note following another, as another voice's copy of a shared key, is edited as that key.
+    if ((fingerings[id] as { tiedTo?: string }).tiedTo) continue;
     seen.add(id);
     targets.push({
       id,

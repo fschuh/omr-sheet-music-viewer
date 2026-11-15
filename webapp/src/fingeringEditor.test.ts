@@ -229,3 +229,15 @@ test("a label at a moment brings print-style labels to the other voices' kept pr
   assert.equal(labels.get("upper")?.printed, true, "the other voice's printed finger, as print");
   assert.equal(labels.has("later"), false, "another moment keeps its digit alone");
 });
+
+test("another voice's copy of a shared key is not a note of its own to edit", () => {
+  // Voice 1's and voice 2's Eb5 drawn as one notehead, with a bass note.
+  const shared = moment("m", [["up", "Eb5", false], ["down", "Eb5", false], ["bass", "Eb3", true]]);
+  const fingerings = {
+    [id("up")]: { finger: 1, left: false },
+    [id("down")]: { finger: 1, left: false, tiedTo: id("up") },
+    [id("bass")]: { finger: 5, left: true },
+  };
+  assert.deepEqual(momentTargets(shared, fingerings).map((target) => target.key), ["up", "bass"]);
+  assert.deepEqual(editWalk([shared], fingerings).map((target) => target.key), ["up", "bass"]);
+});
