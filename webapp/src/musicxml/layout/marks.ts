@@ -41,6 +41,8 @@ const FINGERING_DIGITS: Record<string, GlyphName> = {
 };
 
 const FINGERING_SCALE = 0.9;
+/** The room a substitution's dash takes between two fingers, in staff spaces. */
+const SUBSTITUTION_DASH = 0.55;
 const MARK_GAP = 0.5;
 const ARTICULATION_STEP = 0.75;
 
@@ -57,6 +59,7 @@ interface Pen {
   staff: number | undefined;
   glyph(name: GlyphName, x: number, y: number, scale?: number, rotate?: number): void;
   text(text: string, x: number, y: number, size: number): void;
+  line(x1: number, y1: number, x2: number, y2: number, width: number): void;
 }
 
 function pen(sp: number): Pen {
@@ -77,6 +80,13 @@ function pen(sp: number): Pen {
       items.push({ kind: "text", text, x: x * sp, y: y * sp, size: size * sp, anchor: "middle" });
       const width = text.length * size * 0.5;
       boxes.push({ x1: x - width / 2, x2: x + width / 2, top: y - size * 0.75, bottom: y + size * 0.25, staff: result.staff });
+    },
+    line: (x1, y1, x2, y2, width) => {
+      items.push({ kind: "line", x1: x1 * sp, y1: y1 * sp, x2: x2 * sp, y2: y2 * sp, width: width * sp });
+      boxes.push({
+        x1: Math.min(x1, x2), x2: Math.max(x1, x2),
+        top: Math.min(y1, y2) - width / 2, bottom: Math.max(y1, y2) + width / 2, staff: result.staff,
+      });
     },
   };
   return result;
@@ -190,29 +200,41 @@ function chordMarks(system: PlacedSystem, chord: PreparedChord, shape: ChordShap
   if (fingered.length) {
     const placement = fingered[0].fingerings[0].placement;
     const up = placement ? placement === "above" : fingeringAbove(chord);
+    // A substitution joins its finger to the one before with a dash, as in "3–4".
     const rows = fingered.map((entry) => ({
       key: model.notes[entry.note.index].key,
-      labels: entry.fingerings.map((fingering) => fingering.text),
+      pieces: entry.fingerings.flatMap((fingering, index) =>
+        [...(index > 0 && fingering.substitution ? [null] : []), ...fingering.text]),
     }));
     let y = up
       ? Math.min(topNote - 1.2, shape.stem && shape.stem.up ? staffTop + shape.stem.yEnd - 0.6 : Infinity)
       : Math.max(bottomNote + 1.2, shape.stem && !shape.stem.up ? staffTop + shape.stem.yEnd + 0.6 : -Infinity);
-    for (const { key, labels: row } of up ? [...rows].reverse() : rows) {
-      const width = Math.max(0.8, row.join("").length * 0.75);
+    for (const { key, pieces } of up ? [...rows].reverse() : rows) {
+      const digits = pieces.filter((piece): piece is string => piece !== null);
+      const dashes = pieces.length - digits.length;
+      const width = Math.max(0.8, digits.length * 0.75 + dashes * SUBSTITUTION_DASH);
       output.fingerings.set(key, [headCentre - width / 2, y - 0.6, headCentre + width / 2, y + 0.6]);
-      const digits = row.flatMap((label) => [...label]);
       if (digits.every((digit) => FINGERING_DIGITS[digit])) {
         // One baseline for the row, centred on y by the row's tallest digits.
         const boxes = digits.map((digit) => glyphBox(FINGERING_DIGITS[digit]));
         const middle = (Math.min(...boxes.map((box) => box.top)) + Math.max(...boxes.map((box) => box.bottom))) / 2;
-        const widths = boxes.map((box) => (box.right - box.left) * FINGERING_SCALE);
+        const widths = pieces.map((piece) => {
+          if (piece === null) return SUBSTITUTION_DASH;
+          const box = glyphBox(FINGERING_DIGITS[piece]);
+          return (box.right - box.left) * FINGERING_SCALE;
+        });
         let x = headCentre - widths.reduce((total, width) => total + width, 0) / 2;
-        digits.forEach((digit, index) => {
-          output.glyph(FINGERING_DIGITS[digit], x - boxes[index].left * FINGERING_SCALE, y - middle * FINGERING_SCALE, FINGERING_SCALE);
+        pieces.forEach((piece, index) => {
+          if (piece === null) {
+            output.line(x + 0.12, y, x + SUBSTITUTION_DASH - 0.12, y, 0.12);
+          } else {
+            const box = glyphBox(FINGERING_DIGITS[piece]);
+            output.glyph(FINGERING_DIGITS[piece], x - box.left * FINGERING_SCALE, y - middle * FINGERING_SCALE, FINGERING_SCALE);
+          }
           x += widths[index];
         });
       } else {
-        output.text(row.join(""), headCentre, y + 0.45, 1.3);
+        output.text(pieces.map((piece) => piece ?? "–").join(""), headCentre, y + 0.45, 1.3);
       }
       y += up ? -1.1 : 1.1;
     }

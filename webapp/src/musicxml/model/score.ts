@@ -237,7 +237,8 @@ export interface NoteModel {
   /** The printed accidental is a courtesy one, in parentheses. */
   accidentalParentheses: boolean;
   /** Fingerings the score prints for the note, such as "3" or "1-2". */
-  fingerings: { text: string; placement: Placement }[];
+  /** Printed fingerings; one marked `substitution` follows the one before it on the held key. */
+  fingerings: { text: string; placement: Placement; substitution?: boolean }[];
   tieStart: boolean;
   tieStop: boolean;
 }

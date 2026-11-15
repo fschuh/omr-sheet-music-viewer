@@ -366,7 +366,9 @@ export const FingeringPageLayer = memo(function FingeringPageLayer({
   const hoverId = editor.hoverId !== editor.cursor?.id ? editor.hoverId : null;
   const printedTargets = useMemo(() => [...notes.values()].flatMap((note) => {
     const fingering = fingerings?.[prefix + note.key];
-    return note.printedFingering && fingering?.basePrinted && !fingering.tiedTo ? [{ note, fingering }] : [];
+    // A note following another, held by a tie or sharing a voice's notehead, has its digit
+    // too: clicking it reaches the key, and changing the key's finger strikes it.
+    return note.printedFingering && fingering?.basePrinted ? [{ note, fingering }] : [];
   }), [fingerings, notes, prefix]);
   // Notes the player moved to the other hand, held ones included: their heads stay black,
   // ringed with a dashed line in their hand's colour, so that colour on a head means the

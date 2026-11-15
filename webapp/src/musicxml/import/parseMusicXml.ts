@@ -298,7 +298,11 @@ function parseFingerings(note: Element): NoteModel["fingerings"] {
     childElements(notations, "technical").flatMap((technical) =>
       childElements(technical, "fingering")
         .filter((fingering) => attribute(fingering, "print-object") !== "no" && fingering.textContent?.trim())
-        .map((fingering) => ({ text: fingering.textContent!.trim(), placement: placementOf(fingering) }))));
+        .map((fingering) => ({
+          text: fingering.textContent!.trim(),
+          placement: placementOf(fingering),
+          ...(attribute(fingering, "substitution") === "yes" ? { substitution: true } : {}),
+        }))));
 }
 
 /** A direction's printed items; items marked not to print, such as hidden tempos, are left out. */

@@ -3,7 +3,7 @@ import type { Note as PianoFingeringNote } from "@lumikey/piano-fingering-model"
 const DEFAULT_TEMPO_BPM = 120;
 const FINGERING_CACHE_FIELD_NAME = "homr-piano-fingering-cache";
 // Bump this whenever the model version, the hand-assignment rules or the notes it sees change.
-const FINGERING_CACHE_VERSION = "lumikey-0.3.0-staff-hands-ties-v2";
+const FINGERING_CACHE_VERSION = "lumikey-0.3.0-staff-hands-ties-shared-v3";
 /** Identifies the predictions: stored predictions from another model or hand rule are stale. */
 export const FINGERING_MODEL = FINGERING_CACHE_VERSION;
 const STEP_SEMITONES: Readonly<Record<string, number>> = {
@@ -67,6 +67,8 @@ interface RawNote {
   durationQuarters: number;
   /** The IDs of the notes tied on to this one. */
   continuations: string[];
+  /** Other voices' notes on the same key at the same moment, which follow this one. */
+  sharers: Element[];
 }
 
 interface RawTempo {
@@ -176,8 +178,12 @@ function parsePart(part: Element, tempoOrder: { value: number }): ParsedPart {
   const continuations = new Map<string, string>();
   // Notes whose tie is still open, by staff and pitch.
   const openTies = new Map<string, RawNote>();
+  // The note sounding each key at each moment of the measure, by staff, pitch and onset, with
+  // its voice: struck there, or held there by a tie.
+  let sounding = new Map<string, { note: RawNote; voice: string; held: boolean }>();
 
   childrenNamed(part, "measure").forEach((measure, measureIndex) => {
+    sounding = new Map();
     let cursor = 0;
     let furthestPosition = 0;
     let lastNoteStart = 0;
@@ -240,6 +246,27 @@ function parsePart(part: Element, tempoOrder: { value: number }): ParsedPart {
       const clef = clefs.get(staff);
       const ties = new Set(childrenNamed(child, "tie").map((tie) => tie.getAttribute("type")));
       const tieKey = `${staff}|${midi}`;
+      const voice = childText(child, "voice") ?? "1";
+      const place = `${staff}|${midi}|${onset}`;
+      // Another voice's note on the same key at the same moment, drawn as one notehead with a
+      // stem each way, is the same key struck once: it follows the note of the first voice, as
+      // a held note follows its tie, lasting as long as the longer of them. Both struck there,
+      // or both held there; a voice striking the key the other holds strikes it again.
+      const held = ties.has("stop");
+      const shared = sounding.get(place);
+      if (shared && shared.voice !== voice && shared.held === held) {
+        const sharer = shared.note;
+        if (!ties.has("stop")) sharer.durationQuarters = Math.max(sharer.durationQuarters, duration);
+        const id = child.getAttribute("id");
+        if (id) {
+          sharer.continuations.push(id);
+          if (sharer.musicXmlId) continuations.set(id, sharer.musicXmlId);
+        }
+        sharer.sharers.push(child);
+        if (ties.has("start")) openTies.set(tieKey, sharer);
+        else if (ties.has("stop") && openTies.get(tieKey) === sharer) openTies.delete(tieKey);
+        continue;
+      }
       const tiedFrom = ties.has("stop") ? openTies.get(tieKey) : undefined;
       if (tiedFrom) {
         // Held on from the note that starts the tie: that note lasts longer instead.
@@ -250,6 +277,7 @@ function parsePart(part: Element, tempoOrder: { value: number }): ParsedPart {
           if (tiedFrom.musicXmlId) continuations.set(id, tiedFrom.musicXmlId);
         }
         if (!ties.has("start")) openTies.delete(tieKey);
+        sounding.set(place, { note: tiedFrom, voice, held: true });
         continue;
       }
       const note: RawNote = {
@@ -261,8 +289,10 @@ function parsePart(part: Element, tempoOrder: { value: number }): ParsedPart {
         offsetQuarters: onset,
         durationQuarters: duration,
         continuations: [],
+        sharers: [],
       };
       notes.push(note);
+      sounding.set(place, { note, voice, held: false });
       if (ties.has("start")) openTies.set(tieKey, note);
       else openTies.delete(tieKey);
     }
@@ -547,7 +577,8 @@ export function printedFingerings(musicXml: string): Record<string, PredictedFin
   const result: Record<string, PredictedFingering> = {};
   for (const part of childrenNamed(document.documentElement, "part")) {
     for (const note of parsePart(part, tempoOrder).notes) {
-      const finger = fingeringForNote(note.element);
+      // A key two voices share takes the first voice's printed finger, else the other's.
+      const finger = [note.element, ...note.sharers].map(fingeringForNote).find((value) => value !== null) ?? null;
       if (finger !== null && note.musicXmlId) result[note.musicXmlId] = { finger, left: note.left };
     }
   }

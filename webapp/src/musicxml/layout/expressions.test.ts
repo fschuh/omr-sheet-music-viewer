@@ -292,6 +292,22 @@ test("printed fingerings stack by note, and a finger change stands in a row", ()
   assert.ok(two.x > four.x);
 });
 
+test("a substitution joins its finger to the one before with a dash", () => {
+  const fingered = (second: string) => pages(treble([
+    note("G5", 16, { type: "whole", stem: "down", extra: notations(`<technical><fingering>3</fingering>${second}</technical>`) }),
+  ]))[0];
+  const dashes = (page: LayoutPage) => items(page).filter((item): item is Line =>
+    item.kind === "line" && item.y1 === item.y2 && item.y1 < noteheadY(page, "G5"));
+  const substituted = fingered('<fingering substitution="yes">4</fingering>');
+  const [three] = glyphs(substituted, "fingering3");
+  const [four] = glyphs(substituted, "fingering4");
+  const [dash] = dashes(substituted);
+  assert.ok(dash, "a dash");
+  assert.ok(three.x < Math.min(dash.x1, dash.x2) && Math.max(dash.x1, dash.x2) < four.x, "between the two fingers");
+  // Two fingerings without the mark stand in a row, as before.
+  assert.equal(dashes(fingered("<fingering>4</fingering>")).length, 0);
+});
+
 test("fingerings of a lower staff go below it", () => {
   const [page] = pages(score([piano([
     note("C5", 16, { type: "whole", staff: 1 }) + "<backup><duration>16</duration></backup>" +

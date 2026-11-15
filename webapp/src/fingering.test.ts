@@ -207,3 +207,30 @@ test("a note tied on from another is held, not played: the model sees one longer
   assert.deepEqual(written.fingeringsByMusicXmlId.c, { finger: 1, left: false });
   assert.deepEqual(cachedFingeringsFromMusicXml(written.musicXml)?.fingeringsByMusicXmlId.b, { finger: 1, left: false });
 });
+
+test("a key two voices share at a moment is one note: the model sees it once, the longer, and the other voice follows it", async () => {
+  const { predictFingerings, printedFingerings, tiedContinuations } = await import("./fingering");
+  const finger = (digit: number) => `<notations><technical><fingering>${digit}</fingering></technical></notations>`;
+  // Voice 1's eighth C5 and voice 2's quarter C5 drawn as one notehead; then voice 1 strikes the
+  // C5 again while voice 2 still holds it, which is struck anew, not shared.
+  const shared = (printed1: string, printed2: string) => `<score-partwise><part-list><score-part id="P1"><part-name>P</part-name></score-part></part-list><part id="P1">
+    <measure><attributes><divisions>4</divisions><clef><sign>G</sign><line>2</line></clef></attributes>
+      <direction><sound tempo="60"/></direction>
+      <note id="up"><pitch><step>C</step><octave>5</octave></pitch><duration>2</duration><voice>1</voice>${printed1}</note>
+      <note id="again"><pitch><step>C</step><octave>5</octave></pitch><duration>2</duration><voice>1</voice></note>
+      <backup><duration>4</duration></backup>
+      <note id="down"><pitch><step>C</step><octave>5</octave></pitch><duration>4</duration><voice>2</voice>${printed2}</note>
+    </measure></part></score-partwise>`;
+  let received: IndexedFingeringNote[] = [];
+  const predict = async (notes: IndexedFingeringNote[]) => {
+    received = notes;
+    return notes.map((note, index) => ({ ...note, finger: index + 1 }));
+  };
+  const predicted = await predictFingerings(shared("", ""), predict);
+  assert.deepEqual(received.map(({ time, duration }) => [time, duration]), [[0, 1000], [500, 500]], "the shared key held as long as the quarter");
+  assert.deepEqual(Object.keys(predicted.fingeringsByMusicXmlId).sort(), ["again", "up"]);
+  assert.deepEqual(tiedContinuations(shared("", "")), { down: "up" });
+  // A printed finger on either voice's copy is the key's; the first voice's wins.
+  assert.deepEqual(printedFingerings(shared("", finger(2))), { up: { finger: 2, left: false } });
+  assert.deepEqual(printedFingerings(shared(finger(3), finger(4))), { up: { finger: 3, left: false } });
+});
