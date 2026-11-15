@@ -185,6 +185,25 @@ test("stacks one marker per distinct fingering on a shared key", () => {
   assert.match(markup, /C4, left hand finger 5 or right hand finger 3/);
 });
 
+test("rings the focused note's marker, by its hand on a shared key, or its name without fingers", () => {
+  const notes = [
+    { pitch: "C4", finger: 5, left: true },
+    { pitch: "C4", finger: 3, left: false },
+    { pitch: "E4", finger: 1, left: false },
+  ];
+  const focused = (markup: string) => [...markup.matchAll(/<span[^>]*data-focused="true"[^>]*>([^<]*)</g)].map((match) => match[0]);
+  const markup = renderToStaticMarkup(<PianoKeyboard notes={notes} focused={{ pitch: "C4", left: false }} />);
+  const rung = focused(markup);
+  assert.equal(rung.length, 1);
+  assert.match(rung[0], /data-hand="right" data-finger="3"/);
+  // Finger numbers hidden: the note's name is ringed instead.
+  const names = renderToStaticMarkup(
+    <PianoKeyboard notes={notes} focused={{ pitch: "E4", left: false }} display={{ ...NAMES_AND_FINGERS, fingerNumbers: false }} />,
+  );
+  assert.deepEqual(focused(names).map((span) => /piano-key-note-name/.test(span)), [true]);
+  assert.equal(focused(renderToStaticMarkup(<PianoKeyboard notes={notes} />)).length, 0);
+});
+
 test("formats stored accidental spellings like the staff note labels", () => {
   assert.equal(formatKeyboardPitch("f#4"), "F♯4");
   assert.equal(formatKeyboardPitch("A3b"), "A♭3");

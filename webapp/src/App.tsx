@@ -1553,6 +1553,11 @@ export function App() {
       : null,
     [fingerCursor, fingerCursorLeft],
   );
+  // The edited note's finger on the keyboard, ringed as the note is on the page.
+  const fingerKeyboardFocus = useMemo(
+    () => fingerEditor.editing && fingerCursor ? { pitch: fingerCursor.pitch, left: fingerCursorLeft } : null,
+    [fingerCursor, fingerCursorLeft, fingerEditor.editing],
+  );
   // The note the pointer is over, in its hand's darker colour; the edited note keeps its own.
   const fingerHoverId = fingerEditor.hoverId;
   const fingerHoverLeft = fingerHoverId ? fingerEditor.fingerings?.[fingerHoverId]?.left : undefined;
@@ -3354,6 +3359,7 @@ export function App() {
                   ? listenFeedback.successPitches
                   : []}
                 waiting={realtimeWaiting}
+                focused={fingerKeyboardFocus}
               />
             ) : null}
           </>

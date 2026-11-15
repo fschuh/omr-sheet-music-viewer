@@ -487,6 +487,17 @@ button:disabled {
   --key-hand-dark: var(--hand-left-dark);
 }
 
+/* The fingering editor's note: its key lit a lighter shade of its hand's colour. */
+.piano-key[data-focused="true"] {
+  --key-hand: color-mix(in srgb, var(--hand-right) 55%, #fff);
+  --key-hand-dark: var(--hand-right);
+}
+
+.piano-key[data-focused="true"][data-hand="left"] {
+  --key-hand: color-mix(in srgb, var(--hand-left) 55%, #fff);
+  --key-hand-dark: var(--hand-left);
+}
+
 .piano-key-white.active {
   background: linear-gradient(180deg, var(--key-hand) 0%, var(--key-hand) 70%, var(--key-hand-dark) 100%);
   border-color: var(--key-hand-dark);
@@ -778,6 +789,20 @@ button:disabled {
 }
 
 .piano-key-finger[data-hand="left"] { background: var(--hand-left-dark); }
+
+/* The note the fingering editor rings: its marker ringed in the hand's darker colour, as the
+   note is on the page, edged in white so the ring stands off the lit key behind it. */
+.piano-key-finger[data-focused="true"],
+.piano-key-note-name[data-focused="true"] {
+  --focus-ring: var(--hand-right-dark);
+  --focus-width: max(3px, calc(var(--hand-marker) * 0.12));
+  box-shadow: 0 0 0 var(--focus-width) var(--focus-ring), 0 0 0 calc(var(--focus-width) + 2px) #fff;
+}
+
+.piano-key-finger[data-focused="true"][data-hand="left"],
+.piano-key-note-name[data-focused="true"][data-hand="left"] {
+  --focus-ring: var(--hand-left-dark);
+}
 
 /* Every C is named on its key, so an octave can be found at a glance. */
 .piano-key-octave {

@@ -67,6 +67,8 @@ interface PianoKeyboardProps {
   solidTilt?: number | null;
   /** Playback is held until the player plays `notes`, so their keys pulse. */
   waiting?: boolean;
+  /** One of `notes` singled out, as the note the fingering editor rings: its marker is ringed too. */
+  focused?: PianoKeyboardNote | null;
 }
 
 export interface PianoKeyboardNote {
@@ -161,6 +163,7 @@ export function PianoKeyboard({
   blackKeyWidth = DEFAULT_KEYBOARD_VIEW_SETTINGS.blackKeyWidth,
   solidTilt = null,
   waiting = false,
+  focused = null,
 }: PianoKeyboardProps) {
   const solid = highwayAttached && solidTilt !== null;
   const { ref: rootRef, size } = useElementSize(solid);
@@ -311,6 +314,8 @@ export function PianoKeyboard({
       "data-midi": key.midi,
       "data-active": labels ? "true" : undefined,
       "data-hand": labels ? (labels.left ? "left" : "right") : undefined,
+      // The focused note's key, lit lighter than the others.
+      "data-focused": labels && focused && pitchToMidi(focused.pitch) === key.midi ? "true" : undefined,
       "data-recognized": recognized ? "true" : undefined,
       "data-result": recognized ? (labels ? "correct" : "wrong") : undefined,
       "data-attack": attack ? attack.attackTimeMs : undefined,
@@ -337,7 +342,13 @@ export function PianoKeyboard({
     return { left, top };
   }
 
+  const focusedMidi = focused ? pitchToMidi(focused.pitch) : null;
+
   function keyLabel(key: PianoKey, labels: PianoKeyLabels) {
+    const focusHere = focusedMidi === key.midi;
+    // The focused note's finger, by its hand; with no finger numbers shown, its name.
+    const fingerFocused = (fingering: PianoKeyFingering) => focusHere && fingering.left === (focused?.left === true);
+    const nameFocused = focusHere && !(display.fingerNumbers && labels.fingerings.some(fingerFocused));
     return (
       <span
         className={`piano-key-label${key.black ? " piano-key-label-black" : ""}`}
@@ -351,12 +362,19 @@ export function PianoKeyboard({
             className="piano-key-finger"
             data-hand={fingering.left ? "left" : "right"}
             data-finger={fingering.finger}
+            data-focused={fingerFocused(fingering) ? "true" : undefined}
           >
             {fingering.finger}
           </span>
         )) : null}
         {display.noteNames
-          ? <span className="piano-key-note-name">{labels.names.join("/")}</span>
+          ? (
+            <span
+              className="piano-key-note-name"
+              data-hand={nameFocused ? (focused?.left ? "left" : "right") : undefined}
+              data-focused={nameFocused ? "true" : undefined}
+            >{labels.names.join("/")}</span>
+          )
           : null}
       </span>
     );
