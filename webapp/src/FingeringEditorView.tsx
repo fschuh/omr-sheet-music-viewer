@@ -3,10 +3,11 @@
 // layers apart rather than hue, so it survives custom hand colours and colour blindness:
 // a predicted finger is an outline in its hand's colour, the player's own is filled, and a
 // printed one stays the score's own digit.
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { editorLabelHand, printedFingerReplaced, type FingeringEditor } from "./fingeringEditor";
 import { fingeringLabelLayout, type EffectiveFingering, type MusicXmlPage } from "./musicxml";
 import { formatKeyboardShortcut, type PlaybackShortcuts } from "./shortcuts";
+import type { RevealElement } from "./DocumentViewer";
 import type { PlaybackCommand } from "./playback";
 
 const FINGER_NAMES = ["thumb", "index finger", "middle finger", "ring finger", "little finger"];
@@ -94,6 +95,7 @@ function FingerPicker({
   scale,
   pageWidth,
   pageHeight,
+  reveal,
 }: {
   editor: FingeringEditor;
   fingering: EffectiveFingering;
@@ -102,8 +104,38 @@ function FingerPicker({
   scale: number;
   pageWidth: number;
   pageHeight: number;
+  /** Scrolls the picker into view. */
+  reveal?: RevealElement;
 }) {
   const cursor = editor.cursor!;
+  // Shown for a note, or moved to another, the picker is brought wholly into view: the score
+  // scrolls up or down for it, and at a side of the view, or of the page, which clips what
+  // stands past it, the picker slides along that edge, in screen pixels, with its caret still
+  // on the note.
+  const pickerRef = useRef<HTMLDivElement>(null);
+  const [slide, setSlide] = useState(0);
+  useLayoutEffect(() => {
+    const picker = pickerRef.current;
+    const stage = picker?.closest(".viewer-stage")?.getBoundingClientRect();
+    const page = picker?.closest(".document-page")?.getBoundingClientRect();
+    if (!picker || !stage || !page) return;
+    const view = { left: Math.max(stage.left, page.left), right: Math.min(stage.right, page.right) };
+    const box = picker.getBoundingClientRect();
+    // Where it would stand centred on the note.
+    const left = box.left - slide;
+    const right = box.right - slide;
+    const margin = 8;
+    let next = 0;
+    if (right > view.right - margin) next = view.right - margin - right;
+    if (left + next < view.left + margin) next = view.left + margin - left;
+    // The caret stays clear of the picker's rounded corners.
+    const most = Math.max(0, box.width / 2 - 18);
+    next = Math.max(-most, Math.min(most, next));
+    if (Math.abs(next - slide) > 0.5) setSlide(next);
+  });
+  useLayoutEffect(() => {
+    if (pickerRef.current) reveal?.(pickerRef.current);
+  }, [anchor.x, anchor.y, above, cursor.id, reveal]);
   const chord = editor.momentNotes.filter((target) => editor.fingerings?.[target.id]?.left === fingering.left);
   const place = chord.findIndex((target) => target.id === cursor.id);
   const other = fingering.left ? "right" : "left";
@@ -111,14 +143,16 @@ function FingerPicker({
   const hasOverride = fingering.source === "yours" || fingering.handMoved;
   return (
     <div
+      ref={pickerRef}
       className={`finger-picker ${handClass(fingering.left)}${above ? " above" : " below"}`}
       role="group"
       aria-label={`Finger for ${cursor.pitch}`}
       style={{
         left: `${(anchor.x / pageWidth) * 100}%`,
         top: `${(anchor.y / pageHeight) * 100}%`,
-        transform: `translate(-50%, ${above ? "-100%" : "0"}) scale(${1 / scale})`,
+        transform: `translate(calc(-50% + ${slide / scale}px), ${above ? "-100%" : "0"}) scale(${1 / scale})`,
         transformOrigin: above ? "50% 100%" : "50% 0",
+        ["--caret-slide" as string]: `${-slide}px`,
       }}
       onPointerDown={stop}
       onPointerMove={stop}
@@ -231,12 +265,15 @@ export const FingeringPageLayer = memo(function FingeringPageLayer({
   editor,
   scale,
   displayWidth,
+  reveal,
 }: {
   page: MusicXmlPage;
   editor: FingeringEditor;
   scale: number;
   /** The page's width on screen before zooming, which the moving marks are placed in. */
   displayWidth: number;
+  /** Scrolls an element of the layer, the finger picker, into view. */
+  reveal?: RevealElement;
 }) {
   const fingerings = editor.fingerings;
   const prefix = `page-${page.index + 1}-`;
@@ -582,6 +619,7 @@ export const FingeringPageLayer = memo(function FingeringPageLayer({
           scale={scale}
           pageWidth={page.width}
           pageHeight={page.height}
+          reveal={reveal}
         />
       ) : null}
     </>

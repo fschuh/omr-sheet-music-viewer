@@ -3201,15 +3201,15 @@ export function App() {
                 <FingeringToolbar editor={fingerEditor} shortcuts={shortcuts} />
               }
               renderPageExtra={fingerEditor.editing
-                ? (page, scale, width) => page.surface
-                  ? <FingeringPageLayer page={page.surface} editor={fingerEditor} scale={scale} displayWidth={width} />
+                ? (page, scale, width, reveal) => page.surface
+                  ? <FingeringPageLayer page={page.surface} editor={fingerEditor} scale={scale} displayWidth={width} reveal={reveal} />
                   : null
                 : undefined}
               footer={<FingeringStatusStrip editor={fingerEditor} shortcuts={shortcuts} />}
               noteHighlight={fingerNoteHighlight}
               hoverHighlight={fingerHoverHighlight}
               onHoverGroup={fingerEditor.editing ? handleViewerHoverGroup : undefined}
-              followMoment={fingerEditor.cursorMoment ?? returnMoment}
+              followMoment={fingerEditor.editing && !fingerEditor.cursorFollowed ? null : fingerEditor.cursorMoment ?? returnMoment}
               stillPages={fingerEditor.editing}
               playbackLocked={fingerEditor.editing}
             />

@@ -2837,7 +2837,8 @@ button:disabled {
   background: #24211d;
   content: "";
   height: 10px;
-  left: 50%;
+  /* Over the note, wherever the picker slid to stay in view. */
+  left: calc(50% + var(--caret-slide, 0px));
   position: absolute;
   transform: translateX(-50%) rotate(45deg);
   width: 10px;

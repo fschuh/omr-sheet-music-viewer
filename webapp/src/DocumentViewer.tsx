@@ -1,5 +1,6 @@
 import {
   memo,
+  useCallback,
   useEffect,
   useId,
   useLayoutEffect,
@@ -282,8 +283,12 @@ interface DocumentViewerProps {
   onRetryPage: (pageIndex: number) => void;
   /** More controls at the end of the playback toolbar. */
   toolbarExtra?: ReactNode;
-  /** Drawn over a page, in the page's box; `scale` is the viewport's zoom and `width` the page's width before it. */
-  renderPageExtra?: (page: DocumentPage, scale: number, width: number) => ReactNode;
+  /**
+   * Drawn over a page, in the page's box; `scale` is the viewport's zoom and `width` the page's
+   * width before it. `reveal` scrolls the score up or down until an element of it is in view,
+   * as a popup asks once shown.
+   */
+  renderPageExtra?: (page: DocumentPage, scale: number, width: number, reveal: RevealElement) => ReactNode;
   /** Below the score. */
   footer?: ReactNode;
   /** Notes of an engraved page to colour while playback is stopped, such as the fingering editor's. */
@@ -305,6 +310,9 @@ interface DocumentViewerProps {
    */
   stillPages?: boolean;
 }
+
+/** Asks the viewer to scroll up or down until an element over a page is wholly in view. */
+export type RevealElement = (element: Element) => void;
 
 export interface NoteHighlight {
   pageIndex: number;
@@ -1957,6 +1965,32 @@ export function DocumentViewer({
     realtimeRunning,
   ]);
 
+  // An element over a page asked to be in view, such as the finger picker once shown. The
+  // overlay asks from its own layout effect, which runs before this viewer's; the scroll is
+  // made here, after following the moment, so that following does not take it out again.
+  const revealRequest = useRef<Element | null>(null);
+  const reveal = useCallback<RevealElement>((element) => {
+    revealRequest.current = element;
+  }, []);
+  useLayoutEffect(() => {
+    const element = revealRequest.current;
+    revealRequest.current = null;
+    const stage = stageRef.current;
+    const rect = stageBox(stage);
+    if (!element || !stage || !rect || !element.isConnected) return;
+    const box = element.getBoundingClientRect();
+    // The element is drawn where this render put the score; following may since have moved it.
+    const current = transformRef.current;
+    const top = box.top - rect.top + current.y - transform.y;
+    const bottom = box.bottom - rect.top + current.y - transform.y;
+    const margin = 12;
+    const safeBottom = scoreViewBottom() - (footer && !playbackActive ? 40 : 0) - margin;
+    let dy = 0;
+    if (bottom > safeBottom) dy = safeBottom - bottom;
+    if (top + dy < margin) dy = margin - top;
+    if (Math.abs(dy) > 0.5) commitTransform({ ...current, y: current.y + dy });
+  });
+
   return (
     <div className="viewer">
       <div className="viewer-toolbar">
@@ -2459,7 +2493,7 @@ export function DocumentViewer({
                 showUnsupportedRests={showUnsupportedRests}
                 showValueMismatches={showValueMismatches}
               />
-              {renderPageExtra?.(page, transform.scale, width)}
+              {renderPageExtra?.(page, transform.scale, width, reveal)}
               {page.status !== "complete" ? (
                 <div className="page-placeholder">
                   {page.status === "failed" ? (

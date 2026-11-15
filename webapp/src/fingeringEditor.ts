@@ -313,6 +313,8 @@ export interface FingeringEditor {
   swapHand: () => void;
   undo: () => void;
   refit: () => void;
+  /** Whether the view should keep the cursor in sight: false after a click while editing. */
+  cursorFollowed: boolean;
   /** Points the cursor at a note, entering edit mode, and unless told otherwise opens its picker. */
   select: (id: string, openPicker?: boolean) => void;
   /** The note the pointer is over while editing, by viewer ID, as clicking it would select it. */
@@ -346,6 +348,9 @@ export function useFingeringEditor(options: FingeringEditorOptions): FingeringEd
   // The ringed note by structural key: the score may be laid out again while editing, which
   // moves notes to other pages and so changes their viewer IDs.
   const [cursorKey, setCursorKey] = useState<string | null>(null);
+  // Whether the view keeps the cursor in sight: not after a click, which picks a note already
+  // in sight, so the view holds still for it; again once the keys or an edit move the cursor.
+  const [cursorFollowed, setCursorFollowed] = useState(true);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [refitting, setRefitting] = useState(false);
@@ -403,7 +408,9 @@ export function useFingeringEditor(options: FingeringEditorOptions): FingeringEd
   }, [playbackActive]);
 
   const moveTo = useCallback((target: EditTarget | null | undefined) => {
-    if (target) setCursorKey(target.key);
+    if (!target) return;
+    setCursorKey(target.key);
+    setCursorFollowed(true);
   }, []);
 
   const save = useCallback((overrides: FingeringOverrides) => {
@@ -473,6 +480,7 @@ export function useFingeringEditor(options: FingeringEditorOptions): FingeringEd
     );
     if (last.cursorKey) {
       setCursorKey(last.cursorKey);
+      setCursorFollowed(true);
       const restored = walk.find((target) => target.key === last.cursorKey);
       if (restored) setFlash((value) => ({ ids: [restored.id], serial: value.serial + 1 }));
     }
@@ -505,6 +513,8 @@ export function useFingeringEditor(options: FingeringEditorOptions): FingeringEd
     const fromSelection = startNoteId ? walk.find((target) => target.id === startNoteId) : undefined;
     const start = fromPlayhead ?? fromRealtime ?? fromSelection;
     if (start) setCursorKey(start.key);
+    // The score is laid out again for editing, which moves the note: the view follows it.
+    setCursorFollowed(true);
     resumePlayback.current = playbackActive;
     if (playbackActive) stopPlayback();
     setEditing(true);
@@ -524,7 +534,10 @@ export function useFingeringEditor(options: FingeringEditorOptions): FingeringEd
     // A held note is edited through the note that starts its tie.
     const id = fingerings?.[clicked]?.tiedTo ?? clicked;
     if (!fingerings?.[id]) return;
+    // Clicked while editing, the note is in sight already; clicked to begin editing, the
+    // score is laid out again, and the view follows the note to where it goes.
     if (!editing) enter();
+    else setCursorFollowed(false);
     setCursorKey(noteKeyOf(id));
     // A note of the hand not being practised is reached by walking both.
     if (!walk.some((target) => target.id === id)) onPracticeHandChange("both");
@@ -582,6 +595,7 @@ export function useFingeringEditor(options: FingeringEditorOptions): FingeringEd
     undo,
     refit,
     select,
+    cursorFollowed,
     hoverId: editing ? hovered : null,
     hover,
     navigate,
