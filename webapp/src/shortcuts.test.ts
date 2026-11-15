@@ -28,9 +28,12 @@ test("default shortcuts reproduce the existing playback keys", () => {
   assert.equal(commandForKeyboardEvent(shortcuts, keyEvent("ArrowLeft")), "backwardNote");
   assert.equal(commandForKeyboardEvent(shortcuts, keyEvent("Period")), "forwardBar");
   assert.equal(commandForKeyboardEvent(shortcuts, keyEvent("Comma")), "backwardBar");
-  assert.equal(commandForKeyboardEvent(shortcuts, keyEvent("ArrowDown")), "forwardPage");
-  assert.equal(commandForKeyboardEvent(shortcuts, keyEvent("ArrowUp")), "backwardPage");
-  // Shift turns the page arrows into tempo, which reads the same on every keyboard layout.
+  assert.equal(commandForKeyboardEvent(shortcuts, keyEvent("ArrowDown")), "forwardSystem");
+  assert.equal(commandForKeyboardEvent(shortcuts, keyEvent("ArrowUp")), "backwardSystem");
+  // Ctrl takes the system arrows to whole pages.
+  assert.equal(commandForKeyboardEvent(shortcuts, keyEvent("ArrowDown", { ctrlKey: true })), "forwardPage");
+  assert.equal(commandForKeyboardEvent(shortcuts, keyEvent("ArrowUp", { ctrlKey: true })), "backwardPage");
+  // Shift turns the system arrows into tempo, which reads the same on every keyboard layout.
   assert.equal(commandForKeyboardEvent(shortcuts, keyEvent("ArrowUp", { shiftKey: true })), "tempoUp");
   assert.equal(commandForKeyboardEvent(shortcuts, keyEvent("ArrowDown", { shiftKey: true })), "tempoDown");
   assert.equal(formatKeyboardShortcut(shortcuts.tempoUp.keyboard), "Shift + Up Arrow");

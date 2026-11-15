@@ -625,6 +625,31 @@ test("playback started inside a repeat goes back to where the repeat begins", ()
   );
 });
 
+test("seeks by system to the note across from the one being played, by where the chords stand", () => {
+  const parsed = parseRealtimeMusicXml(score(`
+    <measure number="1"><attributes><divisions>4</divisions></attributes>${quarter("a")}${quarter("b", "D")}</measure>
+    <measure number="2">${quarter("c", "E")}${quarter("d", "F")}</measure>
+    <measure number="3">${quarter("e", "G")}${quarter("f", "A")}</measure>
+  `));
+  // Bar 1 is the first system, bars 2 and 3 the second, each note its own chord.
+  const places: Record<string, [number, number]> = { a: [0, 100], b: [0, 400], c: [1, 120], d: [1, 220], e: [1, 330], f: [1, 450] };
+  const visualMap = new Map(Object.entries(places).map(([id, [system, x]]) => [id, {
+    musicXmlId: id, pageIndex: 0, visualGroupId: `head-${id}`, staffGroupIndex: system, x, y: 0, systemRight: 0, systemTop: 0, systemBottom: 0,
+  }]));
+  const moments = Object.entries(places).map(([id, [system, x]]) => ({
+    pageIndex: 0, staffGroupIndex: system, center: [x, 0] as [number, number], visualGroupIds: [`head-${id}`],
+  }));
+  const seek = (measureIndex: number, onset: number, command: "forwardSystem" | "backwardSystem") =>
+    seekStructuralPosition(parsed, { measureIndex, onset }, command, moments, visualMap);
+  // During playback the playhead is a little past the note being played.
+  assert.deepEqual(seek(0, 1.2, "forwardSystem"), { measureIndex: 2, onset: 1 }, "b at 400 is across from f at 450");
+  assert.deepEqual(seek(0, 0, "forwardSystem"), { measureIndex: 1, onset: 0 });
+  assert.deepEqual(seek(2, 0, "backwardSystem"), { measureIndex: 0, onset: 1 }, "e at 330 is nearer b at 400");
+  assert.deepEqual(seek(1, 0, "forwardSystem"), { measureIndex: 1, onset: 0 }, "the last system stays");
+  // Without the chords' places, a system step stays put.
+  assert.deepEqual(seekStructuralPosition(parsed, { measureIndex: 0, onset: 0 }, "forwardSystem"), { measureIndex: 0, onset: 0 });
+});
+
 test("seeks notes, bars, and pages in structural score order", () => {
   const parsed = parseRealtimeMusicXml(score(`
     <measure number="1"><print new-page="yes" page-number="1"/><attributes><divisions>4</divisions></attributes>${quarter("a")}${quarter("b", "D")}</measure>

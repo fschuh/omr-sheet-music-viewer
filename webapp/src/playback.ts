@@ -7,6 +7,7 @@ import {
   type RealtimeScoreNote,
 } from "./realtime";
 import type { MusicalDynamic } from "./pianoRegistry";
+import { acrossSystem } from "./systemStep";
 
 export const playbackCommandNames = [
   "togglePlayback",
@@ -21,6 +22,8 @@ export const playbackCommandNames = [
   "backwardNote",
   "forwardBar",
   "backwardBar",
+  "forwardSystem",
+  "backwardSystem",
   "forwardPage",
   "backwardPage",
   "toggleLoopMode",
@@ -545,6 +548,11 @@ function firstMomentOfPreviousBar(timeline: PlaybackMoment[], index: number): nu
   return target;
 }
 
+/** Where a moment stands on its page, for stepping by system. */
+export function momentSpot(moment: Pick<PlaybackMoment, "pageIndex" | "staffGroupIndex" | "center">) {
+  return { pageIndex: moment.pageIndex, staffGroupIndex: moment.staffGroupIndex, x: moment.center[0] };
+}
+
 function commandDestination(
   timeline: PlaybackMoment[],
   index: number,
@@ -582,6 +590,10 @@ function commandDestination(
     return destination < 0 ? timeline.length - 1 : destination;
   }
   if (command === "backwardBar") return firstMomentOfPreviousBar(timeline, index);
+  if (command === "forwardSystem" || command === "backwardSystem") {
+    const target = acrossSystem(timeline, momentSpot, momentSpot(timeline[index]), command === "forwardSystem" ? 1 : -1);
+    return target < 0 ? index : target;
+  }
   if (command === "forwardPage") {
     const currentPage = timeline[index].pageIndex;
     const destination = timeline.findIndex(

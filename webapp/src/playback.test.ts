@@ -602,6 +602,26 @@ test("page commands target page beginnings and the document edges", () => {
   assert.equal(firstAgain.currentMomentId, timeline[0].id);
 });
 
+test("system commands land across from the moment in the system below or above, over pages too", () => {
+  const pages = [
+    page(0, [
+      group("a1", 0, 0, 100, 200), group("a2", 0, 0, 250, 200), group("a3", 0, 0, 500, 200),
+      group("b1", 1, 0, 150, 600), group("b2", 1, 0, 420, 600),
+    ], [1, 1, 1, 2, 2]),
+    page(1, [group("c1", 0, 0, 120, 200), group("c2", 0, 0, 480, 200)], [3, 3]),
+  ];
+  const { timeline, state: first } = activeAtFirst(pages);
+  const at = (id: string) => ({ ...first, currentMomentId: timeline.find((moment) => moment.visualGroupIds.includes(id))!.id });
+  const landsOn = (state: PlaybackState) => timeline.find((moment) => moment.id === state.currentMomentId)!.visualGroupIds[0];
+  assert.equal(landsOn(run(timeline, at("a2"), "forwardSystem")), "b1", "x 250 is nearer 150 than 420");
+  assert.equal(landsOn(run(timeline, at("a3"), "forwardSystem")), "b2");
+  assert.equal(landsOn(run(timeline, at("b2"), "forwardSystem")), "c2", "on to the next page's first system");
+  assert.equal(landsOn(run(timeline, at("c1"), "backwardSystem")), "b1", "back to the last system of the page before");
+  assert.equal(landsOn(run(timeline, at("b2"), "backwardSystem")), "a3");
+  assert.equal(landsOn(run(timeline, at("c2"), "forwardSystem")), "c2", "the last system stays");
+  assert.equal(landsOn(run(timeline, at("a1"), "backwardSystem")), "a1", "the first system stays");
+});
+
 test("navigation is inactive outside playback mode and toggle exits cleanly", () => {
   const timeline = timelineForPages([page(0, [group("a", 0, 0, 100, 200)], [1])]);
   assert.equal(run(timeline, initialPlaybackState, "forwardNote"), initialPlaybackState);

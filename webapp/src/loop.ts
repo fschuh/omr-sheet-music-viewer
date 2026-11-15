@@ -241,7 +241,7 @@ function loopMomentIndexes(timeline: readonly PlaybackMoment[], region: LoopRegi
   return timeline.flatMap((moment, index) => (measureInLoop(moment.measureIndex, region) ? [index] : []));
 }
 
-const FORWARD_COMMANDS: ReadonlySet<PlaybackCommand> = new Set(["forwardNote", "forwardBar", "forwardPage"]);
+const FORWARD_COMMANDS: ReadonlySet<PlaybackCommand> = new Set(["forwardNote", "forwardBar", "forwardSystem", "forwardPage"]);
 
 /**
  * Note-by-note playback kept inside the loop. A move that would leave it lands on the

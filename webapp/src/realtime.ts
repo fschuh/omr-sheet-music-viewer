@@ -3,6 +3,7 @@ import { formatPitchName } from "./noteLabels";
 import type { PageNoteGeometry } from "./noteGeometry";
 import type { DocumentPage, VisualGroupRef } from "./types";
 import { MUSICAL_DYNAMICS, type MusicalDynamic } from "./pianoRegistry";
+import { acrossSystem, type SystemSpot } from "./systemStep";
 
 export type PlaybackMode = "note-by-note" | "realtime";
 export type PlaybackStatus = "inactive" | "note-by-note" | "playing" | "paused";
@@ -224,7 +225,9 @@ export type StructuralSeekCommand =
   | "forwardBar"
   | "backwardBar"
   | "forwardPage"
-  | "backwardPage";
+  | "backwardPage"
+  | "forwardSystem"
+  | "backwardSystem";
 
 export interface RealtimePlayhead {
   pageIndex: number;
@@ -1700,10 +1703,50 @@ function playableStructuralPositions(score: RealtimeScore): StructuralPosition[]
   );
 }
 
+/** A chord or note as it stands on the page, with the noteheads it is drawn as. */
+export interface SystemStepMoment {
+  pageIndex: number;
+  staffGroupIndex: number;
+  center: [number, number];
+  visualGroupIds: readonly string[];
+}
+
+/** Where a step down or up a system goes from `current`, by the moments' places on the page. */
+function seekAcrossSystem(
+  score: RealtimeScore,
+  current: StructuralPosition,
+  direction: 1 | -1,
+  moments: readonly SystemStepMoment[],
+  visualMap: ReadonlyMap<string, VisualNoteTarget>,
+): StructuralPosition | null {
+  const notes = score.measures[current.measureIndex]?.notes.filter((note) => Math.abs(note.onset - current.onset) < 1e-6) ?? [];
+  const groups = new Set(notes.flatMap((note) => {
+    const visual = visualMap.get(note.musicXmlId);
+    return visual ? [`${visual.pageIndex}|${visual.visualGroupId}`] : [];
+  }));
+  const from = moments.find((moment) => moment.visualGroupIds.some((id) => groups.has(`${moment.pageIndex}|${id}`)));
+  if (!from) return null;
+  const spot = (moment: SystemStepMoment): SystemSpot =>
+    ({ pageIndex: moment.pageIndex, staffGroupIndex: moment.staffGroupIndex, x: moment.center[0] });
+  const target = moments[acrossSystem(moments, spot, spot(from), direction)];
+  if (!target) return null;
+  for (const visualGroupId of target.visualGroupIds) {
+    const position = structuralPositionForGroup(score, visualMap, { pageIndex: target.pageIndex, visualGroupId });
+    if (position) return position;
+  }
+  return null;
+}
+
+/**
+ * Where a step command takes the playhead from `current`. Steps by system need where the
+ * score's chords stand on its pages, `moments` and `visualMap`; without them they stay put.
+ */
 export function seekStructuralPosition(
   score: RealtimeScore,
   current: StructuralPosition,
   command: StructuralSeekCommand,
+  moments: readonly SystemStepMoment[] = [],
+  visualMap: ReadonlyMap<string, VisualNoteTarget> = new Map(),
 ): StructuralPosition {
   const positions = playableStructuralPositions(score);
   if (positions.length === 0) return { measureIndex: 0, onset: 0 };
@@ -1714,6 +1757,11 @@ export function seekStructuralPosition(
     (position.measureIndex === current.measureIndex && position.onset > current.onset + 1e-6),
   );
   const currentIndex = (after < 0 ? positions.length : after) - 1;
+  if (command === "forwardSystem" || command === "backwardSystem") {
+    // Counting in, before the first note, the step starts from that note.
+    const from = positions[Math.max(0, currentIndex)];
+    return seekAcrossSystem(score, from, command === "forwardSystem" ? 1 : -1, moments, visualMap) ?? current;
+  }
   if (command === "forwardNote") return positions[Math.min(positions.length - 1, currentIndex + 1)];
   if (command === "backwardNote") return positions[Math.max(0, currentIndex - 1)];
 

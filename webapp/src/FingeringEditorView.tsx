@@ -581,6 +581,7 @@ export function FingeringStatusStrip({
     [`${keyName(shortcuts, "backwardNote")} · ${keyName(shortcuts, "forwardNote")}`, "Previous / next note"],
     [`${keyName(shortcuts, "fingerNoteHigher")} · ${keyName(shortcuts, "fingerNoteLower")}`, "Higher / lower note at the same time"],
     [`${keyName(shortcuts, "backwardBar")} · ${keyName(shortcuts, "forwardBar")}`, "Previous / next bar"],
+    [`${keyName(shortcuts, "backwardSystem")} · ${keyName(shortcuts, "forwardSystem")}`, "The note above / below, in the system before or after"],
     [keyName(shortcuts, "playCurrentNotes"), "Hear the notes at the ring"],
     ["Ctrl + V", "Paste a run of fingers, such as 54545243"],
     [`${keyName(shortcuts, "toggleFingerEditing")} · Esc`, "Back to what was playing, at the ring; Esc first closes the picker"],

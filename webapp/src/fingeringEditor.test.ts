@@ -120,6 +120,7 @@ test("practising one hand follows a note moved to the other hand", () => {
 test("the cursor moves by note, bar and page as the playhead does", () => {
   const target = (key: string, barKey: string, pageIndex = 0) => ({
     id: `page-${pageIndex + 1}-${key}`, pageIndex, key, pitch: "C4", momentId: key, measure: null, barKey,
+    staffGroupIndex: 0, x: 0,
   });
   const walk = [
     target("a", "bar1"), target("b", "bar1"), target("c", "bar2"), target("d", "bar2"),
@@ -135,4 +136,25 @@ test("the cursor moves by note, bar and page as the playhead does", () => {
   assert.equal(navigateWalk(walk, 5, "backwardPage"), 0);
   assert.equal(navigateWalk(walk, 5, "rewind"), 0);
   assert.equal(navigateWalk([], 0, "forwardNote"), -1);
+});
+
+test("the cursor steps by system to the note across from it, nearest in pitch of a chord's", () => {
+  const target = (key: string, pitch: string, staffGroupIndex: number, x: number, pageIndex = 0) => ({
+    id: `page-${pageIndex + 1}-${key}`, pageIndex, key, pitch, momentId: `${pageIndex}-${staffGroupIndex}-${x}`,
+    measure: null, barKey: `bar-${staffGroupIndex}`, staffGroupIndex, x,
+  });
+  const walk = [
+    target("a-high", "E5", 0, 100), target("a-low", "C3", 0, 100), target("b", "G4", 0, 400),
+    // A chord across from the first: its top note and its bass.
+    target("c-high", "G5", 1, 110), target("c-low", "E3", 1, 110), target("d", "A4", 1, 380),
+    target("e", "C4", 0, 90, 1),
+  ];
+  const step = (key: string, command: "forwardSystem" | "backwardSystem") =>
+    walk[navigateWalk(walk, walk.findIndex((value) => value.key === key), command)].key;
+  assert.equal(step("a-high", "forwardSystem"), "c-high");
+  assert.equal(step("a-low", "forwardSystem"), "c-low", "the bass goes to the bass");
+  assert.equal(step("b", "forwardSystem"), "d");
+  assert.equal(step("c-low", "backwardSystem"), "a-low");
+  assert.equal(step("d", "forwardSystem"), "e", "on to the next page");
+  assert.equal(step("e", "forwardSystem"), "e", "the last system stays");
 });

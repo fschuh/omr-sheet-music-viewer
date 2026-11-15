@@ -1251,7 +1251,7 @@ export function App() {
         const offset = realtimeControllerRef.current?.getOffset() ?? realtimeFrame?.offset ?? 0;
         const current = route ? routeStepPosition(route, offset) : null;
         if (!current) return;
-        let destination = seekStructuralPosition(realtimeModel.score, current, command);
+        let destination = seekStructuralPosition(realtimeModel.score, current, command, fullPlaybackTimeline, realtimeVisualMap);
         if (route && realtimeRouteLoopsRef.current) {
           // A step out of the loop lands on its start: counting in to it when the loop
           // counts in to each pass, otherwise at once.
@@ -1286,6 +1286,7 @@ export function App() {
       realtimeFrame?.offset,
       realtimeModel.score,
       realtimeStatus,
+      realtimeVisualMap,
       seekRealtime,
       seekRealtimePosition,
       selectedGroup,

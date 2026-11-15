@@ -22,6 +22,7 @@ import {
 import type { PlaybackMoment, PracticeHand } from "./playback";
 import { noteInPracticeHand } from "./playback";
 import { pitchToMidi } from "./piano";
+import { acrossSystem } from "./systemStep";
 import type { FingeringLayers, LoadedDocument } from "./types";
 
 /** A document with new fingering layers, and every view's fingerings resolved from them. */
@@ -84,6 +85,9 @@ export interface EditTarget {
   measure: number | null;
   /** Moments of one bar share this key. */
   barKey: string;
+  /** The moment's system on its page, and how far across the page it stands. */
+  staffGroupIndex: number;
+  x: number;
 }
 
 /** The moment's notes that have a finger, top note first. */
@@ -107,6 +111,8 @@ export function momentTargets(
       momentId: moment.id,
       measure: moment.measure,
       barKey: moment.barKey,
+      staffGroupIndex: moment.staffGroupIndex,
+      x: moment.center[0],
     });
   }
   if (targets.length < 2) return targets;
@@ -165,11 +171,14 @@ export type EditNavigation =
   | "backwardBar"
   | "forwardPage"
   | "backwardPage"
+  | "forwardSystem"
+  | "backwardSystem"
   | "rewind";
 
 export function isEditNavigation(command: string): command is EditNavigation {
   return command === "forwardNote" || command === "backwardNote" || command === "forwardBar" ||
-    command === "backwardBar" || command === "forwardPage" || command === "backwardPage" || command === "rewind";
+    command === "backwardBar" || command === "forwardPage" || command === "backwardPage" ||
+    command === "forwardSystem" || command === "backwardSystem" || command === "rewind";
 }
 
 /** The first note of the run of notes around `index` that share `group`. */
@@ -181,8 +190,9 @@ function runStart(walk: readonly EditTarget[], index: number, group: (target: Ed
 
 /**
  * Where a navigation command takes the cursor in the walk: by note, to the first note of
- * the next or previous bar or page, or to the start. A step back by bar or page goes to the
- * start of the one before, as playback's does.
+ * the next or previous bar or page, to the note across from it in the system below or above,
+ * or to the start. A step back by bar or page goes to the start of the one before, as
+ * playback's does; a step by system takes, of a chord's notes, the nearest in pitch.
  */
 export function navigateWalk(walk: readonly EditTarget[], index: number, command: EditNavigation): number {
   if (walk.length === 0) return -1;
@@ -191,6 +201,12 @@ export function navigateWalk(walk: readonly EditTarget[], index: number, command
   if (command === "rewind") return 0;
   if (command === "forwardNote") return Math.min(at + 1, last);
   if (command === "backwardNote") return Math.max(at - 1, 0);
+  if (command === "forwardSystem" || command === "backwardSystem") {
+    const pitch = pitchMidi(walk[at].pitch);
+    const target = acrossSystem(walk, (target) => target, walk[at], command === "forwardSystem" ? 1 : -1,
+      (target) => Math.abs(pitchMidi(target.pitch) - pitch));
+    return target < 0 ? at : target;
+  }
   const group = command === "forwardBar" || command === "backwardBar"
     ? (target: EditTarget) => `${target.pageIndex}|${target.barKey}`
     : (target: EditTarget) => target.pageIndex;
