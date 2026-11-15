@@ -3,7 +3,7 @@ import test from "node:test";
 import { parseMusicXml } from "../import/parseMusicXml";
 import type { LayoutNote, LayoutPage } from "../model/layout";
 import { note, piano, score } from "../testScores";
-import { fingeringLabelLayout, labelsNeedRoom } from "./fingeringLabels";
+import { fingeringLabelLayout, labelsNeedRoom, MOVED_GAP } from "./fingeringLabels";
 import { pageFormat } from "./pageFormat";
 import { layoutScore } from "./pages";
 
@@ -163,6 +163,28 @@ test("labels need room only where their hands are not those the layout made room
   assert.equal(labelsNeedRoom(staffHands, hands), true, "the moved bar's stacks below reach the next system's labels");
   const moved = layoutScore(parsed, format, { fingeringRoom: true, movedHand: firstBarLeft }).pages[0];
   assert.equal(labelsNeedRoom(moved, hands), false, "fits once laid out for those hands");
+});
+
+test("notes moved to a hand stand in their own stack, beyond that hand's chord, with room laid out for it", () => {
+  const parsed = parseMusicXml(denseScore());
+  const format = pageFormat(parsed.defaults);
+  // The first bar's right-hand notes moved to the left hand, where its held bass note has a label.
+  const firstBarLeft = (key: string) => (/^P1-m1-s1-/.test(key) ? true : undefined);
+  const hands = (key: string) => firstBarLeft(key) ?? staffHand(key);
+  const moved = (key: string) => firstBarLeft(key) !== undefined;
+  const page = layoutScore(parsed, format, { fingeringRoom: true, movedHand: firstBarLeft }).pages[0];
+  const layout = fingeringLabelLayout(page, hands, moved);
+  const half = layout.size / 2;
+  const bass = layout.labels.find((label) => label.key.startsWith("P1-m1-s2-"))!;
+  // The moved chord struck with the bass note: its stack is the bass note's moment's.
+  const crossed = layout.labels.filter((label) => moved(label.key) && label.stackId.startsWith(bass.stackId));
+  assert.equal(crossed.length, 2, "the chord struck with the bass note");
+  assert.ok(crossed.every((label) => label.stackId !== bass.stackId && label.stackId === crossed[0].stackId), "a stack of their own");
+  assert.ok(layout.stacks.some((stack) => stack.id === crossed[0].stackId));
+  assert.ok(layout.stacks.every((stack) => stack.id !== bass.stackId), "the bass note alone has no stack");
+  const top = Math.min(...crossed.map((label) => label.y - half));
+  assert.ok(top - (bass.y + half) >= MOVED_GAP * page.staffSpace - 0.01, "beyond the chord's label, a wider gap out");
+  assert.equal(labelsNeedRoom(page, hands, moved), false, "the layout made room for them");
 });
 
 test("with room for fingerings, every label stays within its own system", () => {

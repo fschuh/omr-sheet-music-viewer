@@ -2,7 +2,7 @@
 // result into what rendering draws. Everything is computed in staff spaces and converted to
 // page pixels when drawn.
 import type { LayoutModel, PageFormat } from "../model/layout";
-import { LABEL_GAP, LABEL_SIZE, STACK_GAP } from "./fingeringLabels";
+import { LABEL_GAP, LABEL_SIZE, MOVED_GAP, STACK_GAP } from "./fingeringLabels";
 import type { ScoreModel } from "../model/score";
 import { beamGroups, crossStaffBeamGaps, layoutBeam, stemDirections, type BeamDrawing, type BeamGroup, type PlacedChord } from "./beams";
 import { avoidRestCollisions, layoutChord, stackSharedAccidentals, type ChordShape } from "./chords";
@@ -214,7 +214,7 @@ function addFingeringLabels(
   system: PlacedSystem, skyline: Box[][], prepared: PreparedScore, shapes: Map<PreparedChord, ChordShape>,
   movedHand?: MovedHand,
 ): void {
-  const columns = new Map<string, { x: number; notes: number; above: boolean; staff: number }>();
+  const columns = new Map<string, { x: number; notes: number; moved: number; above: boolean; staff: number }>();
   // Each part's outer staves are solid from end to end, so that labels next to them are spaced
   // clear of their lines, not only of what happens to stand above or below them.
   for (const staves of prepared.partStaves) {
@@ -232,13 +232,16 @@ function addFingeringLabels(
       const above = labelSide(prepared, chord, movedHand?.(note.key)).endsWith("above");
       const staff = above ? staves[0] : staves[staves.length - 1];
       const key = `${staff}|${above}|${x.toFixed(2)}`;
-      const column = columns.get(key) ?? { x, notes: 0, above, staff };
+      const column = columns.get(key) ?? { x, notes: 0, moved: 0, above, staff };
       column.notes += 1;
+      if (movedHand?.(note.key) !== undefined) column.moved += 1;
       columns.set(key, column);
     }
   }
   for (const column of columns.values()) {
-    const height = LABEL_SIZE + (column.notes - 1) * (LABEL_SIZE + STACK_GAP);
+    // Notes moved to this hand stand beyond its chord's labels, a wider gap out.
+    const apart = column.moved > 0 && column.moved < column.notes ? MOVED_GAP - STACK_GAP : 0;
+    const height = LABEL_SIZE + (column.notes - 1) * (LABEL_SIZE + STACK_GAP) + apart;
     const x1 = column.x - LABEL_SIZE / 2;
     const x2 = column.x + LABEL_SIZE / 2;
     // The staff's content in the column, beams included, as the labels are placed against it.

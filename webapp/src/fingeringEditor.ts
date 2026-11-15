@@ -110,7 +110,7 @@ export interface EditTarget {
   x: number;
 }
 
-/** The moment's notes that have a finger, top note first. */
+/** The moment's notes that have a finger, in the order their labels stand, top first. */
 export function momentTargets(
   moment: PlaybackMoment | null,
   fingerings: Readonly<Record<string, unknown>>,
@@ -136,7 +136,15 @@ export function momentTargets(
     });
   }
   if (targets.length < 2) return targets;
-  return targets.sort((a, b) => pitchMidi(b.pitch) - pitchMidi(a.pitch) || a.id.localeCompare(b.id));
+  // As their labels stand, top to bottom: notes moved to the right hand above its own, then
+  // its own, then the left hand's own, then notes moved to the left hand below them; each
+  // group top note first.
+  const place = (target: EditTarget) => {
+    const fingering = fingerings[target.id] as { left?: boolean; handMoved?: boolean } | undefined;
+    const moved = fingering?.handMoved === true;
+    return fingering?.left ? (moved ? 3 : 2) : (moved ? 0 : 1);
+  };
+  return targets.sort((a, b) => place(a) - place(b) || pitchMidi(b.pitch) - pitchMidi(a.pitch) || a.id.localeCompare(b.id));
 }
 
 /** Every note of the timeline the editor can step through, in playing order. */

@@ -213,6 +213,14 @@ function FingerPicker({
   );
 }
 
+/** How far a moved note's dashed ring stands off its head, in staff spaces: close, to keep clear of its dots and accidentals. */
+const MOVED_RING_GAP = 0.22;
+
+/** A label the player changed, its finger or its hand, is filled; others are outlined. */
+function labelFilled(fingering: EffectiveFingering): boolean {
+  return fingering.source === "yours" || fingering.handMoved;
+}
+
 /** A label's circle and digit, centred on the origin. */
 function LabelFace({ size, finger }: { size: number; finger: number }) {
   return (
@@ -288,21 +296,22 @@ export const FingeringPageLayer = memo(function FingeringPageLayer({
   // Where labels go depends only on which notes have one and on which hand, so a new finger
   // does not place the page's labels again.
   const hands = useMemo(() => {
-    const result = new Map<string, boolean>();
+    const result = new Map<string, { left: boolean; moved: boolean }>();
     for (const [key, note] of notes) {
-      const left = editorLabelHand(fingerings?.[prefix + key], Boolean(note.printedFingering));
-      if (left !== undefined) result.set(key, left);
+      const fingering = fingerings?.[prefix + key];
+      const left = editorLabelHand(fingering, Boolean(note.printedFingering));
+      if (left !== undefined) result.set(key, { left, moved: Boolean(fingering?.handMoved) });
     }
     return result;
   }, [fingerings, notes, prefix]);
   const handsSignature = useMemo(
-    () => [...hands].map(([key, left]) => `${key}:${left ? "L" : "R"}`).join("|"),
+    () => [...hands].map(([key, { left, moved }]) => `${key}:${left ? "L" : "R"}${moved ? "m" : ""}`).join("|"),
     [hands],
   );
   const handsRef = useRef(hands);
   handsRef.current = hands;
   const layout = useMemo(
-    () => fingeringLabelLayout(page, (key) => handsRef.current.get(key)),
+    () => fingeringLabelLayout(page, (key) => handsRef.current.get(key)?.left, (key) => handsRef.current.get(key)?.moved ?? false),
     // The signature stands for the hands.
     [page, handsSignature],
   );
@@ -337,6 +346,13 @@ export const FingeringPageLayer = memo(function FingeringPageLayer({
     const fingering = fingerings?.[prefix + note.key];
     return note.printedFingering && fingering?.basePrinted && !fingering.tiedTo ? [{ note, fingering }] : [];
   }), [fingerings, notes, prefix]);
+  // Notes the player moved to the other hand, held ones included: their heads stay black,
+  // ringed with a dashed line in their hand's colour, so that colour on a head means the
+  // ringed note alone.
+  const movedHeads = useMemo(() => [...notes.values()].flatMap((note) => {
+    const fingering = fingerings?.[prefix + note.key];
+    return fingering?.handMoved ? [{ note, left: fingering.left }] : [];
+  }), [fingerings, notes, prefix]);
   const marks = useMemo(() => {
     if (!fingerings) return null;
     const radius = layout.size / 2;
@@ -353,6 +369,21 @@ export const FingeringPageLayer = memo(function FingeringPageLayer({
             rx={radius + layout.size * 0.12}
           />
         ))}
+        {movedHeads.map(({ note, left }) => {
+          const [x1, y1, x2, y2] = note.headBounds;
+          return (
+            <ellipse
+              key={`moved-${note.key}`}
+              className={`fingering-moved-head ${handClass(left)}`}
+              cx={(x1 + x2) / 2}
+              cy={(y1 + y2) / 2}
+              rx={(x2 - x1) / 2 + MOVED_RING_GAP * page.staffSpace}
+              ry={(y2 - y1) / 2 + MOVED_RING_GAP * page.staffSpace}
+              strokeWidth={layout.size * 0.08}
+              strokeDasharray={`${0.36 * page.staffSpace} ${0.22 * page.staffSpace}`}
+            />
+          );
+        })}
         {printedTargets.map(({ note, fingering }) => {
           const id = prefix + note.key;
           const [left, top, right, bottom] = note.printedFingering!;
@@ -400,7 +431,7 @@ export const FingeringPageLayer = memo(function FingeringPageLayer({
               size={layout.size}
               left={label.left}
               finger={fingering.finger}
-              yours={fingering.source === "yours"}
+              yours={labelFilled(fingering)}
               text={labelText(id, fingering, notes.get(label.key)?.pitch ?? null)}
               onPick={pick}
               onHover={hover}
@@ -409,7 +440,7 @@ export const FingeringPageLayer = memo(function FingeringPageLayer({
         })}
       </>
     );
-  }, [fingerings, hover, hoverId, layout, notes, pick, prefix, printedTargets]);
+  }, [fingerings, hover, hoverId, layout, movedHeads, notes, page.staffSpace, pick, prefix, printedTargets]);
   if (!editor.editing || !fingerings) return null;
 
   const cursorId = editor.cursor?.id ?? null;
@@ -452,7 +483,7 @@ export const FingeringPageLayer = memo(function FingeringPageLayer({
         <g className={`fingering-hover ${handClass(hovered.left)}`} transform={`translate(${hovered.x} ${hovered.y})`}>
           <circle className="fingering-hover-ground" r={outer} />
           <g
-            className={`fingering-label ${handClass(hovered.left)} ${hoveredFingering.source === "yours" ? "yours" : "predicted"}`}
+            className={`fingering-label ${handClass(hovered.left)} ${labelFilled(hoveredFingering) ? "yours" : "predicted"}`}
             // Only the label underneath takes the pointer, so the hover holds while it is there.
             style={{ pointerEvents: "none" }}
           >
@@ -488,7 +519,19 @@ export const FingeringPageLayer = memo(function FingeringPageLayer({
   let anchor: { x: number; y: number; above: boolean } | null = null;
   let lead: { x: number; from: number; to: number; tickTo: number } | null = null;
   if (cursorLabel) {
-    const stack = layout.stacks.find((candidate) => candidate.id === cursorLabel.stackId);
+    // The hand's labels at the moment: its chord's stack and, beyond it outside the outline,
+    // the notes moved to that hand. The picker stands beyond them all.
+    const chordId = cursorLabel.stackId.replace(/\|moved$/, "");
+    const members = new Set([chordId, `${chordId}|moved`]);
+    const group = layout.labels.filter((label) => members.has(label.stackId));
+    const outlined = layout.stacks.find((candidate) => candidate.id === chordId) ?? layout.stacks.find((candidate) => members.has(candidate.id));
+    const stack = group.length > 1
+      ? {
+        x: outlined?.x ?? cursorLabel.x,
+        top: Math.min(...group.map((label) => label.y - radius)),
+        bottom: Math.max(...group.map((label) => label.y + radius)),
+      }
+      : undefined;
     const above = !cursorLabel.left;
     if (stack) {
       const y = above ? stack.top - layout.size * 0.12 - radius * 0.6 : stack.bottom + layout.size * 0.12 + radius * 0.6;
@@ -500,9 +543,9 @@ export const FingeringPageLayer = memo(function FingeringPageLayer({
         const right = x + layout.size * 0.15;
         const top = Math.min(y, cursorLabel.y);
         const bottom = Math.max(y, cursorLabel.y);
-        const labelInWay = layout.labels.some((label) => label.stackId !== stack.id &&
+        const labelInWay = layout.labels.some((label) => !members.has(label.stackId) &&
           label.x + radius > left && label.x - radius < right && label.y + radius > top && label.y - radius < bottom);
-        const stackInWay = layout.stacks.some((other) => other.id !== stack.id &&
+        const stackInWay = layout.stacks.some((other) => !members.has(other.id) &&
           other.x + layout.size * 0.62 > left && other.x - layout.size * 0.62 < right &&
           other.bottom + layout.size * 0.12 > top && other.top - layout.size * 0.12 < bottom);
         return !labelInWay && !stackInWay;
@@ -561,7 +604,7 @@ export const FingeringPageLayer = memo(function FingeringPageLayer({
       {pops.map(({ id, label, fingering }) => (
         <div
           key={`${id}-${editor.flash.serial}`}
-          className={`fingering-pop ${handClass(label.left)} ${fingering.source === "yours" ? "yours" : "predicted"}`}
+          className={`fingering-pop ${handClass(label.left)} ${labelFilled(fingering) ? "yours" : "predicted"}`}
           aria-hidden="true"
           style={{
             width: layout.size * k,

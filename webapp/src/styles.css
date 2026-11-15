@@ -2813,6 +2813,11 @@ button:disabled {
   .document-page .fingering-pop { display: none; }
 }
 
+/* A note moved to the other hand: its head ringed with a dashed line in that hand's colour. */
+.fingering-layer .fingering-moved-head { fill: none; }
+.fingering-layer .fingering-moved-head.right-hand { stroke: var(--hand-right); }
+.fingering-layer .fingering-moved-head.left-hand { stroke: var(--hand-left); }
+
 .fingering-layer .fingering-stack {
   fill: #fff;
   stroke-width: 3;

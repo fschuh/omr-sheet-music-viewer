@@ -2,7 +2,9 @@
 // part and left-hand fingers below it, each moment's labels just clear of its chords and of
 // whatever else the page draws in their column, such as pedal marks and tempo text. A note
 // moved to the other hand moves its label to that hand's side. A hand's notes struck
-// together share one stack, top note on top. Positions are page pixels.
+// together share one stack, top note on top; notes moved to it from the other staff have
+// their own, further out, so that a chord's stack holds only that chord's notes. Positions
+// are page pixels.
 import { glyphBox } from "../fonts/smufl";
 import type { Bounds, Drawable, LayoutPage } from "../model/layout";
 
@@ -12,6 +14,11 @@ export const LABEL_SIZE = 1.7;
 export const LABEL_GAP = 0.6;
 /** Between two labels of a stack, in staff spaces. */
 export const STACK_GAP = 0.15;
+/**
+ * Between a hand's chord's labels and those of notes moved to that hand, in staff spaces: room
+ * for both stacks' outlines and a gap between them.
+ */
+export const MOVED_GAP = 0.8;
 /**
  * Labels step past marks in their way by at most this, in staff spaces; further, they overlap.
  * A page laid out with room for them has that room wherever they need it.
@@ -92,10 +99,12 @@ function itemBounds(item: Drawable, sp: number): Bounds | null {
 /**
  * Labels for the page's notes that have a hand: `handOf` says whether a note, by its
  * structural key, is played by the left hand, or undefined for a note without a label.
+ * `moved` says whether the player moved it there from the other hand.
  */
 export function fingeringLabelLayout(
   page: LayoutPage,
   handOf: (key: string) => boolean | undefined,
+  moved: (key: string) => boolean = () => false,
 ): FingeringLabelLayout {
   const sp = page.staffSpace;
   const size = LABEL_SIZE * sp;
@@ -103,7 +112,7 @@ export function fingeringLabelLayout(
   const gap = LABEL_GAP * sp;
   // The extent of the music struck at each moment of a part: its chords and the part's staves.
   const reach = new Map<string, { top: number; bottom: number }>();
-  const groups = new Map<string, { left: boolean; notes: LabelledNote[]; place: string }>();
+  const groups = new Map<string, { left: boolean; moved: boolean; notes: LabelledNote[]; place: string }>();
   const obstacles: Bounds[] = [];
   for (const item of page.items) {
     const bounds = itemBounds(item, sp);
@@ -133,8 +142,9 @@ export function fingeringLabelLayout(
     for (const note of chord.notes) {
       const left = handOf(note.key);
       if (left === undefined) continue;
-      const id = `${place}|${left ? "L" : "R"}`;
-      const group = groups.get(id) ?? { left, notes: [], place };
+      const crossed = moved(note.key);
+      const id = `${place}|${left ? "L" : "R"}${crossed ? "|moved" : ""}`;
+      const group = groups.get(id) ?? { left, moved: crossed, notes: [], place };
       group.notes.push({ key: note.key, x: note.center[0], y: note.center[1] });
       groups.set(id, group);
     }
@@ -171,10 +181,20 @@ export function fingeringLabelLayout(
   const labels: FingeringLabelPlacement[] = [];
   const stacks: FingeringLabelStack[] = [];
   // Right-hand labels go first; left-hand ones then keep clear of those of the system below.
+  // A hand's chord goes before the notes moved to that hand, which stand beyond it.
   const rightLabels: Bounds[] = [];
-  const ordered = [...groups].sort(([, a], [, b]) => Number(a.left) - Number(b.left));
+  const placed = new Map<string, { top: number; bottom: number }>();
+  const ordered = [...groups].sort(([, a], [, b]) => Number(a.left) - Number(b.left) || Number(a.moved) - Number(b.moved));
   for (const [id, group] of ordered) {
-    const extent = reach.get(group.place)!;
+    const music = reach.get(group.place)!;
+    const chordLabels = group.moved ? placed.get(`${group.place}|${group.left ? "L" : "R"}`) : undefined;
+    // Moved notes stand clear of the chord's own labels, beyond them from the staff.
+    const extent = chordLabels
+      ? {
+        top: Math.min(music.top, chordLabels.top - (MOVED_GAP - LABEL_GAP) * sp),
+        bottom: Math.max(music.bottom, chordLabels.bottom + (MOVED_GAP - LABEL_GAP) * sp),
+      }
+      : music;
     // Top note first; on the right hand's side the stack grows upward from the music.
     const notes = [...group.notes].sort((a, b) => a.y - b.y);
     const x = notes.reduce((total, note) => total + note.x, 0) / notes.length;
@@ -188,6 +208,7 @@ export function fingeringLabelLayout(
     notes.forEach((note, index) => {
       labels.push({ key: note.key, x, y: first + index * step, left: group.left, stackId: id });
     });
+    placed.set(id, { top: first - size / 2, bottom: first + (count - 1) * step + size / 2 });
     if (count > 1) {
       stacks.push({ id, x, top: first - size / 2, bottom: first + (count - 1) * step + size / 2, left: group.left });
     }
@@ -202,8 +223,12 @@ export function fingeringLabelLayout(
  * of a system overlapping. Moving a note to the other hand can do any of these; otherwise its
  * label fits where the layout made room, and the score need not be laid out again.
  */
-export function labelsNeedRoom(page: LayoutPage, handOf: (key: string) => boolean | undefined): boolean {
-  const layout = fingeringLabelLayout(page, handOf);
+export function labelsNeedRoom(
+  page: LayoutPage,
+  handOf: (key: string) => boolean | undefined,
+  moved?: (key: string) => boolean,
+): boolean {
+  const layout = fingeringLabelLayout(page, handOf, moved);
   const half = layout.size / 2;
   const gap = STACK_GAP * page.staffSpace;
   const systemOf = (label: FingeringLabelPlacement) => Number(label.stackId.slice(0, label.stackId.indexOf("|")));
