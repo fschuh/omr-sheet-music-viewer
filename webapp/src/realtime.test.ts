@@ -571,6 +571,25 @@ test("follows D.C. al Fine and D.S. al Coda using named sound tokens", () => {
   );
 });
 
+test("a jump or repeat plays on at the tempo in force where it lands", () => {
+  // A rit. at a repeat's end, and another before the D.S., slow the bars before each jump back
+  // to a bar with no tempo of its own, where the tempo marked before it applies again.
+  const tempo = (bpm: number) => `<direction><sound tempo="${bpm}"/></direction>`;
+  const parsed = parseRealtimeMusicXml(score(`
+    <measure number="1"><attributes><divisions>4</divisions></attributes>${tempo(140)}${quarter("a")}</measure>
+    <measure number="2"><barline location="left"><repeat direction="forward"/></barline><sound segno="main"/>${quarter("b")}</measure>
+    <measure number="3">${tempo(70)}${quarter("c")}<barline location="right"><repeat direction="backward"/></barline></measure>
+    <measure number="4">${tempo(140)}${quarter("d")}<sound tocoda="tail"/></measure>
+    <measure number="5">${tempo(70)}${quarter("e")}<sound dalsegno="main"/></measure>
+    <measure number="6"><sound coda="tail"/>${tempo(120)}${quarter("f")}</measure>
+  `));
+  const route = expandPerformanceRoute(parsed);
+  assert.deepEqual(route.occurrences.map((occurrence) => occurrence.measureNumber), ["1", "2", "3", "2", "3", "4", "5", "2", "3", "4", "6"]);
+  // The tempo at the start of each bar, in route order.
+  const bpmAt = (offset: number) => route.tempoSegments.filter((segment) => segment.offset <= offset).at(-1)!.bpm;
+  assert.deepEqual(route.occurrences.map((occurrence) => bpmAt(occurrence.scoreStart)), [140, 140, 70, 140, 70, 140, 70, 140, 70, 140, 120]);
+});
+
 test("starts structurally after skipped repeats and reports malformed loops", () => {
   const parsed = parseRealtimeMusicXml(score(`
     <measure number="1"><attributes><divisions>4</divisions></attributes><barline><repeat direction="forward"/></barline>${quarter("a")}</measure>

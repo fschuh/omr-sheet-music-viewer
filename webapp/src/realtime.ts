@@ -1475,6 +1475,7 @@ export function expandPerformanceRoute(
   let scoreOffset = 0;
   let jumped = false;
   let firstOccurrence = true;
+  let lastPlayed: number | null = null;
   let carriedEndingPass: number | null = score.measures[startMeasure].endingNumbers.size > 0
     ? Math.min(...score.measures[startMeasure].endingNumbers)
     : null;
@@ -1529,6 +1530,12 @@ export function expandPerformanceRoute(
         beat: measure.beat,
       };
       occurrences.push(occurrence);
+      // Where the route goes anywhere but on to the next bar, back for a repeat or by a jump,
+      // the tempo is the one marked in the score before where it lands, not a rit. before it left.
+      if (lastPlayed !== null && index !== lastPlayed + 1) {
+        rawTempos.push({ offset: scoreOffset, bpm: effectiveTempoBefore(score, index, 0) });
+      }
+      lastPlayed = index;
       for (const note of measure.notes) {
         if (note.cue) continue;
         // Notes before the start are skipped; grace notes on it, which last no time, still play.
