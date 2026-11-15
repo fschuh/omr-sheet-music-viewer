@@ -21,6 +21,7 @@ import { readScoreFile, scoreDataStore, type MusicXmlScoreFile } from "./scoreDa
 export type { LayoutPage as MusicXmlPage } from "./model/layout";
 export {
   fingeringLabelLayout,
+  labelColumn,
   labelsNeedRoom,
   type FingeringLabelLayout,
   type FingeringLabelPlacement,

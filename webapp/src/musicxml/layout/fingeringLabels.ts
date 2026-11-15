@@ -1,10 +1,11 @@
 // Where the fingering labels of an engraved page go. Right-hand fingers stand above their
 // part and left-hand fingers below it, each moment's labels just clear of its chords and of
 // whatever else the page draws in their column, such as pedal marks and tempo text. A note
-// moved to the other hand moves its label to that hand's side. A hand's notes struck
-// together share one stack, top note on top; notes moved to it from the other staff have
-// their own, further out, so that a chord's stack holds only that chord's notes. Positions
-// are page pixels.
+// moved to the other hand moves its label to that hand's side. A chord's notes share one
+// stack, top note on top. Another voice's chord struck with it on the same side has its own,
+// a wider gap away, the higher voice above; notes moved to the hand from the other staff have
+// theirs furthest out, a stack for each chord they came from. So a stack holds only its own
+// chord's notes. Positions are page pixels.
 import { glyphBox } from "../fonts/smufl";
 import type { Bounds, Drawable, LayoutPage } from "../model/layout";
 
@@ -15,10 +16,19 @@ export const LABEL_GAP = 0.6;
 /** Between two labels of a stack, in staff spaces. */
 export const STACK_GAP = 0.15;
 /**
- * Between a hand's chord's labels and those of notes moved to that hand, in staff spaces: room
- * for both stacks' outlines and a gap between them.
+ * Between the labels of two groups on one side of a moment, such as two voices' chords or a
+ * chord and the notes moved to its hand, in staff spaces: room for both stacks' outlines and
+ * a gap between them.
  */
 export const MOVED_GAP = 0.8;
+
+/**
+ * The side of the staff a label's stack stands on at its moment: its stack ID without the
+ * group, which is a chord's or the notes moved there. Stacks sharing it stand in one column.
+ */
+export function labelColumn(stackId: string): string {
+  return stackId.slice(0, stackId.lastIndexOf("|"));
+}
 /**
  * Labels step past marks in their way by at most this, in staff spaces; further, they overlap.
  * A page laid out with room for them has that room wherever they need it.
@@ -112,7 +122,7 @@ export function fingeringLabelLayout(
   const gap = LABEL_GAP * sp;
   // The extent of the music struck at each moment of a part: its chords and the part's staves.
   const reach = new Map<string, { top: number; bottom: number }>();
-  const groups = new Map<string, { left: boolean; moved: boolean; notes: LabelledNote[]; place: string }>();
+  const groups = new Map<string, { left: boolean; moved: boolean; notes: LabelledNote[]; place: string; column: string }>();
   const obstacles: Bounds[] = [];
   for (const item of page.items) {
     const bounds = itemBounds(item, sp);
@@ -143,8 +153,10 @@ export function fingeringLabelLayout(
       const left = handOf(note.key);
       if (left === undefined) continue;
       const crossed = moved(note.key);
-      const id = `${place}|${left ? "L" : "R"}${crossed ? "|moved" : ""}`;
-      const group = groups.get(id) ?? { left, moved: crossed, notes: [], place };
+      const column = `${place}|${left ? "L" : "R"}`;
+      // A chord's notes moved to the other hand stand together, apart from another voice's.
+      const id = `${column}|${crossed ? "moved-" : ""}${chord.id}`;
+      const group = groups.get(id) ?? { left, moved: crossed, notes: [], place, column };
       group.notes.push({ key: note.key, x: note.center[0], y: note.center[1] });
       groups.set(id, group);
     }
@@ -181,37 +193,46 @@ export function fingeringLabelLayout(
   const labels: FingeringLabelPlacement[] = [];
   const stacks: FingeringLabelStack[] = [];
   // Right-hand labels go first; left-hand ones then keep clear of those of the system below.
-  // A hand's chord goes before the notes moved to that hand, which stand beyond it.
+  // A column, one side of the music at a moment, stands clear of what is in its way as one
+  // block, so that its groups stay together: chords from the staff outward, the lowest voice
+  // first above the music and the highest below it, then the notes moved to that hand, each
+  // group a wider gap from the next.
   const rightLabels: Bounds[] = [];
-  const placed = new Map<string, { top: number; bottom: number }>();
-  const ordered = [...groups].sort(([, a], [, b]) => Number(a.left) - Number(b.left) || Number(a.moved) - Number(b.moved));
-  for (const [id, group] of ordered) {
-    const music = reach.get(group.place)!;
-    const chordLabels = group.moved ? placed.get(`${group.place}|${group.left ? "L" : "R"}`) : undefined;
-    // Moved notes stand clear of the chord's own labels, beyond them from the staff.
-    const extent = chordLabels
-      ? {
-        top: Math.min(music.top, chordLabels.top - (MOVED_GAP - LABEL_GAP) * sp),
-        bottom: Math.max(music.bottom, chordLabels.bottom + (MOVED_GAP - LABEL_GAP) * sp),
-      }
-      : music;
-    // Top note first; on the right hand's side the stack grows upward from the music.
-    const notes = [...group.notes].sort((a, b) => a.y - b.y);
-    const x = notes.reduce((total, note) => total + note.x, 0) / notes.length;
-    const count = notes.length;
-    const height = size + (count - 1) * step;
-    const system = Number(group.place.split("|")[0]);
-    const first = group.left
-      ? clearOf(x, extent.bottom + gap, height, true, page.systems[system + 1]?.top ?? Infinity, rightLabels) + size / 2
-      : clearOf(x, extent.top - gap, height, false, page.systems[system - 1]?.bottom ?? -Infinity) - height + size / 2;
-    if (!group.left) rightLabels.push([x - size / 2, first - size / 2, x + size / 2, first - size / 2 + height]);
-    notes.forEach((note, index) => {
-      labels.push({ key: note.key, x, y: first + index * step, left: group.left, stackId: id });
+  const outward = (group: { left: boolean; notes: LabelledNote[] }) => {
+    const ys = group.notes.map((note) => note.y);
+    return group.left ? Math.min(...ys) : -Math.max(...ys);
+  };
+  const ordered = [...groups].sort(([, a], [, b]) =>
+    Number(a.left) - Number(b.left) || Number(a.moved) - Number(b.moved) || outward(a) - outward(b));
+  const columns = new Map<string, [string, (typeof ordered)[number][1]][]>();
+  for (const entry of ordered) columns.set(entry[1].column, [...(columns.get(entry[1].column) ?? []), entry]);
+  const apart = MOVED_GAP * sp;
+  for (const members of columns.values()) {
+    const { left, place } = members[0][1];
+    const music = reach.get(place)!;
+    const system = Number(place.split("|")[0]);
+    const all = members.flatMap(([, group]) => group.notes);
+    const columnX = all.reduce((total, note) => total + note.x, 0) / all.length;
+    const heights = members.map(([, group]) => size + (group.notes.length - 1) * step);
+    const total = heights.reduce((sum, height) => sum + height, 0) + (members.length - 1) * apart;
+    // The edge of the column nearest the music, from which its groups go outward.
+    let edge = left
+      ? clearOf(columnX, music.bottom + gap, total, true, page.systems[system + 1]?.top ?? Infinity, rightLabels)
+      : clearOf(columnX, music.top - gap, total, false, page.systems[system - 1]?.bottom ?? -Infinity);
+    if (!left) rightLabels.push([columnX - size / 2, edge - total, columnX + size / 2, edge]);
+    members.forEach(([id, group], index) => {
+      // Top note first.
+      const notes = [...group.notes].sort((a, b) => a.y - b.y);
+      const x = notes.reduce((sum, note) => sum + note.x, 0) / notes.length;
+      const height = heights[index];
+      const top = left ? edge : edge - height;
+      edge = left ? edge + height + apart : edge - height - apart;
+      const first = top + size / 2;
+      notes.forEach((note, position) => {
+        labels.push({ key: note.key, x, y: first + position * step, left, stackId: id });
+      });
+      if (notes.length > 1) stacks.push({ id, x, top, bottom: top + height, left });
     });
-    placed.set(id, { top: first - size / 2, bottom: first + (count - 1) * step + size / 2 });
-    if (count > 1) {
-      stacks.push({ id, x, top: first - size / 2, bottom: first + (count - 1) * step + size / 2, left: group.left });
-    }
   }
   return { size, labels, stacks };
 }

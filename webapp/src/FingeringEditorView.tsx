@@ -5,7 +5,7 @@
 // printed one stays the score's own digit.
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { editorLabelHand, printedFingerReplaced, type FingeringEditor } from "./fingeringEditor";
-import { fingeringLabelLayout, type EffectiveFingering, type MusicXmlPage } from "./musicxml";
+import { fingeringLabelLayout, labelColumn, type EffectiveFingering, type MusicXmlPage } from "./musicxml";
 import { formatKeyboardShortcut, type PlaybackShortcuts } from "./shortcuts";
 import type { RevealElement } from "./DocumentViewer";
 import type { PlaybackCommand } from "./playback";
@@ -519,12 +519,13 @@ export const FingeringPageLayer = memo(function FingeringPageLayer({
   let anchor: { x: number; y: number; above: boolean } | null = null;
   let lead: { x: number; from: number; to: number; tickTo: number } | null = null;
   if (cursorLabel) {
-    // The hand's labels at the moment: its chord's stack and, beyond it outside the outline,
-    // the notes moved to that hand. The picker stands beyond them all.
-    const chordId = cursorLabel.stackId.replace(/\|moved$/, "");
-    const members = new Set([chordId, `${chordId}|moved`]);
-    const group = layout.labels.filter((label) => members.has(label.stackId));
-    const outlined = layout.stacks.find((candidate) => candidate.id === chordId) ?? layout.stacks.find((candidate) => members.has(candidate.id));
+    // The hand's labels at the moment: its chord's stack and, each apart outside its outline,
+    // other voices' chords and the notes moved to that hand. The picker stands beyond them all.
+    const column = labelColumn(cursorLabel.stackId);
+    const group = layout.labels.filter((label) => labelColumn(label.stackId) === column);
+    const members = new Set(group.map((label) => label.stackId));
+    const outlined = layout.stacks.find((candidate) => candidate.id === cursorLabel.stackId) ??
+      layout.stacks.find((candidate) => members.has(candidate.id));
     const stack = group.length > 1
       ? {
         x: outlined?.x ?? cursorLabel.x,

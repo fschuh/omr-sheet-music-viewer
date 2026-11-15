@@ -3,7 +3,7 @@ import test from "node:test";
 import { parseMusicXml } from "../import/parseMusicXml";
 import type { LayoutNote, LayoutPage } from "../model/layout";
 import { note, piano, score } from "../testScores";
-import { fingeringLabelLayout, labelsNeedRoom, MOVED_GAP } from "./fingeringLabels";
+import { fingeringLabelLayout, labelColumn, labelsNeedRoom, MOVED_GAP } from "./fingeringLabels";
 import { pageFormat } from "./pageFormat";
 import { layoutScore } from "./pages";
 
@@ -133,7 +133,8 @@ test("with room for fingerings, a page's labels clear one another", () => {
 
 test("notes moved to the left hand get their labels' room below the part", () => {
   const parsed = parseMusicXml(denseScore());
-  // Every right-hand note moved to the left hand: each stack below grows by two labels.
+  // Every right-hand note moved to the left hand: below the part, each chord's two labels
+  // stand in a stack of their own, apart from the held bass note's.
   const moved = layoutScore(parsed, pageFormat(parsed.defaults), {
     fingeringRoom: true,
     movedHand: (key) => (/-s1-/.test(key) ? true : undefined),
@@ -141,7 +142,7 @@ test("notes moved to the left hand get their labels' room below the part", () =>
   assert.ok(moved.systems.length > 1);
   const layout = fingeringLabelLayout(moved, () => true);
   const tallest = Math.max(...layout.stacks.map((stack) => (stack.bottom - stack.top) / moved.staffSpace));
-  assert.ok(Math.abs(tallest - (1.7 + 2 * 1.85)) < 0.01, "stacks of three labels");
+  assert.ok(Math.abs(tallest - (1.7 + 1.85)) < 0.01, "stacks of two labels, a chord's");
   // Placed for those hands, the labels below each system stay clear of the next.
   for (let index = 0; index + 1 < moved.systems.length; index += 1) {
     const below = layout.labels.filter((label) => label.y > moved.systems[index].bottom && label.y < moved.systems[index + 1].top);
@@ -177,7 +178,7 @@ test("notes moved to a hand stand in their own stack, beyond that hand's chord, 
   const half = layout.size / 2;
   const bass = layout.labels.find((label) => label.key.startsWith("P1-m1-s2-"))!;
   // The moved chord struck with the bass note: its stack is the bass note's moment's.
-  const crossed = layout.labels.filter((label) => moved(label.key) && label.stackId.startsWith(bass.stackId));
+  const crossed = layout.labels.filter((label) => moved(label.key) && labelColumn(label.stackId) === labelColumn(bass.stackId));
   assert.equal(crossed.length, 2, "the chord struck with the bass note");
   assert.ok(crossed.every((label) => label.stackId !== bass.stackId && label.stackId === crossed[0].stackId), "a stack of their own");
   assert.ok(layout.stacks.some((stack) => stack.id === crossed[0].stackId));
@@ -185,6 +186,50 @@ test("notes moved to a hand stand in their own stack, beyond that hand's chord, 
   const top = Math.min(...crossed.map((label) => label.y - half));
   assert.ok(top - (bass.y + half) >= MOVED_GAP * page.staffSpace - 0.01, "beyond the chord's label, a wider gap out");
   assert.equal(labelsNeedRoom(page, hands, moved), false, "the layout made room for them");
+});
+
+test("two voices struck together on a staff stand apart, the higher voice above, not as one chord", () => {
+  // The right hand's upper voice C5 over its lower voice A4, struck together, then held.
+  const voices = firstPage(score([piano([
+    note("C5", 8, { type: "half", staff: 1, voice: 1 }) + note("E5", 8, { type: "half", staff: 1, voice: 1 }) +
+      "<backup><duration>16</duration></backup>" +
+      note("A4", 16, { type: "whole", staff: 1, voice: 2 }) +
+      "<backup><duration>16</duration></backup>" +
+      note("A2", 16, { type: "whole", staff: 2, voice: 5 }),
+  ])]));
+  const layout = fingeringLabelLayout(voices, staffHand);
+  const label = (pitch: string) => layout.labels.find((value) => value.key === noteOf(voices, pitch).key)!;
+  const [upper, lower] = [label("C5"), label("A4")];
+  assert.notEqual(upper.stackId, lower.stackId, "a stack each");
+  assert.equal(labelColumn(upper.stackId), labelColumn(lower.stackId), "in one column");
+  assert.equal(layout.stacks.length, 0, "single notes, no outline");
+  assert.ok(lower.y - upper.y >= layout.size + MOVED_GAP * voices.staffSpace - 0.01, "the upper voice above, a wider gap away");
+  // Both voices moved to the left hand: still apart, below the left hand's own note, the
+  // upper voice nearer the staff.
+  const moved = (key: string) => /-s1-/.test(key);
+  const crossed = fingeringLabelLayout(voices, () => true, moved);
+  const at = (pitch: string) => crossed.labels.find((value) => value.key === noteOf(voices, pitch).key)!;
+  assert.notEqual(at("C5").stackId, at("A4").stackId, "a stack each, moved");
+  assert.equal(labelColumn(at("C5").stackId), labelColumn(at("A2").stackId));
+  assert.ok(at("A2").y < at("C5").y && at("C5").y < at("A4").y, "the bass note's own, then the upper voice, then the lower");
+  assert.ok(at("A4").y - at("C5").y >= crossed.size + MOVED_GAP * voices.staffSpace - 0.01);
+});
+
+test("a hand's groups at a moment stay together past a mark in their way", () => {
+  // Two voices of the right hand under a long tempo mark, as in a waltz's opening.
+  const words = '<direction placement="above"><direction-type><words>Allegro molto, sempre legato e dolce</words></direction-type><staff>1</staff></direction>';
+  const marked = firstPage(score([piano([
+    words +
+      note("C5", 8, { type: "half", staff: 1, voice: 1 }) + note("E5", 8, { type: "half", staff: 1, voice: 1 }) +
+      "<backup><duration>16</duration></backup>" +
+      note("A4", 16, { type: "whole", staff: 1, voice: 2 }) +
+      "<backup><duration>16</duration></backup>" +
+      note("A2", 16, { type: "whole", staff: 2, voice: 5 }),
+  ])]));
+  const layout = fingeringLabelLayout(marked, staffHand);
+  const label = (pitch: string) => layout.labels.find((value) => value.key === noteOf(marked, pitch).key)!;
+  const apart = label("A4").y - label("C5").y;
+  assert.ok(Math.abs(apart - (layout.size + MOVED_GAP * marked.staffSpace)) < 0.01, `the voices ${apart} apart, one gap`);
 });
 
 test("with room for fingerings, every label stays within its own system", () => {

@@ -3,6 +3,7 @@
 // page pixels when drawn.
 import type { LayoutModel, PageFormat } from "../model/layout";
 import { LABEL_GAP, LABEL_SIZE, MOVED_GAP, STACK_GAP } from "./fingeringLabels";
+import { fractionKey } from "../model/fraction";
 import type { ScoreModel } from "../model/score";
 import { beamGroups, crossStaffBeamGaps, layoutBeam, stemDirections, type BeamDrawing, type BeamGroup, type PlacedChord } from "./beams";
 import { avoidRestCollisions, layoutChord, stackSharedAccidentals, type ChordShape } from "./chords";
@@ -214,7 +215,9 @@ function addFingeringLabels(
   system: PlacedSystem, skyline: Box[][], prepared: PreparedScore, shapes: Map<PreparedChord, ChordShape>,
   movedHand?: MovedHand,
 ): void {
-  const columns = new Map<string, { x: number; notes: number; moved: number; above: boolean; staff: number }>();
+  // A column is one side of the music at one moment; its labels stand in groups, a chord's
+  // or the notes moved to its hand, a wider gap apart.
+  const columns = new Map<string, { x1: number; x2: number; notes: number; groups: Set<unknown>; above: boolean; staff: number }>();
   // Each part's outer staves are solid from end to end, so that labels next to them are spaced
   // clear of their lines, not only of what happens to stand above or below them.
   for (const staves of prepared.partStaves) {
@@ -227,23 +230,25 @@ function addFingeringLabels(
     const staves = prepared.partStaves[chord.part];
     // Labels centre on the noteheads.
     const x = system.chords.get(chord)! + 0.6 * shapes.get(chord)!.scale;
+    const moment = `${chord.measureIndex}|${chord.model.grace ? chord.model.id : fractionKey(chord.model.onset)}`;
     // Each note's label goes to its hand's side, which the player may have changed.
     for (const note of chord.model.notes) {
       const above = labelSide(prepared, chord, movedHand?.(note.key)).endsWith("above");
       const staff = above ? staves[0] : staves[staves.length - 1];
-      const key = `${staff}|${above}|${x.toFixed(2)}`;
-      const column = columns.get(key) ?? { x, notes: 0, moved: 0, above, staff };
+      const key = `${staff}|${above}|${moment}`;
+      const column = columns.get(key) ?? { x1: x, x2: x, notes: 0, groups: new Set(), above, staff };
       column.notes += 1;
-      if (movedHand?.(note.key) !== undefined) column.moved += 1;
+      column.x1 = Math.min(column.x1, x);
+      column.x2 = Math.max(column.x2, x);
+      column.groups.add(movedHand?.(note.key) !== undefined ? `moved|${chord.model.id}` : chord);
       columns.set(key, column);
     }
   }
   for (const column of columns.values()) {
-    // Notes moved to this hand stand beyond its chord's labels, a wider gap out.
-    const apart = column.moved > 0 && column.moved < column.notes ? MOVED_GAP - STACK_GAP : 0;
+    const apart = (column.groups.size - 1) * (MOVED_GAP - STACK_GAP);
     const height = LABEL_SIZE + (column.notes - 1) * (LABEL_SIZE + STACK_GAP) + apart;
-    const x1 = column.x - LABEL_SIZE / 2;
-    const x2 = column.x + LABEL_SIZE / 2;
+    const x1 = column.x1 - LABEL_SIZE / 2;
+    const x2 = column.x2 + LABEL_SIZE / 2;
     // The staff's content in the column, beams included, as the labels are placed against it.
     const staffTop = system.staffTops[column.staff];
     const beams = system.beams.flatMap((beam) => beam.segments.map((segment) => {
