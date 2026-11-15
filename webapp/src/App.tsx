@@ -146,7 +146,7 @@ import {
   viewerIdsByKey,
 } from "./musicxml";
 import {
-  editorLabelHand,
+  editorLabels,
   isEditNavigation,
   rekeyFingeringLayers,
   useFingeringEditor,
@@ -1462,14 +1462,10 @@ export function App() {
     const crowded = current.pages.some((page) => {
       const surface = page.surface;
       if (!surface) return false;
-      const notes = new Map(surface.chords.flatMap((chord) => chord.notes.map((note) => [note.key, note] as const)));
-      if (![...changed].some((key) => notes.has(key))) return false;
+      if (![...changed].some((key) => surface.chords.some((chord) => chord.notes.some((note) => note.key === key)))) return false;
       // The labels as the editor draws them.
-      return labelsNeedRoom(
-        surface,
-        (key) => editorLabelHand(resolved[`page-${page.index + 1}-${key}`], Boolean(notes.get(key)?.printedFingering)),
-        (key) => Boolean(resolved[`page-${page.index + 1}-${key}`]?.handMoved),
-      );
+      const labels = editorLabels(surface, (key) => resolved[`page-${page.index + 1}-${key}`]);
+      return labelsNeedRoom(surface, (key) => labels.get(key)?.left, (key) => labels.get(key)?.moved ?? false);
     });
     if (crowded) relayoutForFingering(true);
   }, [movedHandsKey, relayoutForFingering]);

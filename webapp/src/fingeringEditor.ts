@@ -19,6 +19,7 @@ import {
   type FingeringOverride,
   type FingeringOverrides,
 } from "./musicxml";
+import type { MusicXmlPage } from "./musicxml";
 import type { PlaybackMoment, PracticeHand } from "./playback";
 import { noteInPracticeHand } from "./playback";
 import { pitchToMidi } from "./piano";
@@ -82,6 +83,57 @@ export function editorLabelHand(fingering: EffectiveFingering | undefined, print
   if (!fingering || fingering.tiedTo) return undefined;
   if (printed && fingering.source === "printed" && !fingering.handMoved) return undefined;
   return fingering.left;
+}
+
+/** How a note's label stands on a page while editing. */
+export interface EditorLabel {
+  /** On the left hand's side, below the part. */
+  left: boolean;
+  /** Moved there from the other hand: it stands apart from the hand's chord. */
+  moved: boolean;
+  /** A printed finger the player kept, labelled only so that its chord's stack reads in order. */
+  printed: boolean;
+}
+
+/**
+ * The labels of a page's notes while editing, by structural key: `fingeringOf` gives a note's
+ * finger and hand. A note has one as `editorLabelHand` says; and once a hand has a label at a
+ * moment, on its side of the music, every note there keeping a printed finger, whatever its
+ * voice, has one too. So the stacks read as the music, top note on top, and a label is not
+ * taken for a note above it whose finger the score prints. Notes moved from the other hand
+ * stand apart and do not count.
+ */
+export function editorLabels(
+  page: MusicXmlPage,
+  fingeringOf: (key: string) => EffectiveFingering | undefined,
+): Map<string, EditorLabel> {
+  const result = new Map<string, EditorLabel>();
+  // By moment and side: the notes keeping a printed finger, and whether a label stands there.
+  const columns = new Map<string, { kept: string[]; labelled: boolean }>();
+  for (const chord of page.chords) {
+    for (const note of chord.notes) {
+      const fingering = fingeringOf(note.key);
+      const left = editorLabelHand(fingering, Boolean(note.printedFingering));
+      const side = left ?? fingering?.left;
+      if (side === undefined) continue;
+      const key = `${chord.systemIndex}|${chord.momentId}|${chord.part}|${side ? "L" : "R"}`;
+      const column = columns.get(key) ?? { kept: [], labelled: false };
+      if (left !== undefined) {
+        const moved = Boolean(fingering?.handMoved);
+        result.set(note.key, { left, moved, printed: false });
+        if (!moved) column.labelled = true;
+      } else if (fingering && !fingering.tiedTo && note.printedFingering) {
+        column.kept.push(note.key);
+      }
+      columns.set(key, column);
+    }
+  }
+  for (const [key, column] of columns) {
+    if (!column.labelled) continue;
+    const left = key.endsWith("|L");
+    for (const note of column.kept) result.set(note, { left, moved: false, printed: true });
+  }
+  return result;
 }
 
 /**

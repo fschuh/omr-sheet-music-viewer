@@ -195,8 +195,7 @@ export function fingeringLabelLayout(
   // Right-hand labels go first; left-hand ones then keep clear of those of the system below.
   // A column, one side of the music at a moment, stands clear of what is in its way as one
   // block, so that its groups stay together: chords from the staff outward, the lowest voice
-  // first above the music and the highest below it, then the notes moved to that hand, each
-  // group a wider gap from the next.
+  // first above the music and the highest below it, then the notes moved to that hand.
   const rightLabels: Bounds[] = [];
   const outward = (group: { left: boolean; notes: LabelledNote[] }) => {
     const ys = group.notes.map((note) => note.y);
@@ -214,7 +213,14 @@ export function fingeringLabelLayout(
     const all = members.flatMap(([, group]) => group.notes);
     const columnX = all.reduce((total, note) => total + note.x, 0) / all.length;
     const heights = members.map(([, group]) => size + (group.notes.length - 1) * step);
-    const total = heights.reduce((sum, height) => sum + height, 0) + (members.length - 1) * apart;
+    // Two single notes of the hand's own voices stand as close as a stack's labels, without its
+    // outline; a chord's outline, or notes moved from the other hand, take the wider gap.
+    const gaps = members.slice(1).map(([, group], index) => {
+      const before = members[index][1];
+      const loose = (candidate: typeof group) => candidate.notes.length === 1 && !candidate.moved;
+      return loose(group) && loose(before) ? step - size : apart;
+    });
+    const total = heights.reduce((sum, height) => sum + height, 0) + gaps.reduce((sum, gap) => sum + gap, 0);
     // The edge of the column nearest the music, from which its groups go outward.
     let edge = left
       ? clearOf(columnX, music.bottom + gap, total, true, page.systems[system + 1]?.top ?? Infinity, rightLabels)
@@ -226,7 +232,8 @@ export function fingeringLabelLayout(
       const x = notes.reduce((sum, note) => sum + note.x, 0) / notes.length;
       const height = heights[index];
       const top = left ? edge : edge - height;
-      edge = left ? edge + height + apart : edge - height - apart;
+      const after = gaps[index] ?? 0;
+      edge = left ? edge + height + after : edge - height - after;
       const first = top + size / 2;
       notes.forEach((note, position) => {
         labels.push({ key: note.key, x, y: first + position * step, left, stackId: id });

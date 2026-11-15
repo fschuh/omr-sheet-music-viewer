@@ -4,7 +4,7 @@
 // a predicted finger is an outline in its hand's colour, the player's own is filled, and a
 // printed one stays the score's own digit.
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
-import { editorLabelHand, printedFingerReplaced, type FingeringEditor } from "./fingeringEditor";
+import { editorLabels, printedFingerReplaced, type EditorLabel, type FingeringEditor } from "./fingeringEditor";
 import { fingeringLabelLayout, labelColumn, type EffectiveFingering, type MusicXmlPage } from "./musicxml";
 import { formatKeyboardShortcut, type PlaybackShortcuts } from "./shortcuts";
 import { createPortal } from "react-dom";
@@ -233,24 +233,34 @@ function FingerPicker({
 /** How far a moved note's dashed ring stands off its head, in staff spaces: close, to keep clear of its dots and accidentals. */
 const MOVED_RING_GAP = 0.22;
 
-/** A label the player changed, its finger or its hand, is filled; others are outlined. */
-function labelFilled(fingering: EffectiveFingering): boolean {
-  return fingering.source === "yours" || fingering.handMoved;
+/**
+ * How a label looks: filled when the player changed its note, its finger or its hand; as
+ * print, a digit without a circle, for a printed finger kept, labelled for its chord's sake;
+ * otherwise outlined, as predicted.
+ */
+type LabelLook = "yours" | "printed" | "predicted";
+
+function labelLook(fingering: EffectiveFingering, label: EditorLabel | undefined): LabelLook {
+  if (fingering.source === "yours" || fingering.handMoved) return "yours";
+  return label?.printed ? "printed" : "predicted";
 }
 
-/** A label's circle and digit, centred on the origin. */
-function LabelFace({ size, finger }: { size: number; finger: number }) {
+/**
+ * A label's circle and digit, centred on the origin. A printed finger's serif digit sits a
+ * little higher than the others' sans: each font's digits are lowered by what centres them.
+ */
+function LabelFace({ size, finger, look }: { size: number; finger: number; look: LabelLook }) {
   return (
     <g className="fingering-label-body">
       <circle className="fingering-face" r={size / 2 - size * 0.04} strokeWidth={size * 0.08} />
-      <text dy="0.36em" fontSize={size * 0.62}>{finger}</text>
+      <text dy={look === "printed" ? "0.33em" : "0.36em"} fontSize={size * 0.62}>{finger}</text>
     </g>
   );
 }
 
 /** One finger label. Its props are plain values, so an edit redraws only the labels it changes. */
 const FingeringLabel = memo(function FingeringLabel({
-  id, x, y, size, left, finger, yours, text, onPick, onHover,
+  id, x, y, size, left, finger, look, text, onPick, onHover,
 }: {
   id: string;
   x: number;
@@ -258,14 +268,14 @@ const FingeringLabel = memo(function FingeringLabel({
   size: number;
   left: boolean;
   finger: number;
-  yours: boolean;
+  look: LabelLook;
   text: string;
   onPick: (id: string) => void;
   onHover: (id: string | null) => void;
 }) {
   return (
     <g
-      className={`fingering-label ${handClass(left)} ${yours ? "yours" : "predicted"}`}
+      className={`fingering-label ${handClass(left)} ${look}`}
       transform={`translate(${x} ${y})`}
       role="button"
       aria-label={text}
@@ -276,7 +286,7 @@ const FingeringLabel = memo(function FingeringLabel({
       onPointerLeave={() => onHover(null)}
       onClick={() => onPick(id)}
     >
-      <LabelFace size={size} finger={finger} />
+      <LabelFace size={size} finger={finger} look={look} />
     </g>
   );
 });
@@ -312,17 +322,12 @@ export const FingeringPageLayer = memo(function FingeringPageLayer({
   );
   // Where labels go depends only on which notes have one and on which hand, so a new finger
   // does not place the page's labels again.
-  const hands = useMemo(() => {
-    const result = new Map<string, { left: boolean; moved: boolean }>();
-    for (const [key, note] of notes) {
-      const fingering = fingerings?.[prefix + key];
-      const left = editorLabelHand(fingering, Boolean(note.printedFingering));
-      if (left !== undefined) result.set(key, { left, moved: Boolean(fingering?.handMoved) });
-    }
-    return result;
-  }, [fingerings, notes, prefix]);
+  const hands = useMemo(
+    () => editorLabels(page, (key) => fingerings?.[prefix + key]),
+    [fingerings, page, prefix],
+  );
   const handsSignature = useMemo(
-    () => [...hands].map(([key, { left, moved }]) => `${key}:${left ? "L" : "R"}${moved ? "m" : ""}`).join("|"),
+    () => [...hands].map(([key, { left, moved, printed }]) => `${key}:${left ? "L" : "R"}${moved ? "m" : ""}${printed ? "p" : ""}`).join("|"),
     [hands],
   );
   const handsRef = useRef(hands);
@@ -407,6 +412,22 @@ export const FingeringPageLayer = memo(function FingeringPageLayer({
           const replaced = printedFingerReplaced(fingering);
           return (
             <g key={`printed-${note.key}`}>
+              {/* Struck or not, the digit is a way to its note, wherever its label now stands. */}
+              <rect
+                className={`fingering-printed ${handClass(fingering.left)}${hoverId === id ? " hovered" : ""}`}
+                x={left - layout.size * 0.1}
+                y={top - layout.size * 0.1}
+                width={right - left + layout.size * 0.2}
+                height={bottom - top + layout.size * 0.2}
+                rx={layout.size * 0.15}
+                role="button"
+                aria-label={`${replaced ? "Printed finger, replaced: " : ""}${labelText(id, fingering, note.pitch)}`}
+                onPointerDown={stop}
+                onPointerMove={stop}
+                onPointerEnter={() => hover(id)}
+                onPointerLeave={() => hover(null)}
+                onClick={() => pick(id)}
+              />
               {replaced ? (
                 <line
                   className="fingering-printed-strike"
@@ -416,23 +437,7 @@ export const FingeringPageLayer = memo(function FingeringPageLayer({
                   y2={(top + bottom) / 2}
                   strokeWidth={layout.size * 0.06}
                 />
-              ) : (
-                <rect
-                  className={`fingering-printed ${handClass(fingering.left)}${hoverId === id ? " hovered" : ""}`}
-                  x={left - layout.size * 0.1}
-                  y={top - layout.size * 0.1}
-                  width={right - left + layout.size * 0.2}
-                  height={bottom - top + layout.size * 0.2}
-                  rx={layout.size * 0.15}
-                  role="button"
-                  aria-label={labelText(id, fingering, note.pitch)}
-                  onPointerDown={stop}
-                  onPointerMove={stop}
-                  onPointerEnter={() => hover(id)}
-                  onPointerLeave={() => hover(null)}
-                  onClick={() => pick(id)}
-                />
-              )}
+              ) : null}
             </g>
           );
         })}
@@ -448,7 +453,7 @@ export const FingeringPageLayer = memo(function FingeringPageLayer({
               size={layout.size}
               left={label.left}
               finger={fingering.finger}
-              yours={labelFilled(fingering)}
+              look={labelLook(fingering, hands.get(label.key))}
               text={labelText(id, fingering, notes.get(label.key)?.pitch ?? null)}
               onPick={pick}
               onHover={hover}
@@ -457,7 +462,7 @@ export const FingeringPageLayer = memo(function FingeringPageLayer({
         })}
       </>
     );
-  }, [fingerings, hover, hoverId, layout, movedHeads, notes, page.staffSpace, pick, prefix, printedTargets]);
+  }, [fingerings, hands, hover, hoverId, layout, movedHeads, notes, page.staffSpace, pick, prefix, printedTargets]);
   // Where this page stands among the pages, for the picker drawn over it: measured once per
   // layout and page size, not on every move of the cursor.
   const markerRef = useRef<HTMLSpanElement>(null);
@@ -520,11 +525,11 @@ export const FingeringPageLayer = memo(function FingeringPageLayer({
         <g className={`fingering-hover ${handClass(hovered.left)}`} transform={`translate(${hovered.x} ${hovered.y})`}>
           <circle className="fingering-hover-ground" r={outer} />
           <g
-            className={`fingering-label ${handClass(hovered.left)} ${labelFilled(hoveredFingering) ? "yours" : "predicted"}`}
+            className={`fingering-label ${handClass(hovered.left)} ${labelLook(hoveredFingering, hands.get(hovered.key))}`}
             // Only the label underneath takes the pointer, so the hover holds while it is there.
             style={{ pointerEvents: "none" }}
           >
-            <LabelFace size={layout.size} finger={hoveredFingering.finger} />
+            <LabelFace size={layout.size} finger={hoveredFingering.finger} look={labelLook(hoveredFingering, hands.get(hovered.key))} />
           </g>
           <circle className="fingering-hover-ring" r={outer - ringWidth / 2} strokeWidth={ringWidth} />
         </g>
@@ -643,7 +648,7 @@ export const FingeringPageLayer = memo(function FingeringPageLayer({
       {pops.map(({ id, label, fingering }) => (
         <div
           key={`${id}-${editor.flash.serial}`}
-          className={`fingering-pop ${handClass(label.left)} ${labelFilled(fingering) ? "yours" : "predicted"}`}
+          className={`fingering-pop ${handClass(label.left)} ${labelLook(fingering, hands.get(label.key))}`}
           aria-hidden="true"
           style={{
             width: layout.size * k,

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { applyTypedRun, editorLabelHand, editWalk, momentTargets, navigateWalk, printedFingerReplaced, withFingeringLayers } from "./fingeringEditor";
-import { resolveFingerings, type FingeringOverrides } from "./musicxml";
+import { applyTypedRun, editorLabelHand, editorLabels, editWalk, momentTargets, navigateWalk, printedFingerReplaced, withFingeringLayers } from "./fingeringEditor";
+import { resolveFingerings, type FingeringOverrides, type MusicXmlPage } from "./musicxml";
 import { buildPlaybackTimeline, timelineForPracticeHand, type PlaybackMoment } from "./playback";
 import type { FingeringLayers, LoadedDocument } from "./types";
 
@@ -189,4 +189,43 @@ test("a moment's notes go in the order their labels stand, notes moved to a hand
   // Above the treble the moved E3 stands over the right hand's own; below the bass the moved
   // E5 stands under the left hand's own.
   assert.deepEqual(momentTargets(chord, fingerings).map((target) => target.key), ["e3", "c5", "c3", "e5"]);
+});
+
+test("once a chord has a label, its notes keeping a printed finger get one too, as print", () => {
+  // A right-hand third with both fingers printed, and a left-hand note with none.
+  const at = { systemIndex: 0, momentId: "m1-t0", part: 0 };
+  const page = { chords: [
+    { ...at, notes: [{ key: "top", printedFingering: [0, 0, 1, 1] }, { key: "bottom", printedFingering: [0, 2, 1, 3] }] },
+    { ...at, notes: [{ key: "bass" }] },
+  ] } as unknown as MusicXmlPage;
+  const printed = { [id("top")]: { finger: 3, left: false }, [id("bottom")]: { finger: 1, left: false } };
+  const predicted = { [id("bass")]: { finger: 5, left: true } };
+  const labels = (overrides: FingeringOverrides) => {
+    const resolved = resolveFingerings({ predicted, printed }, overrides);
+    return Object.fromEntries([...editorLabels(page, (key) => resolved[id(key)])].map(([key, label]) => [key, label.printed ? "printed" : "label"]));
+  };
+  assert.deepEqual(labels({}), { bass: "label" }, "the score's digits show the third's fingers");
+  assert.deepEqual(labels({ bottom: { finger: 2 } }), { bass: "label", bottom: "label", top: "printed" });
+  // Moved to the other hand, the bottom note leaves the third's side: the top keeps its digit alone.
+  assert.deepEqual(labels({ bottom: { left: true } }), { bass: "label", bottom: "label" });
+});
+
+test("a label at a moment brings print-style labels to the other voices' kept printed fingers there", () => {
+  // Two voices of the right hand struck together, each with a printed finger, and the next moment.
+  const at = { systemIndex: 0, momentId: "m1-t0", part: 0 };
+  const page = { chords: [
+    { ...at, notes: [{ key: "upper", printedFingering: [0, 0, 1, 1] }] },
+    { ...at, notes: [{ key: "lower", printedFingering: [0, 6, 1, 7] }] },
+    { ...at, momentId: "m1-t1", notes: [{ key: "later", printedFingering: [2, 0, 3, 1] }] },
+  ] } as unknown as MusicXmlPage;
+  const printed = {
+    [id("upper")]: { finger: 4, left: false },
+    [id("lower")]: { finger: 2, left: false },
+    [id("later")]: { finger: 1, left: false },
+  };
+  const resolved = resolveFingerings({ predicted: {}, printed }, { lower: { finger: 3 } });
+  const labels = editorLabels(page, (key) => resolved[id(key)]);
+  assert.equal(labels.get("lower")?.printed, false, "yours");
+  assert.equal(labels.get("upper")?.printed, true, "the other voice's printed finger, as print");
+  assert.equal(labels.has("later"), false, "another moment keeps its digit alone");
 });

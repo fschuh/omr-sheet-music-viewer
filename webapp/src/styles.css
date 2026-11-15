@@ -2743,6 +2743,11 @@ button:disabled {
 .fingering-layer .fingering-label.predicted text { fill: var(--hand-ink); }
 .fingering-layer .fingering-label.yours .fingering-face { fill: var(--hand-ink); stroke: var(--hand-ink); }
 .fingering-layer .fingering-label.yours text { fill: #fff; }
+/* A printed finger kept, labelled so that its stack reads in order: the score's digit, in a
+   serif whose digits share one height, so they centre alike, in a circle of neutral grey
+   rather than a hand's colour. */
+.fingering-layer .fingering-label.printed .fingering-face { fill: #fff; stroke: #a39b91; }
+.fingering-layer .fingering-label.printed text { fill: #24211d; font-family: "Times New Roman", Times, serif; font-style: italic; }
 
 /* The note the pointer is over, on its label or its notehead: the cursor's ring, in its
    hand's lighter colour. */
@@ -2799,6 +2804,7 @@ button:disabled {
 .document-page .fingering-pop.left-hand { --hand: var(--hand-left); --hand-ink: var(--hand-left-dark); }
 .document-page .fingering-pop.predicted { background: #fff; border-color: var(--hand); color: var(--hand-ink); }
 .document-page .fingering-pop.yours { background: var(--hand-ink); border-color: var(--hand-ink); color: #fff; }
+.document-page .fingering-pop.printed { background: #fff; border-color: #a39b91; color: #24211d; font-family: "Times New Roman", Times, serif; font-style: italic; }
 
 @keyframes fingering-pop {
   0% { opacity: 1; transform: var(--at) scale(1.55); }

@@ -3,7 +3,7 @@ import test from "node:test";
 import { parseMusicXml } from "../import/parseMusicXml";
 import type { LayoutNote, LayoutPage } from "../model/layout";
 import { note, piano, score } from "../testScores";
-import { fingeringLabelLayout, labelColumn, labelsNeedRoom, MOVED_GAP } from "./fingeringLabels";
+import { fingeringLabelLayout, labelColumn, labelsNeedRoom, MOVED_GAP, STACK_GAP } from "./fingeringLabels";
 import { pageFormat } from "./pageFormat";
 import { layoutScore } from "./pages";
 
@@ -188,7 +188,7 @@ test("notes moved to a hand stand in their own stack, beyond that hand's chord, 
   assert.equal(labelsNeedRoom(page, hands, moved), false, "the layout made room for them");
 });
 
-test("two voices struck together on a staff stand apart, the higher voice above, not as one chord", () => {
+test("two voices struck together on a staff have a stack each, the higher voice above, not as one chord", () => {
   // The right hand's upper voice C5 over its lower voice A4, struck together, then held.
   const voices = firstPage(score([piano([
     note("C5", 8, { type: "half", staff: 1, voice: 1 }) + note("E5", 8, { type: "half", staff: 1, voice: 1 }) +
@@ -203,7 +203,8 @@ test("two voices struck together on a staff stand apart, the higher voice above,
   assert.notEqual(upper.stackId, lower.stackId, "a stack each");
   assert.equal(labelColumn(upper.stackId), labelColumn(lower.stackId), "in one column");
   assert.equal(layout.stacks.length, 0, "single notes, no outline");
-  assert.ok(lower.y - upper.y >= layout.size + MOVED_GAP * voices.staffSpace - 0.01, "the upper voice above, a wider gap away");
+  // Single notes, without outlines: as close as a stack's labels.
+  assert.ok(Math.abs(lower.y - upper.y - (layout.size + STACK_GAP * voices.staffSpace)) < 0.01, "the upper voice just above");
   // Both voices moved to the left hand: still apart, below the left hand's own note, the
   // upper voice nearer the staff.
   const moved = (key: string) => /-s1-/.test(key);
@@ -229,7 +230,7 @@ test("a hand's groups at a moment stay together past a mark in their way", () =>
   const layout = fingeringLabelLayout(marked, staffHand);
   const label = (pitch: string) => layout.labels.find((value) => value.key === noteOf(marked, pitch).key)!;
   const apart = label("A4").y - label("C5").y;
-  assert.ok(Math.abs(apart - (layout.size + MOVED_GAP * marked.staffSpace)) < 0.01, `the voices ${apart} apart, one gap`);
+  assert.ok(Math.abs(apart - (layout.size + STACK_GAP * marked.staffSpace)) < 0.01, `the voices ${apart} apart, as in a stack`);
 });
 
 test("with room for fingerings, every label stays within its own system", () => {
