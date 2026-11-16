@@ -2195,11 +2195,10 @@ export function App() {
       if (activePage !== "viewer") return;
       if (isEditableKeyboardTarget(event.target)) return;
       const editor = fingerEditorRef.current;
-      // Esc leaves the fingering editor, closing its picker first, and leaves playback alone.
+      // Esc leaves the fingering editor at once, its picker open or not, and leaves playback alone.
       if (editor.editing && event.key === "Escape" && !event.ctrlKey && !event.altKey && !event.metaKey) {
         event.preventDefault();
-        if (editor.pickerOpen) editor.closePicker();
-        else editor.exit();
+        editor.exit();
         return;
       }
       const command = commandForKeyboardEvent(shortcuts, event);

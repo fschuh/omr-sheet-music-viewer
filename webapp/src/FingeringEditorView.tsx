@@ -772,7 +772,7 @@ export function FingeringStatusStrip({
     [`${keyName(shortcuts, "backwardSystem")} · ${keyName(shortcuts, "forwardSystem")}`, "The note above / below, in the system before or after"],
     [keyName(shortcuts, "playCurrentNotes"), "Hear the notes at the selected note"],
     ["Ctrl + V", "Paste a run of fingers, such as 54545243"],
-    [`${keyName(shortcuts, "toggleFingerEditing")} · Esc`, "Back to what was playing, at the selected note; Esc first closes the picker"],
+    [`${keyName(shortcuts, "toggleFingerEditing")} · Esc`, "Back to what was playing, at the selected note"],
   ];
   return (
     <section className="fingering-status" aria-label="Selected note">
