@@ -409,6 +409,29 @@ export function noteheadAt(
   );
 }
 
+/**
+ * Where a measure starts in the stacked pages, in document pixels: its system's top and its
+ * first barline. Null when no page's systems hold it.
+ */
+export function measureAnchor(
+  pages: readonly Pick<DocumentPage, "index" | "width" | "height">[],
+  geometryByPage: ReadonlyMap<number, PageNoteGeometry>,
+  layoutWidth: number,
+  measure: number,
+): [x: number, y: number] | null {
+  let pageTop = 0;
+  for (const page of pages) {
+    const system = geometryByPage.get(page.index)?.systems.find((candidate) =>
+      measure >= candidate.firstMeasure && measure < candidate.firstMeasure + candidate.barlines.length - 1);
+    if (system) {
+      const pageLeft = (layoutWidth - page.width) / 2;
+      return [pageLeft + system.barlines[measure - system.firstMeasure], pageTop + system.top];
+    }
+    pageTop += page.height + PAGE_GAP;
+  }
+  return null;
+}
+
 export interface PlaybackMomentExtents {
   /** Every notehead of the moment's system, in page pixels. */
   system: Bounds;
@@ -1882,10 +1905,39 @@ export function DocumentViewer({
     }
   }
 
+  // The same score laid out again, as for editing fingers, keeps the bar being followed where
+  // it stood on the screen, so the new layout seems to change in place. Before following,
+  // which then moves it only if it is now out of sight, as under the editor's status bar.
+  const heldInPlace = useRef(false);
+  const lastLayout = useRef<{
+    key: string;
+    pages: typeof pages;
+    geometry: typeof geometryByPage;
+    width: number;
+  } | null>(null);
+  useLayoutEffect(() => {
+    const previous = lastLayout.current;
+    lastLayout.current = { key: documentKey, pages, geometry: geometryByPage, width: layout.width };
+    if (!previous || previous.key !== documentKey || previous.pages === pages) return;
+    const measure = ((playbackActive ? playbackMoment : null) ?? followMoment)?.measureIndex;
+    if (measure === null || measure === undefined) return;
+    const before = measureAnchor(previous.pages, previous.geometry, previous.width, measure);
+    const after = measureAnchor(pages, geometryByPage, layout.width, measure);
+    if (!before || !after) return;
+    heldInPlace.current = true;
+    const current = transformRef.current;
+    const x = current.x + (before[0] - after[0]) * current.scale;
+    const y = current.y + (before[1] - after[1]) * current.scale;
+    if (Math.abs(x - current.x) > 0.5 || Math.abs(y - current.y) > 0.5) commitTransform({ ...current, x, y });
+  }, [pages]);
+
   // Before the browser paints, so a score laid out again never shows a frame at the old place.
   useLayoutEffect(() => {
     // Playback's moment, or, while it has none yet, as realtime before its first frame, the one asked for.
     const followed = (playbackActive ? playbackMoment : null) ?? followMoment;
+    // Just held in place by a new layout, the moment moves only if it is out of sight.
+    const held = heldInPlace.current;
+    heldInPlace.current = false;
     if (!followed) return;
     // The view is the loop handle's while one is dragged, and in realtime, where the
     // playhead moves on regardless, for a moment after a loop end moved.
@@ -1936,7 +1988,12 @@ export function DocumentViewer({
     let x = current.x;
     let y = current.y;
 
-    if (screenStaffTop < safeTop || screenStaffBottom > safeBottom) {
+    // Held in place, the system's notes need only be in sight, not in the comfortable middle.
+    const outOfSight = held
+      ? current.y + (pageTop + extents.system[1]) * current.scale < 0 ||
+        current.y + (pageTop + extents.system[3]) * current.scale > safeBottom
+      : screenStaffTop < safeTop || screenStaffBottom > safeBottom;
+    if (outOfSight) {
       const documentCenter = (staffTop + staffBottom) / 2;
       y = (safeTop + safeBottom) / 2 - documentCenter * current.scale;
     }

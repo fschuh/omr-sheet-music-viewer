@@ -13,6 +13,7 @@ import {
   noteheadAt,
   pageDiagnosticNoteheads,
   playbackMomentExtents,
+  measureAnchor,
   revealOffset,
   shouldScrollPlaybackHorizontally,
   steppedTempoMultiplier,
@@ -1253,4 +1254,21 @@ test("handles keep their screen size at any zoom", () => {
   const atHalf = tabs(renderLoop({ loop: { startMeasure: 0, endMeasure: 2 }, scale: 0.5 }));
   // The handle bar and grip tab are twice as wide in page pixels at half the zoom.
   assert.deepEqual(atHalf, atFull.map((sizes) => sizes.map((size) => size * 2)));
+});
+
+test("a measure is found by its system's top and first barline, pages stacked and centred", () => {
+  const system = (index: number, top: number, firstMeasure: number, barlines: number[]) =>
+    ({ index, top, bottom: top + 80, firstMeasure, barlines });
+  const geometry = new Map([
+    [0, { pageIndex: 0, noteheads: [], notes: [], measureOffset: 0, systems: [system(0, 100, 0, [50, 200, 350]), system(1, 300, 2, [40, 300])] }],
+    [1, { pageIndex: 1, noteheads: [], notes: [], measureOffset: 3, systems: [system(0, 120, 3, [60, 260])] }],
+  ]);
+  const pages = [{ index: 0, width: 800, height: 1000 }, { index: 1, width: 600, height: 1000 }];
+  assert.deepEqual(measureAnchor(pages, geometry, 800, 1), [200, 100]);
+  assert.deepEqual(measureAnchor(pages, geometry, 800, 2), [40, 300]);
+  // The second page, narrower, is centred, and stands below the first and the gap.
+  const [x, y] = measureAnchor(pages, geometry, 800, 3)!;
+  assert.equal(x, 100 + 60);
+  assert.ok(y > 1000 + 120);
+  assert.equal(measureAnchor(pages, geometry, 800, 4), null);
 });
