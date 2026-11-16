@@ -530,7 +530,8 @@ export function App() {
     [noteGeometry],
   );
   // Loop mode belongs to one run of playback. Turning it on always loops the bar being
-  // played; turning it off, or stopping playback, forgets the bars it looped.
+  // played; turning it off, or stopping playback, forgets the bars it looped. Editing fingers
+  // only pauses that run: playback comes back after it, and the loop with it.
   const [loopMode, setLoopMode] = useState(false);
   const [loopRegion, setLoopRegion] = useState<LoopRegion | null>(null);
   const [loopPass, setLoopPass] = useState(1);
@@ -599,8 +600,14 @@ export function App() {
   const playbackActive = playbackStatus !== "inactive";
   const playbackActiveRef = useRef(playbackActive);
   playbackActiveRef.current = playbackActive;
+  // Playback stopped for the fingering editor, which resumes it on leaving.
+  const loopHeldForEditing = useRef(false);
   useEffect(() => {
-    if (playbackActive) return;
+    if (playbackActive) {
+      loopHeldForEditing.current = false;
+      return;
+    }
+    if (loopHeldForEditing.current) return;
     setLoopMode(false);
     setLoopRegion(null);
     setLoopPass(1);
@@ -1470,6 +1477,8 @@ export function App() {
     if (crowded) relayoutForFingering(true);
   }, [movedHandsKey, relayoutForFingering]);
   const enterFingerEditor = useCallback(() => {
+    // Playback has just been stopped for editing; its loop waits for it to resume.
+    loopHeldForEditing.current = true;
     fingerEditingForLayout.current = true;
     checkedHands.current = movedHands(documentRef.current);
     setReturnFocus(null);
@@ -1486,6 +1495,13 @@ export function App() {
       setReturnFocus({ pageIndex, visualGroupId: cursor.key });
     }
     if (resume) setResumeAfterEditing(true);
+    else {
+      // No playback to go back to, so no loop either.
+      loopHeldForEditing.current = false;
+      setLoopMode(false);
+      setLoopRegion(null);
+      setLoopPass(1);
+    }
   }, [relayoutForFingering]);
   const fingerEditor = useFingeringEditor({
     document,
