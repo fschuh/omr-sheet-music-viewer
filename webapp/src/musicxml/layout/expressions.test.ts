@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { ENGRAVING_DEFAULTS, glyphBox, glyphWidth } from "../fonts/smufl";
-import { parseMusicXml } from "../import/parseMusicXml";
+import { importMusicXml, parseMusicXml } from "../import/parseMusicXml";
 import type { Drawable, LayoutPage } from "../model/layout";
-import { attributes, measure, note, part, piano, score } from "../testScores";
+import { attributes, backup, measure, note, part, piano, score } from "../testScores";
 import { pageFormat } from "./pageFormat";
 import { layoutScore } from "./pages";
 
@@ -354,6 +354,93 @@ test("a trill line starting and stopping on one note runs to the next note", () 
   assert.ok(wiggles.every((wiggle) => wiggle.x > trill.x));
   const next = page.chords[1].notes[0].items.find((item): item is Glyph => item.kind === "glyph")!;
   assert.ok(Math.max(...wiggles.map((wiggle) => wiggle.x)) < next.x);
+});
+
+test("a trill line stops before the grace notes closing it, and their accidentals", () => {
+  // A line without its sign, for room to run in a short measure.
+  const [page] = pages(score([part("P1", [measure(
+    attributes({ divisions: 4, fifths: 0, time: [5, 4], clefs: ["G"] }) +
+      note("F5", 16, { type: "whole", extra: notations('<ornaments><wavy-line type="start"/><wavy-line type="stop"/></ornaments>') }) +
+      note("E5", 0, { grace: true, type: "16th", accidental: "natural" }) +
+      note("F5", 0, { grace: true, type: "16th" }) +
+      note("F5", 4, { type: "quarter" }),
+  )])]));
+  const wiggles = glyphs(page, "wiggleTrill");
+  assert.ok(wiggles.length >= 1);
+  const [natural] = glyphs(page, "accidentalNatural");
+  const end = Math.max(...wiggles.map((wiggle) => wiggle.x)) + glyphWidth("wiggleTrill") * staffSpace(page);
+  assert.ok(end < natural.x, "the line ends before the grace note's natural");
+});
+
+test("a trill line a file stops without starting it is a trill on its note, its fingering above", () => {
+  // As some exports write a trill whose line spans one note: the line's stop alone.
+  const xml = treble([
+    note("F5", 12, {
+      type: "half",
+      dots: 1,
+      stem: "down",
+      extra: notations('<ornaments><wavy-line type="stop" number="1"/></ornaments><technical><fingering>1</fingering><fingering>3</fingering><fingering>2</fingering></technical>'),
+    }) + note("F5", 4, { type: "quarter" }),
+  ]);
+  const imported = importMusicXml(xml);
+  const [chord] = imported.score.parts[0].measures[0].chords;
+  assert.deepEqual(chord.ornaments, [{ name: "trill-mark", placement: null }]);
+  assert.deepEqual(chord.wavyLines, [{ type: "start", number: "1" }, { type: "stop", number: "1" }]);
+  // Repaired in the XML too, which playback reads.
+  assert.equal(imported.root.getElementsByTagName("trill-mark").length, 1);
+
+  const [page] = pages(xml);
+  const [trill] = glyphs(page, "ornamentTrill");
+  assert.ok(trill && glyphs(page, "wiggleTrill").length >= 1);
+  const [one] = glyphs(page, "fingering1");
+  // The digit's baseline above the sign's top.
+  assert.ok(one.y < trill.y + glyphBox("ornamentTrill").top * staffSpace(page), "the fingering stands above the sign");
+});
+
+test("trill lines a file starts are left as they are", () => {
+  const ornaments = (content: string) => notations(`<ornaments>${content}</ornaments>`);
+  const cases = {
+    "start and stop on two notes": [
+      note("C5", 8, { type: "half", extra: ornaments('<trill-mark/><wavy-line type="start"/>') }) +
+        note("C5", 8, { type: "half", extra: ornaments('<wavy-line type="stop"/>') }),
+    ],
+    "start and stop on one note": [
+      note("C5", 8, { type: "half", extra: ornaments('<trill-mark/><wavy-line type="start"/><wavy-line type="stop"/>') }) +
+        note("C5", 8, { type: "half" }),
+    ],
+    "a line across a barline": [
+      note("C5", 16, { type: "whole", extra: ornaments('<trill-mark/><wavy-line type="start"/>') }),
+      note("C5", 16, { type: "whole", extra: ornaments('<wavy-line type="stop"/>') }),
+    ],
+    "two numbered lines at once": [
+      note("C5", 16, { type: "whole", extra: ornaments('<trill-mark/><wavy-line type="start" number="1"/>') }) +
+        backup(16) +
+        note("A4", 16, { type: "whole", voice: 2, extra: ornaments('<trill-mark/><wavy-line type="start" number="2"/>') }),
+      note("C5", 16, { type: "whole", extra: ornaments('<wavy-line type="stop" number="1"/>') }) +
+        backup(16) +
+        note("A4", 16, { type: "whole", voice: 2, extra: ornaments('<wavy-line type="stop" number="2"/>') }),
+    ],
+    // The voice written first stops a line the voice written after it started earlier.
+    "a line another voice starts, written after its stop": [
+      note(null, 8, { type: "half" }) +
+        note("C5", 8, { type: "half", extra: ornaments('<wavy-line type="stop"/>') }) +
+        backup(16) +
+        note("A4", 8, { type: "half", voice: 2, extra: ornaments('<trill-mark/><wavy-line type="start"/>') }) +
+        note(null, 8, { type: "half", voice: 2 }),
+    ],
+    "a line without a sign": [
+      note("C5", 8, { type: "half", extra: ornaments('<wavy-line type="start"/>') }) +
+        note("C5", 8, { type: "half", extra: ornaments('<wavy-line type="stop"/>') }),
+    ],
+  };
+  for (const [name, measures] of Object.entries(cases)) {
+    const xml = treble(measures);
+    const signs = (xml.match(/<trill-mark\/>/g) ?? []).length;
+    const imported = importMusicXml(xml);
+    assert.equal(imported.root.getElementsByTagName("trill-mark").length, signs, name);
+    const lines = imported.score.parts[0].measures.flatMap((value) => value.chords).flatMap((chord) => chord.wavyLines);
+    assert.equal(lines.length, (xml.match(/<wavy-line /g) ?? []).length, name);
+  }
 });
 
 test("a single tremolo crosses its stem", () => {

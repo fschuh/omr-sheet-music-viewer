@@ -151,6 +151,46 @@ function partSources(root: Element): PartSource[] {
   return [...parts.values()];
 }
 
+/**
+ * Restores trills whose line a file stops without starting it. Some exports write a trill
+ * whose line spans a single note as the line's stop alone, losing its start and its sign.
+ * Such a stop, with no line of its number open in the part before it, gains on its note the
+ * trill sign and the line's start, as the trill was printed. A start later in the same
+ * measure, which another voice written after it may hold, counts as open: a file whose lines
+ * all start is left as it is.
+ */
+function repairUnstartedTrills(source: PartSource): void {
+  const open = new Set<string>();
+  // Starts another voice wrote after the stop they open, in the same measure.
+  const early = new Set<Element>();
+  for (const measure of source.measures) {
+    if (!measure) continue;
+    const lines = Array.from(measure.content.getElementsByTagName("wavy-line"));
+    lines.forEach((line, index) => {
+      const number = attribute(line, "number") ?? "1";
+      const type = attribute(line, "type");
+      if (type === "start") {
+        if (!early.has(line)) open.add(number);
+        return;
+      }
+      if (type !== "stop" || open.delete(number)) return;
+      const later = lines.slice(index + 1)
+        .find((other) => attribute(other, "type") === "start" && (attribute(other, "number") ?? "1") === number);
+      if (later) {
+        early.add(later);
+        return;
+      }
+      const ornaments = line.parentNode as Element;
+      const document = line.ownerDocument;
+      const start = document.createElement("wavy-line");
+      start.setAttribute("type", "start");
+      if (attribute(line, "number")) start.setAttribute("number", number);
+      ornaments.insertBefore(start, line);
+      if (!childElement(ornaments, "trill-mark")) ornaments.insertBefore(document.createElement("trill-mark"), start);
+    });
+  }
+}
+
 function partNames(root: Element): Map<string, string> {
   const names = new Map<string, string>();
   for (const part of childElements(childElement(root, "part-list") ?? root, "score-part")) {
@@ -748,6 +788,8 @@ export function importMusicXml(text: string): ImportedScore {
     throw new MusicXmlImportError("The file is not a MusicXML score");
   }
   const parts = partSources(root);
+  // Repaired in the XML, so that the document MusicXML, which playback reads, has them too.
+  for (const part of parts) repairUnstartedTrills(part);
   const elementsByNote = new Map<NoteModel, Element>();
   const score = parseScore(root, parts, elementsByNote);
   const noteElements = new Map([...elementsByNote].map(([note, element]) => [note.key, element]));

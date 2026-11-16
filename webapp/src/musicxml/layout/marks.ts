@@ -294,14 +294,21 @@ function trillLine(output: Pen, staff: number, from: number, to: number, y: numb
   }
 }
 
-/** Where a chord's sound ends on the page: at the part's next chord on its staff, or its barline. */
-function chordEndX(system: PlacedSystem, chord: PreparedChord, chords: PreparedChord[]): number {
+/**
+ * Where a chord's sound ends on the page: just before the part's next chord on its staff,
+ * grace notes and accidentals included, such as a trill's closing notes; or its barline.
+ */
+function chordEndX(
+  system: PlacedSystem,
+  chord: PreparedChord,
+  chords: PreparedChord[],
+  shapes: Map<PreparedChord, ChordShape>,
+): number {
   const x = system.chords.get(chord)!;
   const next = chords
-    .filter((other) => other.part === chord.part && other.staff === chord.staff && !other.model.grace)
-    .map((other) => system.chords.get(other)!)
-    .filter((value) => value > x + 0.01);
-  if (next.length) return Math.min(...next) - 0.6;
+    .filter((other) => other.part === chord.part && other.staff === chord.staff && system.chords.get(other)! > x + 0.01)
+    .map((other) => system.chords.get(other)! - (shapes.get(other)?.left ?? 0));
+  if (next.length) return Math.min(...next) - 0.4;
   const position = system.plan.measures.indexOf(chord.measureIndex);
   return (system.measures[position]?.barlineX ?? system.right) - 0.4;
 }
@@ -354,7 +361,7 @@ export function layoutMarks(
         const start = trills.get(key);
         if (!start) continue;
         trills.delete(key);
-        const end = chordEndX(system, chord, chords);
+        const end = chordEndX(system, chord, chords, shapes);
         if (start.system === system) {
           trillLine(output, start.chord.staff, start.anchor.x, end, start.anchor.y);
         } else {
