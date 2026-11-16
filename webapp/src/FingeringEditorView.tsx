@@ -47,7 +47,7 @@ export function FingeringToolbar({
         className={`fingering-edit-toggle${editor.editing ? " active" : ""}`}
         aria-pressed={editor.editing}
         title={editor.editing
-          ? `Back to playback at the ringed note (${toggleKey} or Esc)`
+          ? `Back to playback at the selected note (${toggleKey} or Esc)`
           : `Edit the fingers of the notes; playback stops while you do (${toggleKey})`}
         onClick={editor.toggle}
       >
@@ -174,16 +174,16 @@ function FingerPicker({
       onPointerMove={stop}
     >
       {chord.length > 1 ? (
-        <div className="finger-picker-chord" role="group" aria-label="Move within the chord">
+        <div className="finger-picker-chord" role="group" aria-label="Move among the notes at this moment">
           <button
             type="button"
-            aria-label="Higher note of the chord"
+            aria-label="Higher note"
             disabled={place <= 0}
             onClick={() => editor.moveInMoment(-1)}
           >▲</button>
           <button
             type="button"
-            aria-label="Lower note of the chord"
+            aria-label="Lower note"
             disabled={place >= chord.length - 1}
             onClick={() => editor.moveInMoment(1)}
           >▼</button>
@@ -761,23 +761,23 @@ export function FingeringStatusStrip({
     [`${keyName(shortcuts, "fingerNoteHigher")} · ${keyName(shortcuts, "fingerNoteLower")}`, "Higher / lower note at the same time"],
     [`${keyName(shortcuts, "backwardBar")} · ${keyName(shortcuts, "forwardBar")}`, "Previous / next bar"],
     [`${keyName(shortcuts, "backwardSystem")} · ${keyName(shortcuts, "forwardSystem")}`, "The note above / below, in the system before or after"],
-    [keyName(shortcuts, "playCurrentNotes"), "Hear the notes at the ring"],
+    [keyName(shortcuts, "playCurrentNotes"), "Hear the notes at the selected note"],
     ["Ctrl + V", "Paste a run of fingers, such as 54545243"],
-    [`${keyName(shortcuts, "toggleFingerEditing")} · Esc`, "Back to what was playing, at the ring; Esc first closes the picker"],
+    [`${keyName(shortcuts, "toggleFingerEditing")} · Esc`, "Back to what was playing, at the selected note; Esc first closes the picker"],
   ];
   return (
-    <section className="fingering-status" aria-label="Ringed note">
+    <section className="fingering-status" aria-label="Selected note">
       {cursor && fingering ? (
         <>
           <span className="fingering-status-where">
             {cursor.measure === null ? "" : `Bar ${cursor.measure}`}
-            {chord.length > 1 ? ` · chord note ${place + 1} of ${chord.length}, top down` : ""}
           </span>
           <span aria-hidden="true">·</span>
           <strong>{cursor.pitch.replace("#", "♯")}</strong>
           <span className={`fingering-status-hand ${handClass(fingering.left)}`}>
             {fingering.left ? "Left hand" : "Right hand"}
           </span>
+          {chord.length > 1 ? <span className="fingering-status-place">note {place + 1} of {chord.length}</span> : null}
           <span aria-hidden="true">·</span>
           <span>{status}</span>
         </>

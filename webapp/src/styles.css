@@ -2979,6 +2979,7 @@ button:disabled {
 .fingering-status strong { color: #24211d; }
 .fingering-status .fingering-status-where { color: #635c53; font-weight: 600; }
 .fingering-status .fingering-status-hand { font-weight: 600; }
+.fingering-status .fingering-status-place { color: #635c53; }
 .fingering-status .fingering-status-hand.right-hand { color: var(--hand-right-dark); }
 .fingering-status .fingering-status-hand.left-hand { color: var(--hand-left-dark); }
 .fingering-status .fingering-status-warning { color: #9c3a12; font-weight: 600; }
