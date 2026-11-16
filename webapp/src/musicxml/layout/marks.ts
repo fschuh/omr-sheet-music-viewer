@@ -44,6 +44,8 @@ const FINGERING_SCALE = 0.9;
 /** The room a substitution's dash takes between two fingers, in staff spaces. */
 const SUBSTITUTION_DASH = 0.55;
 const MARK_GAP = 0.5;
+/** Between a mark, such as a staccato or an ornament, and the fingering beyond it, in staff spaces. */
+const MARK_FINGERING_GAP = 0.25;
 const ARTICULATION_STEP = 0.75;
 
 /** An area in staff spaces from the page's top left: left, top, right, bottom. */
@@ -141,6 +143,12 @@ function chordMarks(system: PlacedSystem, chord: PreparedChord, shape: ChordShap
   const topNote = ys.length ? Math.min(...ys) : extent.top;
   const bottomNote = ys.length ? Math.max(...ys) : extent.bottom;
 
+  // Where the chord's marks end on each side, by its notes: its fingerings stand beyond them.
+  let marksTop: number | null = null;
+  let marksBottom: number | null = null;
+  const clearTop = (y: number) => { marksTop = Math.min(marksTop ?? Infinity, y); };
+  const clearBottom = (y: number) => { marksBottom = Math.max(marksBottom ?? -Infinity, y); };
+
   // Articulations stack outward from the notehead on the side away from the stem.
   let above = 0;
   let below = 0;
@@ -153,7 +161,12 @@ function chordMarks(system: PlacedSystem, chord: PreparedChord, shape: ChordShap
       ? (stemOnSide ? staffTop + shape.stem!.yEnd : topNote) - 0.9
       : (stemOnSide ? staffTop + shape.stem!.yEnd : bottomNote) + 0.9;
     const y = offLine(up ? start - above : start + below, staffTop, up);
-    centred(output, up ? glyphs[0] : glyphs[1], headCentre, y, shape.scale);
+    const glyph = up ? glyphs[0] : glyphs[1];
+    centred(output, glyph, headCentre, y, shape.scale);
+    const box = glyphBox(glyph);
+    const half = ((box.bottom - box.top) / 2) * shape.scale;
+    if (up) clearTop(y - half);
+    else clearBottom(y + half);
     if (up) above += ARTICULATION_STEP;
     else below += ARTICULATION_STEP;
   }
@@ -167,11 +180,13 @@ function chordMarks(system: PlacedSystem, chord: PreparedChord, shape: ChordShap
       const y = outerBottom + MARK_GAP - box.top;
       output.glyph(glyphs[1], headCentre - (box.left + box.right) / 2, y);
       outerBottom = y + box.bottom;
+      clearBottom(outerBottom);
     } else {
       const box = glyphBox(glyphs[0]);
       const y = outerTop - MARK_GAP - box.bottom;
       output.glyph(glyphs[0], headCentre - (box.left + box.right) / 2, y);
       outerTop = y + box.top;
+      clearTop(outerTop);
     }
   }
   let trill: TrillAnchor | null = null;
@@ -183,12 +198,20 @@ function chordMarks(system: PlacedSystem, chord: PreparedChord, shape: ChordShap
       const y = outerBottom + MARK_GAP - box.top;
       output.glyph(glyph, x, y);
       outerBottom = y + box.bottom;
+      clearBottom(outerBottom);
     } else {
       const y = outerTop - MARK_GAP - box.bottom;
       output.glyph(glyph, x, y);
       outerTop = y + box.top;
+      clearTop(outerTop);
       if (ornament.name === "trill-mark") trill = { x: x + box.right + 0.2, y: y + (box.top + box.bottom) / 2 + 0.3 };
     }
+  }
+  // A trill line without a sign starts above the chord, where the sign would stand.
+  if (!trill && model.wavyLines.some((wavy) => wavy.type === "start")) {
+    trill = { x: headCentre, y: outerTop - MARK_GAP - 0.5 };
+    const wiggle = glyphBox("wiggleTrill");
+    clearTop(trill.y - (wiggle.bottom - wiggle.top) / 2);
   }
 
   // Fingerings stack over or under the chord in the order of its notes; several on one
@@ -206,9 +229,19 @@ function chordMarks(system: PlacedSystem, chord: PreparedChord, shape: ChordShap
       pieces: entry.fingerings.flatMap((fingering, index) =>
         [...(index > 0 && fingering.substitution ? [null] : []), ...fingering.text]),
     }));
+    // By the notes, or beyond the chord's marks on that side: past its staccatos and
+    // accents, and past an ornament, which they then finger, a turn's over its sign.
     let y = up
-      ? Math.min(topNote - 1.2, shape.stem && shape.stem.up ? staffTop + shape.stem.yEnd - 0.6 : Infinity)
-      : Math.max(bottomNote + 1.2, shape.stem && !shape.stem.up ? staffTop + shape.stem.yEnd + 0.6 : -Infinity);
+      ? Math.min(
+        topNote - 1.2,
+        shape.stem && shape.stem.up ? staffTop + shape.stem.yEnd - 0.6 : Infinity,
+        marksTop === null ? Infinity : marksTop - MARK_FINGERING_GAP - 0.6,
+      )
+      : Math.max(
+        bottomNote + 1.2,
+        shape.stem && !shape.stem.up ? staffTop + shape.stem.yEnd + 0.6 : -Infinity,
+        marksBottom === null ? -Infinity : marksBottom + MARK_FINGERING_GAP + 0.6,
+      );
     for (const { key, pieces } of up ? [...rows].reverse() : rows) {
       const digits = pieces.filter((piece): piece is string => piece !== null);
       const dashes = pieces.length - digits.length;

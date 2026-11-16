@@ -495,15 +495,20 @@ export const FingeringPageLayer = memo(function FingeringPageLayer({
   const cursorLabel = layout.labels.find((label) => prefix + label.key === cursorId);
   const cursorPrinted = printedTargets.find(({ note }) => prefix + note.key === cursorId && !cursorLabel);
   const cursorFingering = cursorId ? fingerings[cursorId] : undefined;
-  // The ring around the cursor's label, which slides from note to note.
-  let ring: { x: number; y: number; r: number; left: boolean } | null = null;
-  if (cursorLabel) ring = { x: cursorLabel.x, y: cursorLabel.y, r: radius + layout.size * 0.2, left: cursorLabel.left };
-  else if (cursorPrinted) {
+  // The ring around the cursor's label, which slides from note to note: `r` is its radius,
+  // and `w` half its width, wider round a printed row of digits, such as an ornament's.
+  let ring: { x: number; y: number; r: number; w: number; left: boolean } | null = null;
+  if (cursorLabel) {
+    const r = radius + layout.size * 0.2;
+    ring = { x: cursorLabel.x, y: cursorLabel.y, r, w: r, left: cursorLabel.left };
+  } else if (cursorPrinted) {
     const [left, top, right, bottom] = cursorPrinted.note.printedFingering!;
+    const r = radius + layout.size * 0.2;
     ring = {
       x: (left + right) / 2,
       y: (top + bottom) / 2,
-      r: Math.max(radius, (right - left) / 2) + layout.size * 0.2,
+      r,
+      w: Math.max(radius, (right - left) / 2 + layout.size * 0.1) + layout.size * 0.2,
       left: cursorPrinted.fingering.left,
     };
   }
@@ -671,10 +676,11 @@ export const FingeringPageLayer = memo(function FingeringPageLayer({
           className={`fingering-ring ${handClass(ring.left)}`}
           aria-hidden="true"
           style={{
-            width: ring.r * 2 * k,
+            width: ring.w * 2 * k,
             height: ring.r * 2 * k,
+            borderRadius: ring.r * k,
             borderWidth: layout.size * 0.1 * k,
-            transform: `translate3d(${(ring.x - ring.r) * k}px, ${(ring.y - ring.r) * k}px, 0)`,
+            transform: `translate3d(${(ring.x - ring.w) * k}px, ${(ring.y - ring.r) * k}px, 0)`,
           }}
         />
       ) : null}
