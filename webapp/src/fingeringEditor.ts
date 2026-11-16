@@ -483,9 +483,16 @@ export function useFingeringEditor(options: FingeringEditorOptions): FingeringEd
       .catch((error: unknown) => onError(`Your fingerings could not be saved: ${errorText(error)}`));
   }, [document, layers?.overridesError, onError]);
 
-  const commit = useCallback((next: FingeringOverrides, changed: readonly string[], after: EditTarget | null | undefined) => {
+  // An edit goes on to `after`, which the view follows; `follow` false keeps the view as it
+  // is, for an edit that stays on its note and leaves the score's layout alone.
+  const commit = useCallback((
+    next: FingeringOverrides,
+    changed: readonly string[],
+    after: EditTarget | null | undefined,
+    follow = true,
+  ) => {
     if (!layers || !document) return;
-    moveTo(after);
+    if (follow) moveTo(after);
     if (JSON.stringify(next) === JSON.stringify(layers.overrides)) return;
     setHistory((entries) => [...entries, { overrides: layers.overrides, cursorKey: cursor?.key ?? null }].slice(-HISTORY_LIMIT));
     setDocument((value) =>
@@ -513,7 +520,8 @@ export function useFingeringEditor(options: FingeringEditorOptions): FingeringEd
   const setFinger = useCallback((finger: number) => typeRun(String(finger)), [typeRun]);
   const pickFinger = useCallback((finger: number) => {
     if (!editing || !layers || !cursor || !fingerings?.[cursor.id]) return;
-    commit(withOverride(layers.overrides, cursor.id, { finger }, fingerings[cursor.id]), [cursor.id], cursor);
+    // The note stays where it is, with the picker shown by it: the view holds still.
+    commit(withOverride(layers.overrides, cursor.id, { finger }, fingerings[cursor.id]), [cursor.id], cursor, false);
   }, [commit, cursor, editing, fingerings, layers]);
   const reset = useCallback(() => typeRun("0"), [typeRun]);
   // Moving a note to the other hand stays on it, picker and all, so its finger can be chosen
@@ -528,7 +536,10 @@ export function useFingeringEditor(options: FingeringEditorOptions): FingeringEd
   /** Back to the printed or predicted finger, staying on the note, as the picker does. */
   const resetHere = useCallback(() => {
     if (!editing || !layers || !cursor || !fingerings?.[cursor.id]) return;
-    commit(withOverride(layers.overrides, cursor.id, null, fingerings[cursor.id]), [cursor.id], cursor);
+    // Back to its own hand, the score is laid out again and the view follows the note; else
+    // it holds still, as for a finger picked.
+    const fingering = fingerings[cursor.id];
+    commit(withOverride(layers.overrides, cursor.id, null, fingering), [cursor.id], cursor, fingering.handMoved);
   }, [commit, cursor, editing, fingerings, layers]);
 
   const undo = useCallback(() => {

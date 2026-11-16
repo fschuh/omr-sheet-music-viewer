@@ -195,9 +195,12 @@ function FingerPicker({
       </div>
       {[1, 2, 3, 4, 5].map((finger) => {
         const base = finger === fingering.baseFinger;
+        // New buttons for each note: moved to another, the picker shows that note's finger at
+        // once, where the same buttons would fade from the last note's. A finger picked for
+        // the note still fades in.
         return (
           <button
-            key={finger}
+            key={`${cursor.id}|${finger}`}
             type="button"
             className={`finger-picker-digit${finger === fingering.finger ? " selected" : ""}`}
             aria-pressed={finger === fingering.finger}
