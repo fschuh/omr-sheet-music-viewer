@@ -1491,6 +1491,7 @@ export function App() {
     document,
     setDocument,
     timeline: playbackTimeline,
+    fullTimeline: fullPlaybackTimeline,
     playbackActive,
     startMomentId: playbackMode === "note-by-note" ? notePlaybackMoment?.id ?? null : null,
     playheadNoteIds: realtimePlayheadNoteIds,
@@ -1897,6 +1898,8 @@ export function App() {
       else if (command === "undoFingerEdit") editor.undo();
       else if (command === "fingerNoteHigher") editor.moveInMoment(-1);
       else if (command === "fingerNoteLower") editor.moveInMoment(1);
+      else if (command === "nextOverride") editor.stepOverride(1);
+      else if (command === "previousOverride") editor.stepOverride(-1);
       else editor.setFinger(Number(command.slice("setFinger".length)));
       return;
     }

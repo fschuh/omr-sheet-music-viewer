@@ -51,6 +51,8 @@ export const playbackCommandNames = [
   "undoFingerEdit",
   "fingerNoteHigher",
   "fingerNoteLower",
+  "nextOverride",
+  "previousOverride",
 ] as const;
 
 export type PlaybackCommand = (typeof playbackCommandNames)[number];
@@ -67,7 +69,9 @@ export type FingerEditCommand =
   | "swapFingerHand"
   | "undoFingerEdit"
   | "fingerNoteHigher"
-  | "fingerNoteLower";
+  | "fingerNoteLower"
+  | "nextOverride"
+  | "previousOverride";
 
 export function isFingerEditCommand(command: PlaybackCommand): command is FingerEditCommand {
   return command === "toggleFingerEditing" ||
@@ -80,7 +84,9 @@ export function isFingerEditCommand(command: PlaybackCommand): command is Finger
     command === "swapFingerHand" ||
     command === "undoFingerEdit" ||
     command === "fingerNoteHigher" ||
-    command === "fingerNoteLower";
+    command === "fingerNoteLower" ||
+    command === "nextOverride" ||
+    command === "previousOverride";
 }
 
 /** Commands that move one end of the loop by a barline. */

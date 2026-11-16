@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { applyTypedRun, editorLabelHand, editorLabels, editWalk, momentTargets, navigateWalk, printedFingerReplaced, withFingeringLayers } from "./fingeringEditor";
+import { applyTypedRun, editorLabelHand, editorLabels, editWalk, momentTargets, navigateWalk, overrideStep, printedFingerReplaced, withFingeringLayers, type EditTarget } from "./fingeringEditor";
 import { resolveFingerings, type FingeringOverrides, type MusicXmlPage } from "./musicxml";
 import { buildPlaybackTimeline, timelineForPracticeHand, type PlaybackMoment } from "./playback";
 import type { FingeringLayers, LoadedDocument } from "./types";
@@ -240,4 +240,21 @@ test("another voice's copy of a shared key is not a note of its own to edit", ()
   };
   assert.deepEqual(momentTargets(shared, fingerings).map((target) => target.key), ["up", "bass"]);
   assert.deepEqual(editWalk([shared], fingerings).map((target) => target.key), ["up", "bass"]);
+});
+
+test("the player's overrides are stepped through in score order, round from the end", () => {
+  const targets = ["a", "b", "c", "d", "e"].map((key) => ({ key, id: `page-1-${key}` })) as unknown as EditTarget[];
+  const overrides = { b: {}, d: {} };
+  const step = (cursor: string | null, direction: -1 | 1) => overrideStep(targets, overrides, cursor, direction)?.key;
+  assert.equal(step("a", 1), "b");
+  assert.equal(step("b", 1), "d");
+  assert.equal(step("c", 1), "d");
+  assert.equal(step("d", 1), "b", "after the last, the first");
+  assert.equal(step("e", -1), "d");
+  assert.equal(step("d", -1), "b");
+  assert.equal(step("b", -1), "d", "before the first, the last");
+  assert.equal(step("a", -1), "d");
+  assert.equal(step(null, 1), "b");
+  assert.equal(step(null, -1), "d");
+  assert.equal(overrideStep(targets, {}, "a", 1), null);
 });

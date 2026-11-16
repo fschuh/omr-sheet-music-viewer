@@ -300,6 +300,26 @@ export function navigateWalk(walk: readonly EditTarget[], index: number, command
   return start === 0 ? 0 : runStart(walk, start - 1, group);
 }
 
+/**
+ * The next of the player's overrides, by structural key, from the cursor in `direction`, in
+ * score order: `targets` are every note of the score, both hands. After the last it starts from the first again, and
+ * before the first from the last. Null without overrides.
+ */
+export function overrideStep(
+  targets: readonly EditTarget[],
+  overrides: Readonly<Record<string, unknown>>,
+  cursorKey: string | null,
+  direction: -1 | 1,
+): EditTarget | null {
+  const marked = targets.flatMap((target, index) => (overrides[target.key] ? [index] : []));
+  if (marked.length === 0) return null;
+  const at = targets.findIndex((target) => target.key === cursorKey);
+  const next = direction > 0
+    ? marked.find((index) => index > at) ?? marked[0]
+    : [...marked].reverse().find((index) => at >= 0 && index < at) ?? marked[marked.length - 1];
+  return targets[next];
+}
+
 interface HistoryEntry {
   overrides: FingeringOverrides;
   /** The ringed note's structural key, which holds across layouts. */
@@ -313,6 +333,8 @@ export interface FingeringEditorOptions {
   setDocument: Dispatch<SetStateAction<LoadedDocument | null>>;
   /** The timeline the cursor walks: one hand's while practising one. */
   timeline: readonly PlaybackMoment[];
+  /** Both hands' timeline, which the player's overrides are found in. */
+  fullTimeline: readonly PlaybackMoment[];
   playbackActive: boolean;
   /**
    * Where entering edit mode puts the cursor: note-by-note's moment, else one of the notes
@@ -354,7 +376,10 @@ export interface FingeringEditor {
   pickerOpen: boolean;
   /** Notes changed by the last edit, which flash; `serial` restarts the flash. */
   flash: { ids: readonly string[]; serial: number };
-  overrideCount: number;
+  /** The notes the player fingered or moved to the other hand, in score order. */
+  overrides: readonly EditTarget[];
+  /** Selects the next of the player's overrides, 1, or the previous, -1, in score order. */
+  stepOverride: (direction: -1 | 1) => void;
   /** The predictions were fitted to other overrides than the current ones. */
   refitNeeded: boolean;
   refitting: boolean;
@@ -399,7 +424,7 @@ function errorText(error: unknown): string {
 
 export function useFingeringEditor(options: FingeringEditorOptions): FingeringEditor {
   const {
-    document, setDocument, timeline, playbackActive, startMomentId, playheadNoteIds, startNoteId, practiceHand,
+    document, setDocument, timeline, fullTimeline, playbackActive, startMomentId, playheadNoteIds, startNoteId, practiceHand,
     onPracticeHandChange, stopPlayback, onEnter, onLeave, audition, predict, onError,
   } = options;
   const layers = document?.source.kind === "musicxml" && document.fingeringStatus === "ready"
@@ -426,6 +451,15 @@ export function useFingeringEditor(options: FingeringEditorOptions): FingeringEd
     [layers, resolved],
   );
   const walk = useMemo(() => (fingerings ? editWalk(timeline, fingerings) : []), [fingerings, timeline]);
+  // Every note of both hands, in score order, among which the player's overrides are found.
+  const everyTarget = useMemo(
+    () => (fingerings ? (fullTimeline === timeline ? walk : editWalk(fullTimeline, fingerings)) : []),
+    [fingerings, fullTimeline, timeline, walk],
+  );
+  const overrides = useMemo(
+    () => (layers ? everyTarget.filter((target) => layers.overrides[target.key]) : []),
+    [everyTarget, layers],
+  );
   const cursorIndex = useMemo(() => {
     const index = walk.findIndex((target) => target.key === cursorKey);
     return index < 0 && walk.length > 0 ? 0 : index;
@@ -653,7 +687,16 @@ export function useFingeringEditor(options: FingeringEditorOptions): FingeringEd
     momentNotes,
     pickerOpen: editing && pickerOpen && cursor !== null,
     flash,
-    overrideCount: layers ? Object.keys(layers.overrides).length : 0,
+    overrides,
+    stepOverride: useCallback((direction: -1 | 1) => {
+      if (!editing || !layers) return;
+      const target = overrideStep(everyTarget, layers.overrides, cursor?.key ?? null, direction);
+      if (!target) return;
+      setPickerOpen(false);
+      moveTo(target);
+      // One of the hand not being practised is reached by walking both.
+      if (!walk.some((candidate) => candidate.key === target.key)) onPracticeHandChange("both");
+    }, [cursor?.key, editing, everyTarget, layers, moveTo, onPracticeHandChange, walk]),
     refitNeeded,
     refitting,
     canUndo: history.length > 0,

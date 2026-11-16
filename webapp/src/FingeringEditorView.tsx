@@ -761,11 +761,15 @@ export function FingeringStatusStrip({
     ? editor.momentNotes.filter((target) => editor.fingerings?.[target.id]?.left === fingering.left)
     : [];
   const place = cursor ? chord.findIndex((target) => target.id === cursor.id) : -1;
+  // The player's fingerings: how many, which of them is selected, and a way through them.
+  const yours = editor.overrides.length;
+  const yourPlace = cursor ? editor.overrides.findIndex((target) => target.key === cursor.key) : -1;
   const keys: [string, string][] = [
     [[1, 2, 3, 4, 5].map((finger) => keyName(shortcuts, `setFinger${finger}` as PlaybackCommand)).join(" "), "Set finger, go to the next note"],
     [keyName(shortcuts, "resetFinger"), "Back to the printed or predicted finger, next note"],
     [keyName(shortcuts, "swapFingerHand"), "Move the note to the other hand"],
     [keyName(shortcuts, "undoFingerEdit"), "Undo"],
+    [`${keyName(shortcuts, "previousOverride")} · ${keyName(shortcuts, "nextOverride")}`, "Previous / next of your fingerings"],
     [`${keyName(shortcuts, "backwardNote")} · ${keyName(shortcuts, "forwardNote")}`, "Previous / next note"],
     [`${keyName(shortcuts, "fingerNoteHigher")} · ${keyName(shortcuts, "fingerNoteLower")}`, "Higher / lower note at the same time"],
     [`${keyName(shortcuts, "backwardBar")} · ${keyName(shortcuts, "forwardBar")}`, "Previous / next bar"],
@@ -793,11 +797,32 @@ export function FingeringStatusStrip({
       ) : (
         <span>No fingered note at the playhead.</span>
       )}
-      <span className="fingering-summary" role="status">
-        {editor.overrideCount
-          ? `${editor.overrideCount} of your fingering${editor.overrideCount === 1 ? "" : "s"}`
-          : "Showing the model’s fingerings"}
-      </span>
+      {yours ? (
+        <span className="fingering-summary fingering-yours" role="group" aria-label="Your fingerings">
+          <button
+            type="button"
+            aria-label="Previous of your fingerings"
+            title={`Previous of your fingerings (${keyName(shortcuts, "previousOverride")})`}
+            onClick={() => editor.stepOverride(-1)}
+          >‹</button>
+          {/* As wide as its widest wording, so that the buttons hold still as it changes. */}
+          <span className="fingering-yours-text">
+            <span aria-hidden="true">{`Your fingering ${yours} of ${yours}`}</span>
+            <span aria-hidden="true">{`${yours} of your fingering${yours === 1 ? "" : "s"}`}</span>
+            <span role="status">
+              {yourPlace >= 0 ? `Your fingering ${yourPlace + 1} of ${yours}` : `${yours} of your fingering${yours === 1 ? "" : "s"}`}
+            </span>
+          </span>
+          <button
+            type="button"
+            aria-label="Next of your fingerings"
+            title={`Next of your fingerings (${keyName(shortcuts, "nextOverride")})`}
+            onClick={() => editor.stepOverride(1)}
+          >›</button>
+        </span>
+      ) : (
+        <span className="fingering-summary" role="status">Showing the model’s fingerings</span>
+      )}
       {editor.unsavedReason ? (
         <span className="fingering-status-warning" title={editor.unsavedReason}>Edits are not being saved</span>
       ) : null}

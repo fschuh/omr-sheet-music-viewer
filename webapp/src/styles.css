@@ -2994,6 +2994,33 @@ button:disabled {
 
 .fingering-status .fingering-summary ~ .fingering-keys { margin-left: 0; }
 
+/* Your fingerings' count between the steps through them. */
+.fingering-status .fingering-yours {
+  align-items: center;
+  display: inline-flex;
+  gap: 4px;
+}
+
+/* The wording over invisible copies of its widest forms, its digits all one width. */
+.fingering-status .fingering-yours-text {
+  display: inline-grid;
+  font-variant-numeric: tabular-nums;
+}
+
+.fingering-status .fingering-yours-text > span {
+  grid-area: 1 / 1;
+  text-align: center;
+}
+
+.fingering-status .fingering-yours-text > span[aria-hidden="true"] { visibility: hidden; }
+
+.fingering-status .fingering-yours > button {
+  font-size: 1rem;
+  height: 26px;
+  line-height: 1;
+  padding: 0 9px;
+}
+
 .fingering-status .fingering-keys {
   margin-left: auto;
   position: relative;

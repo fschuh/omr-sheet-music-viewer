@@ -69,6 +69,8 @@ export const playbackCommandDetails: ReadonlyArray<{
   { command: "undoFingerEdit", label: "Undo finger edit", description: "While editing fingers, undo the last change." },
   { command: "fingerNoteHigher", label: "Select next higher note", description: "While editing fingers, select the next higher note played at the same time." },
   { command: "fingerNoteLower", label: "Select next lower note", description: "While editing fingers, select the next lower note played at the same time." },
+  { command: "nextOverride", label: "Next of your fingerings", description: "While editing fingers, select the next note you fingered or moved to the other hand, from the start again after the last." },
+  { command: "previousOverride", label: "Previous of your fingerings", description: "While editing fingers, select the previous note you fingered or moved to the other hand, from the end again before the first." },
 ];
 
 function keyboard(code: string): KeyboardShortcut {
@@ -118,6 +120,8 @@ export function defaultPlaybackShortcuts(): PlaybackShortcuts {
     undoFingerEdit: { keyboard: { ...keyboard("KeyZ"), ctrl: true }, midi: null },
     fingerNoteHigher: { keyboard: { ...keyboard("ArrowUp"), alt: true }, midi: null },
     fingerNoteLower: { keyboard: { ...keyboard("ArrowDown"), alt: true }, midi: null },
+    nextOverride: { keyboard: keyboard("KeyY"), midi: null },
+    previousOverride: { keyboard: { ...keyboard("KeyY"), shift: true }, midi: null },
   };
 }
 
