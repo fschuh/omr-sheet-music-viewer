@@ -32,24 +32,58 @@ export async function pageImageMarkup(page: LayoutPage): Promise<string> {
     .replace(LELAND_URL, font);
 }
 
-// One image per laid-out page, decoded and ready to paint, kept while the page is.
+// One image per laid-out page, decoded and ready to paint, kept while the page is; and the
+// URLs of those already decoded, which a page shows from its first frame.
 const images = new WeakMap<LayoutPage, Promise<string>>();
+const decoded = new WeakMap<LayoutPage, string>();
+
+// An image's URL keeps its file in memory until it is revoked: it is revoked when its page's
+// layout is dropped, as when another score opens, see `releasePageImages`, or else once the
+// layout is collected.
+const releases = typeof FinalizationRegistry === "undefined"
+  ? null
+  : new FinalizationRegistry<string>((url) => URL.revokeObjectURL(url));
 
 function pageImage(page: LayoutPage): Promise<string> {
   let image = images.get(page);
   if (!image) {
-    image = pageImageMarkup(page).then(async (markup) => {
+    const made: Promise<string> = pageImageMarkup(page).then(async (markup) => {
       const url = URL.createObjectURL(new Blob([markup], { type: "image/svg+xml" }));
+      releases?.register(page, url);
       // Decoded before it is shown, so swapping it for the SVG never leaves a blank frame.
       const decoder = new Image();
       decoder.src = url;
       await decoder.decode();
+      // Released while it was being made: no page shows it.
+      if (images.get(page) !== made) {
+        URL.revokeObjectURL(url);
+        throw new Error("The page's layout was dropped");
+      }
+      decoded.set(page, url);
       return url;
     });
-    image.catch(() => images.delete(page));
+    image = made;
+    image.catch(() => {
+      if (images.get(page) === made) images.delete(page);
+    });
     images.set(page, image);
   }
   return image;
+}
+
+/**
+ * Lets go of the pages' images, whose layouts are dropped, as when another score opens or
+ * the score is laid out again: their files leave memory.
+ */
+export function releasePageImages(pages: readonly LayoutPage[]): void {
+  for (const page of pages) {
+    const image = images.get(page);
+    if (!image) continue;
+    images.delete(page);
+    const url = decoded.get(page);
+    decoded.delete(page);
+    if (url) URL.revokeObjectURL(url);
+  }
 }
 
 /** Prepares the pages' images one by one in idle time, so they are ready when first shown. */
@@ -94,5 +128,6 @@ export function usePageImage(page: LayoutPage, wanted: boolean): string | null {
       cancelIdleCallback(idle);
     };
   }, [page, wanted]);
-  return wanted && ready?.page === page ? ready.url : null;
+  if (!wanted) return null;
+  return ready?.page === page ? ready.url : decoded.get(page) ?? null;
 }

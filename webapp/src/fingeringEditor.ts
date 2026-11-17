@@ -629,12 +629,15 @@ export function useFingeringEditor(options: FingeringEditorOptions): FingeringEd
   }, [available, fingerings, onEnter, playbackActive, playheadNoteIds, startMomentId, startNoteId, stopPlayback, walk]);
   // Whether playback was on when edit mode began, so leaving it goes back to playback.
   const resumePlayback = useRef(false);
+  // A function made in a render keeps every value of that render it could see, the score's
+  // document and fingerings among them; so each that would otherwise outlive a score is made
+  // again for the next, with `layers`, letting the last score go.
   const exit = useCallback(() => {
     if (!editing) return;
     setEditing(false);
     setPickerOpen(false);
     onLeave(cursor, resumePlayback.current);
-  }, [cursor, editing, onLeave]);
+  }, [cursor, editing, layers, onLeave]);
   const toggle = useCallback(() => (editing ? exit() : enter()), [editing, enter, exit]);
 
   const select = useCallback((clicked: string, openPicker = true) => {
@@ -676,7 +679,7 @@ export function useFingeringEditor(options: FingeringEditorOptions): FingeringEd
 
   const auditionCursor = useCallback(() => {
     if (cursorMoment) audition(cursorMoment);
-  }, [audition, cursorMoment]);
+  }, [audition, cursorMoment, layers]);
 
   return {
     available,

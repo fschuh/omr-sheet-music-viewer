@@ -6,6 +6,7 @@ import { pageNoteGeometry, viewerIds } from "./geometry/pageNoteGeometry";
 import { documentMusicXml } from "./import/documentMusicXml";
 import { importMusicXml } from "./import/parseMusicXml";
 import type { ScoreModel } from "./model/score";
+import type { LayoutPage } from "./model/layout";
 import { pageFormat } from "./layout/pageFormat";
 import { layoutScore, type LayoutOptions } from "./layout/pages";
 import type { FingeringPredictor } from "../fingering";
@@ -17,6 +18,7 @@ import {
 } from "./scoreData/fingerings";
 import type { FingeringOverrides } from "./scoreData/overrides";
 import { readScoreFile, scoreDataStore, type MusicXmlScoreFile } from "./scoreData/scoreData";
+import { releasePageImages } from "./render/MusicXmlPageImage";
 
 export type { LayoutPage as MusicXmlPage } from "./model/layout";
 export {
@@ -41,6 +43,11 @@ export type { FingeringOverride, FingeringOverrides } from "./scoreData/override
 export { MusicXmlImportError } from "./import/parseMusicXml";
 export { MusicXmlNoteMarks, MusicXmlPageSurface, type HighlightKind } from "./render/MusicXmlPageSurface";
 export { preparePageImages, usePageImage } from "./render/MusicXmlPageImage";
+
+/** The engraved pages of a document's layout. */
+function surfaces(document: LoadedDocument): LayoutPage[] {
+  return document.pages.flatMap((page) => (page.surface ? [page.surface] : []));
+}
 export { showScoreDataFolder, showScoreSource } from "./scoreData/scoreData";
 
 const MUSIC_XML_EXTENSION = /\.(musicxml|xml|mxl)$/i;
@@ -88,6 +95,11 @@ let opened: {
 /** Imports and lays out a score file that has been read. */
 export function musicXmlScoreDocument(jobId: string, file: MusicXmlScoreFile): LoadedDocument {
   const { document, score } = laidOut(jobId, file, {});
+  // The score opened before goes, and its pages' images with it.
+  if (opened) {
+    releasePageImages(surfaces(opened.plain));
+    if (opened.roomy) releasePageImages(surfaces(opened.roomy.layout));
+  }
   opened = { jobId, file, score, plain: document, roomy: null };
   return document;
 }
@@ -110,6 +122,8 @@ export function relayoutMusicXmlScore(
   if (fingeringRoom) {
     const hands = JSON.stringify(Object.entries(movedHands).sort(([a], [b]) => a.localeCompare(b)));
     if (opened.roomy?.hands !== hands) {
+      // The layout for the hands before goes, and its pages' images with it.
+      if (opened.roomy) releasePageImages(surfaces(opened.roomy.layout));
       opened.roomy = {
         hands,
         layout: laidOutAgain(opened.plain, opened.score, opened.file, { fingeringRoom, movedHand: (key) => movedHands[key] }),

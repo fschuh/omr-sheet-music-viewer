@@ -140,6 +140,7 @@ import {
   openMusicXmlScore,
   labelsNeedRoom,
   preparePageImages,
+  noteKeyOf,
   relayoutMusicXmlScore,
   showScoreDataFolder,
   showScoreSource,
@@ -490,25 +491,46 @@ export function App() {
   const [error, setError] = useState<string | null>(
     nativeAvailable ? null : "PDF processing is available in the Tauri desktop app. Run npm run tauri dev.",
   );
+  // Realtime reads the score from the usual layout's MusicXML. The fingering editor's layout
+  // only moves notes to other pages, which renames them, so it is not read again for it, nor
+  // once more on leaving it, when the usual MusicXML comes back as it was.
+  const realtimeSource = useRef<{ jobId: string; musicXml: string } | null>(null);
+  const fingeringLayout = document?.pages.some((page) => page.surface?.fingeringRoom) ?? false;
+  if (document?.documentMusicXml && (!fingeringLayout || realtimeSource.current?.jobId !== document.jobId)) {
+    realtimeSource.current = { jobId: document.jobId, musicXml: document.documentMusicXml };
+  }
+  const realtimeMusicXml = document && realtimeSource.current?.jobId === document.jobId
+    ? realtimeSource.current.musicXml
+    : null;
   const realtimeModel = useMemo(() => {
-    if (!document?.documentMusicXml) return { score: null, error: null };
+    if (!realtimeMusicXml) return { score: null, error: null };
     try {
-      return { score: parseRealtimeMusicXml(document.documentMusicXml), error: null };
+      return { score: parseRealtimeMusicXml(realtimeMusicXml), error: null };
     } catch (modelError) {
       return {
         score: null,
         error: modelError instanceof Error ? modelError.message : String(modelError),
       };
     }
-  }, [document?.documentMusicXml]);
+  }, [realtimeMusicXml]);
   const noteGeometry = useMemo(
     () => documentNoteGeometry(document?.source.kind, document?.pages ?? []),
     [document?.pages, document?.source.kind],
   );
-  const noteFacts = useMemo(
-    () => documentNoteScoreFacts(document?.source.kind, document?.pages ?? [], realtimeModel.score),
-    [document?.pages, document?.source.kind, realtimeModel.score],
-  );
+  const noteFacts = useMemo(() => {
+    const facts = documentNoteScoreFacts(document?.source.kind, document?.pages ?? [], realtimeModel.score);
+    if (document?.source.kind !== "musicxml" || realtimeMusicXml === document.documentMusicXml) return facts;
+    // Read from the usual layout, the facts go to the notes by their IDs in this one.
+    const idByKey = new Map(noteGeometry.flatMap((page) => page.notes.map((note) => [noteKeyOf(note.id), note.id] as const)));
+    const rename = (id: string) => idByKey.get(noteKeyOf(id)) ?? id;
+    const renamed = <T,>(map: Map<string, T>) => new Map([...map].map(([id, value]) => [rename(id), value] as const));
+    return {
+      suppressedNoteIds: new Set([...facts.suppressedNoteIds].map(rename)),
+      startsAttackByNoteId: renamed(facts.startsAttackByNoteId),
+      dynamicByNoteId: renamed(facts.dynamicByNoteId),
+      leftByNoteId: renamed(facts.leftByNoteId),
+    };
+  }, [document?.documentMusicXml, document?.pages, document?.source.kind, noteGeometry, realtimeModel.score, realtimeMusicXml]);
   const fullPlaybackTimeline = useMemo(
     () => buildPlaybackTimeline(noteGeometry, noteFacts, document?.predictedFingerings),
     [document?.predictedFingerings, noteFacts, noteGeometry],

@@ -945,6 +945,7 @@ const EngravedPage = memo(function EngravedPage({
   hoverKeys,
   hoverKind,
   still,
+  far,
 }: {
   surface: MusicXmlPage;
   geometry: PageNoteGeometry | undefined;
@@ -960,6 +961,11 @@ const EngravedPage = memo(function EngravedPage({
   hoverKind: HighlightKind;
   /** Drawn as one image, with `noteKeys` drawn over it. */
   still: boolean;
+  /**
+   * Far from the view: drawn as its image once that is ready, even during playback, whose
+   * highlights it cannot show; it is drawn live again before it comes into view.
+   */
+  far: boolean;
 }) {
   const highlighted = useMemo(
     () => !playbackActive && noteKeys.length > 0
@@ -967,18 +973,21 @@ const EngravedPage = memo(function EngravedPage({
       : pageHighlightIds(geometry, selected, surface.index, highlightAll, [], playbackActive, playbackGroupIds),
     [geometry, highlightAll, noteKeys, playbackActive, playbackGroupIds, selected, surface.index],
   );
-  // The SVG stays mounted under the image, carrying the highlight until the image is
-  // decoded, so going in and out of the still view never flashes.
-  const image = usePageImage(surface, still && !playbackActive);
+  // The image is decoded before it is shown, so going into the still view never flashes.
+  const image = usePageImage(surface, (still && !playbackActive) || far);
   return (
     <>
-      <div className="musicxml-page-live" hidden={image !== null}>
-        <MusicXmlPageSurface
-          page={surface}
-          highlighted={image ? NO_HIGHLIGHT : highlighted}
-          highlightKind={playbackActive ? "playback" : noteKeys.length > 0 ? noteKind : "selected"}
-        />
-      </div>
+      {/* Under a ready image the page is not drawn again as SVG: thousands of elements,
+          for nothing. Without one, it is, in the same frame the image goes. */}
+      {image === null ? (
+        <div className="musicxml-page-live">
+          <MusicXmlPageSurface
+            page={surface}
+            highlighted={highlighted}
+            highlightKind={playbackActive ? "playback" : noteKeys.length > 0 ? noteKind : "selected"}
+          />
+        </div>
+      ) : null}
       {image ? (
         <>
           <img className="musicxml-page" src={image} alt={`Sheet music page ${surface.index + 1}`} draggable={false} />
@@ -2048,6 +2057,22 @@ export function DocumentViewer({
     if (Math.abs(dy) > 0.5) commitTransform({ ...current, y: current.y + dy });
   });
 
+  // The pages in view and a screen's height around them. Only these are drawn live, as SVG,
+  // and have what is drawn over them, such as the fingering editor's labels; the rest show
+  // their images, so that a long score's thousands of elements are not all made at once, as
+  // when it is laid out again for editing fingers. They come alive as the score scrolls to them.
+  const pagesNearView = new Set<number>();
+  {
+    const viewHeight = stageBoxRef.current?.stage.height ?? (typeof window === "undefined" ? 1000 : window.innerHeight);
+    let pageTop = 0;
+    for (const { page, height } of displayPages) {
+      const top = transform.y + pageTop * transform.scale;
+      const bottom = top + height * transform.scale;
+      if (bottom > -viewHeight && top < 2 * viewHeight) pagesNearView.add(page.index);
+      pageTop += height + PAGE_GAP;
+    }
+  }
+
   return (
     <div className="viewer">
       <div className="viewer-toolbar">
@@ -2498,6 +2523,7 @@ export function DocumentViewer({
                   hoverKeys={hoverHighlight?.pageIndex === page.index ? hoverHighlight.keys : NO_NOTE_KEYS}
                   hoverKind={hoverHighlight?.kind ?? "selected"}
                   still={stillPages}
+                  far={!pagesNearView.has(page.index)}
                 />
               ) : page.imageUrl ? (
                 <img src={page.imageUrl} alt={`Sheet music page ${page.index + 1}`} draggable={false} />
@@ -2550,7 +2576,7 @@ export function DocumentViewer({
                 showUnsupportedRests={showUnsupportedRests}
                 showValueMismatches={showValueMismatches}
               />
-              {renderPageExtra?.(page, transform.scale, width, reveal)}
+              {pagesNearView.has(page.index) ? renderPageExtra?.(page, transform.scale, width, reveal) : null}
               {page.status !== "complete" ? (
                 <div className="page-placeholder">
                   {page.status === "failed" ? (
