@@ -2,7 +2,7 @@
 // glyph, and the browser regroups every one of them whenever anything on the page changes;
 // as an image it is a single picture, so marks moving over it stay smooth. The image cannot
 // use the document's fonts, so the music font travels inside it.
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { LayoutPage } from "../model/layout";
 import { LELAND_URL, MusicXmlPageSurface } from "./MusicXmlPageSurface";
 
@@ -36,6 +36,9 @@ export async function pageImageMarkup(page: LayoutPage): Promise<string> {
 // URLs of those already decoded, which a page shows from its first frame.
 const images = new WeakMap<LayoutPage, Promise<string>>();
 const decoded = new WeakMap<LayoutPage, string>();
+// The image element each was decoded in. It is the one put on the page: a new element would
+// load the image again, which takes a moment, and the page would show blank meanwhile.
+const elements = new WeakMap<LayoutPage, HTMLImageElement>();
 
 // An image's URL keeps its file in memory until it is revoked: it is revoked when its page's
 // layout is dropped, as when another score opens, see `releasePageImages`, or else once the
@@ -52,6 +55,9 @@ function pageImage(page: LayoutPage): Promise<string> {
       releases?.register(page, url);
       // Decoded before it is shown, so swapping it for the SVG never leaves a blank frame.
       const decoder = new Image();
+      decoder.className = "musicxml-page";
+      decoder.alt = `Sheet music page ${page.index + 1}`;
+      decoder.draggable = false;
       decoder.src = url;
       await decoder.decode();
       // Released while it was being made: no page shows it.
@@ -60,6 +66,7 @@ function pageImage(page: LayoutPage): Promise<string> {
         throw new Error("The page's layout was dropped");
       }
       decoded.set(page, url);
+      elements.set(page, decoder);
       return url;
     });
     image = made;
@@ -82,6 +89,8 @@ export function releasePageImages(pages: readonly LayoutPage[]): void {
     images.delete(page);
     const url = decoded.get(page);
     decoded.delete(page);
+    elements.get(page)?.remove();
+    elements.delete(page);
     if (url) URL.revokeObjectURL(url);
   }
 }
@@ -101,6 +110,22 @@ export function preparePageImages(pages: readonly LayoutPage[]): () => void {
     cancelled = true;
     if (handle !== null) cancelIdleCallback(handle);
   };
+}
+
+/**
+ * The page's image, `url` from `usePageImage`: the very element it was decoded in, which
+ * paints in the frame it is put in.
+ */
+export function MusicXmlPageImage({ page, url }: { page: LayoutPage; url: string }) {
+  const holder = useRef<HTMLDivElement>(null);
+  const element = elements.get(page);
+  useLayoutEffect(() => {
+    if (!element || !holder.current) return;
+    holder.current.appendChild(element);
+    return () => element.remove();
+  }, [element]);
+  if (!element) return <img className="musicxml-page" src={url} alt={`Sheet music page ${page.index + 1}`} draggable={false} />;
+  return <div ref={holder} className="musicxml-page" />;
 }
 
 /**

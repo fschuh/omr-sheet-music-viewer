@@ -25,6 +25,7 @@ import { diagnosticNoteheads } from "./sidecarNoteGeometry";
 import {
   MusicXmlNoteMarks,
   MusicXmlPageSurface,
+  MusicXmlPageImage,
   usePageImage,
   type HighlightKind,
   type MusicXmlPage,
@@ -990,7 +991,7 @@ const EngravedPage = memo(function EngravedPage({
       ) : null}
       {image ? (
         <>
-          <img className="musicxml-page" src={image} alt={`Sheet music page ${surface.index + 1}`} draggable={false} />
+          <MusicXmlPageImage page={surface} url={image} />
           {noteKeys.length > 0 ? <MusicXmlNoteMarks page={surface} keys={noteKeys} kind={noteKind} /> : null}
         </>
       ) : null}

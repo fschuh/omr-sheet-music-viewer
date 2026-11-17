@@ -42,7 +42,7 @@ export {
 export type { FingeringOverride, FingeringOverrides } from "./scoreData/overrides";
 export { MusicXmlImportError } from "./import/parseMusicXml";
 export { MusicXmlNoteMarks, MusicXmlPageSurface, type HighlightKind } from "./render/MusicXmlPageSurface";
-export { preparePageImages, usePageImage } from "./render/MusicXmlPageImage";
+export { MusicXmlPageImage, preparePageImages, usePageImage } from "./render/MusicXmlPageImage";
 
 /** The engraved pages of a document's layout. */
 function surfaces(document: LoadedDocument): LayoutPage[] {
