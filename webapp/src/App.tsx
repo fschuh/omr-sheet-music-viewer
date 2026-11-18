@@ -1545,6 +1545,12 @@ export function App() {
   });
   const fingerEditorRef = useRef(fingerEditor);
   fingerEditorRef.current = fingerEditor;
+  // The note highway shown when editing fingers begins stays, hidden, until playback comes
+  // back after it: made again, it would need a new WebGL context and its shaders compiled.
+  const noteHighwayBeforeEditing = useRef(false);
+  const backToPlayback = fingerEditor.editing || resumeAfterEditing;
+  if (!backToPlayback) noteHighwayBeforeEditing.current = noteHighwayShown;
+  const keepNoteHighway = backToPlayback && noteHighwayEnabled && noteHighwayBeforeEditing.current;
   // The roomy layout and its pages' images are prepared in idle time once a MusicXML score's
   // fingerings are ready, so that entering the editor is quick.
   const fingeringsReadyJob = document?.source.kind === "musicxml" && document.fingeringStatus === "ready"
@@ -3365,7 +3371,7 @@ export function App() {
               </dl>
               {workerInfo ? <p className="worker-info">{workerInfo}</p> : null}
             </aside> : null}
-            {noteHighwayShown ? (
+            {noteHighwayShown || keepNoteHighway ? (
               <NoteHighway
                 getFrame={playbackMode === "realtime" ? realtimeHighwayFrame : noteByNoteHighwayFrame}
                 hidden={!noteHighwayVisible}

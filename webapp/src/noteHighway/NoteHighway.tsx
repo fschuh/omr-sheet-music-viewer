@@ -38,8 +38,8 @@ export function NoteHighway({
   upcomingLead = 1,
 }: NoteHighwayProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const latest = useRef({ getFrame, view, upcomingLead });
-  latest.current = { getFrame, view, upcomingLead };
+  const latest = useRef({ getFrame, view, upcomingLead, hidden });
+  latest.current = { getFrame, view, upcomingLead, hidden };
 
   useEffect(() => {
     const container = containerRef.current;
@@ -80,9 +80,17 @@ export function NoteHighway({
     const approachHands = new Uint8Array(88);
 
     let frame = 0;
+    let wasHidden = false;
     const draw = () => {
       frame = requestAnimationFrame(draw);
-      const { getFrame: currentGetFrame, view: currentView, upcomingLead: lead } = latest.current;
+      const { getFrame: currentGetFrame, view: currentView, upcomingLead: lead, hidden: hiddenNow } = latest.current;
+      // Hidden, it draws nothing, on the keys either, and waits with its context to be shown.
+      if (hiddenNow) {
+        if (!wasHidden) approachPainter.clear();
+        wasHidden = true;
+        return;
+      }
+      wasHidden = false;
       const { track, now, window: span } = currentGetFrame();
       active.setView(currentView);
       active.setTrack(track);
