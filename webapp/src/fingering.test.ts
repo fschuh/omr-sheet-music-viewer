@@ -183,6 +183,29 @@ test("printed fingerings are read with the hand their staff implies", async () =
   assert.deepEqual(printedFingerings(SCORE), {});
 });
 
+test("notes the score does not show, or cue notes, are not fingered", async () => {
+  const { predictFingerings } = await import("./fingering");
+  // A turn on C5, written out after it as hidden cue notes, as some exports do for playback.
+  const hidden = `<score-partwise><part-list><score-part id="P1"><part-name>P</part-name></score-part></part-list><part id="P1">
+    <measure><attributes><divisions>8</divisions><clef><sign>G</sign><line>2</line></clef></attributes>
+      <direction><sound tempo="60"/></direction>
+      <note id="turn"><pitch><step>C</step><octave>5</octave></pitch><duration>4</duration><voice>1</voice></note>
+      <note id="next"><pitch><step>C</step><octave>6</octave></pitch><duration>4</duration><voice>1</voice></note>
+      <backup><duration>8</duration></backup>
+      <note id="h1" print-object="no"><cue/><pitch><step>D</step><alter>-1</alter><octave>5</octave></pitch><duration>1</duration><voice>2</voice></note>
+      <note id="h2" print-object="no"><cue/><pitch><step>C</step><octave>5</octave></pitch><duration>1</duration><voice>2</voice></note>
+      <note id="h3" print-object="no"><pitch><step>B</step><octave>4</octave></pitch><duration>1</duration><voice>2</voice></note>
+      <note id="h4"><cue/><pitch><step>C</step><octave>5</octave></pitch><duration>1</duration><voice>2</voice></note>
+    </measure></part></score-partwise>`;
+  let received: IndexedFingeringNote[] = [];
+  const predicted = await predictFingerings(hidden, async (notes) => {
+    received = notes;
+    return notes.map((note) => ({ ...note, finger: 1 }));
+  });
+  assert.deepEqual(received.map(({ note }) => note), [72, 84], "the model sees only the notes shown");
+  assert.deepEqual(Object.keys(predicted.fingeringsByMusicXmlId).sort(), ["next", "turn"]);
+});
+
 test("a note tied on from another is held, not played: the model sees one longer note and both show its finger", async () => {
   const { predictFingerings, tiedContinuations } = await import("./fingering");
   const tied = `<score-partwise><part-list><score-part id="P1"><part-name>P</part-name></score-part></part-list><part id="P1">
