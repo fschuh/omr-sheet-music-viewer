@@ -34,7 +34,17 @@ const ORNAMENT_GLYPHS: Record<ChordModel["ornaments"][number]["name"], GlyphName
   mordent: "ornamentMordent",
   turn: "ornamentTurn",
   "inverted-turn": "ornamentTurnInverted",
+  "delayed-turn": "ornamentTurn",
+  "delayed-inverted-turn": "ornamentTurnInverted",
+  "vertical-turn": "ornamentTurnUp",
+  "inverted-vertical-turn": "ornamentTurnUpS",
 };
+
+/** The glyph of an ornament: a turn with a slash has its own. */
+function ornamentGlyph(ornament: ChordModel["ornaments"][number]): GlyphName {
+  if (ornament.slash && (ornament.name === "turn" || ornament.name === "delayed-turn")) return "ornamentTurnSlash";
+  return ORNAMENT_GLYPHS[ornament.name];
+}
 
 const FINGERING_DIGITS: Record<string, GlyphName> = {
   "0": "fingering0", "1": "fingering1", "2": "fingering2", "3": "fingering3", "4": "fingering4", "5": "fingering5",
@@ -131,7 +141,14 @@ interface TrillAnchor {
   y: number;
 }
 
-function chordMarks(system: PlacedSystem, chord: PreparedChord, shape: ChordShape, output: Pen): TrillAnchor {
+function chordMarks(
+  system: PlacedSystem,
+  chord: PreparedChord,
+  shape: ChordShape,
+  output: Pen,
+  /** Where the chord's sound ends on the page, by which a delayed turn stands. */
+  endX: () => number,
+): TrillAnchor {
   const model = chord.model;
   const x = system.chords.get(chord)!;
   const staffTop = system.top + system.staffTops[chord.staff];
@@ -191,8 +208,16 @@ function chordMarks(system: PlacedSystem, chord: PreparedChord, shape: ChordShap
   }
   let trill: TrillAnchor | null = null;
   for (const ornament of model.ornaments) {
-    const glyph = ORNAMENT_GLYPHS[ornament.name];
+    const glyph = ornamentGlyph(ornament);
     const box = glyphBox(glyph);
+    // A delayed turn stands between the note and the next, at the height the chord's own
+    // ornaments start from, clear of its fingerings, which it does not finger.
+    if (ornament.name === "delayed-turn" || ornament.name === "delayed-inverted-turn") {
+      const centre = (headCentre + Math.max(headCentre, endX())) / 2;
+      const y = ornament.placement === "below" ? outerBottom + MARK_GAP - box.top : outerTop - MARK_GAP - box.bottom;
+      output.glyph(glyph, centre - (box.left + box.right) / 2, y);
+      continue;
+    }
     const x = headCentre - (box.left + box.right) / 2;
     if (ornament.placement === "below") {
       const y = outerBottom + MARK_GAP - box.top;
@@ -352,7 +377,7 @@ export function layoutMarks(
       if (!chord.model.printed) continue;
       // The marks of a chord beamed across staves belong to no staff.
       output.staff = crossStaff.has(chord) ? undefined : chord.staff;
-      const anchor = chordMarks(system, chord, shapes.get(chord)!, output);
+      const anchor = chordMarks(system, chord, shapes.get(chord)!, output, () => chordEndX(system, chord, chords, shapes));
       // In document order, so that a line starting and stopping on one note spans that note.
       for (const wavy of chord.model.wavyLines) {
         const key = `${chord.part}|${wavy.number}`;

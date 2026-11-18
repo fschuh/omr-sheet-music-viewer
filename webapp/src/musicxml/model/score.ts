@@ -199,7 +199,18 @@ export interface ChordModel {
   /** Articulations by MusicXML name, such as "staccato" or "strong-accent". */
   articulations: { name: string; placement: Placement }[];
   fermata: { inverted: boolean; shape: string } | null;
-  ornaments: { name: "trill-mark" | "mordent" | "inverted-mordent" | "turn" | "inverted-turn"; placement: Placement }[];
+  /**
+   * Ornaments by MusicXML name. A delayed turn stands after its note, before the next; `slash`
+   * marks a turn drawn with a stroke through it.
+   */
+  ornaments: {
+    name:
+      | "trill-mark" | "mordent" | "inverted-mordent"
+      | "turn" | "inverted-turn" | "delayed-turn" | "delayed-inverted-turn"
+      | "vertical-turn" | "inverted-vertical-turn";
+    placement: Placement;
+    slash?: boolean;
+  }[];
   wavyLines: { type: "start" | "stop" | "continue"; number: string }[];
   arpeggiate: { direction: "up" | "down" | null; number: string } | null;
   tremolo: { type: "single" | "start" | "stop" | "unmeasured"; marks: number } | null;

@@ -443,6 +443,39 @@ test("trill lines a file starts are left as they are", () => {
   }
 });
 
+test("every kind of turn is drawn with its own sign, above or below", () => {
+  const drawn = (ornament: string) => {
+    const [page] = pages(treble([
+      note("C5", 8, { type: "half", stem: "down", extra: notations(`<ornaments><${ornament}/></ornaments>`) }) +
+        note("C5", 8, { type: "half" }),
+    ]));
+    return page;
+  };
+  const signs: [string, string][] = [
+    ["turn", "ornamentTurn"],
+    ["inverted-turn", "ornamentTurnInverted"],
+    ['turn slash="yes"', "ornamentTurnSlash"],
+    ["delayed-turn", "ornamentTurn"],
+    ["delayed-inverted-turn", "ornamentTurnInverted"],
+    ["vertical-turn", "ornamentTurnUp"],
+    ["inverted-vertical-turn", "ornamentTurnUpS"],
+  ];
+  for (const [ornament, glyph] of signs) assert.equal(glyphs(drawn(ornament), glyph).length, 1, ornament);
+  // Above the staff, or below it.
+  const staffTop = (page: LayoutPage) => Math.min(...page.items.filter((item): item is Line => item.kind === "line" && item.y1 === item.y2 && item.x2 - item.x1 > 200).map((line) => line.y1));
+  const above = drawn("turn");
+  assert.ok(glyphs(above, "ornamentTurn")[0].y < staffTop(above));
+  const below = drawn('turn placement="below"');
+  assert.ok(glyphs(below, "ornamentTurn")[0].y > staffTop(below) + 4 * staffSpace(below));
+  // A delayed turn stands between its note and the next.
+  const delayed = drawn("delayed-turn");
+  const heads = delayed.chords.map((chord) => chord.notes[0].items.find((item): item is Glyph => item.kind === "glyph")!.x);
+  const [sign] = glyphs(delayed, "ornamentTurn");
+  assert.ok(sign.x > heads[0] + staffSpace(delayed) && sign.x < heads[1], "after the note, before the next");
+  const [onNote] = glyphs(above, "ornamentTurn");
+  assert.ok(Math.abs(onNote.x - heads[0]) < staffSpace(above), "a turn on its note stands over it");
+});
+
 test("a single tremolo crosses its stem", () => {
   const [page] = pages(treble([
     note("C5", 16, { type: "half", stem: "down", extra: notations('<ornaments><tremolo type="single">3</tremolo></ornaments>') }) +

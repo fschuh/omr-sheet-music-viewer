@@ -31,6 +31,19 @@ export interface RealtimeMordent {
   auxiliaryPitch: string;
 }
 
+/**
+ * A turn: the notes either side of the main note, played around it. Upper, main, lower, main
+ * on the beat; lower before upper when inverted; from the main note first when `fromMain`;
+ * at the note's end, after it has sounded, when delayed.
+ */
+export interface RealtimeTurn {
+  upperPitch: string;
+  lowerPitch: string;
+  inverted: boolean;
+  delayed: boolean;
+  fromMain: boolean;
+}
+
 /** A rolled chord: notes sharing a part, onset and number roll together. */
 export interface RealtimeArpeggio {
   number: string;
@@ -69,6 +82,7 @@ export interface RealtimeScoreNote {
   tremolo: RealtimeTremolo | null;
   trill: RealtimeTrill | null;
   mordent: RealtimeMordent | null;
+  turn?: RealtimeTurn | null;
   arpeggio: RealtimeArpeggio | null;
 }
 
@@ -508,6 +522,61 @@ function parseMordent(
   return { auxiliaryPitch: formatPitchName(below.step, below.octave, below.alter) };
 }
 
+/**
+ * Turns by MusicXML name, and whether each goes to its lower note first. The vertical turn,
+ * its sign rising from lower left, goes up from below; the inverted vertical one comes down
+ * from above.
+ */
+const TURNS: Record<string, boolean> = {
+  turn: false,
+  "inverted-turn": true,
+  "delayed-turn": false,
+  "delayed-inverted-turn": true,
+  "vertical-turn": true,
+  "inverted-vertical-turn": false,
+};
+
+function parseTurn(
+  note: Element,
+  step: string,
+  octave: number,
+  alter: number,
+  fifths: number,
+): RealtimeTurn | null {
+  const element = Object.keys(TURNS).map((name) => descendants(note, name)[0]).find((found) => found !== undefined);
+  if (!element) return null;
+  const name = element.localName || element.nodeName.split(":").at(-1)!;
+  // An accidental over the sign alters the upper note, one under it the lower; of two
+  // placed neither way, the first is the upper's.
+  const ornaments = descendants(note, "ornaments").find((candidate) => descendants(candidate, name).includes(element));
+  const marks = ornaments ? descendants(ornaments, "accidental-mark") : [];
+  const placed = (where: string) => marks.find((mark) => mark.getAttribute("placement") === where);
+  const unplaced = marks.filter((mark) => !mark.getAttribute("placement"));
+  const above = placed("above") ?? unplaced[0];
+  const below = placed("below") ?? (placed("above") ? unplaced[0] : unplaced[1]);
+  // The neighbours a step either side, in the key; `trill-step` may make them a half or
+  // whole tone, or the note itself.
+  const trillStep = element.getAttribute("trill-step") || null;
+  const upperPitch = trillAdjacentPitch(step, octave, alter, 1, fifths, trillStep, accidentalAlter(above?.textContent ?? null));
+  let lowerPitch = trillAdjacentPitch(step, octave, alter, -1, fifths, trillStep, null);
+  const lowerAccidental = accidentalAlter(below?.textContent ?? null);
+  if (lowerAccidental !== null && trillStep !== "unison") {
+    const lower = adjacentDiatonicPitch(step, octave, -1, fifths);
+    lowerPitch = formatPitchName(lower.step, lower.octave, lowerAccidental);
+  }
+  // A slash through the sign turns it the other way.
+  const slash = yes(element.getAttribute("slash"));
+  let inverted = TURNS[name] !== slash;
+  // MusicXML starts a turn on its first neighbour unless it says otherwise: on the main note,
+  // or on the lower note, the figure then going up from it. One fingered with five fingers,
+  // one per note, starts on its main note, as the fingering shows.
+  const start = element.getAttribute("start-note") || null;
+  if (start === "below") inverted = true;
+  if (start === "upper") inverted = false;
+  const fromMain = start === "main" || (start === null && descendants(note, "fingering").length === 5);
+  return { upperPitch, lowerPitch, inverted, delayed: name.startsWith("delayed"), fromMain };
+}
+
 function parseArpeggio(note: Element, semitone: number): RealtimeArpeggio | null {
   const element = descendants(note, "arpeggiate")[0];
   if (!element) return null;
@@ -854,6 +923,7 @@ function parsePartMeasure(
             tremolo: parseTremolo(child),
             trill: parseTrill(child, step, octaveNumber, alter, fifths),
             mordent: parseMordent(child, step, octaveNumber, alter, fifths),
+            turn: parseTurn(child, step, octaveNumber, alter, fifths),
             arpeggio: parseArpeggio(child, pitchSemitone(step, octaveNumber, alter)),
           });
         }
@@ -1165,6 +1235,8 @@ const MIN_TREMOLO_INTERVAL_QUARTERS = 1 / 32;
 const DEFAULT_TRILL_INTERVAL_QUARTERS = 0.125;
 /** MuseScore's mordent: two 32nd notes, then the main note. */
 const MORDENT_NOTE_QUARTERS = 0.125;
+/** A turn's notes are 32nds too, squeezed to fit a short note. */
+const TURN_NOTE_QUARTERS = 0.125;
 
 function tremoloInterval(tremolo: RealtimeTremolo): number {
   if (tremolo.type === "unmeasured" || tremolo.marks === 0) {
@@ -1301,6 +1373,26 @@ function expandOrnamentNotes(
     addNote(note, note.onset + 2 * step, note.release);
   };
 
+  const addTurn = (note: RouteScoreNote, turn: RealtimeTurn) => {
+    const [first, second] = turn.inverted ? [turn.lowerPitch, turn.upperPitch] : [turn.upperPitch, turn.lowerPitch];
+    const figure = turn.fromMain || turn.delayed
+      ? [note.pitch, first, note.pitch, second, note.pitch]
+      : [first, note.pitch, second, note.pitch];
+    const duration = Math.max(0, note.release - note.onset);
+    const step = Math.min(TURN_NOTE_QUARTERS, duration / figure.length);
+    // On the beat the figure starts with the note and its last note holds to the end; delayed,
+    // the note holds first and the figure ends with it.
+    const start = turn.delayed ? note.release - step * (figure.length - 1) : note.onset;
+    figure.forEach((pitch, index) => {
+      const last = index === figure.length - 1;
+      const onset = turn.delayed && index === 0 ? note.onset : start + step * (turn.delayed ? index - 1 : index);
+      const release = turn.delayed
+        ? (index === 0 ? start : onset + step)
+        : (last ? note.release : onset + step);
+      addNote(note, onset, release, pitch);
+    });
+  };
+
   for (const groups of lanes.values()) {
     for (let index = 0; index < groups.length; index += 1) {
       const group = groups[index];
@@ -1321,6 +1413,7 @@ function expandOrnamentNotes(
       for (const note of group.notes) {
         if (note.trill) addTrill(note, note.trill);
         else if (note.mordent) addMordent(note, note.mordent);
+        else if (note.turn) addTurn(note, note.turn);
         else addNote(note, note.onset, note.release);
       }
     }
@@ -2092,7 +2185,7 @@ function writtenNoteKey(note: PerformanceNote): string {
 /**
  * The attacks of `route` that `include` keeps, grouped by the time they are struck:
  * what the player is waited for. Ornaments are not waited for: grace notes are left
- * out, and a trill, tremolo or mordent is waited for once, at its written note. Each
+ * out, and a trill, tremolo, mordent or turn is waited for once, at its written note. Each
  * note of a rolled chord is waited for in turn; see PerformanceRoute.attacks.
  */
 export function realtimeWaitPoints(
@@ -2110,7 +2203,7 @@ export function realtimeWaitPoints(
     else points.push({ onset: note.onset, notes: [note], ignoredPitches: [] });
   }
   // What ornaments add: every note a grace note sounds as, and every note a trill,
-  // tremolo or mordent sounds as but the first at its written pitch.
+  // tremolo, mordent or turn sounds as but the first at its written pitch.
   const graces = new Set(attacks.filter((attack) => attack.grace).map(writtenNoteKey));
   const writtenPitches = new Map(attacks.map((attack) => [writtenNoteKey(attack), attack.pitch]));
   const struck = new Set<string>();

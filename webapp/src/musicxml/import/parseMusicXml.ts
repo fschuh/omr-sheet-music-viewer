@@ -261,7 +261,10 @@ function placementOf(element: Element | undefined): Placement {
 }
 
 const ARTICULATIONS = new Set(["staccato", "accent", "tenuto", "staccatissimo", "strong-accent", "detached-legato", "spiccato"]);
-const ORNAMENTS = new Set(["trill-mark", "mordent", "inverted-mordent", "turn", "inverted-turn"]);
+const ORNAMENTS = new Set([
+  "trill-mark", "mordent", "inverted-mordent",
+  "turn", "inverted-turn", "delayed-turn", "delayed-inverted-turn", "vertical-turn", "inverted-vertical-turn",
+]);
 
 type ChordMarks = Pick<ChordModel, "slurs" | "articulations" | "fermata" | "ornaments" | "wavyLines" | "arpeggiate" | "tremolo">;
 
@@ -290,7 +293,11 @@ function parseChordMarks(note: Element): ChordMarks {
     for (const group of childElements(notations, "ornaments")) {
       for (const ornament of childElements(group)) {
         if (ORNAMENTS.has(ornament.localName)) {
-          marks.ornaments.push({ name: ornament.localName as ChordMarks["ornaments"][number]["name"], placement: placementOf(ornament) });
+          marks.ornaments.push({
+            name: ornament.localName as ChordMarks["ornaments"][number]["name"],
+            placement: placementOf(ornament),
+            ...(attribute(ornament, "slash") === "yes" ? { slash: true } : {}),
+          });
         }
         if (ornament.localName === "wavy-line") {
           const type = attribute(ornament, "type");

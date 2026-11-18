@@ -1152,6 +1152,42 @@ test("a fermata holds until the next onset anywhere, twice as long, or by its sh
   assert.deepEqual(rest.measures[0].fermatas, [{ onset: 1, end: 2, stretch: 2 }]);
 });
 
+test("turns play the notes around the main note in 32nds, the last held", () => {
+  const turned = (name: string, extra = "", fingers = 0, fifths = 0) =>
+    sounding(score(`<measure number="1"><attributes><divisions>4</divisions><key><fifths>${fifths}</fifths></key></attributes>` +
+      `<note id="m"><pitch><step>C</step><octave>5</octave></pitch><duration>4</duration><voice>1</voice><type>quarter</type>` +
+      `<notations><ornaments><${name}/>${extra}</ornaments>` +
+      (fingers ? `<technical>${"<fingering>1</fingering>".repeat(fingers)}</technical>` : "") +
+      `</notations></note></measure>`));
+  // From the upper note, as MusicXML has it.
+  assert.deepEqual(turned("turn"), ["D5@0-0.125", "C5@0.125-0.25", "B4@0.25-0.375", "C5@0.375-1"]);
+  assert.deepEqual(turned("inverted-turn"), ["B4@0-0.125", "C5@0.125-0.25", "D5@0.25-0.375", "C5@0.375-1"]);
+  // In the key, with accidentals over and under the sign.
+  assert.deepEqual(turned("turn", "", 0, -3), ["D5@0-0.125", "C5@0.125-0.25", "B♭4@0.25-0.375", "C5@0.375-1"]);
+  assert.deepEqual(turned("turn", '<accidental-mark placement="below">natural</accidental-mark>', 0, -3),
+    ["D5@0-0.125", "C5@0.125-0.25", "B4@0.25-0.375", "C5@0.375-1"]);
+  // Fingered with five fingers, from the main note.
+  assert.deepEqual(turned("turn", "", 5), ["C5@0-0.125", "D5@0.125-0.25", "C5@0.25-0.375", "B4@0.375-0.5", "C5@0.5-1"]);
+  // Delayed: the note held, the figure at its end.
+  assert.deepEqual(turned("delayed-turn"), ["C5@0-0.5", "D5@0.5-0.625", "C5@0.625-0.75", "B4@0.75-0.875", "C5@0.875-1"]);
+  assert.deepEqual(turned("delayed-inverted-turn"), ["C5@0-0.5", "B4@0.5-0.625", "C5@0.625-0.75", "D5@0.75-0.875", "C5@0.875-1"]);
+  // Vertical turns: up from below, and down from above.
+  assert.deepEqual(turned("vertical-turn"), ["B4@0-0.125", "C5@0.125-0.25", "D5@0.25-0.375", "C5@0.375-1"]);
+  assert.deepEqual(turned("inverted-vertical-turn"), ["D5@0-0.125", "C5@0.125-0.25", "B4@0.25-0.375", "C5@0.375-1"]);
+  // A slash turns it the other way.
+  assert.deepEqual(turned('turn slash="yes"'), ["B4@0-0.125", "C5@0.125-0.25", "D5@0.25-0.375", "C5@0.375-1"]);
+  // The start note given: the main note, or the lower one.
+  assert.deepEqual(turned('turn start-note="main"'), ["C5@0-0.125", "D5@0.125-0.25", "C5@0.25-0.375", "B4@0.375-0.5", "C5@0.5-1"]);
+  assert.deepEqual(turned('turn start-note="below"'), ["B4@0-0.125", "C5@0.125-0.25", "D5@0.25-0.375", "C5@0.375-1"]);
+  // A half step either side.
+  assert.deepEqual(turned('turn trill-step="half"'), ["D♭5@0-0.125", "C5@0.125-0.25", "B4@0.25-0.375", "C5@0.375-1"]);
+  // Two accidentals placed neither way: the upper's first, then the lower's.
+  assert.deepEqual(turned("turn", "<accidental-mark>sharp</accidental-mark><accidental-mark>flat</accidental-mark>"),
+    ["D♯5@0-0.125", "C5@0.125-0.25", "B♭4@0.25-0.375", "C5@0.375-1"]);
+  // Placed below the staff, it sounds the same.
+  assert.deepEqual(turned('turn placement="below"'), turned("turn"));
+});
+
 test("mordents play two 32nd notes with the neighbour above or below, then the main note", () => {
   const ornament = (name: string, accidental = "") =>
     `<note id="m"><pitch><step>C</step><octave>5</octave></pitch><duration>4</duration><voice>1</voice><type>quarter</type><notations><ornaments><${name}/>${accidental}</ornaments></notations></note>`;
