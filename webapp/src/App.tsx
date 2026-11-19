@@ -1121,12 +1121,17 @@ export function App() {
     countIn = false,
   ): RealtimeStart | null => {
     if (!realtimeModel.score) return null;
+    // A note's fingering names its hand, which the player may have moved from its staff's:
+    // practising one hand, muting one, and waiting follow it, as in note-by-note.
+    const fingerings = document?.predictedFingerings;
+    const handOf = (musicXmlId: string) => fingerings?.[musicXmlId]?.left;
     const loopRegion = loopRef.current;
     if (loopRegion) {
       const route = expandPerformanceRoute(realtimeModel.score, {
         startMeasureIndex: loopRegion.startMeasure,
         endMeasureIndex: loopRegion.endMeasure,
         visualMap: realtimeVisualMap,
+        handOf,
       });
       if (route.totalQuarters > 0) {
         const inLoop = position ? loopRouteOffset(route, position) : null;
@@ -1139,9 +1144,10 @@ export function App() {
       startMeasureIndex: position?.measureIndex ?? 0,
       startOffset: position?.onset ?? 0,
       visualMap: realtimeVisualMap,
+      handOf,
     });
     return { route, offset: 0, leadIn: position && !countIn ? 0 : leadInFor(route, 0), loops: false };
-  }, [leadInFor, realtimeModel.score, realtimeVisualMap]);
+  }, [document?.predictedFingerings, leadInFor, realtimeModel.score, realtimeVisualMap]);
   const routeForGroup = useCallback((group: VisualGroupRef | null): RealtimeStart | null => {
     const position = realtimeModel.score
       ? structuralPositionForGroup(realtimeModel.score, realtimeVisualMap, group)

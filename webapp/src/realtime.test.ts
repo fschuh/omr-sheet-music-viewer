@@ -552,6 +552,21 @@ test("a trill ends where the small notes closing it start", () => {
   assert.ok(played.includes("E5@1.375-1.4375") && played.includes("F5@1.4375-1.5"), "the ending plays");
 });
 
+test("a note moved to the other hand plays, and is waited for, in that hand", () => {
+  // Two treble quarters; the player moved the second to the left hand.
+  const parsed = parseRealtimeMusicXml(score(`
+    <measure number="1"><attributes><divisions>4</divisions><clef><sign>G</sign><line>2</line></clef></attributes>
+      ${quarter("stays", "C", 5)}${quarter("moved", "C", 4)}
+    </measure>
+  `));
+  const hands = (route: PerformanceRoute) => route.notes.map((note) => [note.musicXmlId, note.left]);
+  assert.deepEqual(hands(expandPerformanceRoute(parsed)), [["stays", false], ["moved", false]]);
+  const route = expandPerformanceRoute(parsed, { handOf: (id) => (id === "moved" ? true : undefined) });
+  assert.deepEqual(hands(route), [["stays", false], ["moved", true]]);
+  const leftWaits = realtimeWaitPoints(route, (note) => note.left === true);
+  assert.deepEqual(leftWaits.map((point) => point.notes.map((note) => note.musicXmlId)), [["moved"]]);
+});
+
 test("a start-repeat closes an ending the file leaves open", () => {
   const parsed = parseRealtimeMusicXml(score(`
     <measure number="1"><attributes><divisions>4</divisions></attributes>${quarter("a")}</measure>

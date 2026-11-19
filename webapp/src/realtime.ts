@@ -237,6 +237,11 @@ export interface ExpandRouteOptions {
    */
   endMeasureIndex?: number;
   visualMap?: ReadonlyMap<string, VisualNoteTarget>;
+  /**
+   * The hand that plays a note, by its MusicXML id, where its fingering names one: the
+   * player may have moved it from its staff's. Absent, a note keeps its staff's hand.
+   */
+  handOf?: (musicXmlId: string) => boolean | undefined;
   maxMeasureVisits?: number;
   maxOccurrences?: number;
 }
@@ -1730,6 +1735,7 @@ export function expandPerformanceRoute(
         if (note.onset < localStart) continue;
         rawNotes.push({
           ...note,
+          left: options.handOf?.(note.musicXmlId) ?? note.left,
           onset: scoreOffset + note.onset - localStart,
           release: scoreOffset + note.onset + note.duration - localStart,
           occurrenceId: occurrence.id,
