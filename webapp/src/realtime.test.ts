@@ -516,19 +516,40 @@ test("expands repeat counts and first/second endings", () => {
   );
 });
 
-test("cue notes are shown but silent", () => {
+test("printed cue notes play, as MuseScore's small notes; hidden ones are silent", () => {
   const parsed = parseRealtimeMusicXml(score(`
     <measure number="1"><attributes><divisions>4</divisions></attributes>
       ${quarter("page-1-played")}
       <note id="page-1-cue"><cue/><pitch><step>D</step><octave>4</octave></pitch><duration>4</duration><voice>1</voice><type>quarter</type></note>
+      <note id="page-1-hidden" print-object="no"><cue/><pitch><step>F</step><octave>4</octave></pitch><duration>4</duration><voice>1</voice><type>quarter</type></note>
       ${quarter("page-1-after", "E")}
     </measure>
   `));
   const [cue] = parsed.measures[0].notes.filter((note) => note.cue);
   assert.equal(cue.musicXmlId, "page-1-cue");
   assert.equal(cue.onset, 1);
-  assert.deepEqual(expandPerformanceRoute(parsed).notes.map((note) => note.musicXmlId), ["page-1-played", "page-1-after"]);
-  assert.deepEqual([...noteScoreFacts(parsed).suppressedNoteIds], ["page-1-cue"]);
+  assert.deepEqual(expandPerformanceRoute(parsed).notes.map((note) => note.musicXmlId), ["page-1-played", "page-1-cue", "page-1-after"]);
+  assert.deepEqual([...noteScoreFacts(parsed).suppressedNoteIds], ["page-1-hidden"]);
+});
+
+test("a trill ends where the small notes closing it start", () => {
+  // A trill on F5 for a dotted quarter; in another voice, E5 and F5 in 64ths at its end.
+  const sixtyFourth = (step: string) =>
+    `<note><cue/><pitch><step>${step}</step><octave>5</octave></pitch><duration>1</duration><voice>2</voice><type>64th</type></note>`;
+  const played = sounding(score(`
+    <measure number="1"><attributes><divisions>16</divisions></attributes>
+      <note><pitch><step>F</step><octave>5</octave></pitch><duration>24</duration><voice>1</voice><type>quarter</type><dot/><notations><ornaments><trill-mark/></ornaments></notations></note>
+      <note><pitch><step>G</step><octave>5</octave></pitch><duration>8</duration><voice>1</voice><type>eighth</type></note>
+      <backup><duration>32</duration></backup>
+      <forward><duration>22</duration></forward>
+      ${sixtyFourth("E")}${sixtyFourth("F")}
+      <forward><duration>8</duration></forward>
+    </measure>
+  `));
+  // The trill's notes, before the ending's F5.
+  const trill = played.filter((note) => /^[FG]5@/.test(note) && Number(note.split("@")[1].split("-")[0]) < 1.375);
+  assert.equal(Number(trill.at(-1)!.split("-")[1]), 1.375, "the trill stops as the ending starts");
+  assert.ok(played.includes("E5@1.375-1.4375") && played.includes("F5@1.4375-1.5"), "the ending plays");
 });
 
 test("a start-repeat closes an ending the file leaves open", () => {

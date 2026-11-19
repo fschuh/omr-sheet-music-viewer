@@ -74,7 +74,11 @@ export interface RealtimeScoreNote {
   graceSlash: boolean;
   /** A grace note's written length in quarter notes; 0 for other notes. */
   graceQuarters: number;
-  /** A cue note: shown, but silent, as MusicXML defines `<cue/>`. */
+  /**
+   * A cue note, `<cue/>`: silent as MusicXML defines it when also hidden, as a written-out
+   * ornament is; printed, it is a small note to play, as MuseScore exports its small notes,
+   * such as a cadenza's or a trill's ending.
+   */
   cue: boolean;
   /** Not printed, `print-object="no"`; it still sounds, unless it only writes out an ornament. */
   hidden?: boolean;
@@ -90,8 +94,13 @@ export interface RealtimeScoreNote {
   arpeggio: RealtimeArpeggio | null;
 }
 
+/** A cue note the score also hides: silent. */
+function silentCue(note: RealtimeScoreNote): boolean {
+  return note.cue && note.hidden === true;
+}
+
 export function scoreNoteStartsAttack(note: RealtimeScoreNote): boolean {
-  return !note.grace && !note.cue && !note.tieStop;
+  return !note.grace && !silentCue(note) && !note.tieStop;
 }
 
 export interface RealtimeTempoChange {
@@ -1317,6 +1326,19 @@ function trillLineEnds(notes: readonly RouteScoreNote[]): Map<RouteScoreNote, nu
  */
 function ornamentsAlongTheirLines(notes: RouteScoreNote[], lineEnds: ReadonlyMap<RouteScoreNote, number>): RouteScoreNote[] {
   for (const [trill, end] of lineEnds) trill.release = Math.max(trill.release, end);
+  // A trill ends where its ending starts: a note another voice of its staff prints during
+  // the trill, a step or less from its note in any octave, as the small notes closing a trill
+  // are written, an octave up at times.
+  const stepsApart = (a: number, b: number) => Math.min(((a - b) % 12 + 12) % 12, ((b - a) % 12 + 12) % 12);
+  for (const trill of notes) {
+    if (!trill.trill) continue;
+    const main = Number(soundingPitch(trill.pitch));
+    const ending = notes.find((note) =>
+      note !== trill && !note.hidden && !note.grace && note.partId === trill.partId && note.staff === trill.staff &&
+      note.voice !== trill.voice && note.onset > trill.onset + 1e-9 && note.onset < trill.release - 1e-9 &&
+      stepsApart(Number(soundingPitch(note.pitch)), main) <= 2);
+    if (ending) trill.release = ending.onset;
+  }
   const dropped = new Set<RouteScoreNote>();
   for (const ornament of notes) {
     const own = ornament.trill
@@ -1703,7 +1725,7 @@ export function expandPerformanceRoute(
       }
       lastPlayed = index;
       for (const note of measure.notes) {
-        if (note.cue) continue;
+        if (silentCue(note)) continue;
         // Notes before the start are skipped; grace notes on it, which last no time, still play.
         if (note.onset < localStart) continue;
         rawNotes.push({

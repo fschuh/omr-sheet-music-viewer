@@ -183,7 +183,7 @@ test("printed fingerings are read with the hand their staff implies", async () =
   assert.deepEqual(printedFingerings(SCORE), {});
 });
 
-test("notes the score does not show, or cue notes, are not fingered", async () => {
+test("notes the score does not show are not fingered; printed cue notes, small notes to play, are", async () => {
   const { predictFingerings } = await import("./fingering");
   // A turn on C5, written out after it as hidden cue notes, as some exports do for playback.
   const hidden = `<score-partwise><part-list><score-part id="P1"><part-name>P</part-name></score-part></part-list><part id="P1">
@@ -202,8 +202,8 @@ test("notes the score does not show, or cue notes, are not fingered", async () =
     received = notes;
     return notes.map((note) => ({ ...note, finger: 1 }));
   });
-  assert.deepEqual(received.map(({ note }) => note), [72, 84], "the model sees only the notes shown");
-  assert.deepEqual(Object.keys(predicted.fingeringsByMusicXmlId).sort(), ["next", "turn"]);
+  assert.deepEqual(received.map(({ note }) => note).sort(), [72, 72, 84], "the model sees only the notes shown");
+  assert.deepEqual(Object.keys(predicted.fingeringsByMusicXmlId).sort(), ["h4", "next", "turn"]);
 });
 
 test("a note tied on from another is held, not played: the model sees one longer note and both show its finger", async () => {

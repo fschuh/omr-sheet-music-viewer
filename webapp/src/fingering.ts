@@ -3,7 +3,7 @@ import type { Note as PianoFingeringNote } from "@lumikey/piano-fingering-model"
 const DEFAULT_TEMPO_BPM = 120;
 const FINGERING_CACHE_FIELD_NAME = "homr-piano-fingering-cache";
 // Bump this whenever the model version, the hand-assignment rules or the notes it sees change.
-const FINGERING_CACHE_VERSION = "lumikey-0.3.0-staff-hands-ties-shared-shown-v4";
+const FINGERING_CACHE_VERSION = "lumikey-0.3.0-staff-hands-ties-shared-shown-v5";
 /** Identifies the predictions: stored predictions from another model or hand rule are stale. */
 export const FINGERING_MODEL = FINGERING_CACHE_VERSION;
 const STEP_SEMITONES: Readonly<Record<string, number>> = {
@@ -242,9 +242,9 @@ function parsePart(part: Element, tempoOrder: { value: number }): ParsedPart {
 
       const midi = midiForNote(child);
       if (midi === null) continue;
-      // A note the score does not show, or a cue note, which is not played, is no one's to
-      // finger: such as an ornament written out, hidden, for playback.
-      if (firstChild(child, "cue") !== null || child.getAttribute("print-object") === "no") continue;
+      // A note the score does not show is no one's to finger: such as an ornament written out,
+      // hidden, for playback. A printed cue note is a small note to play, and is fingered.
+      if (child.getAttribute("print-object") === "no") continue;
       const staff = finiteNumber(childText(child, "staff")) ?? 1;
       const clef = clefs.get(staff);
       const ties = new Set(childrenNamed(child, "tie").map((tie) => tie.getAttribute("type")));
