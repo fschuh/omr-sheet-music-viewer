@@ -150,7 +150,9 @@ export function drawPage(index: number, systems: PlacedSystem[], context: DrawCo
     }
     for (const chord of systemChords(system)) {
       const drawn = drawChord(chord, context.shapes.get(chord)!, system.chords.get(chord)!, staffTop(chord.staff), systemIndex, glyph, line, sp);
-      if (drawn.chord) {
+      // A chord the score does not print has no notehead to point at: no highlight, note
+      // name or step of its own, though it may still sound.
+      if (drawn.chord && chord.model.printed) {
         for (const note of drawn.chord.notes) {
           const printed = context.printedFingerings?.get(note.key);
           if (printed) note.printedFingering = [printed[0] * sp, printed[1] * sp, printed[2] * sp, printed[3] * sp];

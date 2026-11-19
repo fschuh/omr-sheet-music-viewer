@@ -404,14 +404,18 @@ export function layoutMarks(
     const output = outputs.get(system)!;
     const chords = systemChords(system).sort((a, b) => system.chords.get(a)! - system.chords.get(b)!);
     for (const chord of chords) {
-      if (!chord.model.printed) continue;
-      // The marks of a chord beamed across staves belong to no staff.
-      output.staff = crossStaff.has(chord) ? undefined : chord.staff;
-      const anchor = chordMarks(system, chord, shapes.get(chord)!, output, () => chordEndX(system, chord, chords, shapes));
+      // A chord the score does not print has no marks; but a trill line may still end on it,
+      // as on a hidden note that writes the trill out for playback.
+      let anchor: TrillAnchor | null = null;
+      if (chord.model.printed) {
+        // The marks of a chord beamed across staves belong to no staff.
+        output.staff = crossStaff.has(chord) ? undefined : chord.staff;
+        anchor = chordMarks(system, chord, shapes.get(chord)!, output, () => chordEndX(system, chord, chords, shapes));
+      }
       // In document order, so that a line starting and stopping on one note spans that note.
       for (const wavy of chord.model.wavyLines) {
         const key = `${chord.part}|${wavy.number}`;
-        if (wavy.type === "start") trills.set(key, { system, chord, anchor });
+        if (wavy.type === "start" && anchor) trills.set(key, { system, chord, anchor });
         if (wavy.type !== "stop") continue;
         const start = trills.get(key);
         if (!start) continue;

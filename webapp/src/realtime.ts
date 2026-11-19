@@ -76,6 +76,10 @@ export interface RealtimeScoreNote {
   graceQuarters: number;
   /** A cue note: shown, but silent, as MusicXML defines `<cue/>`. */
   cue: boolean;
+  /** Not printed, `print-object="no"`; it still sounds, unless it only writes out an ornament. */
+  hidden?: boolean;
+  /** The trill lines, `<wavy-line>`, that start or stop at the note, by number. */
+  wavyLines?: { type: "start" | "stop"; number: string }[];
   tieStart: boolean;
   tieStop: boolean;
   inferredTieGroup: string | null;
@@ -762,8 +766,13 @@ function inferSamePitchSlurTies(measures: PartMeasureData[]): void {
           startOnset !== undefined &&
           stopOnset !== undefined &&
           Math.abs(stopOnset - (startOnset + (start?.duration ?? 0))) <= 1e-6;
+        // A file that writes its ties says where they are: a note tied in writing is not
+        // guessed into another tie by a slur, such as a phrase's, that starts or ends on it.
+        const writtenTie = start !== undefined &&
+          (start.tieStart || start.tieStop || note.tieStart || note.tieStop);
         if (
           start &&
+          !writtenTie &&
           !start.grace &&
           !note.grace &&
           soundingPitch(start.pitch) === soundingPitch(note.pitch) &&
@@ -910,6 +919,11 @@ function parsePartMeasure(
             graceSlash: grace && yes(first(child, "grace")!.getAttribute("slash")),
             graceQuarters: grace ? notatedQuarters(child) : 0,
             cue: first(child, "cue") !== null,
+            hidden: child.getAttribute("print-object") === "no",
+            wavyLines: descendants(child, "wavy-line").flatMap((line) => {
+              const type = line.getAttribute("type");
+              return type === "start" || type === "stop" ? [{ type, number: line.getAttribute("number") || "1" }] : [];
+            }),
             tieStart: tieTypes.has("start"),
             tieStop: tieTypes.has("stop"),
             inferredTieGroup: null,
@@ -1268,6 +1282,62 @@ function performanceNote(
     fingeringMusicXmlId,
     left: note.left,
   };
+}
+
+/**
+ * Where each trill's line ends: at the written end of the note its line stops at, not of the
+ * notes tied on from it. Read from the notes as written, before ties join them, so that a line
+ * stopping on a note tied from another still ends there. `notes` are in time order.
+ */
+function trillLineEnds(notes: readonly RouteScoreNote[]): Map<RouteScoreNote, number> {
+  const ends = new Map<RouteScoreNote, number>();
+  const open = new Map<string, RouteScoreNote>();
+  for (const note of notes) {
+    for (const line of note.wavyLines ?? []) {
+      const key = `${note.partId}|${line.number}`;
+      if (line.type === "start") {
+        if (note.trill) open.set(key, note);
+        continue;
+      }
+      const trill = open.get(key);
+      if (!trill) continue;
+      open.delete(key);
+      ends.set(trill, note.onset + note.duration);
+    }
+  }
+  return ends;
+}
+
+/**
+ * Ornaments as long as they are marked. A trill whose line starts at its note goes on to the
+ * line's end, `lineEnds`: the notes of its pitch its voice writes again under the line, bar
+ * after bar, are the trill going on, not struck anew. And notes the score does not print, on
+ * an ornament's staff while it sounds, and only of its notes, write the ornament out for
+ * playback: the ornament plays itself, so they are left out. `notes` are in time order.
+ */
+function ornamentsAlongTheirLines(notes: RouteScoreNote[], lineEnds: ReadonlyMap<RouteScoreNote, number>): RouteScoreNote[] {
+  for (const [trill, end] of lineEnds) trill.release = Math.max(trill.release, end);
+  const dropped = new Set<RouteScoreNote>();
+  for (const ornament of notes) {
+    const own = ornament.trill
+      ? [ornament.trill.auxiliaryPitch, ornament.trill.lowerPitch]
+      : ornament.turn
+        ? [ornament.turn.upperPitch, ornament.turn.lowerPitch]
+        : ornament.mordent ? [ornament.mordent.auxiliaryPitch] : null;
+    if (!own) continue;
+    const main = soundingPitch(ornament.pitch);
+    const pitches = new Set([main, ...own.map(soundingPitch)]);
+    for (const note of notes) {
+      if (note === ornament || note.partId !== ornament.partId || note.staff !== ornament.staff) continue;
+      if (note.onset < ornament.onset - 1e-9 || note.onset >= ornament.release - 1e-9) continue;
+      const pitch = soundingPitch(note.pitch);
+      const restruck = Boolean(ornament.trill) && note.onset > ornament.onset + 1e-9 &&
+        note.voice === ornament.voice && pitch === main && !note.hidden;
+      const writtenOut = note.hidden && pitches.has(pitch);
+      if (restruck || writtenOut) dropped.add(note);
+    }
+  }
+  return notes.filter((note) => !dropped.has(note));
 }
 
 function expandOrnamentNotes(
@@ -1714,19 +1784,41 @@ export function expandPerformanceRoute(
 
   const sustainedNotes: RouteScoreNote[] = [];
   const activeTies = new Map<string, RouteScoreNote>();
-  for (const note of rawNotes.sort((left, right) => left.onset - right.onset || left.release - right.release)) {
-    const tieOwner = note.inferredTieGroup ?? `voice:${note.voice}`;
+  rawNotes.sort((left, right) => left.onset - right.onset || left.release - right.release);
+  const lineEnds = trillLineEnds(rawNotes);
+  for (const note of rawNotes) {
     // A tie may join two spellings of one sound, such as D♭5 to C♯5.
-    const tieKey = `${note.partId}:${note.staff}:${tieOwner}:${soundingPitch(note.pitch)}`;
-    const tied = note.tieStop ? activeTies.get(tieKey) : undefined;
-    if (tied) {
+    const keyOf = (owner: string) => `${note.partId}:${note.staff}:${owner}:${soundingPitch(note.pitch)}`;
+    const voiceKey = keyOf(`voice:${note.voice}`);
+    const tieKey = note.inferredTieGroup ? keyOf(note.inferredTieGroup) : voiceKey;
+    // A note tied in writing goes on from its voice's tie, though slurs also infer one for it
+    // from here on: when the note goes on where that tie's note ends.
+    const voiceHeld = activeTies.get(voiceKey);
+    const heldKey = !note.tieStop
+      ? null
+      : activeTies.has(tieKey)
+        ? tieKey
+        : voiceHeld && voiceHeld.release >= note.onset - 1e-6 ? voiceKey : null;
+    if (heldKey) {
+      const tied = activeTies.get(heldKey)!;
       tied.release = Math.max(tied.release, note.release);
-      if (!note.tieStart) activeTies.delete(tieKey);
+      activeTies.delete(heldKey);
+      if (note.tieStart) {
+        activeTies.set(tieKey, tied);
+        activeTies.set(voiceKey, tied);
+      }
       continue;
     }
     sustainedNotes.push(note);
-    if (note.tieStart) activeTies.set(tieKey, note);
+    if (note.tieStart) {
+      activeTies.set(tieKey, note);
+      activeTies.set(voiceKey, note);
+    }
   }
+  // A new array: the notes kept, ornaments as long as they are marked.
+  const ornamented = ornamentsAlongTheirLines(sustainedNotes, lineEnds);
+  sustainedNotes.length = 0;
+  sustainedNotes.push(...ornamented);
   const playheadNotes = sustainedNotes.map((note, index) =>
     performanceNote(note, note.onset, note.release, index, options.visualMap),
   );

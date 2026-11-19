@@ -443,6 +443,20 @@ test("trill lines a file starts are left as they are", () => {
   }
 });
 
+test("a trill line ending on a note the score does not print is drawn", () => {
+  // As a trill written out for playback in hidden notes may end it.
+  const lineTo = (hidden: boolean) => pages(treble([
+    note("C5", 16, { type: "whole", extra: notations('<ornaments><trill-mark/><wavy-line type="start" number="2"/></ornaments>') }),
+    note("C5", 16, { type: "whole" }) + backup(16) +
+      `<note${hidden ? ' print-object="no"' : ""}><pitch><step>D</step><octave>5</octave></pitch><duration>8</duration><voice>2</voice><type>half</type><staff>1</staff>` +
+      notations('<ornaments><wavy-line type="stop" number="2"/></ornaments>') + "</note>" +
+      note(null, 8, { type: "half", voice: 2 }),
+  ]))[0];
+  const hiddenEnd = glyphs(lineTo(true), "wiggleTrill");
+  assert.ok(hiddenEnd.length >= 2, "the line is drawn");
+  assert.equal(hiddenEnd.length, glyphs(lineTo(false), "wiggleTrill").length, "as far as to a printed note");
+});
+
 test("accidentals written as words at an ornament's beat become the ornament's own", () => {
   // As MuseScore wrote them: a flat and a natural in its text font, above the staff, at the
   // turn's beat, the flat higher; and a sharp on the second staff at that staff's trill.

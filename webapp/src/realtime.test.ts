@@ -165,6 +165,41 @@ test("sustains adjacent treble slur endpoints despite an interleaved bass voice"
   assert.equal(route.notes.find((note) => note.musicXmlId === "treble-start")?.release, 3);
 });
 
+test("a written tie holds through a note where a slur to the same pitch starts", () => {
+  // E5 tied over three notes; on the second a slur starts that ends on the third, which slurs
+  // alone would make a tie of their own: the E5 is still struck once.
+  const parsed = parseRealtimeMusicXml(score(`
+    <measure number="1">
+      <attributes><divisions>4</divisions></attributes>
+      ${quarter("first", "E", 5, '<tie type="start"/><notations><tied type="start"/></notations>')}
+      ${quarter("second", "E", 5, '<tie type="stop"/><tie type="start"/><notations><tied type="stop"/><tied type="start"/><slur type="start" number="1"/></notations>')}
+      ${quarter("third", "E", 5, '<tie type="stop"/><notations><tied type="stop"/><slur type="stop" number="1"/></notations>')}
+    </measure>
+  `));
+  const route = expandPerformanceRoute(parsed);
+  assert.deepEqual(route.notes.map((note) => [note.musicXmlId, note.onset, note.release]), [["first", 0, 3]]);
+});
+
+test("a phrase slur from a note tied in writing to the same pitch is no tie", () => {
+  // E5 tied into the second bar, where a slur starts on it and ends on the E5 of the third
+  // bar, a rest between them: the E5 ends with the second bar and is struck again.
+  const parsed = parseRealtimeMusicXml(score(`
+    <measure number="1">
+      <attributes><divisions>4</divisions></attributes>
+      <note id="first"><pitch><step>E</step><octave>5</octave></pitch><duration>16</duration><tie type="start"/><voice>1</voice><type>whole</type><notations><tied type="start"/></notations></note>
+    </measure>
+    <measure number="2">
+      <note id="held"><pitch><step>E</step><octave>5</octave></pitch><duration>8</duration><tie type="stop"/><voice>1</voice><type>half</type><notations><tied type="stop"/><slur type="start" number="1"/></notations></note>
+      <note><rest/><duration>8</duration><voice>1</voice><type>half</type></note>
+    </measure>
+    <measure number="3">
+      <note id="again"><pitch><step>E</step><octave>5</octave></pitch><duration>16</duration><voice>1</voice><type>whole</type><notations><slur type="stop" number="1"/></notations></note>
+    </measure>
+  `));
+  const route = expandPerformanceRoute(parsed);
+  assert.deepEqual(route.notes.map((note) => [note.musicXmlId, note.onset, note.release]), [["first", 0, 6], ["again", 8, 12]]);
+});
+
 test("extends an inferred slur tie to every repeated chord tone", () => {
   const parsed = parseRealtimeMusicXml(score(`
     <measure number="1">
@@ -1203,6 +1238,56 @@ test("accidentals a file writes as words at an ornament's beat alter its neighbo
   }).documentMusicXml!;
   assert.deepEqual(sounding(repaired), ["D♭5@0-0.125", "C5@0.125-0.25", "B4@0.25-0.375", "C5@0.375-1"]);
   assert.deepEqual(sounding(xml), ["D5@0-0.125", "C5@0.125-0.25", "B♭4@0.25-0.375", "C5@0.375-1"], "unrepaired, by the key");
+});
+
+test("a trill plays for the whole of its line, over the notes written again under it", () => {
+  // A trill on C5 with its line to the next bar, where the C5 is written again; and, hidden,
+  // the trill written out for playback, as some files do; and a hidden note of other music.
+  const xml = score(
+    `<measure number="1"><attributes><divisions>4</divisions></attributes>` +
+      `<note id="t"><pitch><step>C</step><octave>5</octave></pitch><duration>16</duration><voice>1</voice><type>whole</type><notations><ornaments><trill-mark/><wavy-line type="start"/></ornaments></notations></note>` +
+      `<backup><duration>16</duration></backup>` +
+      `<note print-object="no"><pitch><step>D</step><octave>5</octave></pitch><duration>8</duration><voice>2</voice><type>half</type></note>` +
+      `<note print-object="no"><pitch><step>F</step><octave>4</octave></pitch><duration>8</duration><voice>2</voice><type>half</type></note>` +
+      `</measure>` +
+      `<measure number="2">` +
+      `<note id="again"><pitch><step>C</step><octave>5</octave></pitch><duration>16</duration><voice>1</voice><type>whole</type><notations><ornaments><wavy-line type="stop"/></ornaments></notations></note>` +
+      `</measure>` +
+      `<measure number="3"><note id="after"><pitch><step>C</step><octave>5</octave></pitch><duration>16</duration><voice>1</voice><type>whole</type></note></measure>`,
+  );
+  const played = sounding(xml);
+  const trill = played.filter((note) => /^[CD]5@/.test(note) && Number(note.split("@")[1].split("-")[0]) < 8);
+  // C, D, C, D… from the trill's start to the end of the second bar, the C there not struck again.
+  assert.equal(trill.length, 64);
+  assert.ok(trill.every((note, index) => note.startsWith(index % 2 === 0 ? "C5@" : "D5@")));
+  assert.equal(trill.at(-1), "D5@7.875-8");
+  // The hidden note of other music still sounds; the hidden D5 is the trill written out.
+  assert.ok(played.includes("F4@2-4"));
+  assert.ok(!played.includes("D5@0-2"));
+  // After the line, the C is struck as written.
+  assert.ok(played.includes("C5@8-12"));
+});
+
+test("a trill ends where its line stops, not where a note tied on from there ends", () => {
+  // The line stops on another voice's E4 in the second bar, which is tied on into the third.
+  const xml = score(
+    `<measure number="1"><attributes><divisions>4</divisions></attributes>` +
+      `<note><pitch><step>C</step><octave>5</octave></pitch><duration>16</duration><voice>1</voice><type>whole</type><notations><ornaments><trill-mark/><wavy-line type="start"/></ornaments></notations></note>` +
+      `<backup><duration>16</duration></backup>` +
+      `<note><pitch><step>E</step><octave>4</octave></pitch><duration>16</duration><voice>2</voice><type>whole</type></note></measure>` +
+      `<measure number="2">` +
+      `<note><pitch><step>C</step><octave>5</octave></pitch><duration>16</duration><voice>1</voice><type>whole</type></note>` +
+      `<backup><duration>16</duration></backup>` +
+      `<note><pitch><step>E</step><octave>4</octave></pitch><duration>16</duration><tie type="start"/><voice>2</voice><type>whole</type><notations><tied type="start"/><ornaments><wavy-line type="stop"/></ornaments></notations></note></measure>` +
+      `<measure number="3">` +
+      `<note><pitch><step>C</step><octave>5</octave></pitch><duration>16</duration><voice>1</voice><type>whole</type></note>` +
+      `<backup><duration>16</duration></backup>` +
+      `<note><pitch><step>E</step><octave>4</octave></pitch><duration>16</duration><tie type="stop"/><voice>2</voice><type>whole</type><notations><tied type="stop"/></notations></note></measure>`,
+  );
+  const played = sounding(xml);
+  const upper = played.filter((note) => note.startsWith("D5@"));
+  assert.equal(upper.at(-1), "D5@7.875-8", "the trill stops at the end of the second bar");
+  assert.ok(played.includes("C5@8-12"), "the third bar's C is struck as written");
 });
 
 test("mordents play two 32nd notes with the neighbour above or below, then the main note", () => {

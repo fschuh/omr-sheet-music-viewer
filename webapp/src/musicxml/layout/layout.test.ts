@@ -146,10 +146,13 @@ test("page geometry has one notehead per note, keyed by note key, scoped to its 
   assert.equal(pageNoteGeometry(second), geometry, "geometry is reused for the same page");
 });
 
-test("an unprinted note keeps its geometry but draws nothing", () => {
-  const xml = score([piano([note("C5", 16, { type: "whole" }).replace("<note>", '<note print-object="no">')])]);
+test("an unprinted note draws nothing and has no notehead to point at", () => {
+  // Such as a trill written out, hidden, for playback: no highlight, note name or step of its own.
+  const xml = score([piano([
+    note("C5", 8, { type: "half" }) +
+      note("D5", 8, { type: "half" }).replace("<note>", '<note print-object="no">'),
+  ])]);
   const [page] = layout(xml).pages;
-  const [chord] = page.chords;
-  assert.equal(chord.notes.length, 1);
-  assert.deepEqual(chord.notes[0].items, []);
+  assert.deepEqual(page.chords.map((chord) => chord.notes.map((value) => value.pitch)), [["C5"]]);
+  assert.deepEqual(pageNoteGeometry(page).notes.map((value) => value.pitch), ["C5"]);
 });
