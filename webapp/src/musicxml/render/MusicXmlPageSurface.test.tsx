@@ -110,3 +110,18 @@ test("highlighted notes and their chord are drawn last, in front of what touches
   assert.deepEqual(order(selected, /data-notehead="(P1-m1-s1-v1-t0-[^"]+)"/g), ["P1-m1-s1-v1-t0-E5", "P1-m1-s1-v1-t0-C5"],
     "and the selected note over its chord's others");
 });
+
+test("music symbols in text are drawn in the music font", () => {
+  // MuseScore's files carry a flat or a note as text in its own text font.
+  const withSymbols: LayoutPage = {
+    ...page,
+    items: [
+      { kind: "text", text: "\uE260", x: 10, y: 10, size: 14, anchor: "middle" },
+      { kind: "text", text: "a tempo \uECA5 = 60", x: 10, y: 40, size: 14, anchor: "start" },
+    ],
+  };
+  const markup = renderToStaticMarkup(<MusicXmlPageSurface page={withSymbols} />);
+  assert.match(markup, /<tspan class="mx-symbol">\uE260<\/tspan>/);
+  assert.match(markup, />a tempo <tspan class="mx-symbol">\uECA5<\/tspan> = 60</);
+  assert.match(markup, /\.mx-glyph,\.mx-symbol\{font-family:"Leland"\}/);
+});

@@ -1,4 +1,4 @@
-import { memo, type ReactElement } from "react";
+import { memo, type ReactElement, type ReactNode } from "react";
 import { glyphText } from "../fonts/smufl";
 import type { Drawable, LayoutChord, LayoutPage } from "../model/layout";
 
@@ -8,7 +8,7 @@ const PAGE_STYLE =
   `@font-face{font-family:"Leland";src:url("${LELAND_URL}") format("opentype");font-display:block}` +
   ".musicxml-page{color:#000}.musicxml-page line{stroke:currentColor}" +
   ".musicxml-page polygon,.musicxml-page path,.musicxml-page text{fill:currentColor}" +
-  '.mx-glyph{font-family:"Leland"}.mx-text{font-family:Georgia,"Times New Roman",serif}' +
+  '.mx-glyph,.mx-symbol{font-family:"Leland"}.mx-text{font-family:Georgia,"Times New Roman",serif}' +
   ".mx-selected{color:#de3619}.mx-playback{color:#13a98d}" +
   // The note the fingering editor points at, in its hand's colour, with its chord's stem;
   // the chord's other notes stay black, so the note stands out within it.
@@ -18,6 +18,19 @@ const PAGE_STYLE =
   ".mx-left-hover{color:var(--hand-left-dark,#915421)}.mx-right-hover{color:var(--hand-right-dark,#1b6f60)}";
 /** SMuFL fonts are scaled so one em is four staff spaces. */
 const EM_PER_STAFF_SPACE = 4;
+
+/** SMuFL's music symbols, in Unicode's private use area, where no text font has them. */
+const MUSIC_SYMBOLS = /([\uE000-\uF8FF]+)/;
+
+/**
+ * Text with any music symbols in it drawn in the music font: MuseScore's files carry such
+ * symbols, a flat or a note, as text in its own text font.
+ */
+function withSymbols(text: string): ReactNode {
+  const parts = text.split(MUSIC_SYMBOLS);
+  if (parts.length === 1) return text;
+  return parts.map((part, index) => (index % 2 === 1 ? <tspan key={index} className="mx-symbol">{part}</tspan> : part));
+}
 
 export type HighlightKind = "selected" | "playback" | "left-hand" | "right-hand" | "left-hover" | "right-hover";
 
@@ -66,10 +79,10 @@ function draw(item: Drawable, staffSpace: number, key: number): ReactElement {
                   fontStyle={run.italic ? "italic" : undefined}
                   fontWeight={run.bold ? "bold" : undefined}
                 >
-                  {run.text}
+                  {withSymbols(run.text)}
                 </tspan>
               ))
-            : item.text}
+            : withSymbols(item.text)}
         </text>
       );
   }
