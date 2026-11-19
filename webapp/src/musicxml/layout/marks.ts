@@ -40,6 +40,17 @@ const ORNAMENT_GLYPHS: Record<ChordModel["ornaments"][number]["name"], GlyphName
   "inverted-vertical-turn": "ornamentTurnUpS",
 };
 
+const ACCIDENTAL_MARK_GLYPHS: Record<string, GlyphName> = {
+  sharp: "accidentalSharp",
+  natural: "accidentalNatural",
+  flat: "accidentalFlat",
+  "double-sharp": "accidentalDoubleSharp",
+  "flat-flat": "accidentalDoubleFlat",
+};
+/** An ornament's accidentals are drawn small, as editions print them. */
+const ACCIDENTAL_MARK_SCALE = 0.65;
+const ACCIDENTAL_MARK_GAP = 0.15;
+
 /** The glyph of an ornament: a turn with a slash has its own. */
 function ornamentGlyph(ornament: ChordModel["ornaments"][number]): GlyphName {
   if (ornament.slash && (ornament.name === "turn" || ornament.name === "delayed-turn")) return "ornamentTurnSlash";
@@ -219,15 +230,34 @@ function chordMarks(
       continue;
     }
     const x = headCentre - (box.left + box.right) / 2;
+    // Its accidentals, small, just over or under the sign: an unplaced one over it.
+    const marks = ornament.accidentals ?? [];
+    const over = marks.find((mark) => mark.placement !== "below");
+    const under = marks.find((mark) => mark.placement === "below");
+    const accidental = (value: string, top: number | null, bottom: number | null): number => {
+      const name = ACCIDENTAL_MARK_GLYPHS[value];
+      const mark = glyphBox(name);
+      const scale = ACCIDENTAL_MARK_SCALE;
+      const y = bottom !== null ? bottom - mark.bottom * scale : top! - mark.top * scale;
+      output.glyph(name, headCentre - ((mark.left + mark.right) / 2) * scale, y, scale);
+      return bottom !== null ? y + mark.top * scale - ACCIDENTAL_MARK_GAP : y + mark.bottom * scale + ACCIDENTAL_MARK_GAP;
+    };
     if (ornament.placement === "below") {
-      const y = outerBottom + MARK_GAP - box.top;
+      // Under the staff, the sign's far side is below it; the mark over it comes first.
+      let edge = outerBottom + MARK_GAP;
+      if (over) edge = accidental(over.value, edge, null);
+      const y = edge - box.top;
       output.glyph(glyph, x, y);
       outerBottom = y + box.bottom;
+      if (under) outerBottom = accidental(under.value, outerBottom + ACCIDENTAL_MARK_GAP, null);
       clearBottom(outerBottom);
     } else {
-      const y = outerTop - MARK_GAP - box.bottom;
+      let edge = outerTop - MARK_GAP;
+      if (under) edge = accidental(under.value, null, edge);
+      const y = edge - box.bottom;
       output.glyph(glyph, x, y);
       outerTop = y + box.top;
+      if (over) outerTop = accidental(over.value, null, outerTop - ACCIDENTAL_MARK_GAP);
       clearTop(outerTop);
       if (ornament.name === "trill-mark") trill = { x: x + box.right + 0.2, y: y + (box.top + box.bottom) / 2 + 0.3 };
     }

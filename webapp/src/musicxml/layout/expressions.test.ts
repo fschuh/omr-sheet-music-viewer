@@ -443,6 +443,41 @@ test("trill lines a file starts are left as they are", () => {
   }
 });
 
+test("accidentals written as words at an ornament's beat become the ornament's own", () => {
+  // As MuseScore wrote them: a flat and a natural in its text font, above the staff, at the
+  // turn's beat, the flat higher; and a sharp on the second staff at that staff's trill.
+  const word = (symbol: string, height: number, staff = 1) =>
+    `<direction placement="above"><direction-type><words relative-y="${height}" font-family="MScore Text">${symbol}</words></direction-type><staff>${staff}</staff></direction>`;
+  const xml = score([piano([
+    note("G5", 4, { type: "quarter", staff: 1 }) +
+      word("", 8) + word("", 35) +
+      note("C5", 4, { type: "quarter", staff: 1, stem: "down", extra: notations("<ornaments><turn/></ornaments>") }) +
+      note("C5", 8, { type: "half", staff: 1 }) +
+      "<backup><duration>16</duration></backup>" +
+      word("", 20, 2) + word("♮", 20, 2) +
+      note("B2", 8, { type: "half", staff: 2, voice: 5, extra: notations("<ornaments><trill-mark/></ornaments>") }) +
+      note("B2", 8, { type: "half", staff: 2, voice: 5 }),
+  ])]);
+  const imported = importMusicXml(xml);
+  const chords = imported.score.parts[0].measures[0].chords;
+  const turn = chords.find((chord) => chord.ornaments.some((ornament) => ornament.name === "turn"))!;
+  assert.deepEqual(turn.ornaments[0].accidentals, [{ value: "flat", placement: "above" }, { value: "natural", placement: "below" }]);
+  const trill = chords.find((chord) => chord.ornaments.some((ornament) => ornament.name === "trill-mark"))!;
+  // One neighbour: the first, highest, word is its accidental; the other word stays as text.
+  assert.deepEqual(trill.ornaments[0].accidentals, [{ value: "sharp", placement: "above" }]);
+  const words = imported.score.parts[0].measures[0].directions.flatMap((direction) => direction.items);
+  assert.equal(words.filter((item) => item.kind === "words").length, 1, "the word at no ornament stays");
+
+  // Drawn small, the flat over the turn and the natural between it and the note.
+  const [page] = pages(xml);
+  const [sign] = glyphs(page, "ornamentTurn");
+  const [flat] = glyphs(page, "accidentalFlat");
+  const [natural] = glyphs(page, "accidentalNatural").filter((glyph) => Math.abs(glyph.x - sign.x) < 2 * staffSpace(page));
+  assert.ok(flat.y < sign.y, "the flat over the sign");
+  assert.ok(natural.y > sign.y, "the natural under it");
+  assert.ok(glyphs(page, "accidentalSharp").length === 1);
+});
+
 test("every kind of turn is drawn with its own sign, above or below", () => {
   const drawn = (ornament: string) => {
     const [page] = pages(treble([

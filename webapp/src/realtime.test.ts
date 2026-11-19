@@ -1188,6 +1188,23 @@ test("turns play the notes around the main note in 32nds, the last held", () => 
   assert.deepEqual(turned('turn placement="below"'), turned("turn"));
 });
 
+test("accidentals a file writes as words at an ornament's beat alter its neighbour notes", async () => {
+  const { musicXmlScoreDocument } = await import("./musicxml");
+  const word = (symbol: string, height: number) =>
+    `<direction placement="above"><direction-type><words relative-y="${height}" font-family="MScore Text">${symbol}</words></direction-type><staff>1</staff></direction>`;
+  // E-flat major: by the key a turn on C goes D, C, B-flat, C; the words make it D-flat and B-natural.
+  const xml = score(`<measure number="1"><attributes><divisions>4</divisions><key><fifths>-3</fifths></key></attributes>` +
+    `${word("", 8)}${word("", 35)}` +
+    `<note id="m"><pitch><step>C</step><octave>5</octave></pitch><duration>4</duration><voice>1</voice><type>quarter</type><notations><ornaments><turn/></ornaments></notations></note>` +
+    `</measure>`);
+  // As the app opens it: realtime reads the document MusicXML, repaired on import.
+  const repaired = musicXmlScoreDocument("musicxml-turn", {
+    path: "/a.musicxml", name: "a.musicxml", musicXml: xml, sourceSha256: "", sourceByteLength: 0, scoreDataPath: "/d",
+  }).documentMusicXml!;
+  assert.deepEqual(sounding(repaired), ["D♭5@0-0.125", "C5@0.125-0.25", "B4@0.25-0.375", "C5@0.375-1"]);
+  assert.deepEqual(sounding(xml), ["D5@0-0.125", "C5@0.125-0.25", "B♭4@0.25-0.375", "C5@0.375-1"], "unrepaired, by the key");
+});
+
 test("mordents play two 32nd notes with the neighbour above or below, then the main note", () => {
   const ornament = (name: string, accidental = "") =>
     `<note id="m"><pitch><step>C</step><octave>5</octave></pitch><duration>4</duration><voice>1</voice><type>quarter</type><notations><ornaments><${name}/>${accidental}</ornaments></notations></note>`;

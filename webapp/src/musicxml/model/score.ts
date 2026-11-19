@@ -210,6 +210,8 @@ export interface ChordModel {
       | "vertical-turn" | "inverted-vertical-turn";
     placement: Placement;
     slash?: boolean;
+    /** Accidentals over or under the sign, altering the neighbour note on that side. */
+    accidentals?: { value: "sharp" | "natural" | "flat" | "double-sharp" | "flat-flat"; placement: Placement }[];
   }[];
   wavyLines: { type: "start" | "stop" | "continue"; number: string }[];
   arpeggiate: { direction: "up" | "down" | null; number: string } | null;

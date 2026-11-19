@@ -191,6 +191,90 @@ function repairUnstartedTrills(source: PartSource): void {
   }
 }
 
+/** Accidentals as text: SMuFL's code points, as MuseScore's text font has them, and Unicode's. */
+const TEXT_ACCIDENTALS: Record<string, string> = {
+  "\uE260": "flat", "\uE261": "natural", "\uE262": "sharp", "\uE263": "double-sharp", "\uE264": "flat-flat",
+  "\u266D": "flat", "\u266E": "natural", "\u266F": "sharp",
+};
+/** Ornaments played with neighbour notes, which an accidental may alter. */
+const NEIGHBOUR_ORNAMENTS = new Set([
+  "trill-mark", "mordent", "inverted-mordent",
+  "turn", "inverted-turn", "delayed-turn", "delayed-inverted-turn", "vertical-turn", "inverted-vertical-turn",
+]);
+
+/** The accidental a direction holds as its only text, or null. */
+function textAccidental(direction: Element): string | null {
+  const types = childElements(direction, "direction-type");
+  const words = types.flatMap((type) => childElements(type));
+  if (words.length !== 1 || words[0].localName !== "words") return null;
+  return TEXT_ACCIDENTALS[(words[0].textContent ?? "").trim()] ?? null;
+}
+
+/**
+ * Restores accidentals of ornaments a file gives as text: some exports write the flat over a
+ * turn or the sharp over a trill as a word, a music symbol, above the staff, and not as the
+ * ornament's accidental mark. Such a word, alone, at the beat of a note of the same staff
+ * whose ornament has a neighbour note, becomes that ornament's accidental mark. The higher of
+ * two on a turn alters its upper note and the lower its lower note; one alone alters the
+ * upper, as an accidental over a turn does. Of a mordent it alters the lower note, of a trill
+ * or an inverted mordent the upper one. Words elsewhere stay as they are.
+ */
+function repairTextOrnamentAccidentals(source: PartSource): void {
+  for (const measure of source.measures) {
+    if (!measure) continue;
+    const words: { element: Element; at: number; staff: string; height: number; accidental: string }[] = [];
+    const ornamented: { at: number; staff: string; ornament: Element }[] = [];
+    let cursor = 0;
+    let last = 0;
+    for (const child of childElements(measure.content)) {
+      if (child.localName === "backup" || child.localName === "forward") {
+        const duration = childNumber(child, "duration") ?? 0;
+        cursor += child.localName === "backup" ? -duration : duration;
+      } else if (child.localName === "direction") {
+        const accidental = textAccidental(child);
+        if (!accidental) continue;
+        const word = childElements(childElement(child, "direction-type")!)[0];
+        const height = Number(attribute(word, "default-y") ?? 0) + Number(attribute(word, "relative-y") ?? 0);
+        words.push({ element: child, at: cursor + (childNumber(child, "offset") ?? 0), staff: childText(child, "staff") ?? "1", height, accidental });
+      } else if (child.localName === "note") {
+        const grace = childElement(child, "grace") !== undefined;
+        const at = childElement(child, "chord") ? last : cursor;
+        if (!grace) {
+          const ornament = childElements(child, "notations")
+            .flatMap((notations) => childElements(notations, "ornaments"))
+            .flatMap((group) => childElements(group))
+            .find((element) => NEIGHBOUR_ORNAMENTS.has(element.localName));
+          if (ornament) ornamented.push({ at, staff: childText(child, "staff") ?? "1", ornament });
+        }
+        if (!grace && !childElement(child, "chord")) {
+          last = cursor;
+          cursor += childNumber(child, "duration") ?? 0;
+        }
+      }
+    }
+    for (const { ornament, at, staff } of ornamented) {
+      const marks = words.filter((word) => word.at === at && word.staff === staff).sort((a, b) => b.height - a.height);
+      if (marks.length === 0) continue;
+      const name = ornament.localName;
+      const turn = name.includes("turn");
+      const placed: [typeof marks[number], "above" | "below"][] = turn
+        ? marks.slice(0, 2).map((mark, index) => [mark, index === 0 ? "above" : "below"])
+        : [[marks[0], name === "mordent" ? "below" : "above"]];
+      const document = ornament.ownerDocument;
+      let after = ornament;
+      for (const [mark, placement] of placed) {
+        const element = document.createElement("accidental-mark");
+        element.setAttribute("placement", placement);
+        element.appendChild(document.createTextNode(mark.accidental));
+        after.parentNode!.insertBefore(element, after.nextSibling);
+        after = element;
+        mark.element.parentNode?.removeChild(mark.element);
+        words.splice(words.indexOf(mark), 1);
+      }
+    }
+  }
+}
+
 function partNames(root: Element): Map<string, string> {
   const names = new Map<string, string>();
   for (const part of childElements(childElement(root, "part-list") ?? root, "score-part")) {
@@ -261,6 +345,8 @@ function placementOf(element: Element | undefined): Placement {
 }
 
 const ARTICULATIONS = new Set(["staccato", "accent", "tenuto", "staccatissimo", "strong-accent", "detached-legato", "spiccato"]);
+const ACCIDENTAL_MARKS = new Set(["sharp", "natural", "flat", "double-sharp", "flat-flat"]);
+type AccidentalMark = "sharp" | "natural" | "flat" | "double-sharp" | "flat-flat";
 const ORNAMENTS = new Set([
   "trill-mark", "mordent", "inverted-mordent",
   "turn", "inverted-turn", "delayed-turn", "delayed-inverted-turn", "vertical-turn", "inverted-vertical-turn",
@@ -298,6 +384,14 @@ function parseChordMarks(note: Element): ChordMarks {
             placement: placementOf(ornament),
             ...(attribute(ornament, "slash") === "yes" ? { slash: true } : {}),
           });
+        }
+        // An accidental mark belongs to the ornament before it in the group.
+        if (ornament.localName === "accidental-mark") {
+          const owner = marks.ornaments.at(-1);
+          const value = ornament.textContent?.trim() ?? "";
+          if (owner && ACCIDENTAL_MARKS.has(value)) {
+            owner.accidentals = [...(owner.accidentals ?? []), { value: value as AccidentalMark, placement: placementOf(ornament) }];
+          }
         }
         if (ornament.localName === "wavy-line") {
           const type = attribute(ornament, "type");
@@ -797,6 +891,7 @@ export function importMusicXml(text: string): ImportedScore {
   const parts = partSources(root);
   // Repaired in the XML, so that the document MusicXML, which playback reads, has them too.
   for (const part of parts) repairUnstartedTrills(part);
+  for (const part of parts) repairTextOrnamentAccidentals(part);
   const elementsByNote = new Map<NoteModel, Element>();
   const score = parseScore(root, parts, elementsByNote);
   const noteElements = new Map([...elementsByNote].map(([note, element]) => [note.key, element]));
