@@ -177,7 +177,7 @@ test("a printed finger gets a label once its note moves to the other hand, and i
   assert.equal(editorLabelHand({ ...kept, tiedTo: id("b") }, false), undefined);
 });
 
-test("a moment's notes go in the order their labels stand, notes moved to a hand beyond its own", () => {
+test("a moment's notes go in the order their labels stand: the right hand's, then the left's, each by pitch", () => {
   // A treble E5 moved to the left hand, and a bass E3 moved to the right hand.
   const chord = moment("m", [["e5", "E5", false], ["c5", "C5", false], ["e3", "E3", true], ["c3", "C3", true]]);
   const fingerings = {
@@ -186,9 +186,12 @@ test("a moment's notes go in the order their labels stand, notes moved to a hand
     [id("e3")]: { finger: 3, left: false, handMoved: true },
     [id("c3")]: { finger: 5, left: true, handMoved: false },
   };
-  // Above the treble the moved E3 stands over the right hand's own; below the bass the moved
-  // E5 stands under the left hand's own.
-  assert.deepEqual(momentTargets(chord, fingerings).map((target) => target.key), ["e3", "c5", "c3", "e5"]);
+  // Above the treble C5, then the moved E3 below it; below the bass the moved E5 above C3.
+  assert.deepEqual(momentTargets(chord, fingerings).map((target) => target.key), ["c5", "e3", "e5", "c3"]);
+  // Moving none of them, top to bottom.
+  const unmoved = Object.fromEntries(Object.entries(fingerings).map(([key, value]) =>
+    [key, { ...value, left: key === id("e3") || key === id("c3"), handMoved: false }]));
+  assert.deepEqual(momentTargets(chord, unmoved).map((target) => target.key), ["e5", "c5", "e3", "c3"]);
 });
 
 test("once a chord has a label, its notes keeping a printed finger get one too, as print", () => {

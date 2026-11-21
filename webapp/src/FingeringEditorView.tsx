@@ -394,6 +394,8 @@ export const FingeringPageLayer = memo(function FingeringPageLayer({
             width={layout.size * 1.24}
             height={stack.bottom - stack.top + layout.size * 0.24}
             rx={radius + layout.size * 0.12}
+            // Notes moved to the hand: dashed, as their heads are ringed.
+            strokeDasharray={stack.moved ? `${0.36 * page.staffSpace} ${0.22 * page.staffSpace}` : undefined}
           />
         ))}
         {movedHeads.map(({ note, left }) => {

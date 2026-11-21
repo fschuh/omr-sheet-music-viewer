@@ -166,7 +166,7 @@ test("labels need room only where their hands are not those the layout made room
   assert.equal(labelsNeedRoom(moved, hands), false, "fits once laid out for those hands");
 });
 
-test("notes moved to a hand stand in their own stack, beyond that hand's chord, with room laid out for it", () => {
+test("notes moved to a hand stand in their own outlined stack, in pitch order with the hand's own, with room laid out for it", () => {
   const parsed = parseMusicXml(denseScore());
   const format = pageFormat(parsed.defaults);
   // The first bar's right-hand notes moved to the left hand, where its held bass note has a label.
@@ -181,10 +181,11 @@ test("notes moved to a hand stand in their own stack, beyond that hand's chord, 
   const crossed = layout.labels.filter((label) => moved(label.key) && labelColumn(label.stackId) === labelColumn(bass.stackId));
   assert.equal(crossed.length, 2, "the chord struck with the bass note");
   assert.ok(crossed.every((label) => label.stackId !== bass.stackId && label.stackId === crossed[0].stackId), "a stack of their own");
-  assert.ok(layout.stacks.some((stack) => stack.id === crossed[0].stackId));
+  assert.ok(layout.stacks.some((stack) => stack.id === crossed[0].stackId && stack.moved), "outlined as moved");
   assert.ok(layout.stacks.every((stack) => stack.id !== bass.stackId), "the bass note alone has no stack");
-  const top = Math.min(...crossed.map((label) => label.y - half));
-  assert.ok(top - (bass.y + half) >= MOVED_GAP * page.staffSpace - 0.01, "beyond the chord's label, a wider gap out");
+  // Higher than the bass note, they stand nearer the staff, above its label, a wider gap apart.
+  const bottom = Math.max(...crossed.map((label) => label.y + half));
+  assert.ok((bass.y - half) - bottom >= MOVED_GAP * page.staffSpace - 0.01, "above the bass note's label, a wider gap apart");
   assert.equal(labelsNeedRoom(page, hands, moved), false, "the layout made room for them");
 });
 
@@ -205,15 +206,54 @@ test("two voices struck together on a staff have a stack each, the higher voice 
   assert.equal(layout.stacks.length, 0, "single notes, no outline");
   // Single notes, without outlines: as close as a stack's labels.
   assert.ok(Math.abs(lower.y - upper.y - (layout.size + STACK_GAP * voices.staffSpace)) < 0.01, "the upper voice just above");
-  // Both voices moved to the left hand: still apart, below the left hand's own note, the
-  // upper voice nearer the staff.
+  // Both voices moved to the left hand: still apart, and in pitch order with the left hand's
+  // own note, the highest nearest the staff; each outlined as moved, though alone.
   const moved = (key: string) => /-s1-/.test(key);
   const crossed = fingeringLabelLayout(voices, () => true, moved);
   const at = (pitch: string) => crossed.labels.find((value) => value.key === noteOf(voices, pitch).key)!;
   assert.notEqual(at("C5").stackId, at("A4").stackId, "a stack each, moved");
   assert.equal(labelColumn(at("C5").stackId), labelColumn(at("A2").stackId));
-  assert.ok(at("A2").y < at("C5").y && at("C5").y < at("A4").y, "the bass note's own, then the upper voice, then the lower");
+  assert.ok(at("C5").y < at("A4").y && at("A4").y < at("A2").y, "the upper voice, then the lower, then the bass note's own");
   assert.ok(at("A4").y - at("C5").y >= crossed.size + MOVED_GAP * voices.staffSpace - 0.01);
+  assert.ok(at("A2").y - at("A4").y >= crossed.size + MOVED_GAP * voices.staffSpace - 0.01);
+  const outlined = new Set(crossed.stacks.filter((stack) => stack.moved).map((stack) => stack.id));
+  assert.ok(outlined.has(at("C5").stackId) && outlined.has(at("A4").stackId), "the moved notes outlined");
+  assert.ok(crossed.stacks.every((stack) => stack.id !== at("A2").stackId), "the bass note not");
+});
+
+test("a note moved to the right hand stands by its pitch among the right hand's voices", () => {
+  // The right hand's E5 over A4, two voices; the left hand's C5, between them, moved to the right.
+  const page = firstPage(score([piano([
+    note("E5", 16, { type: "whole", staff: 1, voice: 1 }) +
+      "<backup><duration>16</duration></backup>" +
+      note("A4", 16, { type: "whole", staff: 1, voice: 2 }) +
+      "<backup><duration>16</duration></backup>" +
+      note("C5", 16, { type: "whole", staff: 2, voice: 5 }),
+  ])]));
+  const movedKey = noteOf(page, "C5").key;
+  const layout = fingeringLabelLayout(page, () => false, (key) => key === movedKey);
+  const y = (pitch: string) => layout.labels.find((value) => value.key === noteOf(page, pitch).key)!.y;
+  assert.ok(y("E5") < y("C5") && y("C5") < y("A4"), "E5 above, the moved C5 between, A4 nearest the staff");
+  assert.deepEqual(layout.stacks.map((stack) => [stack.moved, layout.labels.find((label) => label.stackId === stack.id)!.key]), [[true, movedKey]]);
+});
+
+test("a moment's labels stand in one line, though a head of a second is set aside", () => {
+  // The right hand's A4 and B4, a second, B4 set to the right of the stem; the left hand's C3,
+  // and a third note to keep the line where most heads are. B4 moved to the left hand.
+  const page = firstPage(score([piano([
+    note("G4", 16, { type: "whole", staff: 1 }) + note("A4", 16, { chord: true, type: "whole", staff: 1 }) +
+      note("D5", 16, { chord: true, type: "whole", staff: 1 }) +
+      "<backup><duration>16</duration></backup>" +
+      note("C3", 16, { type: "whole", staff: 2, voice: 5 }),
+  ])]));
+  const aside = noteOf(page, "A4");
+  assert.ok(Math.abs(aside.center[0] - noteOf(page, "G4").center[0]) > page.staffSpace / 2, "the second's upper head is set aside");
+  const movedKey = aside.key;
+  const layout = fingeringLabelLayout(page, (key) => key === movedKey || key === noteOf(page, "C3").key, (key) => key === movedKey);
+  const xs = layout.labels.map((label) => label.x);
+  assert.equal(layout.labels.length, 4);
+  assert.ok(Math.max(...xs) - Math.min(...xs) < 0.01, "one line, above and below");
+  assert.ok(Math.abs(xs[0] - noteOf(page, "G4").center[0]) < 0.01, "where most heads are");
 });
 
 test("a hand's groups at a moment stay together past a mark in their way", () => {

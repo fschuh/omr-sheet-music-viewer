@@ -3,9 +3,12 @@
 // whatever else the page draws in their column, such as pedal marks and tempo text. A note
 // moved to the other hand moves its label to that hand's side. A chord's notes share one
 // stack, top note on top. Another voice's chord struck with it on the same side has its own,
-// a wider gap away, the higher voice above; notes moved to the hand from the other staff have
-// theirs furthest out, a stack for each chord they came from. So a stack holds only its own
-// chord's notes. Positions are page pixels.
+// a wider gap away; so do notes moved to the hand from the other staff, a stack for each chord
+// they came from, outlined even when alone, to mark them moved. A side's stacks stand in pitch
+// order, the higher above, so that they read as the chord the hand plays. So a stack holds
+// only its own chord's notes. A moment's labels, above and below, stand in one line down the
+// page, where most of its noteheads are, not drawn aside by a head set off a second.
+// Positions are page pixels.
 import { glyphBox } from "../fonts/smufl";
 import type { Bounds, Drawable, LayoutPage } from "../model/layout";
 
@@ -47,13 +50,18 @@ export interface FingeringLabelPlacement {
   stackId: string;
 }
 
-/** Labels of one hand's notes struck together, when there is more than one. */
+/**
+ * Labels of one hand's notes struck together, when there is more than one; and those of notes
+ * moved to the hand, even one alone, whose outline marks them moved.
+ */
 export interface FingeringLabelStack {
   id: string;
   x: number;
   top: number;
   bottom: number;
   left: boolean;
+  /** Notes the player moved to this hand from the other. */
+  moved: boolean;
 }
 
 export interface FingeringLabelLayout {
@@ -67,6 +75,18 @@ interface LabelledNote {
   key: string;
   x: number;
   y: number;
+  /** Its pitch as a semitone number; null for an unpitched note. */
+  semitone: number | null;
+}
+
+const STEP_SEMITONES: Record<string, number> = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+
+/** A pitch such as "F#5" as a semitone number, so that pitches compare; null when unreadable. */
+function semitoneOf(pitch: string | null): number | null {
+  const match = pitch ? /^([A-G])(#*|b*)(-?\d+)$/.exec(pitch) : null;
+  if (!match) return null;
+  const alter = match[2].startsWith("#") ? match[2].length : -match[2].length;
+  return (Number(match[3]) + 1) * 12 + STEP_SEMITONES[match[1]] + alter;
 }
 
 /** What a drawn item covers, roughly; null for what labels may cross, such as slurs. */
@@ -157,7 +177,7 @@ export function fingeringLabelLayout(
       // A chord's notes moved to the other hand stand together, apart from another voice's.
       const id = `${column}|${crossed ? "moved-" : ""}${chord.id}`;
       const group = groups.get(id) ?? { left, moved: crossed, notes: [], place, column };
-      group.notes.push({ key: note.key, x: note.center[0], y: note.center[1] });
+      group.notes.push({ key: note.key, x: note.center[0], y: note.center[1], semitone: semitoneOf(note.pitch) });
       groups.set(id, group);
     }
   }
@@ -194,24 +214,40 @@ export function fingeringLabelLayout(
   const stacks: FingeringLabelStack[] = [];
   // Right-hand labels go first; left-hand ones then keep clear of those of the system below.
   // A column, one side of the music at a moment, stands clear of what is in its way as one
-  // block, so that its groups stay together: chords from the staff outward, the lowest voice
-  // first above the music and the highest below it, then the notes moved to that hand.
+  // block, so that its groups stay together: from the staff outward in pitch, the lowest first
+  // above the music and the highest below it, notes moved to the hand among the hand's own, so
+  // that the column reads top to bottom as the hand's chord. By height on the page where a
+  // pitch is unknown; of two at one pitch, the moved notes go further out.
   const rightLabels: Bounds[] = [];
-  const outward = (group: { left: boolean; notes: LabelledNote[] }) => {
-    const ys = group.notes.map((note) => note.y);
-    return group.left ? Math.min(...ys) : -Math.max(...ys);
+  const outward = (group: { left: boolean; notes: LabelledNote[] }, byPitch: boolean) => {
+    const values = group.notes.map((note) => (byPitch ? -note.semitone! : note.y));
+    return group.left ? Math.min(...values) : -Math.max(...values);
   };
-  const ordered = [...groups].sort(([, a], [, b]) =>
-    Number(a.left) - Number(b.left) || Number(a.moved) - Number(b.moved) || outward(a) - outward(b));
+  const pitched = (group: { notes: LabelledNote[] }) => group.notes.every((note) => note.semitone !== null);
+  const ordered = [...groups].sort(([, a], [, b]) => {
+    const byPitch = pitched(a) && pitched(b);
+    return Number(a.left) - Number(b.left) || outward(a, byPitch) - outward(b, byPitch) || Number(a.moved) - Number(b.moved);
+  });
   const columns = new Map<string, [string, (typeof ordered)[number][1]][]>();
   for (const entry of ordered) columns.set(entry[1].column, [...(columns.get(entry[1].column) ?? []), entry]);
   const apart = MOVED_GAP * sp;
+  // Each moment's line: the median of its labelled noteheads, both hands', so that a head set
+  // to the other side of its stem, as in a second, leaves it where the rest are.
+  const momentXs = new Map<string, number[]>();
+  for (const group of groups.values()) {
+    momentXs.set(group.place, [...(momentXs.get(group.place) ?? []), ...group.notes.map((note) => note.x)]);
+  }
+  const momentX = new Map<string, number>();
+  for (const [place, xs] of momentXs) {
+    const sorted = [...xs].sort((a, b) => a - b);
+    const middle = Math.floor(sorted.length / 2);
+    momentX.set(place, sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2);
+  }
   for (const members of columns.values()) {
     const { left, place } = members[0][1];
     const music = reach.get(place)!;
     const system = Number(place.split("|")[0]);
-    const all = members.flatMap(([, group]) => group.notes);
-    const columnX = all.reduce((total, note) => total + note.x, 0) / all.length;
+    const columnX = momentX.get(place)!;
     const heights = members.map(([, group]) => size + (group.notes.length - 1) * step);
     // Two single notes of the hand's own voices stand as close as a stack's labels, without its
     // outline; a chord's outline, or notes moved from the other hand, take the wider gap.
@@ -229,7 +265,7 @@ export function fingeringLabelLayout(
     members.forEach(([id, group], index) => {
       // Top note first.
       const notes = [...group.notes].sort((a, b) => a.y - b.y);
-      const x = notes.reduce((sum, note) => sum + note.x, 0) / notes.length;
+      const x = columnX;
       const height = heights[index];
       const top = left ? edge : edge - height;
       const after = gaps[index] ?? 0;
@@ -238,7 +274,7 @@ export function fingeringLabelLayout(
       notes.forEach((note, position) => {
         labels.push({ key: note.key, x, y: first + position * step, left, stackId: id });
       });
-      if (notes.length > 1) stacks.push({ id, x, top, bottom: top + height, left });
+      if (notes.length > 1 || group.moved) stacks.push({ id, x, top, bottom: top + height, left, moved: group.moved });
     });
   }
   return { size, labels, stacks };
