@@ -572,10 +572,29 @@ fn score_dialog_directory(last_score: Option<&str>) -> Option<PathBuf> {
         .map(Path::to_path_buf)
 }
 
+/// Whether the open dialog is up, so that another is not opened over it.
+static SCORE_DIALOG_OPEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Lets the open dialog be opened again once the one up has closed, however it closes.
+struct ScoreDialogOpen;
+
+impl Drop for ScoreDialogOpen {
+    fn drop(&mut self) {
+        SCORE_DIALOG_OPEN.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// Asks for a score to open, in a dialog owned by the window that asked: modal, the window
+/// waits for it, and while it is up no other opens.
 #[tauri::command]
-async fn choose_score(last_score: Option<String>) -> Option<String> {
+async fn choose_score(window: tauri::WebviewWindow, last_score: Option<String>) -> Option<String> {
+    if SCORE_DIALOG_OPEN.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return None;
+    }
+    let open = ScoreDialogOpen;
     tauri::async_runtime::spawn_blocking(move || {
-        let mut dialog = rfd::FileDialog::new();
+        let _open = open;
+        let mut dialog = rfd::FileDialog::new().set_parent(&window);
         if let Some(folder) = score_dialog_directory(last_score.as_deref()) {
             dialog = dialog.set_directory(folder);
         }
