@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { applyTypedRun, editorLabelHand, editorLabels, editWalk, momentTargets, navigateWalk, overrideStep, printedFingerReplaced, withFingeringLayers, type EditTarget } from "./fingeringEditor";
+import { applyTypedRun, editorLabelHand, editorLabels, editWalk, momentTargets, navigateWalk, overrideStep, printedFingerReplaced, walkIndexOf, withFingeringLayers, type EditTarget } from "./fingeringEditor";
 import { resolveFingerings, type FingeringOverrides, type MusicXmlPage } from "./musicxml";
 import { buildPlaybackTimeline, timelineForPracticeHand, type PlaybackMoment } from "./playback";
 import type { FingeringLayers, LoadedDocument } from "./types";
@@ -46,19 +46,19 @@ const timeline = [
   moment("tied", [["c-E5", "E5", false]], false),
 ];
 
-test("a moment's fingered notes are walked top note first, across both hands", () => {
-  assert.deepEqual(momentTargets(timeline[0], fingerings).map((target) => target.pitch), ["C5", "A4", "E4", "A2"]);
+test("a moment's fingered notes are walked lowest note first, across both hands", () => {
+  assert.deepEqual(momentTargets(timeline[0], fingerings).map((target) => target.pitch), ["A2", "E4", "A4", "C5"]);
   assert.deepEqual(momentTargets(timeline[2], fingerings), [], "a held note is not struck again");
-  assert.deepEqual(editWalk(timeline, fingerings).map((target) => target.key), ["a-C5", "a-A4", "a-E4", "a-A2", "b-D5"]);
+  assert.deepEqual(editWalk(timeline, fingerings).map((target) => target.key), ["a-A2", "a-E4", "a-A4", "a-C5", "b-D5"]);
 });
 
 test("a typed run sets a finger per note and moves on, across moments", () => {
   const walk = editWalk(timeline, fingerings);
-  const result = applyTypedRun("5 3 2-14", walk, 0, {}, resolve);
+  const result = applyTypedRun("1 2 3-54", walk, 0, {}, resolve);
   assert.deepEqual(result.overrides, {
-    "a-C5": { finger: 5 },
-    "a-E4": { finger: 2 },
     "a-A2": { finger: 1 },
+    "a-E4": { finger: 2 },
+    "a-C5": { finger: 5 },
     "b-D5": { finger: 4 },
   }, "a printed finger typed again is no override");
   assert.equal(result.end, walk.length - 1, "the walk stops at its last note");
@@ -68,11 +68,11 @@ test("a typed run sets a finger per note and moves on, across moments", () => {
 test("0 restores the printed or predicted finger and h moves a note to the other hand without moving on", () => {
   const walk = editWalk(timeline, fingerings);
   const start = { "a-C5": { finger: 2 } };
-  const reset = applyTypedRun("0", walk, 0, start, resolve);
-  assert.deepEqual([reset.overrides, reset.end], [{}, 1]);
-  const moved = applyTypedRun("h", walk, 2, {}, resolve);
-  assert.deepEqual([moved.overrides, moved.end], [{ "a-E4": { left: true } }, 2]);
-  const back = applyTypedRun("h", walk, 2, moved.overrides, resolve);
+  const reset = applyTypedRun("0", walk, 3, start, resolve);
+  assert.deepEqual([reset.overrides, reset.end], [{}, 4]);
+  const moved = applyTypedRun("h", walk, 1, {}, resolve);
+  assert.deepEqual([moved.overrides, moved.end], [{ "a-E4": { left: true } }, 1]);
+  const back = applyTypedRun("h", walk, 1, moved.overrides, resolve);
   assert.deepEqual(back.overrides, {}, "moving it back to its staff's hand is no override");
 });
 
@@ -84,6 +84,24 @@ test("a document takes its fingerings resolved from its layers", () => {
   assert.deepEqual(document.predictedFingerings?.[id("a-E4")], { finger: 3, left: true });
   assert.deepEqual(document.predictedFingerings?.[id("a-A4")], { finger: 3, left: false });
   assert.equal(document.predictedFingeringCount, 6);
+});
+
+test("a cursor on a note of the other hand lands on the nearest note the hand plays", () => {
+  const every = editWalk(timeline, fingerings);
+  const right = every.filter((target) => target.key !== "a-A2");
+  const left = every.filter((target) => target.key === "a-A2");
+  // Its own note stays.
+  assert.equal(walkIndexOf(right, every, "a-A4"), 1);
+  // The same moment's lowest note of the hand.
+  assert.equal(right[walkIndexOf(right, every, "a-A2")].key, "a-E4");
+  assert.equal(left[walkIndexOf(left, every, "a-C5")].key, "a-A2");
+  // Past the hand's last note, its last; with no cursor, its first.
+  assert.equal(left[walkIndexOf(left, every, "b-D5")].key, "a-A2");
+  assert.equal(walkIndexOf(right, every, null), 0);
+  // A moment the hand does not play: its next note.
+  const later = every.filter((target) => target.key === "b-D5");
+  assert.equal(later[walkIndexOf(later, every, "a-E4")].key, "b-D5");
+  assert.equal(walkIndexOf([], every, "a-E4"), -1);
 });
 
 test("practising one hand follows a note moved to the other hand", () => {
@@ -177,7 +195,7 @@ test("a printed finger gets a label once its note moves to the other hand, and i
   assert.equal(editorLabelHand({ ...kept, tiedTo: id("b") }, false), undefined);
 });
 
-test("a moment's notes go in the order their labels stand: the right hand's, then the left's, each by pitch", () => {
+test("a moment's notes go in the order their labels stand, bottom up: the left hand's, then the right's, each by pitch", () => {
   // A treble E5 moved to the left hand, and a bass E3 moved to the right hand.
   const chord = moment("m", [["e5", "E5", false], ["c5", "C5", false], ["e3", "E3", true], ["c3", "C3", true]]);
   const fingerings = {
@@ -186,12 +204,12 @@ test("a moment's notes go in the order their labels stand: the right hand's, the
     [id("e3")]: { finger: 3, left: false, handMoved: true },
     [id("c3")]: { finger: 5, left: true, handMoved: false },
   };
-  // Above the treble C5, then the moved E3 below it; below the bass the moved E5 above C3.
-  assert.deepEqual(momentTargets(chord, fingerings).map((target) => target.key), ["c5", "e3", "e5", "c3"]);
-  // Moving none of them, top to bottom.
+  // Below the bass C3, then the moved E5 above it; above the treble the moved E3 below C5.
+  assert.deepEqual(momentTargets(chord, fingerings).map((target) => target.key), ["c3", "e5", "e3", "c5"]);
+  // Moving none of them, bottom to top.
   const unmoved = Object.fromEntries(Object.entries(fingerings).map(([key, value]) =>
     [key, { ...value, left: key === id("e3") || key === id("c3"), handMoved: false }]));
-  assert.deepEqual(momentTargets(chord, unmoved).map((target) => target.key), ["e5", "c5", "e3", "c3"]);
+  assert.deepEqual(momentTargets(chord, unmoved).map((target) => target.key), ["c3", "e3", "c5", "e5"]);
 });
 
 test("once a chord has a label, its notes keeping a printed finger get one too, as print", () => {
@@ -241,8 +259,8 @@ test("another voice's copy of a shared key is not a note of its own to edit", ()
     [id("down")]: { finger: 1, left: false, tiedTo: id("up") },
     [id("bass")]: { finger: 5, left: true },
   };
-  assert.deepEqual(momentTargets(shared, fingerings).map((target) => target.key), ["up", "bass"]);
-  assert.deepEqual(editWalk([shared], fingerings).map((target) => target.key), ["up", "bass"]);
+  assert.deepEqual(momentTargets(shared, fingerings).map((target) => target.key), ["bass", "up"]);
+  assert.deepEqual(editWalk([shared], fingerings).map((target) => target.key), ["bass", "up"]);
 });
 
 test("the player's overrides are stepped through in score order, round from the end", () => {

@@ -27,6 +27,21 @@ export type HighwayFrameSource = () => HighwayFrame;
 /** Note-by-note advances glide the notes down rather than jumping them. */
 const STEP_GLIDE_MS = 160;
 
+/** Beyond this many quarters a held highway's move cuts rather than glides. */
+const HELD_GLIDE_MAX_QUARTERS = 16;
+
+interface Glide {
+  from: number;
+  to: number;
+  startedAt: number;
+}
+
+/** Where a glide stands at `time`. */
+function glidePosition({ from, to, startedAt }: Glide, time: number): number {
+  const progress = Math.min(1, Math.max(0, (time - startedAt) / STEP_GLIDE_MS));
+  return progress >= 1 ? to : from + (to - from) * easeOutCubic(progress);
+}
+
 /**
  * Realtime: score seconds on the playback clock. The window grows with the tempo
  * multiplier so notes take the same real time to reach the keys at any tempo.
@@ -117,11 +132,7 @@ export function useNoteByNoteHighwaySource(
   latest.current = { moments, hand, loop, timeZoom };
   const glide = useRef({ from: currentIndex, to: currentIndex, startedAt: 0, hand });
 
-  const positionAt = useCallback((time: number) => {
-    const { from, to, startedAt } = glide.current;
-    const progress = Math.min(1, Math.max(0, (time - startedAt) / STEP_GLIDE_MS));
-    return progress >= 1 ? to : from + (to - from) * easeOutCubic(progress);
-  }, []);
+  const positionAt = useCallback((time: number) => glidePosition(glide.current, time), []);
 
   useLayoutEffect(() => {
     const time = performance.now();
@@ -162,4 +173,45 @@ export function useNoteByNoteHighwaySource(
       window,
     };
   }, [positionAt]);
+}
+
+/**
+ * Realtime's highway standing still at `offset` in `route`, as the fingering editor's
+ * cursor moves through the score while playback is held: moving to another offset glides
+ * the notes there, as note-by-note's steps do; a jump of more than a few bars, or a change
+ * between a looping route and one that is not, cuts. The rest is realtime's.
+ */
+export function useHeldRealtimeHighwaySource(
+  route: PerformanceRoute | null,
+  offset: number,
+  looping: boolean,
+  tempoMultiplier: number,
+  hand: PracticeHand,
+  fingerings?: Readonly<Record<string, PredictedFingering>>,
+  fixedTempoBpm: number | null = null,
+  timeZoom = 1,
+): HighwayFrameSource {
+  const latest = useRef({ route, looping });
+  latest.current = { route, looping };
+  const glide = useRef({ from: offset, to: offset, startedAt: 0, looping });
+  const offsetAt = useCallback((time: number) => glidePosition(glide.current, time), []);
+  useLayoutEffect(() => {
+    const time = performance.now();
+    const from = offsetAt(time);
+    const cut = looping !== glide.current.looping || Math.abs(offset - from) > HELD_GLIDE_MAX_QUARTERS;
+    glide.current = { from: cut ? offset : from, to: offset, startedAt: time, looping };
+  }, [looping, offset, offsetAt]);
+  const getRoute = useCallback(() => latest.current.route, []);
+  const getOffset = useCallback(() => offsetAt(performance.now()), [offsetAt]);
+  const getLooping = useCallback(() => latest.current.looping, []);
+  return useRealtimeHighwaySource(
+    getRoute,
+    getOffset,
+    tempoMultiplier,
+    hand,
+    getLooping,
+    fingerings,
+    fixedTempoBpm,
+    timeZoom,
+  );
 }

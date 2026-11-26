@@ -163,9 +163,9 @@ export interface EditTarget {
 }
 
 /**
- * The moment's notes that have a finger, in the order their labels stand, top to bottom: the
- * right hand's above the music, then the left hand's below it, each hand's in pitch order, top
- * note first, notes moved to it among its own.
+ * The moment's notes that have a finger, in the order their labels stand, bottom to top, as
+ * the keys run left to right: the left hand's below the music, then the right hand's above
+ * it, each hand's in pitch order, lowest note first, notes moved to it among its own.
  */
 export function momentTargets(
   moment: PlaybackMoment | null,
@@ -195,7 +195,7 @@ export function momentTargets(
   }
   if (targets.length < 2) return targets;
   const leftHand = (target: EditTarget) => Number((fingerings[target.id] as { left?: boolean } | undefined)?.left === true);
-  return targets.sort((a, b) => leftHand(a) - leftHand(b) || pitchMidi(b.pitch) - pitchMidi(a.pitch) || a.id.localeCompare(b.id));
+  return targets.sort((a, b) => leftHand(b) - leftHand(a) || pitchMidi(a.pitch) - pitchMidi(b.pitch) || a.id.localeCompare(b.id));
 }
 
 /** Every note of the timeline the editor can step through, in playing order. */
@@ -204,6 +204,26 @@ export function editWalk(
   fingerings: Readonly<Record<string, unknown>>,
 ): EditTarget[] {
   return timeline.flatMap((moment) => momentTargets(moment, fingerings));
+}
+
+/**
+ * Where in `walk` the cursor on `key` stands. A note the walk has is itself; one it lacks, as
+ * a note of the other hand once one hand is practised, gives way to the walk's nearest note
+ * in score order: its lowest at the same moment, else its first after it, else its last.
+ * `everyTarget` is every note of both hands, in score order.
+ */
+export function walkIndexOf(walk: readonly EditTarget[], everyTarget: readonly EditTarget[], key: string | null): number {
+  if (walk.length === 0) return -1;
+  const own = walk.findIndex((target) => target.key === key);
+  if (own >= 0) return own;
+  const at = everyTarget.findIndex((target) => target.key === key);
+  if (at < 0) return 0;
+  const momentId = everyTarget[at].momentId;
+  const sameMoment = walk.findIndex((target) => target.momentId === momentId);
+  if (sameMoment >= 0) return sameMoment;
+  const order = new Map(everyTarget.map((target, index) => [target.key, index]));
+  const after = walk.findIndex((target) => (order.get(target.key) ?? -1) > at);
+  return after >= 0 ? after : walk.length - 1;
 }
 
 /**
@@ -362,15 +382,21 @@ export interface FingeringEditor {
   /** A MusicXML score with fingerings is open. */
   available: boolean;
   editing: boolean;
+  /** Playback was on when editing began, and resumes on leaving. */
+  resumes: boolean;
   /** Each note's finger and where it comes from, by viewer ID. */
   fingerings: Readonly<Record<string, EffectiveFingering>> | null;
   /** The note the next digit goes to. */
   cursor: EditTarget | null;
   /** The cursor's moment. */
   cursorMoment: PlaybackMoment | null;
-  /** The cursor's moment's notes, top first. */
+  /** The cursor's moment's notes, in the walk's order: bottom first. */
   momentNotes: EditTarget[];
   pickerOpen: boolean;
+  /** The picker stands over the ringed note's finger on the keyboard, where it was opened, not on the page. */
+  pickerOnKeyboard: boolean;
+  /** Rings a note picked by its finger on the keyboard, with its picker there; picked again, closes it. */
+  pickOnKeyboard: (id: string) => void;
   /** Notes changed by the last edit, which flash; `serial` restarts the flash. */
   flash: { ids: readonly string[]; serial: number };
   /** The notes the player fingered or moved to the other hand, in score order. */
@@ -436,6 +462,7 @@ export function useFingeringEditor(options: FingeringEditorOptions): FingeringEd
   // in sight, so the view holds still for it; again once the keys or an edit move the cursor.
   const [cursorFollowed, setCursorFollowed] = useState(true);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerOnKeyboard, setPickerOnKeyboard] = useState(false);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [refitting, setRefitting] = useState(false);
   const [flash, setFlash] = useState<{ ids: readonly string[]; serial: number }>({ ids: [], serial: 0 });
@@ -457,11 +484,14 @@ export function useFingeringEditor(options: FingeringEditorOptions): FingeringEd
     () => (layers ? everyTarget.filter((target) => layers.overrides[target.key]) : []),
     [everyTarget, layers],
   );
-  const cursorIndex = useMemo(() => {
-    const index = walk.findIndex((target) => target.key === cursorKey);
-    return index < 0 && walk.length > 0 ? 0 : index;
-  }, [cursorKey, walk]);
+  const cursorIndex = useMemo(() => walkIndexOf(walk, everyTarget, cursorKey), [cursorKey, everyTarget, walk]);
   const cursor = editing ? walk[cursorIndex] ?? null : null;
+  // A cursor left off the walk, as by practising the other hand, stays on the note it gave way
+  // to, so going back to both hands keeps it there.
+  const shownKey = walk[cursorIndex]?.key ?? null;
+  useEffect(() => {
+    if (shownKey !== null && shownKey !== cursorKey) setCursorKey(shownKey);
+  }, [cursorKey, shownKey]);
   const cursorMoment = useMemo(
     () => (cursor ? timeline.find((moment) => moment.id === cursor.momentId) ?? null : null),
     [cursor, timeline],
@@ -620,12 +650,14 @@ export function useFingeringEditor(options: FingeringEditorOptions): FingeringEd
     // The score is laid out again for editing, which moves the note: the view follows it.
     setCursorFollowed(true);
     resumePlayback.current = playbackActive;
+    setResumes(playbackActive);
     if (playbackActive) stopPlayback();
     setEditing(true);
     onEnter();
   }, [available, fingerings, onEnter, playbackActive, playheadNoteIds, startMomentId, startNoteId, stopPlayback, walk]);
   // Whether playback was on when edit mode began, so leaving it goes back to playback.
   const resumePlayback = useRef(false);
+  const [resumes, setResumes] = useState(false);
   // A function made in a render keeps every value of that render it could see, the score's
   // document and fingerings among them; so each that would otherwise outlive a score is made
   // again for the next, with `layers`, letting the last score go.
@@ -649,7 +681,17 @@ export function useFingeringEditor(options: FingeringEditorOptions): FingeringEd
     // A note of the hand not being practised is reached by walking both.
     if (!walk.some((target) => target.id === id)) onPracticeHandChange("both");
     setPickerOpen(openPicker);
+    setPickerOnKeyboard(false);
   }, [editing, enter, fingerings, onPracticeHandChange, walk]);
+  const pickerShown = editing && pickerOpen && cursor !== null;
+  const pickOnKeyboard = useCallback((id: string) => {
+    if (pickerShown && pickerOnKeyboard && cursor?.id === id) {
+      setPickerOpen(false);
+      return;
+    }
+    select(id);
+    setPickerOnKeyboard(true);
+  }, [cursor?.id, pickerOnKeyboard, pickerShown, select]);
 
   const [hovered, setHovered] = useState<string | null>(null);
   const hover = useCallback((id: string | null) => {
@@ -670,8 +712,9 @@ export function useFingeringEditor(options: FingeringEditorOptions): FingeringEd
 
   const moveInMoment = useCallback((direction: -1 | 1) => {
     if (!cursor) return;
+    // The moment's notes run bottom first, so the note above is the next one.
     const index = momentNotes.findIndex((target) => target.id === cursor.id);
-    moveTo(momentNotes[index + direction]);
+    moveTo(momentNotes[index - direction]);
   }, [cursor, momentNotes, moveTo]);
 
   const auditionCursor = useCallback(() => {
@@ -685,7 +728,9 @@ export function useFingeringEditor(options: FingeringEditorOptions): FingeringEd
     cursor,
     cursorMoment,
     momentNotes,
-    pickerOpen: editing && pickerOpen && cursor !== null,
+    pickerOpen: pickerShown,
+    pickerOnKeyboard: pickerShown && pickerOnKeyboard,
+    pickOnKeyboard,
     flash,
     overrides,
     stepOverride: useCallback((direction: -1 | 1) => {
@@ -699,6 +744,7 @@ export function useFingeringEditor(options: FingeringEditorOptions): FingeringEd
     }, [cursor?.key, editing, everyTarget, layers, moveTo, onPracticeHandChange, walk]),
     refitNeeded,
     refitting,
+    resumes: editing && resumes,
     canUndo: history.length > 0,
     unsavedReason: layers?.overridesError ?? null,
     toggle,
@@ -718,7 +764,10 @@ export function useFingeringEditor(options: FingeringEditorOptions): FingeringEd
     moveInMoment,
     audition: auditionCursor,
     closePicker: useCallback(() => setPickerOpen(false), []),
-    togglePicker: useCallback(() => setPickerOpen((open) => !open), []),
+    togglePicker: useCallback(() => {
+      setPickerOpen((open) => !open);
+      setPickerOnKeyboard(false);
+    }, []),
     typeRun,
   };
 }

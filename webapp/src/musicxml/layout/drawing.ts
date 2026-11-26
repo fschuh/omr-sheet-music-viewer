@@ -83,6 +83,7 @@ export function drawPage(index: number, systems: PlacedSystem[], context: DrawCo
         top: staffTop(staves[0] ?? 0) * sp,
         bottom: (staffTop(staves[staves.length - 1] ?? lastStaff) + 4) * sp,
       })),
+      staves: system.staffTops.map((_, staff) => ({ top: staffTop(staff) * sp, bottom: (staffTop(staff) + 4) * sp })),
       firstMeasure: system.plan.measures[0],
       barlines: [system.left * sp, ...measureEnds],
     });
@@ -421,6 +422,7 @@ function drawChord(
       id: model.id,
       systemIndex,
       part: chord.part,
+      staff: chord.staff,
       momentId,
       notes,
       items: printed ? chordItems : [],

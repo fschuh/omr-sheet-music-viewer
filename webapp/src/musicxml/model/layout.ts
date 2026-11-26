@@ -57,6 +57,8 @@ export interface LayoutChord {
   systemIndex: number;
   /** The chord's part, by its position in the score: an index into LayoutSystem.parts. */
   part: number;
+  /** The staff the chord is drawn on: an index into LayoutSystem.staves. */
+  staff: number;
   /** Chords struck together in a system share this ID. */
   momentId: string;
   notes: LayoutNote[];
@@ -72,6 +74,8 @@ export interface LayoutSystem {
   bottom: number;
   /** For each part of the score, the top line of its first staff and the bottom line of its last. */
   parts: { top: number; bottom: number }[];
+  /** Each staff's top and bottom line, from the top. */
+  staves: { top: number; bottom: number }[];
   /** The system's first measure, by position. */
   firstMeasure: number;
   /** Where each measure begins, then where the last one ends: one more than its measures. */

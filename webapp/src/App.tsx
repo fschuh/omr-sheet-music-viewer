@@ -5,6 +5,7 @@ import {
   addPredictedFingeringsToMusicXml,
   cachedFingeringsFromMusicXml,
   type FingeringPredictor,
+  type PredictedFingering,
 } from "./fingering";
 import { PianoKeyboard } from "./PianoKeyboard";
 import { SettingsPage } from "./SettingsPage";
@@ -87,6 +88,7 @@ import {
   loadLastScorePath,
   loadListenInputSource,
   loadLoopDimOutside,
+  loadFingeringStaffHighlight,
   loadLoopRestart,
   loadNoteHighwayEnabled,
   loadPlaybackPiano,
@@ -100,6 +102,7 @@ import {
   saveLastScorePath,
   saveListenInputSource,
   saveLoopDimOutside,
+  saveFingeringStaffHighlight,
   saveLoopRestart,
   saveNoteHighwayEnabled,
   savePlaybackPiano,
@@ -145,6 +148,7 @@ import {
   showScoreDataFolder,
   showScoreSource,
   viewerIdsByKey,
+  type MusicXmlPage,
 } from "./musicxml";
 import {
   editorLabels,
@@ -154,8 +158,9 @@ import {
   withFingeringLayers,
   type EditTarget,
 } from "./fingeringEditor";
-import { FingeringPageLayer, FingeringStatusStrip, FingeringToolbar } from "./FingeringEditorView";
+import { FingeringPageLayer, FingeringStatusStrip, FingeringToolbar, KeyboardFingerPicker, type SystemReach } from "./FingeringEditorView";
 import {
+  useHeldRealtimeHighwaySource,
   useNoteByNoteHighwaySource,
   useRealtimeHighwaySource,
 } from "./noteHighway/highwaySources";
@@ -436,6 +441,7 @@ export function App() {
   const [playbackPiano, setPlaybackPiano] = useState(loadPlaybackPiano);
   const [listenInputSource, setListenInputSource] = useState(loadListenInputSource);
   const [loopDimOutside, setLoopDimOutside] = useState(loadLoopDimOutside);
+  const [fingeringStaffHighlight, setFingeringStaffHighlight] = useState(loadFingeringStaffHighlight);
   const [realtimeCountIn, setRealtimeCountIn] = useState(loadRealtimeCountIn);
   const [loopRestart, setLoopRestart] = useState(loadLoopRestart);
   const changeLoopRestart = useCallback((restart: LoopRestart) => {
@@ -817,26 +823,6 @@ export function App() {
     ),
     [fullPlaybackTimeline, keyboardView.minimumWhiteKeys, keyboardView.range, practiceHand],
   );
-  const keyboardSolid = noteHighwayShown && keyboardView.keyboard3d;
-  const highwayView = useMemo(() => ({
-    range: keyboardRange,
-    tilt: keyboardView.tilt,
-    keyboard3d: keyboardSolid,
-    colors: keyboardHandColors,
-    noteStyle: keyboardView.noteStyle,
-    whiteNoteWidth: keyboardView.whiteNoteWidth,
-    noteLabels: keyboardView.highwayNoteLabels,
-    blackKeyWidth: keyboardView.blackKeyWidth,
-  }), [
-    keyboardHandColors,
-    keyboardRange,
-    keyboardSolid,
-    keyboardView.blackKeyWidth,
-    keyboardView.highwayNoteLabels,
-    keyboardView.noteStyle,
-    keyboardView.tilt,
-    keyboardView.whiteNoteWidth,
-  ]);
   const keyboardDisplay = useMemo(() => ({
     octaveLabels: keyboardView.octaveLabels,
     fingerNumbers: keyboardView.fingerNumbers,
@@ -1557,6 +1543,138 @@ export function App() {
   const backToPlayback = fingerEditor.editing || resumeAfterEditing;
   if (!backToPlayback) noteHighwayBeforeEditing.current = noteHighwayShown;
   const keepNoteHighway = backToPlayback && noteHighwayEnabled && noteHighwayBeforeEditing.current;
+  // Editing fingers on top of playback, an enabled highway stays, live: it stands at the
+  // editor's cursor, gliding as it moves, and shows the fingers as they are edited.
+  const highwayWhileEditing = noteHighwayEnabled && fingerEditor.resumes;
+  const highwayOn = noteHighwayShown || highwayWhileEditing;
+  const highwayVisible = noteHighwayVisible || (highwayWhileEditing && !loopDragging);
+  const editorCursorIndex = highwayWhileEditing && fingerEditor.cursorMoment
+    ? Math.max(0, playbackTimeline.findIndex((moment) => moment.id === fingerEditor.cursorMoment!.id))
+    : 0;
+  const editorNoteByNoteHighwayFrame = useNoteByNoteHighwaySource(
+    fullPlaybackTimeline,
+    editorCursorIndex,
+    practiceHand,
+    noteByNoteLoopSteps,
+    keyboardView.timeZoom,
+  );
+  // Realtime reads the usual layout's MusicXML, whose notes are named for the pages they
+  // stand on there; the editor's roomier layout moves notes to other pages, renaming them. The
+  // fingerings, named in the editor's layout, go to realtime's notes by their keys.
+  const editorRealtimeFingerings = useMemo(() => {
+    const score = realtimeModel.score;
+    const fingerings = document?.predictedFingerings;
+    if (!highwayWhileEditing || playbackMode !== "realtime" || !score || !fingerings) return fingerings;
+    if (realtimeMusicXml === document?.documentMusicXml) return fingerings;
+    const byKey = new Map(Object.entries(fingerings).map(([id, fingering]) => [noteKeyOf(id), fingering] as const));
+    const renamed: Record<string, PredictedFingering> = {};
+    for (const measure of score.measures) {
+      for (const note of measure.notes) {
+        const fingering = byKey.get(noteKeyOf(note.musicXmlId));
+        if (fingering) renamed[note.musicXmlId] = fingering;
+      }
+    }
+    return renamed;
+  }, [
+    document?.documentMusicXml,
+    document?.predictedFingerings,
+    highwayWhileEditing,
+    playbackMode,
+    realtimeModel.score,
+    realtimeMusicXml,
+  ]);
+  // In realtime, the route playback would take: the held loop's, when the cursor is in it,
+  // else the whole score's; built again as fingers change, since they can move notes'
+  // hands.
+  const editorRealtimeRoutes = useMemo(() => {
+    const score = realtimeModel.score;
+    if (!highwayWhileEditing || playbackMode !== "realtime" || !score) return null;
+    const fingerings = editorRealtimeFingerings;
+    const handOf = (musicXmlId: string) => fingerings?.[musicXmlId]?.left;
+    try {
+      const whole = expandPerformanceRoute(score, { visualMap: realtimeVisualMap, handOf });
+      const held = loop && loopHeldForEditing.current
+        ? expandPerformanceRoute(score, {
+          startMeasureIndex: loop.startMeasure,
+          endMeasureIndex: loop.endMeasure,
+          visualMap: realtimeVisualMap,
+          handOf,
+        })
+        : null;
+      return { whole, loop: held && held.totalQuarters > 0 ? held : null };
+    } catch {
+      return null;
+    }
+  }, [
+    editorRealtimeFingerings,
+    highwayWhileEditing,
+    loop?.endMeasure,
+    loop?.startMeasure,
+    playbackMode,
+    realtimeModel.score,
+    realtimeVisualMap,
+  ]);
+  const editorCursor = fingerEditor.cursor;
+  const editorRealtimeStand = useMemo(() => {
+    const score = realtimeModel.score;
+    if (!editorRealtimeRoutes || !score) return { route: null, offset: 0, loops: false };
+    // The cursor's note in realtime's score, by its key: its first appearance.
+    let position: StructuralPosition | null = null;
+    for (const measure of editorCursor ? score.measures : []) {
+      const note = measure.notes
+        .filter((candidate) => noteKeyOf(candidate.musicXmlId) === editorCursor!.key)
+        .sort((left, right) => left.onset - right.onset)[0];
+      if (note) {
+        position = { measureIndex: measure.index, onset: note.onset };
+        break;
+      }
+    }
+    const inLoop = position && editorRealtimeRoutes.loop ? loopRouteOffset(editorRealtimeRoutes.loop, position) : null;
+    if (inLoop !== null) return { route: editorRealtimeRoutes.loop, offset: inLoop, loops: true };
+    const offset = position ? loopRouteOffset(editorRealtimeRoutes.whole, position) ?? 0 : 0;
+    return { route: editorRealtimeRoutes.whole, offset, loops: false };
+  }, [editorCursor, editorRealtimeRoutes, realtimeModel.score]);
+  const editorRealtimeHighwayFrame = useHeldRealtimeHighwaySource(
+    editorRealtimeStand.route,
+    editorRealtimeStand.offset,
+    editorRealtimeStand.loops,
+    tempoMultiplier,
+    practiceHand,
+    editorRealtimeFingerings,
+    keyboardView.timeScale === "fixed-tempo" ? realtimeOpeningBpm : null,
+    keyboardView.timeZoom,
+  );
+  // How far each system's fingering labels reach down, as the editor's layers last drew them,
+  // so the highway's faded far end recedes to keep the labels under a lower staff in sight.
+  const labelReach = useRef(new Map<number, { page: MusicXmlPage; reach: ReadonlyMap<number, SystemReach> }>());
+  const reportLabelReach = useCallback((page: MusicXmlPage, reach: ReadonlyMap<number, SystemReach>) => {
+    labelReach.current.set(page.index, { page, reach });
+  }, []);
+  const labelReachBottom = useCallback((page: MusicXmlPage, systemIndex: number) => {
+    const drawn = labelReach.current.get(page.index);
+    return drawn?.page === page ? drawn.reach.get(systemIndex)?.bottom ?? null : null;
+  }, []);
+  const [highwayClearTo, setHighwayClearTo] = useState<number | null>(null);
+  const keyboardSolid = highwayOn && keyboardView.keyboard3d;
+  const highwayView = useMemo(() => ({
+    range: keyboardRange,
+    tilt: keyboardView.tilt,
+    keyboard3d: keyboardSolid,
+    colors: keyboardHandColors,
+    noteStyle: keyboardView.noteStyle,
+    whiteNoteWidth: keyboardView.whiteNoteWidth,
+    noteLabels: keyboardView.highwayNoteLabels,
+    blackKeyWidth: keyboardView.blackKeyWidth,
+  }), [
+    keyboardHandColors,
+    keyboardRange,
+    keyboardSolid,
+    keyboardView.blackKeyWidth,
+    keyboardView.highwayNoteLabels,
+    keyboardView.noteStyle,
+    keyboardView.tilt,
+    keyboardView.whiteNoteWidth,
+  ]);
   // The roomy layout and its pages' images are prepared in idle time once a MusicXML score's
   // fingerings are ready, so that entering the editor is quick.
   const fingeringsReadyJob = document?.source.kind === "musicxml" && document.fingeringStatus === "ready"
@@ -1605,6 +1723,26 @@ export function App() {
     () => fingerEditor.editing && fingerCursor ? { pitch: fingerCursor.pitch, left: fingerCursorLeft } : null,
     [fingerCursor, fingerCursorLeft, fingerEditor.editing],
   );
+  // The ringed moment's fingers on the keyboard pick their notes, as their labels on the page do.
+  const keyboardFingerTargets = useMemo(() => {
+    const result = new Map<string, string>();
+    if (!fingerEditor.editing) return result;
+    for (const target of fingerEditor.momentNotes) {
+      const left = fingerEditor.fingerings?.[target.id]?.left === true;
+      const key = `${pitchToMidi(target.pitch)}|${left ? "L" : "R"}`;
+      if (!result.has(key)) result.set(key, target.id);
+    }
+    return result;
+  }, [fingerEditor.editing, fingerEditor.fingerings, fingerEditor.momentNotes]);
+  const keyboardFingerPickable = useCallback(
+    (midi: number, left: boolean) => keyboardFingerTargets.has(`${midi}|${left ? "L" : "R"}`),
+    [keyboardFingerTargets],
+  );
+  const pickKeyboardFinger = useCallback((midi: number, left: boolean) => {
+    const id = keyboardFingerTargets.get(`${midi}|${left ? "L" : "R"}`);
+    if (!id) return;
+    fingerEditorRef.current.pickOnKeyboard(id);
+  }, [keyboardFingerTargets]);
   // The note the pointer is over, in its hand's darker colour; the edited note keeps its own.
   const fingerHoverId = fingerEditor.hoverId;
   const fingerHoverLeft = fingerHoverId ? fingerEditor.fingerings?.[fingerHoverId]?.left : undefined;
@@ -2292,7 +2430,7 @@ export function App() {
     if (!fingerPickerOpen) return;
     function closeOnPressOutside(event: PointerEvent) {
       const target = event.target;
-      if (target instanceof Element && target.closest(".finger-picker, .fingering-label, .fingering-printed")) return;
+      if (target instanceof Element && target.closest(".finger-picker, .fingering-label, .fingering-printed, .piano-key-finger.pickable")) return;
       fingerEditorRef.current.closePicker();
     }
     window.addEventListener("pointerdown", closeOnPressOutside, true);
@@ -3095,6 +3233,11 @@ export function App() {
             setLoopDimOutside(enabled);
             saveLoopDimOutside(enabled);
           }}
+          fingeringStaffHighlight={fingeringStaffHighlight}
+          onChangeFingeringStaffHighlight={(enabled) => {
+            setFingeringStaffHighlight(enabled);
+            saveFingeringStaffHighlight(enabled);
+          }}
           realtimeCountIn={realtimeCountIn}
           onChangeRealtimeCountIn={(countIn) => {
             setRealtimeCountIn(countIn);
@@ -3167,7 +3310,7 @@ export function App() {
 
       <section
         className={`workspace${diagnosticsShown ? "" : " debug-panel-hidden"}${
-          noteHighwayShown ? " note-highway-active" : ""
+          highwayOn ? " note-highway-active" : ""
         }`}
         style={handColorProperties(keyboardHandColors)}
       >
@@ -3217,9 +3360,13 @@ export function App() {
               onPracticedHandSoundChange={setPracticedHandSoundEnabled}
               onOtherHandSoundChange={setOtherHandSoundEnabled}
               noteHighwayEnabled={noteHighwayEnabled}
-              noteHighwayVisible={noteHighwayVisible}
+              noteHighwayVisible={highwayVisible}
+              systemReachBottom={highwayWhileEditing ? labelReachBottom : undefined}
+              onHighwayClearChange={setHighwayClearTo}
               loopMode={loopMode}
-              loop={playbackActive ? loop : null}
+              // Paused for the fingering editor, the loop stays, held for playback to resume.
+              loop={playbackActive || (fingerEditor.resumes && loopHeldForEditing.current) ? loop : null}
+              playbackHeld={fingerEditor.resumes}
               loopPass={loopPass}
               loopPlaying={playbackMode === "realtime"
                 ? realtimeStatus !== "inactive" && realtimeRouteLoopsRef.current
@@ -3251,9 +3398,10 @@ export function App() {
               toolbarExtra={
                 <FingeringToolbar editor={fingerEditor} shortcuts={shortcuts} />
               }
+              framed={fingerEditor.editing}
               renderPageExtra={fingerEditor.editing
                 ? (page, scale, width, reveal) => page.surface
-                  ? <FingeringPageLayer page={page.surface} editor={fingerEditor} scale={scale} displayWidth={width} reveal={reveal} />
+                  ? <FingeringPageLayer page={page.surface} editor={fingerEditor} scale={scale} displayWidth={width} reveal={reveal} onReach={reportLabelReach} practiceHand={practiceHand} staffHighlight={fingeringStaffHighlight} />
                   : null
                 : undefined}
               footer={<FingeringStatusStrip editor={fingerEditor} shortcuts={shortcuts} />}
@@ -3377,17 +3525,20 @@ export function App() {
               </dl>
               {workerInfo ? <p className="worker-info">{workerInfo}</p> : null}
             </aside> : null}
-            {noteHighwayShown || keepNoteHighway ? (
+            {highwayOn || keepNoteHighway ? (
               <NoteHighway
-                getFrame={playbackMode === "realtime" ? realtimeHighwayFrame : noteByNoteHighwayFrame}
-                hidden={!noteHighwayVisible}
+                getFrame={highwayWhileEditing
+                  ? playbackMode === "realtime" ? editorRealtimeHighwayFrame : editorNoteByNoteHighwayFrame
+                  : playbackMode === "realtime" ? realtimeHighwayFrame : noteByNoteHighwayFrame}
+                hidden={!highwayVisible}
                 view={highwayView}
                 upcomingLead={keyboardView.upcomingLead}
+                clearTo={highwayWhileEditing ? highwayClearTo : null}
               />
             ) : null}
             {playbackActive || fingerEditor.editing ? (
               <PianoKeyboard
-                highwayAttached={noteHighwayShown}
+                highwayAttached={highwayOn}
                 range={keyboardRange}
                 display={keyboardDisplay}
                 blackKeyWidth={keyboardView.blackKeyWidth}
@@ -3408,8 +3559,11 @@ export function App() {
                   : []}
                 waiting={realtimeWaiting}
                 focused={fingerKeyboardFocus}
+                fingerPickable={fingerEditor.editing ? keyboardFingerPickable : undefined}
+                onFingerPick={fingerEditor.editing ? pickKeyboardFinger : undefined}
               />
             ) : null}
+            <KeyboardFingerPicker editor={fingerEditor} />
           </>
         ) : (
           <div className="empty-state">

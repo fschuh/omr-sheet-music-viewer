@@ -75,6 +75,16 @@ const MAX_TEMPO_PERCENTAGE = 300;
 const MIN_VISIBLE_DOCUMENT_PX = 96;
 const DEFAULT_VIEWPORT_TRANSFORM: ViewportTransform = { scale: 1, x: 24, y: 24 };
 const NO_REALTIME_GROUPS: readonly string[] = [];
+/** The share of the highway, from its far end, over which a system's staves stand in sight, so its labels may clear it. */
+const HIGHWAY_CLEARABLE_SHARE = 0.3;
+/** The most of the highway, from its far end, that labels may clear. */
+const HIGHWAY_MOST_CLEARED = 0.6;
+/** Room kept between the lowest label and where the highway comes back, in screen pixels. */
+const HIGHWAY_CLEAR_MARGIN = 6;
+/** The opacity of the labels of a system under the highway. */
+const FAINT_LABEL_OPACITY = 0.2;
+/** A footer standing at the top of the score: its height, and a little room. */
+const FOOTER_AT_TOP_HEIGHT = 40;
 /** In keyboard order, left to right. */
 const PRACTICE_HAND_OPTIONS: ReadonlyArray<{
   hand: PracticeHand;
@@ -246,6 +256,16 @@ interface DocumentViewerProps {
   noteHighwayEnabled?: boolean;
   /** The highway is on screen, so playback scrolling keeps the staff above it. */
   noteHighwayVisible?: boolean;
+  /**
+   * How far down a system reaches with what is drawn under it, such as the fingering editor's
+   * labels, in its page's units; null where nothing is.
+   */
+  systemReachBottom?: (page: MusicXmlPage, systemIndex: number) => number | null;
+  /**
+   * Told where, in the window's coordinates, the highway should be cleared down to, so that
+   * what the systems standing over its far end reach down with stays in sight; null for nowhere.
+   */
+  onHighwayClearChange?: (clearTo: number | null) => void;
   listenFeedback: ListenModeFeedback;
   /** Realtime waits at each note, while listening, until the player plays it. */
   realtimeWaitEnabled?: boolean;
@@ -284,6 +304,13 @@ interface DocumentViewerProps {
   onRetryPage: (pageIndex: number) => void;
   /** More controls at the end of the playback toolbar. */
   toolbarExtra?: ReactNode;
+  /** Another mode stands over the score, the fingering editor: the score is framed in its colour. */
+  framed?: boolean;
+  /**
+   * Playback is paused under another mode, the fingering editor, which resumes it: its
+   * controls stay as they were, dimmed, and its loop stays drawn, faint, out of reach.
+   */
+  playbackHeld?: boolean;
   /**
    * Drawn over a page, in the page's box; `scale` is the viewport's zoom and `width` the page's
    * width before it. `reveal` scrolls the score up or down until an element of it is in view,
@@ -1054,6 +1081,8 @@ export function DocumentViewer({
   otherHandSoundEnabled = false,
   noteHighwayEnabled = false,
   noteHighwayVisible = false,
+  systemReachBottom,
+  onHighwayClearChange,
   listenFeedback,
   realtimeWaitEnabled = false,
   realtimeWaiting = false,
@@ -1080,6 +1109,8 @@ export function DocumentViewer({
   onSelectGroup,
   onRetryPage,
   toolbarExtra,
+  framed = false,
+  playbackHeld = false,
   renderPageExtra,
   footer,
   noteHighlight = null,
@@ -1984,9 +2015,11 @@ export function DocumentViewer({
     const momentContentLeft = pageLeft + extents.contentLeft;
     const momentContentRight = pageLeft + extents.contentRight;
     const current = transformRef.current;
-    const safeTop = rect.height * 0.12;
-    // A footer, such as the fingering editor's, stands over the score above the keyboard.
-    const safeBottom = scoreViewBottom() - (footer && !playbackActive ? 40 : 0);
+    // A footer, such as the fingering editor's, stands over the score above the keyboard, or,
+    // with the note highway there, at the top of the score.
+    const footerAtTop = footer && !playbackActive && noteHighwayVisible;
+    const safeTop = Math.max(rect.height * 0.12, footerAtTop ? FOOTER_AT_TOP_HEIGHT + 12 : 0);
+    const safeBottom = scoreViewBottom() - (footer && !playbackActive && !noteHighwayVisible ? 40 : 0);
     const safeLeft = rect.width * 0.12;
     const safeRight = rect.width * 0.88;
     const screenStaffTop = current.y + staffTop * current.scale;
@@ -1999,10 +2032,17 @@ export function DocumentViewer({
     let y = current.y;
 
     // Held in place, the system's notes need only be in sight, not in the comfortable middle.
-    const outOfSight = held
-      ? current.y + (pageTop + extents.system[1]) * current.scale < 0 ||
-        current.y + (pageTop + extents.system[3]) * current.scale > safeBottom
-      : screenStaffTop < safeTop || screenStaffBottom > safeBottom;
+    // So too under the fingering editor, which stands over playback without moving the score:
+    // it scrolls, as playback would, only once the cursor's system is out of sight, under the
+    // status strip, the highway or the keyboard.
+    const notesTop = current.y + (pageTop + extents.system[1]) * current.scale;
+    const notesBottom = current.y + (pageTop + extents.system[3]) * current.scale;
+    const outOfSight = stillPages && !playbackActive
+      ? notesTop < (footerAtTop ? FOOTER_AT_TOP_HEIGHT : 0) ||
+        notesBottom > scoreViewBottom() - (footer && !noteHighwayVisible ? 40 : 0)
+      : held
+        ? notesTop < 0 || notesBottom > safeBottom
+        : screenStaffTop < safeTop || screenStaffBottom > safeBottom;
     if (outOfSight) {
       const documentCenter = (staffTop + staffBottom) / 2;
       y = (safeTop + safeBottom) / 2 - documentCenter * current.scale;
@@ -2051,10 +2091,12 @@ export function DocumentViewer({
     const top = box.top - rect.top + current.y - transform.y;
     const bottom = box.bottom - rect.top + current.y - transform.y;
     const margin = 12;
-    const safeBottom = scoreViewBottom() - (footer && !playbackActive ? 40 : 0) - margin;
+    const footerAtTop = footer && !playbackActive && noteHighwayVisible;
+    const safeBottom = scoreViewBottom() - (footer && !playbackActive && !footerAtTop ? 40 : 0) - margin;
+    const safeTop = margin + (footerAtTop ? FOOTER_AT_TOP_HEIGHT : 0);
     let dy = 0;
     if (bottom > safeBottom) dy = safeBottom - bottom;
-    if (top + dy < margin) dy = margin - top;
+    if (top + dy < safeTop) dy = safeTop - top;
     if (Math.abs(dy) > 0.5) commitTransform({ ...current, y: current.y + dy });
   });
 
@@ -2073,6 +2115,63 @@ export function DocumentViewer({
       pageTop += height + PAGE_GAP;
     }
   }
+
+  // The highway's faded far end recedes for a system standing over it whose labels reach down
+  // into it, so they stay in sight; the labels of the systems under the highway are faint, so
+  // they keep out of its notes' way. Measured after each render, as the view or the labels move.
+  const highwayClear = useRef<number | null>(null);
+  const faintSystems = useRef(new Map<HTMLElement, string>());
+  useLayoutEffect(() => {
+    if (!onHighwayClearChange) return;
+    const boxes = stageBoxRef.current;
+    let clearTo: number | null = null;
+    // By page, the systems under the highway.
+    const faint = new Map<HTMLElement, number[]>();
+    if (noteHighwayVisible && systemReachBottom && boxes) {
+      const { stage, viewer } = boxes;
+      const highwayTop = viewer.top + viewer.height * NOTE_HIGHWAY_TOP_FRACTION;
+      const keyboardHeight = Math.min(168, Math.max(116, window.innerHeight * 0.18));
+      const highwayHeight = Math.max(1, viewer.bottom - keyboardHeight - highwayTop);
+      let pageTop = 0;
+      for (const { page, width, height } of displayPages) {
+        const surface = page.surface;
+        if (surface && pagesNearView.has(page.index)) {
+          const unit = width / surface.width;
+          const onScreen = (y: number) => stage.top + transform.y + (pageTop + y * unit) * transform.scale;
+          const element = pageRefs.current.get(page.index);
+          surface.systems.forEach((system, index) => {
+            // A system whose staves stand within the highway's faint far end; one further down
+            // is under the highway, its labels faint.
+            if (onScreen(system.bottom) > highwayTop + highwayHeight * HIGHWAY_CLEARABLE_SHARE) {
+              if (element) faint.set(element, [...(faint.get(element) ?? []), index]);
+              return;
+            }
+            const reach = systemReachBottom(surface, index);
+            if (reach === null) return;
+            const bottom = onScreen(reach) + HIGHWAY_CLEAR_MARGIN;
+            if (bottom > highwayTop) clearTo = Math.max(clearTo ?? bottom, bottom);
+          });
+        }
+        pageTop += height + PAGE_GAP;
+      }
+      if (clearTo !== null) clearTo = Math.min(clearTo, highwayTop + highwayHeight * HIGHWAY_MOST_CLEARED);
+    }
+    // Each page's faint systems, set on it for its labels to read; the rest set back.
+    for (const element of new Set([...faintSystems.current.keys(), ...faint.keys()])) {
+      const systems = faint.get(element) ?? [];
+      const signature = systems.join(",");
+      const previous = faintSystems.current.get(element) ?? "";
+      if (signature === previous) continue;
+      for (const index of previous ? previous.split(",") : []) element.style.removeProperty(`--label-system-${index}`);
+      for (const index of systems) element.style.setProperty(`--label-system-${index}`, String(FAINT_LABEL_OPACITY));
+      if (signature) faintSystems.current.set(element, signature);
+      else faintSystems.current.delete(element);
+    }
+    if (clearTo !== null && highwayClear.current !== null && Math.abs(clearTo - highwayClear.current) < 0.5) return;
+    if (clearTo === highwayClear.current) return;
+    highwayClear.current = clearTo;
+    onHighwayClearChange(clearTo);
+  });
 
   return (
     <div className="viewer">
@@ -2122,7 +2221,12 @@ export function DocumentViewer({
           }}
         >+</button>
         <div className="toolbar-separator" aria-hidden="true" />
-        <div className="playback-controls" role="group" aria-label="Playback controls">
+        <div
+          className={`playback-controls${playbackHeld ? " held" : ""}`}
+          role="group"
+          aria-label="Playback controls"
+          title={playbackHeld ? "Playback is paused while you edit fingers; it resumes when you leave the editor" : undefined}
+        >
           {onPlaybackModeChange ? <div className="playback-mode-selector" role="group" aria-label="Playback type">
             <button
               type="button"
@@ -2481,7 +2585,7 @@ export function DocumentViewer({
       </div>
       <div
         ref={stageRef}
-        className={`viewer-stage${isPointerPanning ? " is-pointer-panning" : ""}${loopDragging ? " is-loop-dragging" : ""}`}
+        className={`viewer-stage${isPointerPanning ? " is-pointer-panning" : ""}${loopDragging ? " is-loop-dragging" : ""}${framed ? " framed" : ""}`}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
@@ -2530,7 +2634,7 @@ export function DocumentViewer({
                 <img src={page.imageUrl} alt={`Sheet music page ${page.index + 1}`} draggable={false} />
               ) : null}
               {loopView && scoreSystems.some((system) => system.pageIndex === page.index) ? (
-                <>
+                <div className={`loop-page${playbackHeld ? " held" : ""}`}>
                   <LoopPageTint
                     width={page.width}
                     height={page.height}
@@ -2553,7 +2657,7 @@ export function DocumentViewer({
                     hover={loopHover}
                     events={loopHandleEvents}
                   />
-                </>
+                </div>
               ) : null}
               <PageOverlay
                 page={page}

@@ -790,6 +790,15 @@ button:disabled {
 
 .piano-key-finger[data-hand="left"] { background: var(--hand-left-dark); }
 
+/* Under the fingering editor, the ringed moment's fingers pick their notes, as their labels do. */
+.piano-key-finger.pickable {
+  cursor: pointer;
+  pointer-events: auto;
+  transition: transform 80ms ease-out;
+}
+
+.piano-key-finger.pickable:hover { transform: scale(1.12); }
+
 /* The note the fingering editor rings: its marker ringed in the hand's darker colour, as the
    note is on the page, edged in white so the ring stands off the lit key behind it. */
 .piano-key-finger[data-focused="true"],
@@ -2714,6 +2723,9 @@ button:disabled {
 
 .viewer-toolbar .fingering-toolbar button { white-space: nowrap; }
 
+/* A system's labels go faint under the note highway while editing, and come back above it. */
+.fingering-layer [style*="--label-system"] { transition: opacity 200ms ease-out; }
+
 .document-page .fingering-layer {
   height: 100%;
   left: 0;
@@ -2760,6 +2772,7 @@ button:disabled {
    them without painting the engraved page again. */
 .document-page .fingering-ring,
 .document-page .fingering-band,
+.document-page .fingering-staff-band,
 .document-page .fingering-pop {
   box-sizing: border-box;
   left: 0;
@@ -2784,6 +2797,17 @@ button:disabled {
   background: rgb(8 115 97 / 10%);
   transition: transform 120ms cubic-bezier(0.2, 0.9, 0.3, 1);
 }
+
+/* The ringed note's staff: a faint stripe in its hand's colour, fading in where it goes and
+   out where it was. */
+.document-page .fingering-staff-band { animation: fingering-staff-band-in 180ms ease-out both; }
+.document-page .fingering-staff-band.leaving { animation: fingering-staff-band-out 180ms ease-out both; }
+
+@keyframes fingering-staff-band-in { from { opacity: 0; } }
+@keyframes fingering-staff-band-out { to { opacity: 0; } }
+
+.document-page .fingering-staff-band.right-hand { background: color-mix(in srgb, var(--hand-right) 12%, transparent); }
+.document-page .fingering-staff-band.left-hand { background: color-mix(in srgb, var(--hand-left) 12%, transparent); }
 
 /* An edited label pops, then gives way to the label underneath. */
 .document-page .fingering-pop {
@@ -2816,6 +2840,8 @@ button:disabled {
 @media (prefers-reduced-motion: reduce) {
   .document-page .fingering-ring,
   .document-page .fingering-band { transition: none; }
+  /* Still ends, so a stripe fading out is let go. */
+  .document-page .fingering-staff-band { animation-duration: 1ms; }
   .document-page .fingering-pop { display: none; }
 }
 
@@ -2844,7 +2870,7 @@ button:disabled {
 .fingering-layer .fingering-printed-strike { stroke: #24211d; }
 
 /* The caret on the picker's edge that faces the ringed note. */
-.document-content .finger-picker::after {
+.finger-picker::after {
   background: #24211d;
   content: "";
   height: 10px;
@@ -2855,8 +2881,8 @@ button:disabled {
   width: 10px;
 }
 
-.document-content .finger-picker.above::after { bottom: -5px; }
-.document-content .finger-picker.below::after { top: -5px; }
+.finger-picker.above::after { bottom: -5px; }
+.finger-picker.below::after { top: -5px; }
 
 /* The line from the caret down a chord's stack to the ringed digit. */
 .document-content .finger-picker-lead {
@@ -2866,7 +2892,7 @@ button:disabled {
   z-index: 3;
 }
 
-.document-content .finger-picker {
+.finger-picker {
   align-items: center;
   background: #24211d;
   border-radius: 10px;
@@ -2879,6 +2905,21 @@ button:disabled {
   position: absolute;
   white-space: nowrap;
   z-index: 3;
+}
+
+/* Opened from the keyboard, over the ringed finger there: in the window, above the keys.
+   Outlined in light, caret too, to stand off the dark highway and black keys behind it. */
+.finger-picker.on-keyboard {
+  border: 2px solid #f3efe8;
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 45%), 0 8px 22px rgb(0 0 0 / 50%);
+  position: fixed;
+  z-index: 20;
+}
+
+.finger-picker.on-keyboard.above::after {
+  border-bottom: 2px solid #f3efe8;
+  border-right: 2px solid #f3efe8;
+  bottom: -7px;
 }
 
 .finger-picker.right-hand { --hand: var(--hand-right); }
@@ -3058,4 +3099,35 @@ button:disabled {
 .fingering-keys-row kbd {
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
   font-weight: 700;
+}
+
+/* The loop of playback paused for the editor: still drawn, faint, out of reach. */
+.document-page .loop-page { display: contents; }
+.document-page .loop-page.held > * { opacity: 0.35; }
+.document-page .loop-page.held,
+.document-page .loop-page.held * { pointer-events: none !important; }
+
+/* The fingering editor stands over the score: a frame in its colour round the score's view and
+   the editor's status strip, closing above the keyboard, which runs over the view's foot; drawn
+   over the pages and the strip, out of the pointer's way, taking no room from them. */
+.viewer-stage.framed::after {
+  border: 3px solid #087361;
+  bottom: var(--piano-keyboard-height, 0px);
+  content: "";
+  left: 0;
+  pointer-events: none;
+  position: absolute;
+  right: 0;
+  top: 0;
+  z-index: 5;
+}
+
+/* With the note highway shown under the editor, the status strip stands at the top of
+   the score, under the toolbar, rather than over the highway or the keys its notes come
+   down to. */
+.workspace.note-highway-active .fingering-status {
+  border-bottom: 1px solid #ddd8d0;
+  border-top: none;
+  bottom: auto;
+  top: 49px;
 }

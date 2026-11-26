@@ -67,6 +67,12 @@ interface PianoKeyboardProps {
   solidTilt?: number | null;
   /** Playback is held until the player plays `notes`, so their keys pulse. */
   waiting?: boolean;
+  /**
+   * A finger marker the player may pick, by its key and hand, as the fingering editor's notes'
+   * are: it takes the pointer, and picking it calls `onFingerPick`.
+   */
+  fingerPickable?: (midi: number, left: boolean) => boolean;
+  onFingerPick?: (midi: number, left: boolean) => void;
   /** One of `notes` singled out, as the note the fingering editor rings: its marker is ringed too. */
   focused?: PianoKeyboardNote | null;
 }
@@ -164,6 +170,8 @@ export function PianoKeyboard({
   solidTilt = null,
   waiting = false,
   focused = null,
+  fingerPickable,
+  onFingerPick,
 }: PianoKeyboardProps) {
   const solid = highwayAttached && solidTilt !== null;
   const { ref: rootRef, size } = useElementSize(solid);
@@ -356,17 +364,27 @@ export function PianoKeyboard({
         data-midi={key.midi}
         data-pressed={recognizedPitchSet.has(key.midi) ? "true" : undefined}
       >
-        {display.fingerNumbers ? labels.fingerings.map((fingering) => (
-          <span
-            key={fingeringKey(fingering)}
-            className="piano-key-finger"
-            data-hand={fingering.left ? "left" : "right"}
-            data-finger={fingering.finger}
-            data-focused={fingerFocused(fingering) ? "true" : undefined}
-          >
-            {fingering.finger}
-          </span>
-        )) : null}
+        {display.fingerNumbers ? labels.fingerings.map((fingering) => {
+          const pickable = onFingerPick !== undefined && fingerPickable?.(key.midi, fingering.left) === true;
+          return (
+            <span
+              key={fingeringKey(fingering)}
+              className={`piano-key-finger${pickable ? " pickable" : ""}`}
+              data-hand={fingering.left ? "left" : "right"}
+              data-finger={fingering.finger}
+              data-focused={fingerFocused(fingering) ? "true" : undefined}
+              {...(pickable
+                ? {
+                  role: "button",
+                  title: `Change this ${fingering.left ? "left" : "right"}-hand finger`,
+                  onClick: () => onFingerPick(key.midi, fingering.left),
+                }
+                : {})}
+            >
+              {fingering.finger}
+            </span>
+          );
+        }) : null}
         {display.noteNames
           ? (
             <span

@@ -165,6 +165,7 @@ const COUNT_IN_LABELS: Readonly<Record<RealtimeCountIn, string>> = {
 const SETTINGS_SECTIONS = [
   { id: "playback", label: "Playback", hint: "Piano, listen input and loop" },
   { id: "keyboard", label: "Keyboard & highway", hint: "Keys, hand colours and 3D notes" },
+  { id: "fingering", label: "Fingering editor", hint: "How editing fingers looks" },
   { id: "shortcuts", label: "Shortcuts", hint: "Keyboard keys and MIDI" },
   { id: "repairs", label: "Repairs", hint: "Corrections to recognition" },
   { id: "debug", label: "Debug", hint: "Troubleshooting tools" },
@@ -189,6 +190,8 @@ interface SettingsPageProps {
   listenInputSource: ListenInputSource;
   /** Whether loop mode dims the bars outside the loop. */
   loopDimOutside?: boolean;
+  /** Whether the fingering editor stripes the staves of the selected note in its hand's colour. */
+  fingeringStaffHighlight?: boolean;
   /** Whether the 3D note highway is shown above the keyboard during playback. */
   noteHighwayEnabled?: boolean;
   /** What realtime does at a loop's end. */
@@ -210,6 +213,7 @@ interface SettingsPageProps {
   onChangePlaybackPiano: (pianoId: PianoId) => void;
   onChangeListenInputSource: (inputSource: ListenInputSource) => void;
   onChangeLoopDimOutside?: (enabled: boolean) => void;
+  onChangeFingeringStaffHighlight?: (enabled: boolean) => void;
   onChangeNoteHighwayEnabled?: (enabled: boolean) => void;
   onChangeLoopRestart?: (restart: LoopRestart) => void;
   onChangeRealtimeCountIn?: (countIn: RealtimeCountIn) => void;
@@ -233,6 +237,7 @@ export function SettingsPage({
   playbackPiano,
   listenInputSource,
   loopDimOutside = true,
+  fingeringStaffHighlight = true,
   noteHighwayEnabled = false,
   loopRestart = DEFAULT_LOOP_RESTART,
   realtimeCountIn = DEFAULT_REALTIME_COUNT_IN,
@@ -251,6 +256,7 @@ export function SettingsPage({
   onChangePlaybackPiano,
   onChangeListenInputSource,
   onChangeLoopDimOutside,
+  onChangeFingeringStaffHighlight,
   onChangeNoteHighwayEnabled,
   onChangeLoopRestart,
   onChangeRealtimeCountIn,
@@ -897,6 +903,32 @@ export function SettingsPage({
                   <option key={labels} value={labels}>{NOTE_LABEL_NAMES[labels]}</option>
                 ))}
               </select>
+            </label>
+          </section>
+
+          <section className="settings-card" aria-labelledby="fingering-editor-title" {...sectionPanel("fingering")}>
+            <header className="settings-card-header">
+              <div>
+                <h3 id="fingering-editor-title">Fingering editor</h3>
+                <p>How the score looks while you edit its fingers.</p>
+              </div>
+            </header>
+            <label className="settings-toggle-row">
+              <input
+                type="checkbox"
+                aria-label="Highlight staves"
+                checked={fingeringStaffHighlight}
+                disabled={!onChangeFingeringStaffHighlight}
+                onChange={(event) => onChangeFingeringStaffHighlight?.(event.target.checked)}
+              />
+              <span>
+                <strong>Highlight staves</strong>
+                <small>
+                  The selected note's staff is tinted in its hand's colour. With both hands
+                  practised, every staff of its system is, each in the colour of the hand that
+                  plays it.
+                </small>
+              </span>
             </label>
           </section>
 

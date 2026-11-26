@@ -95,8 +95,8 @@ test("renders every playback command with its default keyboard key and empty MID
 
 test("lists the sections and shows only the chosen one", () => {
   const playback = renderSettings();
-  assert.equal(playback.match(/role="tab"/g)?.length, 5);
-  for (const label of ["Playback", "Keyboard &amp; highway", "Shortcuts", "Repairs", "Debug"]) {
+  assert.equal(playback.match(/role="tab"/g)?.length, 6);
+  for (const label of ["Playback", "Keyboard &amp; highway", "Fingering editor", "Shortcuts", "Repairs", "Debug"]) {
     assert.match(playback, new RegExp(`role="tab"[^>]*><strong>${label}</strong>`));
   }
   // Playback is first: its panel shows, and the others are hidden.
@@ -106,6 +106,15 @@ test("lists the sections and shows only the chosen one", () => {
   const shortcuts = renderSettings({ initialSection: "shortcuts" });
   assert.match(shortcuts, /<section[^>]*id="settings-panel-shortcuts" role="tabpanel">/);
   assert.match(shortcuts, /<section[^>]*id="settings-panel-playback" role="tabpanel" hidden="">/);
+});
+
+test("the fingering editor's staff highlight is on unless switched off", () => {
+  const toggle = (markup: string) => markup.match(/<input[^>]*aria-label="Highlight staves"[^>]*>/)?.[0] ?? "";
+  assert.match(toggle(renderSettings({ initialSection: "fingering", onChangeFingeringStaffHighlight: () => undefined })), /checked=""/);
+  assert.doesNotMatch(
+    toggle(renderSettings({ initialSection: "fingering", fingeringStaffHighlight: false, onChangeFingeringStaffHighlight: () => undefined })),
+    /checked=""/,
+  );
 });
 
 test("disables MIDI assignment when initialization fails", () => {

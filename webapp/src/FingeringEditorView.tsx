@@ -3,13 +3,14 @@
 // layers apart rather than hue, so it survives custom hand colours and colour blindness:
 // a predicted finger is an outline in its hand's colour, the player's own is filled, and a
 // printed one stays the score's own digit.
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { editorLabels, printedFingerReplaced, type EditorLabel, type FingeringEditor } from "./fingeringEditor";
 import { fingeringLabelLayout, labelColumn, type EffectiveFingering, type MusicXmlPage } from "./musicxml";
 import { formatKeyboardShortcut, type PlaybackShortcuts } from "./shortcuts";
+import { pitchToMidi } from "./piano";
 import { createPortal } from "react-dom";
 import type { RevealElement } from "./DocumentViewer";
-import type { PlaybackCommand } from "./playback";
+import type { PlaybackCommand, PracticeHand } from "./playback";
 
 const FINGER_NAMES = ["thumb", "index finger", "middle finger", "ring finger", "little finger"];
 
@@ -47,7 +48,9 @@ export function FingeringToolbar({
         className={`fingering-edit-toggle${editor.editing ? " active" : ""}`}
         aria-pressed={editor.editing}
         title={editor.editing
-          ? `Back to playback at the selected note (${toggleKey} or Esc)`
+          ? editor.resumes
+            ? `Leave the editor and resume playback at the ringed note (${toggleKey} or Esc)`
+            : `Leave the editor (${toggleKey} or Esc)`
           : `Edit the fingers of the notes; playback stops while you do (${toggleKey})`}
         onClick={editor.toggle}
       >
@@ -95,6 +98,141 @@ interface PageFrame {
   top: number;
   width: number;
   height: number;
+}
+
+/** The picker's controls: the moment's notes of the hand, the five fingers, the other hand and back to the base. */
+function FingerPickerControls({ editor, fingering }: { editor: FingeringEditor; fingering: EffectiveFingering }) {
+  const cursor = editor.cursor!;
+  const chord = editor.momentNotes.filter((target) => editor.fingerings?.[target.id]?.left === fingering.left);
+  const place = chord.findIndex((target) => target.id === cursor.id);
+  const other = fingering.left ? "right" : "left";
+  const resetLabel = fingering.basePrinted ? "Use the printed finger" : "Use the predicted finger";
+  const hasOverride = fingering.source === "yours" || fingering.handMoved;
+  return (
+    <>
+      {chord.length > 1 ? (
+        <div className="finger-picker-chord" role="group" aria-label="Move among the notes at this moment">
+          <button
+            type="button"
+            aria-label="Higher note"
+            disabled={place >= chord.length - 1}
+            onClick={() => editor.moveInMoment(-1)}
+          >▲</button>
+          <button
+            type="button"
+            aria-label="Lower note"
+            disabled={place <= 0}
+            onClick={() => editor.moveInMoment(1)}
+          >▼</button>
+        </div>
+      ) : null}
+      <div className="finger-picker-note">
+        <strong>{cursor.pitch.replace("#", "♯")}</strong>
+        {chord.length > 1 ? <span>{place + 1}/{chord.length}</span> : null}
+      </div>
+      {[1, 2, 3, 4, 5].map((finger) => {
+        const base = finger === fingering.baseFinger;
+        // New buttons for each note: moved to another, the picker shows that note's finger at
+        // once, where the same buttons would fade from the last note's. A finger picked for
+        // the note still fades in.
+        return (
+          <button
+            key={`${cursor.id}|${finger}`}
+            type="button"
+            className={`finger-picker-digit${finger === fingering.finger ? " selected" : ""}`}
+            aria-pressed={finger === fingering.finger}
+            aria-label={`${finger}, ${FINGER_NAMES[finger - 1]}${base ? (fingering.basePrinted ? ", printed" : ", predicted") : ""}`}
+            onClick={() => editor.pickFinger(finger)}
+          >
+            {finger}
+            {base ? <span className="finger-picker-base" aria-hidden="true" /> : null}
+          </button>
+        );
+      })}
+      <span className="finger-picker-divider" aria-hidden="true" />
+      <button
+        type="button"
+        className={`finger-picker-hand ${handClass(!fingering.left)}`}
+        aria-label={`Play ${cursor.pitch} with the ${other} hand`}
+        title={`Play with the ${other} hand`}
+        onClick={editor.swapHand}
+      >⇄ {fingering.left ? "RH" : "LH"}</button>
+      <button
+        type="button"
+        className="finger-picker-reset"
+        aria-label={resetLabel}
+        title={resetLabel}
+        disabled={!hasOverride}
+        onClick={editor.resetHere}
+      >↺</button>
+    </>
+  );
+}
+
+/**
+ * The finger picker opened from the keyboard, standing over the ringed note's finger there,
+ * where it was clicked; held inside the window at its sides, its caret still on the finger.
+ */
+export function KeyboardFingerPicker({ editor }: { editor: FingeringEditor }) {
+  const cursor = editor.cursor;
+  const fingering = cursor ? editor.fingerings?.[cursor.id] : undefined;
+  const shown = editor.pickerOnKeyboard && cursor !== null && fingering !== undefined;
+  const midi = cursor ? pitchToMidi(cursor.pitch) : null;
+  const hand = fingering?.left ? "left" : "right";
+  const pickerRef = useRef<HTMLDivElement>(null);
+  const [place, setPlace] = useState<{ x: number; y: number; slide: number } | null>(null);
+  // The keyboard's markers move with its keys, so the finger is found again after each render.
+  const [, setResized] = useState(0);
+  useEffect(() => {
+    if (!shown) return;
+    const resized = () => setResized((count) => count + 1);
+    window.addEventListener("resize", resized);
+    return () => window.removeEventListener("resize", resized);
+  }, [shown]);
+  useLayoutEffect(() => {
+    const marker = shown && midi !== null
+      ? window.document.querySelector(`.piano-key-label[data-midi="${midi}"] .piano-key-finger[data-hand="${hand}"]`)
+      : null;
+    if (!marker) {
+      if (place) setPlace(null);
+      return;
+    }
+    const box = marker.getBoundingClientRect();
+    const x = box.left + box.width / 2;
+    // Clear of the finger by the outlined caret's length.
+    const y = box.top - 11;
+    const width = pickerRef.current?.offsetWidth ?? 0;
+    const margin = 8;
+    let slide = 0;
+    if (x + width / 2 > window.innerWidth - margin) slide = window.innerWidth - margin - (x + width / 2);
+    if (x - width / 2 + slide < margin) slide = margin - (x - width / 2);
+    // The caret stays clear of the picker's rounded corners.
+    const most = Math.max(0, width / 2 - 18);
+    slide = Math.max(-most, Math.min(most, slide));
+    if (!place || Math.abs(place.x - x) > 0.5 || Math.abs(place.y - y) > 0.5 || Math.abs(place.slide - slide) > 0.5) {
+      setPlace({ x, y, slide });
+    }
+  });
+  if (!shown) return null;
+  return (
+    <div
+      ref={pickerRef}
+      className={`finger-picker on-keyboard above ${handClass(fingering.left)}`}
+      role="group"
+      aria-label={`Finger for ${cursor.pitch}`}
+      style={{
+        left: place?.x ?? 0,
+        top: place?.y ?? 0,
+        visibility: place ? undefined : "hidden",
+        transform: `translate(calc(-50% + ${place?.slide ?? 0}px), -100%)`,
+        ["--caret-slide" as string]: `${-(place?.slide ?? 0)}px`,
+      }}
+      onPointerDown={stop}
+      onPointerMove={stop}
+    >
+      <FingerPickerControls editor={editor} fingering={fingering} />
+    </div>
+  );
 }
 
 /** The finger picker, standing just outside the ringed note's label. */
@@ -150,11 +288,6 @@ function FingerPicker({
   useLayoutEffect(() => {
     if (pickerRef.current) reveal?.(pickerRef.current);
   }, [anchor.x, anchor.y, above, cursor.id, reveal]);
-  const chord = editor.momentNotes.filter((target) => editor.fingerings?.[target.id]?.left === fingering.left);
-  const place = chord.findIndex((target) => target.id === cursor.id);
-  const other = fingering.left ? "right" : "left";
-  const resetLabel = fingering.basePrinted ? "Use the printed finger" : "Use the predicted finger";
-  const hasOverride = fingering.source === "yours" || fingering.handMoved;
   // Over its page but outside it: a page clips what stands past its edges, and the picker of
   // a note near the page's top or bottom stands past them.
   return createPortal(
@@ -173,65 +306,64 @@ function FingerPicker({
       onPointerDown={stop}
       onPointerMove={stop}
     >
-      {chord.length > 1 ? (
-        <div className="finger-picker-chord" role="group" aria-label="Move among the notes at this moment">
-          <button
-            type="button"
-            aria-label="Higher note"
-            disabled={place <= 0}
-            onClick={() => editor.moveInMoment(-1)}
-          >▲</button>
-          <button
-            type="button"
-            aria-label="Lower note"
-            disabled={place >= chord.length - 1}
-            onClick={() => editor.moveInMoment(1)}
-          >▼</button>
-        </div>
-      ) : null}
-      <div className="finger-picker-note">
-        <strong>{cursor.pitch.replace("#", "♯")}</strong>
-        {chord.length > 1 ? <span>{place + 1}/{chord.length}</span> : null}
-      </div>
-      {[1, 2, 3, 4, 5].map((finger) => {
-        const base = finger === fingering.baseFinger;
-        // New buttons for each note: moved to another, the picker shows that note's finger at
-        // once, where the same buttons would fade from the last note's. A finger picked for
-        // the note still fades in.
-        return (
-          <button
-            key={`${cursor.id}|${finger}`}
-            type="button"
-            className={`finger-picker-digit${finger === fingering.finger ? " selected" : ""}`}
-            aria-pressed={finger === fingering.finger}
-            aria-label={`${finger}, ${FINGER_NAMES[finger - 1]}${base ? (fingering.basePrinted ? ", printed" : ", predicted") : ""}`}
-            onClick={() => editor.pickFinger(finger)}
-          >
-            {finger}
-            {base ? <span className="finger-picker-base" aria-hidden="true" /> : null}
-          </button>
-        );
-      })}
-      <span className="finger-picker-divider" aria-hidden="true" />
-      <button
-        type="button"
-        className={`finger-picker-hand ${handClass(!fingering.left)}`}
-        aria-label={`Play ${cursor.pitch} with the ${other} hand`}
-        title={`Play with the ${other} hand`}
-        onClick={editor.swapHand}
-      >⇄ {fingering.left ? "RH" : "LH"}</button>
-      <button
-        type="button"
-        className="finger-picker-reset"
-        aria-label={resetLabel}
-        title={resetLabel}
-        disabled={!hasOverride}
-        onClick={editor.resetHere}
-      >↺</button>
+      <FingerPickerControls editor={editor} fingering={fingering} />
     </div>,
     frame.host,
   );
 }
+
+/** A staff's stripe, in page units; `key` names its system, staff and hand. */
+interface StaffBandBox {
+  key: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  left: boolean;
+}
+
+/**
+ * The staff stripes. A stripe that goes, to another staff, system or hand, fades out where it
+ * stood as the new one fades in, rather than sliding over the page to it.
+ */
+function StaffBands({ bands, scale, radius }: { bands: StaffBandBox[]; scale: number; radius: number }) {
+  const [leaving, setLeaving] = useState<StaffBandBox[]>([]);
+  const previous = useRef(bands);
+  useLayoutEffect(() => {
+    const keys = new Set(bands.map((band) => band.key));
+    const gone = previous.current.filter((band) => !keys.has(band.key));
+    previous.current = bands;
+    // One that comes back while fading out is shown afresh instead.
+    setLeaving((current) => {
+      const kept = current.filter((band) => !keys.has(band.key) && !gone.some((other) => other.key === band.key));
+      return gone.length || kept.length !== current.length ? [...kept, ...gone] : current;
+    });
+  });
+  const draw = (band: StaffBandBox, out: boolean) => (
+    <div
+      key={`${out ? "out" : "in"}-${band.key}`}
+      className={`fingering-staff-band ${handClass(band.left)}${out ? " leaving" : ""}`}
+      aria-hidden="true"
+      onAnimationEnd={out ? () => setLeaving((current) => current.filter((other) => other !== band)) : undefined}
+      style={{
+        width: band.width * scale,
+        height: band.height * scale,
+        borderRadius: radius * scale,
+        transform: `translate3d(${band.x * scale}px, ${band.y * scale}px, 0)`,
+      }}
+    />
+  );
+  return (
+    <>
+      {leaving.map((band) => draw(band, true))}
+      {bands.map((band) => draw(band, false))}
+    </>
+  );
+}
+
+/** How far the ringed note's staff band reaches past its staff's ends and lines, in staff spaces. */
+const STAFF_BAND_PAD_X = 0.4;
+const STAFF_BAND_PAD_Y = 0.4;
 
 /** How far a moved note's dashed ring stands off its head, in staff spaces: close, to keep clear of its dots and accidentals. */
 const MOVED_RING_GAP = 0.22;
@@ -295,6 +427,20 @@ const FingeringLabel = memo(function FingeringLabel({
 });
 
 /**
+ * A system's labels' opacity, which the view may lower for a system it shows faint, as one
+ * under the note highway, by setting `--label-system-<index>` on the page.
+ */
+function systemFaintness(system: number): CSSProperties {
+  return { opacity: `var(--label-system-${system}, 1)` };
+}
+
+/** How far a system reaches up and down with its fingering labels, in page units. */
+export interface SystemReach {
+  top: number;
+  bottom: number;
+}
+
+/**
  * The fingering labels of one engraved page while editing, with the finger picker of the
  * ringed note when it is on this page.
  */
@@ -304,14 +450,23 @@ export const FingeringPageLayer = memo(function FingeringPageLayer({
   scale,
   displayWidth,
   reveal,
+  onReach,
+  practiceHand = "both",
+  staffHighlight = true,
 }: {
   page: MusicXmlPage;
   editor: FingeringEditor;
+  /** With both hands practised, every staff of the ringed note's system is striped; with one, its staff alone. */
+  practiceHand?: PracticeHand;
+  /** Whether the ringed note's staves are striped at all. */
+  staffHighlight?: boolean;
   scale: number;
   /** The page's width on screen before zooming, which the moving marks are placed in. */
   displayWidth: number;
   /** Scrolls an element of the layer, the finger picker, into view. */
   reveal?: RevealElement;
+  /** Told how far each system reaches with its labels, by system index, in page units. */
+  onReach?: (page: MusicXmlPage, reach: ReadonlyMap<number, SystemReach>) => void;
 }) {
   const fingerings = editor.fingerings;
   const prefix = `page-${page.index + 1}-`;
@@ -355,6 +510,8 @@ export const FingeringPageLayer = memo(function FingeringPageLayer({
     }
     return result;
   }, [layout, page]);
+  // Before the viewer's own layout effect, which reads it.
+  useLayoutEffect(() => onReach?.(page, systemReach), [onReach, page, systemReach]);
   // The labels change with the fingers, not with the cursor, so moving the cursor redraws
   // only the ring and the band.
   const editorRef = useRef(editor);
@@ -383,11 +540,14 @@ export const FingeringPageLayer = memo(function FingeringPageLayer({
   const marks = useMemo(() => {
     if (!fingerings) return null;
     const radius = layout.size / 2;
+    const systemOfStack = (stackId: string) => Number(stackId.slice(0, stackId.indexOf("|")));
+    const systemOfNote = (key: string) => chordOf.get(key)?.systemIndex ?? 0;
     return (
       <>
         {layout.stacks.map((stack) => (
           <rect
             key={stack.id}
+            style={systemFaintness(systemOfStack(stack.id))}
             className={`fingering-stack ${handClass(stack.left)}`}
             x={stack.x - radius - layout.size * 0.12}
             y={stack.top - layout.size * 0.12}
@@ -403,6 +563,7 @@ export const FingeringPageLayer = memo(function FingeringPageLayer({
           return (
             <ellipse
               key={`moved-${note.key}`}
+              style={systemFaintness(systemOfNote(note.key))}
               className={`fingering-moved-head ${handClass(left)}`}
               cx={(x1 + x2) / 2}
               cy={(y1 + y2) / 2}
@@ -418,7 +579,7 @@ export const FingeringPageLayer = memo(function FingeringPageLayer({
           const [left, top, right, bottom] = note.printedFingering!;
           const replaced = printedFingerReplaced(fingering);
           return (
-            <g key={`printed-${note.key}`}>
+            <g key={`printed-${note.key}`} style={systemFaintness(systemOfNote(note.key))}>
               {/* Struck or not, the digit is a way to its note, wherever its label now stands. */}
               <rect
                 className={`fingering-printed ${handClass(fingering.left)}${hoverId === id ? " hovered" : ""}`}
@@ -452,24 +613,25 @@ export const FingeringPageLayer = memo(function FingeringPageLayer({
           const id = prefix + label.key;
           const fingering = fingerings[id];
           return (
-            <FingeringLabel
-              key={label.key}
-              id={id}
-              x={label.x}
-              y={label.y}
-              size={layout.size}
-              left={label.left}
-              finger={fingering.finger}
-              look={labelLook(fingering, hands.get(label.key))}
-              text={labelText(id, fingering, notes.get(label.key)?.pitch ?? null)}
-              onPick={pick}
-              onHover={hover}
-            />
+            <g key={label.key} style={systemFaintness(systemOfStack(label.stackId))}>
+              <FingeringLabel
+                id={id}
+                x={label.x}
+                y={label.y}
+                size={layout.size}
+                left={label.left}
+                finger={fingering.finger}
+                look={labelLook(fingering, hands.get(label.key))}
+                text={labelText(id, fingering, notes.get(label.key)?.pitch ?? null)}
+                onPick={pick}
+                onHover={hover}
+              />
+            </g>
           );
         })}
       </>
     );
-  }, [fingerings, hands, hover, hoverId, layout, movedHeads, notes, page.staffSpace, pick, prefix, printedTargets]);
+  }, [chordOf, fingerings, hands, hover, hoverId, layout, movedHeads, notes, page.staffSpace, pick, prefix, printedTargets]);
   // Where this page stands among the pages, for the picker drawn over it: measured once per
   // layout and page size, not on every move of the cursor.
   const markerRef = useRef<HTMLSpanElement>(null);
@@ -567,6 +729,47 @@ export const FingeringPageLayer = memo(function FingeringPageLayer({
     const pad = page.staffSpace * 0.6;
     band = { x: (left + right) / 2 - width / 2, y: reach.top - pad, width, height: reach.bottom - reach.top + 2 * pad };
   }
+  // The ringed note's staff, across its system, in its hand's colour; with both hands
+  // practised, every staff of the system, each in the colour of the hand most of its notes
+  // there are played with, so the stripes hold still as the ring moves between the hands.
+  const staffBands: StaffBandBox[] = [];
+  const cursorSystem = cursorChord ? page.systems[cursorChord.systemIndex] : undefined;
+  if (staffHighlight && cursorChord && cursorSystem && cursorFingering) {
+    const { barlines, staves } = cursorSystem;
+    const padX = page.staffSpace * STAFF_BAND_PAD_X;
+    const padY = page.staffSpace * STAFF_BAND_PAD_Y;
+    const band = (staff: number, left: boolean) => {
+      const extent = staves[staff];
+      if (!extent) return;
+      staffBands.push({
+        key: `${cursorChord.systemIndex}|${staff}|${left ? "L" : "R"}`,
+        x: barlines[0] - padX,
+        y: extent.top - padY,
+        width: barlines[barlines.length - 1] - barlines[0] + 2 * padX,
+        height: extent.bottom - extent.top + 2 * padY,
+        left,
+      });
+    };
+    if (practiceHand === "both") {
+      staves.forEach((_, staff) => {
+        let lefts = 0;
+        let rights = 0;
+        for (const chord of page.chords) {
+          if (chord.systemIndex !== cursorChord.systemIndex || chord.staff !== staff) continue;
+          for (const note of chord.notes) {
+            const fingering = fingerings[prefix + note.key];
+            if (!fingering) continue;
+            if (fingering.left) lefts += 1;
+            else rights += 1;
+          }
+        }
+        // A staff without fingered notes takes its place: the upper half the right hand's.
+        band(staff, lefts === rights ? staff >= staves.length / 2 : lefts > rights);
+      });
+    } else {
+      band(cursorChord.staff, cursorFingering.left);
+    }
+  }
   // The picker stands outside the system, its caret pointing at the ringed label. In a
   // chord's stack it stands beside the stack, and a line runs from its caret down the
   // stack's side and turns in at the ringed digit.
@@ -636,6 +839,7 @@ export const FingeringPageLayer = memo(function FingeringPageLayer({
   return (
     <>
       <span ref={markerRef} hidden />
+      <StaffBands bands={staffBands} scale={k} radius={page.staffSpace * 0.4} />
       {band ? (
         <div
           className="fingering-band"
@@ -686,7 +890,7 @@ export const FingeringPageLayer = memo(function FingeringPageLayer({
           }}
         />
       ) : null}
-      {editor.pickerOpen && anchor && cursorFingering && lead ? (
+      {editor.pickerOpen && !editor.pickerOnKeyboard && anchor && cursorFingering && lead ? (
         <>
           <div
             className="finger-picker-lead"
@@ -710,7 +914,7 @@ export const FingeringPageLayer = memo(function FingeringPageLayer({
           />
         </>
       ) : null}
-      {editor.pickerOpen && anchor && cursorFingering && frame ? (
+      {editor.pickerOpen && !editor.pickerOnKeyboard && anchor && cursorFingering && frame ? (
         <FingerPicker
           editor={editor}
           fingering={cursorFingering}

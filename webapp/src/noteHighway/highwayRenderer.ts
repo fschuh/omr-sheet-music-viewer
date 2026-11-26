@@ -174,6 +174,14 @@ uniform sampler2D u_names;
 
 out vec4 outColor;
 
+// A line across the highway, in device pixels from the canvas's bottom, above which nothing
+// shows, and the band below it over which the highway comes back: its faded far end receding
+// to leave what the score has there in sight. A line past the canvas's top changes nothing.
+uniform vec2 u_clear;
+float highwayClear() {
+  return 1.0 - smoothstep(u_clear.x - u_clear.y, u_clear.x, gl_FragCoord.y);
+}
+
 void main() {
   // Each hand has its colour, darker on black keys. The other hand's notes keep
   // their shape but lose their colour and most of their opacity, so they show
@@ -210,6 +218,7 @@ void main() {
   color = mix(color, min(base * 1.6 + 0.25, vec3(1.0)), v_sounding * 0.55 * (1.0 - v_ghost));
   float alpha = (1.0 - smoothstep(0.6, 1.0, v_far)) * mix(1.0, 0.3, v_ghost);
   alpha *= mix(1.0, rounded, u_flat);
+  alpha *= highwayClear();
 
   // The label, a finger number or a note name, sits at the near end of the top face,
   // reading upright. A glyph's ink is about 0.6 of its cell's height, so on a short
@@ -273,6 +282,14 @@ uniform vec3 u_leftColor;
 
 out vec4 outColor;
 
+// A line across the highway, in device pixels from the canvas's bottom, above which nothing
+// shows, and the band below it over which the highway comes back: its faded far end receding
+// to leave what the score has there in sight. A line past the canvas's top changes nothing.
+uniform vec2 u_clear;
+float highwayClear() {
+  return 1.0 - smoothstep(u_clear.x - u_clear.y, u_clear.x, gl_FragCoord.y);
+}
+
 bool blackPitchClass(int pitchClass) {
   return pitchClass == 1 || pitchClass == 3 || pitchClass == 6 || pitchClass == 8 || pitchClass == 10;
 }
@@ -327,6 +344,7 @@ void main() {
 
   float fade = 1.0 - smoothstep(0.08, 1.0, far);
   float alpha = max(0.84 * fade, max(hit, rail) * (1.0 - smoothstep(0.55, 1.0, far)));
+  alpha *= highwayClear();
   outColor = vec4(min(color, vec3(1.0)) * alpha, alpha);
 }`;
 
@@ -373,10 +391,19 @@ in float v_across;
 
 out vec4 outColor;
 
+// A line across the highway, in device pixels from the canvas's bottom, above which nothing
+// shows, and the band below it over which the highway comes back: its faded far end receding
+// to leave what the score has there in sight. A line past the canvas's top changes nothing.
+uniform vec2 u_clear;
+float highwayClear() {
+  return 1.0 - smoothstep(u_clear.x - u_clear.y, u_clear.x, gl_FragCoord.y);
+}
+
 void main() {
   float profile = 1.0 - abs(v_across * 2.0 - 1.0);
   float loopLine = step(1.5, v_strength);
   float alpha = min(v_strength * 0.5, 0.95) * profile * (1.0 - smoothstep(0.35, 1.0, v_far));
+  alpha *= highwayClear();
   // The loop line takes the score's loop colour, #D98A1C.
   vec3 color = mix(vec3(0.82, 0.88, 0.92), vec3(0.851, 0.541, 0.11), loopLine);
   outColor = vec4(color * alpha, alpha);
@@ -403,6 +430,9 @@ function noteBoxGeometry(): {
   });
   return { vertices: new Float32Array(vertices), indices: new Uint16Array(indices) };
 }
+
+/** Below a clearing line, the share of the canvas's height over which the highway comes back. */
+const CLEAR_BAND = 0.16;
 
 const UNIT_QUAD = new Float32Array([0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1]);
 
@@ -449,14 +479,14 @@ function uniforms<Name extends string>(
 const NOTE_UNIFORMS = [
   "u_viewProjection", "u_now", "u_unitsPerTime", "u_length", "u_minLength", "u_gap", "u_heights", "u_laneSpan", "u_wholeWhiteKeys", "u_laneInset",
   "u_rightColor", "u_rightDark", "u_leftColor", "u_leftDark", "u_ghostColor",
-  "u_flat", "u_labels", "u_digits", "u_names",
+  "u_flat", "u_labels", "u_digits", "u_names", "u_clear",
 ] as const;
 const FLOOR_UNIFORMS = [
   "u_viewProjection", "u_center", "u_halfWidth", "u_keyboardHalfWidth", "u_length",
-  "u_blackKeyWidth", "u_glow", "u_rightColor", "u_leftColor",
+  "u_blackKeyWidth", "u_glow", "u_rightColor", "u_leftColor", "u_clear",
 ] as const;
 const LINE_UNIFORMS = [
-  "u_viewProjection", "u_now", "u_unitsPerTime", "u_center", "u_halfWidth", "u_length",
+  "u_viewProjection", "u_now", "u_unitsPerTime", "u_center", "u_halfWidth", "u_length", "u_clear",
 ] as const;
 
 /**
@@ -536,6 +566,8 @@ export class NoteHighwayRenderer {
   private cssSize = { width: 0, height: 0 };
   private readonly glow = new Float32Array(KEY_COUNT);
   private lastDraw = "";
+  /** How far down from the canvas's top the highway is cleared, as a share of its height; 0 for none. */
+  private clear = 0;
   private sizeVersion = 0;
   private trackVersion = 0;
 
@@ -729,18 +761,32 @@ export class NoteHighwayRenderer {
     this.lastDraw = "";
   }
 
+  /**
+   * Clears the highway's far end down to `share` of the canvas's height from its top, the
+   * highway coming back below it; 0 clears nothing.
+   */
+  setClear(share: number): void {
+    const next = Math.max(0, Math.min(1, share));
+    if (Math.abs(next - this.clear) < 1e-4) return;
+    this.clear = next;
+    this.lastDraw = "";
+  }
+
   /** Draws the highway at `now`; a no-op when nothing visible changed. */
   render(now: number, window: number): void {
     const resources = this.resources;
     const camera = this.camera;
     const layout = this.layout;
     if (!resources || !camera || !layout || this.gl.isContextLost()) return;
-    const drawKey = `${this.sizeVersion}:${this.trackVersion}:${now}:${window}`;
+    const drawKey = `${this.sizeVersion}:${this.trackVersion}:${now}:${window}:${this.clear}`;
     if (drawKey === this.lastDraw) return;
     this.lastDraw = drawKey;
 
     const gl = this.gl;
     const unitsPerTime = camera.length / window;
+    // The clearing line in device pixels from the bottom, and the band it fades in over.
+    const clearLine = this.clear > 0 ? this.canvas.height * (1 - this.clear) : this.canvas.height * 2;
+    const clearBand = Math.max(1, this.canvas.height * CLEAR_BAND);
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
     gl.clearColor(0, 0, 0, 0);
     gl.clearDepth(1);
@@ -771,6 +817,7 @@ export class NoteHighwayRenderer {
     gl.uniform4fv(floor.u_glow, this.glow);
     gl.uniform3fv(floor.u_rightColor, colorChannels(colors.right.base));
     gl.uniform3fv(floor.u_leftColor, colorChannels(colors.left.base));
+    gl.uniform2f(floor.u_clear, clearLine, clearBand);
     gl.bindVertexArray(resources.floorVao);
     gl.drawArrays(gl.TRIANGLES, 0, 6);
 
@@ -787,6 +834,7 @@ export class NoteHighwayRenderer {
         gl.uniform1f(line.u_center, layout.center);
         gl.uniform1f(line.u_halfWidth, layout.halfWidth);
         gl.uniform1f(line.u_length, camera.length);
+        gl.uniform2f(line.u_clear, clearLine, clearBand);
         gl.bindVertexArray(resources.lineVao);
         gl.bindBuffer(gl.ARRAY_BUFFER, resources.lineInstanceBuffer);
         gl.vertexAttribPointer(
@@ -828,6 +876,7 @@ export class NoteHighwayRenderer {
       gl.activeTexture(gl.TEXTURE1);
       gl.bindTexture(gl.TEXTURE_2D, resources.nameTexture);
       gl.uniform1i(note.u_names, 1);
+      gl.uniform2f(note.u_clear, clearLine, clearBand);
       gl.activeTexture(gl.TEXTURE0);
       gl.bindVertexArray(resources.noteVao);
       gl.bindBuffer(gl.ARRAY_BUFFER, resources.noteInstanceBuffer);

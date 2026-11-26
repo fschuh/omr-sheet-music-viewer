@@ -23,6 +23,11 @@ interface NoteHighwayProps {
    * note coming; 0 shows nothing.
    */
   upcomingLead?: number;
+  /**
+   * Where, in the window's coordinates, the highway's far end is cleared down to, leaving
+   * what lies above it in sight; null clears nothing beyond its usual fade.
+   */
+  clearTo?: number | null;
 }
 
 /**
@@ -36,10 +41,11 @@ export function NoteHighway({
   hidden = false,
   view = DEFAULT_HIGHWAY_RENDER_VIEW,
   upcomingLead = 1,
+  clearTo = null,
 }: NoteHighwayProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const latest = useRef({ getFrame, view, upcomingLead, hidden });
-  latest.current = { getFrame, view, upcomingLead, hidden };
+  const latest = useRef({ getFrame, view, upcomingLead, hidden, clearTo });
+  latest.current = { getFrame, view, upcomingLead, hidden, clearTo };
 
   useEffect(() => {
     const container = containerRef.current;
@@ -63,7 +69,11 @@ export function NoteHighway({
     const active = renderer;
     active.setView(latest.current.view);
 
+    // The clearing line as a share of the canvas's height, measured again when it or the
+    // canvas changes.
+    let clearedFor: { to: number | null; size: string } | null = null;
     const resize = () => {
+      clearedFor = null;
       active.resize(
         canvas.clientWidth,
         canvas.clientHeight,
@@ -94,6 +104,12 @@ export function NoteHighway({
       const { track, now, window: span } = currentGetFrame();
       active.setView(currentView);
       active.setTrack(track);
+      const to = latest.current.clearTo;
+      if (clearedFor?.to !== to) {
+        const box = canvas.getBoundingClientRect();
+        active.setClear(to === null || box.height <= 0 ? 0 : (to - box.top) / box.height);
+        clearedFor = { to, size: `${box.width}x${box.height}` };
+      }
       // render() skips the GPU work and the painter skips unchanged keys, so
       // leaving the loop running while nothing moves costs almost nothing.
       active.render(now, span);
